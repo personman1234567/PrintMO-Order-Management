@@ -1,0 +1,46 @@
+{
+  "name": "printmo-order-management",
+  "version": "1.0.0",
+  "description": "Desktop app for managing PrintMO orders and batching to S&S Activewear",
+  "author": "Ethan Duke ethan.duke@icloud.com",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "node-fetch": "^2.6.7",
+    "redis": "^4.7.0"
+  },
+  "devDependencies": {
+    "electron": "^26.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.printmo.orders",
+    "productName": "PrintMO Order Management",
+    "directories": {
+      "output": "dist",
+      "buildResources": "Assets"
+    },
+    "extraResources": [
+      {
+        "from": ".env",
+        "to": ".env",
+        "filter": ["**/*"]
+      }
+    ],
+    "files": [
+      "**/*"
+    ],
+    "mac": {
+      "icon": "PrintMO_Orders.icns",
+      "target": ["dmg","zip"]
+    },
+    "win": {
+      "icon": "PrintMO_Orders.ico",
+      "target": ["nsis","zip"]
+    }
+  }
+}

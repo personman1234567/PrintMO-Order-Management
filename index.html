@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PrintMO Order Management</title>
+  <style>
+    /* ─── Global & Layout ─────────────────────────────────── */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; font-family: sans-serif; }
+    .container {
+      display: grid;
+      grid-template-columns: 1fr 0.8fr 1fr;
+      gap: 16px;
+      height: 100%;
+      padding: 16px;
+      background: #f6f5f6;
+    }
+
+    /* ─── Panel Base ───────────────────────────────────────── */
+    .panel {
+      background: #fff;
+      border-radius: 25px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: 12px 16px;
+      font-size: 1.2rem;
+      font-weight: bold;
+      border-bottom: 1px solid #ddd;
+    }
+    .panel-body {
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ─── Order Pipeline (Left) ───────────────────────────── */
+    /* AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA */
+    /* Panel container */
+    .pipeline {
+      background: #fff;
+      border-radius: 25px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Header */
+    .pipeline .panel-header {
+      padding: 12px 16px;
+      font-size: 1.2rem;
+      font-weight: bold;
+      border-bottom: 1px solid #ddd;
+      position: relative;
+    }
+    #pipeline-count {
+      position: absolute;
+      top: 12px;
+      right: 16px;
+    }
+
+    /* Cards container: 3‑col flex grid, percent gaps */
+    .pipeline .cards {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between; /* 3 per row; center if fewer */
+      align-content: flex-start;      /* rows start at top */
+      gap: 1%;                        /* 2% gap instead of px */
+      padding: 16px;
+      height: 100%;
+      overflow-y: auto;
+    }
+
+    /* Each card: 32% width → three across, perfect square */
+    .cards .pipeline-card {
+      flex: 0 0 calc((100% - 2%) / 3);
+      max-width: calc((100% - 2%) / 3);
+      aspect-ratio: 1 / 1;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      overflow: hidden;
+      padding: 0;
+    }
+
+    .pipeline-card {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .pipeline-card::before {
+      content: "";
+      position: absolute;
+      top: -50%; left: -50%;
+      width: 200%; height: 200%;
+
+      /* stronger white band at 50% */
+      background:
+        linear-gradient(
+          60deg,
+          rgba(255,255,255,0)   30%,
+          rgba(255,255,255,0.13) 50%,
+          rgba(255,255,255,0)   70%
+        );
+
+      transform: rotate(25deg) translateX(-100%);
+      pointer-events: none;
+
+      /* use CSS var for per-card delay */
+      animation: shimmer 3s infinite;
+      animation-delay: var(--shimmer-delay, 0s);
+    }
+
+    @keyframes shimmer {
+      to { transform: rotate(25deg) translateX(100%); }
+    }
+
+    /* Header bar */
+    .pipeline-card .card-header {
+      background: linear-gradient(
+        90deg,
+        rgba(26,115,232,1) 0%,
+        rgba(23,101,193,1) 100%
+      );
+      color: #fff;
+      padding: 8px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-top-left-radius: 8px;
+      border-top-right-radius: 8px;
+    }
+    .pipeline-card .time-ago-pill {
+      background: rgba(255,255,255,0.25);
+      padding: 2px 6px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      margin: 0;
+    }
+
+    /* Body */
+    .pipeline-card .card-body {
+      padding: 8px 12px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      text-align: left;
+    }
+    .pipeline-card .cust-name {
+      font-size: 0.95rem;
+      margin: 8px 12px 4px;
+      line-height: 1.2;
+    }
+
+    /* Counts: no wrapping + 8px inner gap */
+    .pipeline-card .counts {
+      display: flex;
+      justify-content: center;
+      font-size: 0.9rem;
+      margin: 0 5px 5px;
+      column-gap: 8px;
+      white-space: nowrap; /* never break lines */
+    }
+
+    /* Footer bar */
+    .pipeline-card .card-footer {
+      background: linear-gradient(
+        90deg,
+        rgba(23,101,193,1) 0%,
+        rgba(26,115,232,1) 100%
+      );
+      color: #fff;
+      padding: 8px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: bold;
+      border-bottom-left-radius: 8px;
+      border-bottom-right-radius: 8px;
+      margin: 0;
+    }
+
+    /* ─── HEADER BAR ─────────────────────────────────────── */
+    .pipeline-card .card-header {
+      background: #1a73e8;
+      color: #fff;
+      padding: 8px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-top-left-radius: 8px;
+      border-top-right-radius: 8px;
+    }
+    .pipeline-card .time-ago-pill {
+      background: rgba(255,255,255,0.25);
+      padding: 2px 6px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      margin: 0;               /* no extra margins */
+    }
+
+    .delete-btn {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      padding: 2px 6px;
+      font-size: 1rem;
+      line-height: 1;
+      border: none;
+      background: rgba(0,0,0,0.1);
+      color: #fff;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: background 0.2s;
+      z-index: 5;
+    }
+    .delete-btn:hover {
+      background: rgba(0,0,0,0.3);
+    }
+
+    /* ─── BODY ───────────────────────────────────────────── */
+    .pipeline-card .card-body {
+      padding: 8px 12px;       /* tighter padding for more room */
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      text-align: left;        /* left‑align the content */
+    }
+    .pipeline-card .cust-name {
+      font-size: 1rem;         /* slightly smaller */
+      font-weight: bold;
+      margin: 0 0 4px 0;       /* small bottom gap */
+      line-height: 1.2;
+    }
+    .pipeline-card .counts {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.9rem;
+      margin-top: auto;
+    }
+
+    /* ─── FOOTER BAR ─────────────────────────────────────── */
+    .pipeline-card .card-footer {
+      background: #1a73e8;
+      color: #fff;
+      padding: 8px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: bold;
+      border-bottom-left-radius: 8px;
+      border-bottom-right-radius: 8px;
+      margin: 0;               /* flush to bottom */
+    }
+
+    /* ─── Create Blanks Order (Middle) ────────────────────── */
+    .create {
+      /* center this panel vertically */
+      align-self: center;
+      height: 85%;            /* shorter than full height */
+    }
+    .create-body {
+      /* three rows: drag zone / cards grid / summary */
+      display: grid;
+      grid-template-rows: 180px 280px auto;
+      row-gap: 16px;
+      height: 100%;
+    }
+    .drag-area {
+      margin: 16px;
+      background: #f0f0f0;
+      border: 2px dashed #ccc;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #666;
+      font-size: 1rem;
+      transition: background 0.2s;
+    }
+    .drag-area.over {
+      background: #d0d0d0;
+    }
+    .picked-cards {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;  /* center each line horizontally */
+      align-content: center;    /* center lines vertically if only one */
+      height: 280px;            /* fixed height */
+      overflow-y: auto;         /* scroll when overflow */
+
+      margin: 0 16px;           /* keep your side padding */
+      padding: 16px 0;          /* vertical padding, no extra horizontal */
+      background: #fafafa;
+      border-radius: 6px;
+    }
+    /* each card takes 30% of the container width */
+    .picked-cards .card {
+      flex: 0 0 30%;            /* always 30% width */
+      margin: 0 1.666% 1.666%    /* top/right/bottom, left inherited by shorthand */;
+      /* shorthand expanded: margin-top:0; margin-right:1.666%; margin-bottom:1.666%; margin-left:1.666% */
+
+      aspect-ratio: 1 / 1;       /* stay perfect squares */
+    }
+    .summary {
+      margin: 0 auto 16px;
+      width: 85%;
+      background: #fff;
+      padding: 16px;
+      border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .summary h3 { text-align: center; }
+    .summary ul {
+      display: none;
+    }
+    #cart-total { font-weight: bold; text-align: center !important; }
+    #order-submit {
+      margin-top: 8px;
+      padding: 10px;
+      font-size: 1rem;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    #clear-picked {
+      margin-top: 8px;
+      width: 100%;
+      padding: 8px;
+      font-size: 1rem;
+      background: #ccc;
+      color: #000;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    #clear-picked:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    /* ─── Production & Fulfillment (Right) ───────────────── */
+    .fulfillment {
+      display: flex;
+      gap: 16px;      
+      padding: 16px;         
+      box-sizing: border-box;
+    }
+    .fulfillment .sub-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+    .fulfillment .sub-section h3 {
+      margin: 0;
+      padding: 12px 16px;
+      border-bottom: 1px solid #eee;
+      font-size: 1rem;
+    }
+    .fulfillment .sub-section .cards {
+      flex: 1;                    /* fill available height */
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;  /* three per row; center if fewer */
+      align-content: flex-start;       /* rows start at top */
+      gap: 1%;                         /* percent‑based gutter */
+      padding: 16px;
+      overflow-y: auto;                /* vertical scrolling when needed */
+      background: transparent;
+    }
+    .fulfillment .sub-section .cards .card {
+      flex: 0 0 calc((100% - 2%) / 3);   /* 100% minus 2% total gutter, /3 */
+      max-width: calc((100% - 2%) / 3);
+      aspect-ratio: 1 / 1;               /* perfect square */
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ─── Cards (all sections) ───────────────────────────── */
+    .card {
+      background: #fff;
+      border-radius: 6px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      cursor: grab;
+      overflow: hidden;
+      font-size: 0.85rem;
+    }
+    body.dragging-cursor,
+    body.dragging-cursor * {
+      cursor: grabbing !important;
+    }
+    .card.dragging {
+      opacity: 0.5;
+    }
+    .card .order-number,
+    .card .order-cust,
+    .card .counts {
+      white-space: normal;
+      overflow: hidden;
+      word-break: break-word;
+    }
+    .card .order-number {
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+    .card .order-cust {
+      margin-bottom: 4px;
+    }
+    .card .counts {
+      margin-top: auto;
+    }
+    #picked-cards .delete-btn {
+      display: none !important;
+    }
+    .pipeline.no-delete .delete-btn {
+      display: none !important;
+      pointer-events: none !important;
+    }
+    /* Detail Screen --------------------------------------- */
+    #detail-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      display: grid;
+      place-items: center;
+      transition: opacity 0.3s;
+    }
+    #detail-overlay.hidden { opacity: 0; pointer-events: none; }
+    #detail-card {
+      background: #fff;
+      border-radius: 8px;
+      width: 80vw; max-width: 600px;
+      transform: scale(0.8);
+      transition: transform 0.3s;
+      overflow: hidden;
+    }
+    #detail-notes {
+      padding-left: 5%;
+    }
+    #detail-cust-name {
+      padding-left: 5%;
+      padding-top: 5%;
+    }
+    #detail-overlay.visible #detail-card {
+      transform: scale(1);
+    }
+    #detail-close {
+      position: absolute;
+      top: 8px; right: 8px;
+      font-size: 1.2rem;
+      background: none; border: none;
+      cursor: pointer;
+    }
+    #detail-header {
+      background: linear-gradient(90deg, #1a73e8, #1565c0);
+      color: #fff;
+      padding: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #detail-items {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+    }
+    #detail-items th,
+    #detail-items td {
+      border-bottom: 1px solid #eee;
+      padding: 8px;
+      text-align: left;
+    }
+    #detail-items tfoot td {
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- LEFT: Pipeline -->
+    <div class="panel pipeline">
+      <div class="panel-header">
+        ORDER PIPELINE
+        <span id="pipeline-count">0</span>
+      </div>
+      <div class="panel-body cards" id="col-received"></div>
+    </div>
+
+    <!-- MIDDLE: Create Blanks Order -->
+    <div class="panel create">
+      <div class="panel-header">CREATE BLANKS ORDER</div>
+      <div class="panel-body create-body">
+        <div class="drag-area" id="col-toOrder">Drag cards here</div>
+        <div class="picked-cards" id="picked-cards"></div>
+        <div class="summary">
+          <h3>Summary</h3>
+          <ul id="summary-list"></ul>
+          <div id="cart-total">Total items: 0</div>
+          <button id="clear-picked">Clear</button>
+          <button id="order-submit">Submit To S&S</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Fulfillment -->
+    <div class="panel fulfillment">
+      <div class="panel-header">PRODUCTION &amp; FULFILLMENT</div>
+      <div class="panel-body" style="display:flex; flex-direction:column;">
+        <div class="sub-section">
+          <h3>Blanks Ordered</h3>
+          <div class="cards" id="col-blanks"></div>
+        </div>
+        <div class="sub-section">
+          <h3>Ready To Print</h3>
+          <div class="cards" id="col-print"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- order detail modal -->
+<div id="detail-overlay" class="hidden">
+  <div id="detail-card">
+    <button id="detail-close">×</button>
+    <div id="detail-header">
+      <h2 id="detail-order-id"></h2>
+      <time id="detail-timestamp"></time>
+    </div>
+    <h3 id="detail-cust-name"></h3>
+    <p id="detail-notes"><em>No notes</em></p>
+    <table id="detail-items">
+      <thead>
+        <tr>
+          <th>Qty</th>
+          <th>Description</th>
+          <th>Variant</th> 
+          <th>Price</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+      <tfoot>
+        <tr><td colspan="2">Discount</td><td id="detail-discount"></td></tr>
+        <tr><td colspan="2"><strong>Total</strong></td><td id="detail-total"></td></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+  <!-- existing renderer logic -->
+  <script src="renderer.js"></script>
+</body>
+</html>
