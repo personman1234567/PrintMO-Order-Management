@@ -444,6 +444,7 @@
       display: grid;
       place-items: center;
       transition: opacity 0.3s;
+      z-index: 1500; /* above fullscreen overlay */
     }
     #detail-overlay.hidden { opacity: 0; pointer-events: none; }
     #detail-card {
@@ -493,6 +494,72 @@
     #detail-items tfoot td {
       font-weight: bold;
     }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid #eee;
+    }
+    .fullscreen-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    #blanks-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      transition: opacity 0.3s;
+      z-index: 1000;
+    }
+    #blanks-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    #blanks-section.fullscreen {
+      position: fixed;
+      inset: 10vh 10vw; /* avoid transform blurriness */
+      background: #fff;
+      z-index: 1001;
+      display: flex;
+      flex-direction: column;
+    }
+    #blanks-section.fullscreen .cards {
+      flex: 1;
+    }
+    #blanks-section.fullscreen .cards .card {
+      flex: 0 0 calc((100% - 4%) / 5);
+      max-width: calc((100% - 4%) / 5);
+    }
+
+    #print-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      transition: opacity 0.3s;
+      z-index: 1000;
+    }
+    #print-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    #print-section.fullscreen {
+      position: fixed;
+      inset: 10vh 10vw;
+      background: #fff;
+      z-index: 1001;
+      display: flex;
+      flex-direction: column;
+    }
+    #print-section.fullscreen .cards {
+      flex: 1;
+    }
+    #print-section.fullscreen .cards .card {
+      flex: 0 0 calc((100% - 4%) / 5);
+      max-width: calc((100% - 4%) / 5);
+    }
   </style>
 </head>
 <body>
@@ -526,12 +593,18 @@
     <div class="panel fulfillment">
       <div class="panel-header">PRODUCTION &amp; FULFILLMENT</div>
       <div class="panel-body" style="display:flex; flex-direction:column;">
-        <div class="sub-section">
-          <h3>Blanks Ordered</h3>
+        <div class="sub-section" id="blanks-section">
+          <div class="section-header">
+            <h3>Blanks Ordered</h3>
+            <button id="blanks-fullscreen-btn" class="fullscreen-btn">Fullscreen</button>
+          </div>
           <div class="cards" id="col-blanks"></div>
         </div>
-        <div class="sub-section">
-          <h3>Ready To Print</h3>
+        <div class="sub-section" id="print-section">
+          <div class="section-header">
+            <h3>Ready To Print</h3>
+            <button id="print-fullscreen-btn" class="fullscreen-btn">Fullscreen</button>
+          </div>
           <div class="cards" id="col-print"></div>
         </div>
       </div>
@@ -565,6 +638,9 @@
     </table>
   </div>
 </div>
+
+<div id="blanks-overlay" class="hidden"></div>
+<div id="print-overlay" class="hidden"></div>
 
   <!-- existing renderer logic -->
   <script src="renderer.js"></script>

@@ -343,6 +343,39 @@ document.addEventListener('DOMContentLoaded', () => {
       clearBtn.disabled = false;
     });
   }
+
+  const fsBtn = document.getElementById('blanks-fullscreen-btn');
+  const blanksSection = document.getElementById('blanks-section');
+  const blanksOverlay = document.getElementById('blanks-overlay');
+  if (fsBtn && blanksSection && blanksOverlay) {
+    fsBtn.addEventListener('click', () => {
+      blanksOverlay.classList.remove('hidden');
+      blanksSection.classList.add('fullscreen');
+    });
+    blanksOverlay.addEventListener('click', (e) => {
+      if (e.target === blanksOverlay) {
+        blanksOverlay.classList.add('hidden');
+        blanksSection.classList.remove('fullscreen');
+      }
+    });
+  }
+
+  const printFsBtn = document.getElementById('print-fullscreen-btn');
+  const printSection = document.getElementById('print-section');
+  const printOverlay = document.getElementById('print-overlay');
+  if (printFsBtn && printSection && printOverlay) {
+    printFsBtn.addEventListener('click', () => {
+      printOverlay.classList.remove('hidden');
+      printSection.classList.add('fullscreen');
+    });
+    printOverlay.addEventListener('click', (e) => {
+      if (e.target === printOverlay) {
+        printOverlay.classList.add('hidden');
+        printSection.classList.remove('fullscreen');
+      }
+    });
+  }
+
   setupDropZones();
   renderBoard();
 });
