@@ -204,6 +204,9 @@
       margin: 0;               /* no extra margins */
     }
 
+    .status-yellow { background: #fdd835 !important; color: #000 !important; }
+    .status-green { background: #43a047 !important; }
+
     .delete-btn {
       position: absolute;
       top: 4px;
@@ -531,6 +534,15 @@
     #detail-items tfoot td {
       font-weight: bold;
     }
+    #ready-controls {
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      padding: 12px;
+    }
+    #ready-apply.hidden {
+      display: none;
+    }
     .section-header {
       display: flex;
       justify-content: space-between;
@@ -673,6 +685,11 @@
         <tr><td colspan="2"><strong>Total</strong></td><td id="detail-total"></td></tr>
       </tfoot>
     </table>
+    <div id="ready-controls">
+      <label><input type="checkbox" id="chk-blanks"> Blanks Ready</label>
+      <label><input type="checkbox" id="chk-prints"> Prints Ready</label>
+      <button id="ready-apply" class="hidden">Apply</button>
+    </div>
   </div>
 </div>
 

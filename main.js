@@ -57,11 +57,19 @@ ipcMain.handle('delete-order', async (event, orderName) => {
 // ─── IPC: fetch all orders ───────────────────────────────────────────────────
 ipcMain.handle('get-queue', async () => {
   const raw = await redis.lRange(QUEUE_KEY, 0, -1);
-  return raw.map(s => {
-    const o = JSON.parse(s);
-    if (!o.status) o.status = 'received';  // default new orders
-    return o;
-  });
+  const results = [];
+  for (let i = 0; i < raw.length; i++) {
+    const o = JSON.parse(raw[i]);
+    let updated = false;
+    if (!o.status) { o.status = 'received'; updated = true; }
+    if (typeof o.blanksStatus !== 'number') { o.blanksStatus = 0; updated = true; }
+    if (typeof o.printsStatus !== 'number') { o.printsStatus = 0; updated = true; }
+    if (updated) {
+      await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
+    }
+    results.push(o);
+  }
+  return results;
 });
 
 // ─── IPC: update an order’s status ───────────────────────────────────────────
@@ -77,6 +85,22 @@ ipcMain.handle('update-status', async (_e, orderId, status) => {
   }
   throw new Error(`Order "${orderId}" not found`);
 });
+
+// ─── IPC: update blanks/prints readiness ─────────────────────────────────────
+ipcMain.handle('update-ready', async (_e, orderId, blanksStatus, printsStatus) => {
+  const raw = await redis.lRange(QUEUE_KEY, 0, -1);
+  for (let i = 0; i < raw.length; i++) {
+    const o = JSON.parse(raw[i]);
+    if (o.name === orderId) {
+      o.blanksStatus = blanksStatus;
+      o.printsStatus = printsStatus;
+      await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
+      return;
+    }
+  }
+  throw new Error(`Order "${orderId}" not found`);
+});
+
 
 // ─── IPC: process only the orders in “To Order” ──────────────────────────────
 ipcMain.handle('process-batch', async (_e, orderIds) => {

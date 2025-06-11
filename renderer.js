@@ -94,7 +94,16 @@ function makeCard(o, style = 'default') {
         <span class="footer-value">$${(o.subtotal||0).toFixed(2)}</span>
       </div>
     `;
-    } else if (style === 'picked') {
+    const hdr = card.querySelector('.card-header');
+    const ftr = card.querySelector('.card-footer');
+    let cls = '';
+    if (o.blanksStatus && o.printsStatus) cls = 'status-green';
+    else if (o.blanksStatus || o.printsStatus) cls = 'status-yellow';
+    if (cls) {
+      hdr.classList.add(cls);
+      if (ftr) ftr.classList.add(cls);
+    }
+  } else if (style === 'picked') {
     // picked card style for middle section
     card.classList.add('pipeline-card');
     card.innerHTML = `
@@ -107,6 +116,11 @@ function makeCard(o, style = 'default') {
       shrinkTextToFit(card.querySelector('.cust-name'));
       shrinkTextToFit(card.querySelector('.counts strong'), 10);
     });
+    const hdr = card.querySelector('.card-header');
+    let cls = '';
+    if (o.blanksStatus && o.printsStatus) cls = 'status-green';
+    else if (o.blanksStatus || o.printsStatus) cls = 'status-yellow';
+    if (cls) hdr.classList.add(cls);
   } else {
     // DEFAULT style (your existing square card)
     card.innerHTML = `
@@ -183,6 +197,31 @@ function openDetail(o) {
   
   document.getElementById('detail-discount').textContent = `-$${disc.toFixed(2)}`;
   document.getElementById('detail-total').textContent    = `$${tot.toFixed(2)}`;
+
+  const chkBlanks = document.getElementById('chk-blanks');
+  const chkPrints = document.getElementById('chk-prints');
+  const applyBtn  = document.getElementById('ready-apply');
+  chkBlanks.checked = !!o.blanksStatus;
+  chkPrints.checked = !!o.printsStatus;
+  applyBtn.classList.add('hidden');
+
+  const updateApply = () => {
+    const b = chkBlanks.checked ? 1 : 0;
+    const p = chkPrints.checked ? 1 : 0;
+    if (b !== (o.blanksStatus || 0) || p !== (o.printsStatus || 0)) {
+      applyBtn.classList.remove('hidden');
+    } else {
+      applyBtn.classList.add('hidden');
+    }
+  };
+  chkBlanks.onchange = chkPrints.onchange = updateApply;
+  applyBtn.onclick = async () => {
+    const blanks = chkBlanks.checked ? 1 : 0;
+    const prints = chkPrints.checked ? 1 : 0;
+    await window.api.updateReady(o.name, blanks, prints);
+    await renderBoard();
+    applyBtn.classList.add('hidden');
+  };
 
   // show overlay
   document.getElementById('detail-overlay')
