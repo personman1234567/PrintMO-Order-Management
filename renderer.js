@@ -46,8 +46,18 @@ function timeAgo(isoDate) {
   return `${days}d ago`;
 }
 
+// shrink the font size of `el` until its text fits on one line
+function shrinkTextToFit(el, min = 8) {
+  if (!el) return;
+  let size = parseFloat(getComputedStyle(el).fontSize);
+  while (el.scrollWidth > el.offsetWidth && size > min) {
+    size -= 0.5;
+    el.style.fontSize = size + 'px';
+  }
+}
+
 // build a card from the record’s `items` array
-function makeCard(o, showExtras = false) {
+function makeCard(o, style = 'default') {
   const card = document.createElement('div');
   card.className   = 'card';
   card.draggable   = true;
@@ -64,7 +74,7 @@ function makeCard(o, showExtras = false) {
     else apparel += it.qty;
   });
 
-  if (showExtras) {
+  if (style === 'pipeline') {
     // PIPELINE style
     card.classList.add('pipeline-card');
     card.innerHTML = `
@@ -84,6 +94,19 @@ function makeCard(o, showExtras = false) {
         <span class="footer-value">$${(o.subtotal||0).toFixed(2)}</span>
       </div>
     `;
+    } else if (style === 'picked') {
+    // picked card style for middle section
+    card.classList.add('pipeline-card');
+    card.innerHTML = `
+      <div class="card-header"><span class="cust-name">${custName}</span></div>
+      <div class="card-body picked-body">
+        <div class="counts"><strong>${apparel}</strong></div>
+      </div>
+    `;
+    requestAnimationFrame(() => {
+      shrinkTextToFit(card.querySelector('.cust-name'));
+      shrinkTextToFit(card.querySelector('.counts strong'), 10);
+    });
   } else {
     // DEFAULT style (your existing square card)
     card.innerHTML = `
@@ -198,27 +221,27 @@ async function renderBoard() {
   const recs = allOrders.filter(x => x.status === 'received');
   const recEl = document.getElementById('col-received');
   recEl.innerHTML = '';
-  recs.forEach(o => recEl.appendChild(makeCard(o, true)));
+  recs.forEach(o => recEl.appendChild(makeCard(o, 'pipeline')));
   document.getElementById('pipeline-count').textContent = recs.length;
 
   // ToOrder picks
   const picks = allOrders.filter(o => o.status === 'toOrder');
   const pickedEl = document.getElementById('picked-cards');
   pickedEl.innerHTML = '';
-  picks.forEach(o => pickedEl.appendChild(makeCard(o)));
+  picks.forEach(o => pickedEl.appendChild(makeCard(o, 'picked')));
   updateSummary();
 
   // Blanks Ordered
   const blanksEl = document.getElementById('col-blanks');
   blanksEl.innerHTML = '';
   allOrders.filter(x => x.status === 'blanks')
-           .forEach(o => blanksEl.appendChild(makeCard(o, true)));
+           .forEach(o => blanksEl.appendChild(makeCard(o, 'pipeline')));
 
   // Ready To Print
   const printEl = document.getElementById('col-print');
   printEl.innerHTML = '';
   allOrders.filter(x => x.status === 'print')
-           .forEach(o => printEl.appendChild(makeCard(o, true)));
+           .forEach(o => printEl.appendChild(makeCard(o, 'pipeline')));
 }
 
 // recalc summary from “toOrder” items
