@@ -308,6 +308,43 @@
 
       aspect-ratio: 1 / 1;       /* stay perfect squares */
     }
+    /* give picked cards the same look as pipeline cards */
+    .picked-cards .pipeline-card {
+      flex: 0 0 30%;
+      max-width: 30%;
+      aspect-ratio: 1 / 1;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      overflow: hidden;
+      padding: 0;
+      transform: scale(0.9);   /* shrink entire card */
+      transform-origin: top left;
+    }
+    .picked-cards .pipeline-card .card-header {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-weight: bold;
+      white-space: nowrap;   /* keep on one line */
+      overflow: hidden;      /* allow shrinkTextToFit */
+    }
+    .picked-cards .pipeline-card .card-header .cust-name {
+      width: 100%;
+      text-align: center;
+      margin: 0;
+    }
+    .picked-cards .pipeline-card .card-body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .picked-cards .pipeline-card .counts {
+      font-size: 1.5rem;
+      margin: 0;
+    }
     .summary {
       margin: 0 auto 16px;
       width: 85%;
