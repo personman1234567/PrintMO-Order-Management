@@ -168,14 +168,48 @@ function makeCard(o, style = 'default') {
   return card;
 }
 
-function makeBundleCard(name, orders) {
+function makeBundleCard(name, orders, style = 'pipeline') {
   const card = document.createElement('div');
   card.className = 'bundle-card pipeline-card';
+  card.dataset.bundleName = name;
+  card.draggable = true;
+
+  let allReady = true,
+      anyReady = false;
+  orders.forEach(o => {
+    if (!(o.blanksStatus && o.printsStatus)) allReady = false;
+    if (o.blanksStatus || o.printsStatus) anyReady = true;
+  });
+
+  let bodyHtml = `<div class="counts"><strong>${orders.length} Orders</strong></div>`;
+  if (style === 'picked') {
+    let apparel = 0;
+    orders.forEach(o => (o.items || []).forEach(it => {
+      if (!isPrintItem(it)) apparel += it.qty;
+    }));
+    bodyHtml = `<div class="counts"><strong>${apparel}</strong></div>`;
+  }
   card.innerHTML = `
     <div class="card-header"><span class="cust-name">${name}</span></div>
-    <div class="card-body"><div class="counts">${orders.length} orders</div></div>
+    <div class="card-body">${bodyHtml}</div>
   `;
+
+  if (allReady) card.classList.add('status-green');
+  else if (anyReady) card.classList.add('status-yellow');
+
   card.addEventListener('click', () => openBundleModal(name, orders));
+
+  card.addEventListener('dragstart', e => {
+    document.body.classList.add('dragging-cursor');
+    card.classList.add('dragging');
+    e.dataTransfer.setData('text/plain', `bundle:${name}`);
+  });
+
+  card.addEventListener('dragend', () => {
+    document.body.classList.remove('dragging-cursor');
+    card.classList.remove('dragging');
+  });
+
   return card;
 }
 
@@ -185,10 +219,25 @@ function openBundleModal(name, orders) {
   const container = document.getElementById('bundle-cards');
   container.innerHTML = '';
   orders.forEach(o => container.appendChild(makeCard(o, 'pipeline')));
+  const destroyBtn = document.getElementById('bundle-destroy');
+  destroyBtn.onclick = async () => {
+    if (!confirm(`Destroy bundle "${name}"?`)) return;
+    const ids = orders.map(o => o.name);
+    await window.api.setBundle(ids, '');
+    closeBundleModal();
+    await renderBoard();
+  };
+  const onOverlayClick = e => {
+    if (e.target.id === 'bundle-overlay') closeBundleModal();
+  };
   overlay.classList.remove('hidden');
-  overlay.addEventListener('click', e => {
-    if (e.target.id === 'bundle-overlay') overlay.classList.add('hidden');
-  }, { once: true });
+  overlay.onclick = onOverlayClick;
+}
+
+function closeBundleModal() {
+  const overlay = document.getElementById('bundle-overlay');
+  overlay.classList.add('hidden');
+  overlay.onclick = null;
 }
 
 function openDetail(o) {
@@ -245,6 +294,14 @@ function openDetail(o) {
     await window.api.updateReady(o.name, blanks, prints);
     await renderBoard();
     applyBtn.classList.add('hidden');
+    const bundleOverlay = document.getElementById('bundle-overlay');
+    if (!bundleOverlay.classList.contains('hidden')) {
+      const bundleName = document.getElementById('bundle-title').textContent;
+      const bundleOrders = allOrders.filter(x => x.bundle === bundleName);
+      const container = document.getElementById('bundle-cards');
+      container.innerHTML = '';
+      bundleOrders.forEach(ord => container.appendChild(makeCard(ord, 'pipeline')));
+    }
   };
 
   // show overlay
@@ -302,7 +359,18 @@ async function renderBoard() {
   const picks = allOrders.filter(o => o.status === 'toOrder');
   const pickedEl = document.getElementById('picked-cards');
   pickedEl.innerHTML = '';
-  picks.forEach(o => pickedEl.appendChild(makeCard(o, 'picked')));
+  const pickGroups = {};
+  picks.forEach(o => {
+    if (o.bundle) {
+      if (!pickGroups[o.bundle]) pickGroups[o.bundle] = [];
+      pickGroups[o.bundle].push(o);
+    } else {
+      pickedEl.appendChild(makeCard(o, 'picked'));
+    }
+  });
+  Object.entries(pickGroups).forEach(([n, arr]) => {
+    pickedEl.appendChild(makeBundleCard(n, arr, 'picked'));
+  });
   updateSummary();
 
   // Blanks Ordered
@@ -463,15 +531,18 @@ function makeDropZone(el, status) {
     const id = e.dataTransfer.getData('text/plain');
     console.log(`→ drop: id="${id}" status="${status}"`);
 
-    // 2) Bail if it's empty (no point in calling updateStatus)
     if (!id) {
       console.warn('Drop ignored: no order ID present');
       return;
     }
 
-    // 3) Proceed with your normal update + re-render
     try {
-      await window.api.updateStatus(id, status);
+      if (id.startsWith('bundle:')) {
+        const name = id.slice(7);
+        await window.api.updateBundleStatus(name, status);
+      } else {
+        await window.api.updateStatus(id, status);
+      }
       await renderBoard();
     } catch (err) {
       console.error('Error updating status on drop:', err);

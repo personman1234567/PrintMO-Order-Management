@@ -8,5 +8,7 @@ contextBridge.exposeInMainWorld('api', {
   updateReady: (orderId, blanks, prints) =>
     ipcRenderer.invoke('update-ready', orderId, blanks, prints),
   deleteOrder:   (orderName) => ipcRenderer.invoke('delete-order', orderName),
-  setBundle:  (orderIds, name) => ipcRenderer.invoke('set-bundle', orderIds, name)
+  setBundle:  (orderIds, name) => ipcRenderer.invoke('set-bundle', orderIds, name),
+  updateBundleStatus: (bundleName, status) =>
+    ipcRenderer.invoke('update-bundle-status', bundleName, status)
 });

@@ -207,6 +207,22 @@
     .status-yellow { background: #fdd835 !important; color: #000 !important; }
     .status-green { background: #43a047 !important; }
 
+    .bundle-card {
+      background: #1a73e8 !important;
+      color: #fff;
+    }
+    .bundle-card .card-header {
+      background: transparent;
+    }
+    .bundle-card .card-body {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      color: #fff;
+    }
+
     .delete-btn {
       position: absolute;
       top: 4px;
@@ -500,10 +516,13 @@
       padding: 16px;
     }
     #bundle-cards {
-      display: flex;
-      flex-wrap: wrap;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
       gap: 8px;
-      justify-content: center;
+    }
+    #bundle-cards .pipeline-card {
+      width: 100%;
+      aspect-ratio: 1 / 1;
     }
 
     #bundle-name-overlay {
@@ -767,6 +786,7 @@
   <div id="bundle-modal">
     <h2 id="bundle-title"></h2>
     <div id="bundle-cards"></div>
+    <button id="bundle-destroy" style="margin-top:12px;">Destroy Bundle</button>
   </div>
 </div>
 

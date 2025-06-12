@@ -87,6 +87,18 @@ ipcMain.handle('update-status', async (_e, orderId, status) => {
   throw new Error(`Order "${orderId}" not found`);
 });
 
+// ─── IPC: update status for all orders in a bundle ──────────────────────────
+ipcMain.handle('update-bundle-status', async (_e, bundleName, status) => {
+  const raw = await redis.lRange(QUEUE_KEY, 0, -1);
+  for (let i = 0; i < raw.length; i++) {
+    const o = JSON.parse(raw[i]);
+    if (o.bundle === bundleName) {
+      o.status = status;
+      await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
+    }
+  }
+});
+
 // ─── IPC: update blanks/prints readiness ─────────────────────────────────────
 ipcMain.handle('update-ready', async (_e, orderId, blanksStatus, printsStatus) => {
   const raw = await redis.lRange(QUEUE_KEY, 0, -1);
