@@ -476,6 +476,67 @@
       display: none !important;
       pointer-events: none !important;
     }
+    .bundle-selected { outline: 3px solid #1a73e8; }
+    .bundle-btn, .bundle-confirm, .bundle-cancel { margin-left: 8px; }
+    .bundle-confirm.hidden, .bundle-cancel.hidden { display: none; }
+
+    #bundle-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      display: grid;
+      place-items: center;
+      transition: opacity 0.3s;
+      z-index: 1400;
+    }
+    #bundle-overlay.hidden { opacity: 0; pointer-events: none; }
+    #bundle-modal {
+      background: #fff;
+      border-radius: 8px;
+      width: 80vw;
+      max-width: 600px;
+      max-height: 80vh;
+      overflow-y: auto;
+      padding: 16px;
+    }
+    #bundle-cards {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+    }
+
+    #bundle-name-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      display: grid;
+      place-items: center;
+      transition: opacity 0.3s;
+      z-index: 1450;
+    }
+    #bundle-name-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    #bundle-name-modal {
+      background: #fff;
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 300px;
+    }
+    #bundle-name-modal input {
+      padding: 8px;
+      font-size: 1rem;
+    }
+    #bundle-name-modal .buttons {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
     /* Detail Screen --------------------------------------- */
     #detail-overlay {
       position: fixed;
@@ -618,6 +679,9 @@
       <div class="panel-header">
         ORDER PIPELINE
         <span id="pipeline-count">0</span>
+        <button id="received-bundle-start" class="bundle-btn">Bundle</button>
+        <button id="received-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
+        <button id="received-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
       </div>
       <div class="panel-body cards" id="col-received"></div>
     </div>
@@ -646,6 +710,9 @@
           <div class="section-header">
             <h3>Blanks Ordered</h3>
             <button id="blanks-fullscreen-btn" class="fullscreen-btn">Fullscreen</button>
+            <button id="blanks-bundle-start" class="bundle-btn">Bundle</button>
+            <button id="blanks-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
+            <button id="blanks-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
           </div>
           <div class="cards" id="col-blanks"></div>
         </div>
@@ -653,6 +720,9 @@
           <div class="section-header">
             <h3>Ready To Print</h3>
             <button id="print-fullscreen-btn" class="fullscreen-btn">Fullscreen</button>
+            <button id="print-bundle-start" class="bundle-btn">Bundle</button>
+            <button id="print-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
+            <button id="print-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
           </div>
           <div class="cards" id="col-print"></div>
         </div>
@@ -689,6 +759,24 @@
       <label><input type="checkbox" id="chk-blanks"> Blanks Ready</label>
       <label><input type="checkbox" id="chk-prints"> Prints Ready</label>
       <button id="ready-apply" class="hidden">Apply</button>
+    </div>
+  </div>
+</div>
+
+<div id="bundle-overlay" class="hidden">
+  <div id="bundle-modal">
+    <h2 id="bundle-title"></h2>
+    <div id="bundle-cards"></div>
+  </div>
+</div>
+
+<div id="bundle-name-overlay" class="hidden">
+  <div id="bundle-name-modal">
+    <h2>Please Name Bundle</h2>
+    <input id="bundle-name-input" type="text" />
+    <div class="buttons">
+      <button id="bundle-name-confirm">Confirm</button>
+      <button id="bundle-name-cancel">Cancel</button>
     </div>
   </div>
 </div>

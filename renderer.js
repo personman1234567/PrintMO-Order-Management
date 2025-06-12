@@ -1,6 +1,7 @@
 // renderer.js
 
 let allOrders = [];
+let bundleMode = null; // {status, selected:Set<string>}
 
 // utility to detect “print” items by SKU or title
 function isPrintItem(li) {
@@ -167,6 +168,29 @@ function makeCard(o, style = 'default') {
   return card;
 }
 
+function makeBundleCard(name, orders) {
+  const card = document.createElement('div');
+  card.className = 'bundle-card pipeline-card';
+  card.innerHTML = `
+    <div class="card-header"><span class="cust-name">${name}</span></div>
+    <div class="card-body"><div class="counts">${orders.length} orders</div></div>
+  `;
+  card.addEventListener('click', () => openBundleModal(name, orders));
+  return card;
+}
+
+function openBundleModal(name, orders) {
+  const overlay = document.getElementById('bundle-overlay');
+  document.getElementById('bundle-title').textContent = name;
+  const container = document.getElementById('bundle-cards');
+  container.innerHTML = '';
+  orders.forEach(o => container.appendChild(makeCard(o, 'pipeline')));
+  overlay.classList.remove('hidden');
+  overlay.addEventListener('click', e => {
+    if (e.target.id === 'bundle-overlay') overlay.classList.add('hidden');
+  }, { once: true });
+}
+
 function openDetail(o) {
   // fill header
   document.getElementById('detail-timestamp').textContent = new Date(o.receivedAt).toLocaleString();
@@ -260,7 +284,18 @@ async function renderBoard() {
   const recs = allOrders.filter(x => x.status === 'received');
   const recEl = document.getElementById('col-received');
   recEl.innerHTML = '';
-  recs.forEach(o => recEl.appendChild(makeCard(o, 'pipeline')));
+  const recGroups = {};
+  recs.forEach(o => {
+    if (o.bundle) {
+      if (!recGroups[o.bundle]) recGroups[o.bundle] = [];
+      recGroups[o.bundle].push(o);
+    } else {
+      recEl.appendChild(makeCard(o, 'pipeline'));
+    }
+  });
+  Object.entries(recGroups).forEach(([n, arr]) => {
+    recEl.appendChild(makeBundleCard(n, arr));
+  });
   document.getElementById('pipeline-count').textContent = recs.length;
 
   // ToOrder picks
@@ -273,14 +308,36 @@ async function renderBoard() {
   // Blanks Ordered
   const blanksEl = document.getElementById('col-blanks');
   blanksEl.innerHTML = '';
-  allOrders.filter(x => x.status === 'blanks')
-           .forEach(o => blanksEl.appendChild(makeCard(o, 'pipeline')));
+  const blankOrders = allOrders.filter(x => x.status === 'blanks');
+  const blankGroups = {};
+  blankOrders.forEach(o => {
+    if (o.bundle) {
+      if (!blankGroups[o.bundle]) blankGroups[o.bundle] = [];
+      blankGroups[o.bundle].push(o);
+    } else {
+      blanksEl.appendChild(makeCard(o, 'pipeline'));
+    }
+  });
+  Object.entries(blankGroups).forEach(([n, arr]) => {
+    blanksEl.appendChild(makeBundleCard(n, arr));
+  });
 
   // Ready To Print
   const printEl = document.getElementById('col-print');
   printEl.innerHTML = '';
-  allOrders.filter(x => x.status === 'print')
-           .forEach(o => printEl.appendChild(makeCard(o, 'pipeline')));
+  const printOrders = allOrders.filter(x => x.status === 'print');
+  const printGroups = {};
+  printOrders.forEach(o => {
+    if (o.bundle) {
+      if (!printGroups[o.bundle]) printGroups[o.bundle] = [];
+      printGroups[o.bundle].push(o);
+    } else {
+      printEl.appendChild(makeCard(o, 'pipeline'));
+    }
+  });
+  Object.entries(printGroups).forEach(([n, arr]) => {
+    printEl.appendChild(makeBundleCard(n, arr));
+  });
 }
 
 // recalc summary from “toOrder” items
@@ -299,6 +356,89 @@ function updateSummary() {
     .join('');
   document.getElementById('cart-total').textContent =
     `Total items: ${summary.Apparel}`;
+}
+
+function startBundle(status) {
+  if (bundleMode) return;
+  const colId = status === 'received' ? 'col-received'
+               : status === 'blanks' ? 'col-blanks'
+               : 'col-print';
+  const container = document.getElementById(colId);
+  bundleMode = { status, container, selected: new Set() };
+  container.querySelectorAll('.pipeline-card:not(.bundle-card)').forEach(c => {
+    c.addEventListener('click', toggleBundleSelect, true);
+  });
+}
+
+function toggleBundleSelect(e) {
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+  const card = e.currentTarget;
+  const id = card.dataset.orderId;
+  if (bundleMode.selected.has(id)) {
+    bundleMode.selected.delete(id);
+    card.classList.remove('bundle-selected');
+  } else {
+    bundleMode.selected.add(id);
+    card.classList.add('bundle-selected');
+  }
+}
+
+function cancelBundle() {
+  if (!bundleMode) return;
+  bundleMode.container.querySelectorAll('.pipeline-card:not(.bundle-card)').forEach(c => {
+    c.removeEventListener('click', toggleBundleSelect, true);
+    c.classList.remove('bundle-selected');
+  });
+  bundleMode = null;
+}
+
+async function confirmBundle(name) {
+  if (!bundleMode) return;
+  const ids = Array.from(bundleMode.selected);
+  await window.api.setBundle(ids, name);
+  cancelBundle();
+  await renderBoard();
+}
+
+function promptBundleName() {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('bundle-name-overlay');
+    const input = document.getElementById('bundle-name-input');
+    const confirmBtn = document.getElementById('bundle-name-confirm');
+    const cancelBtn = document.getElementById('bundle-name-cancel');
+
+    function cleanup() {
+      overlay.classList.add('hidden');
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      input.removeEventListener('keydown', onKey);
+    }
+
+    function onConfirm() {
+      const val = input.value.trim();
+      cleanup();
+      resolve(val);
+    }
+
+    function onCancel() {
+      cleanup();
+      resolve('');
+    }
+
+    function onKey(e) {
+      if (e.key === 'Enter') onConfirm();
+      if (e.key === 'Escape') onCancel();
+    }
+
+    overlay.classList.remove('hidden');
+    input.value = '';
+    input.focus();
+
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    input.addEventListener('keydown', onKey);
+  });
 }
 
 function makeDropZone(el, status) {
@@ -437,6 +577,38 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // Bundle buttons
+  const bundleConfigs = [
+    { start: 'received-bundle-start', confirm: 'received-bundle-confirm', cancel: 'received-bundle-cancel', status: 'received' },
+    { start: 'blanks-bundle-start', confirm: 'blanks-bundle-confirm', cancel: 'blanks-bundle-cancel', status: 'blanks' },
+    { start: 'print-bundle-start', confirm: 'print-bundle-confirm', cancel: 'print-bundle-cancel', status: 'print' }
+  ];
+  bundleConfigs.forEach(cfg => {
+    const s = document.getElementById(cfg.start);
+    const c = document.getElementById(cfg.confirm);
+    const x = document.getElementById(cfg.cancel);
+    if (!s || !c || !x) return;
+    s.addEventListener('click', () => {
+      startBundle(cfg.status);
+      s.classList.add('hidden');
+      c.classList.remove('hidden');
+      x.classList.remove('hidden');
+    });
+    x.addEventListener('click', () => {
+      cancelBundle();
+      s.classList.remove('hidden');
+      c.classList.add('hidden');
+      x.classList.add('hidden');
+    });
+    c.addEventListener('click', async () => {
+      const name = await promptBundleName();
+      if (name) await confirmBundle(name);
+      s.classList.remove('hidden');
+      c.classList.add('hidden');
+      x.classList.add('hidden');
+    });
+  });
 
   setupDropZones();
   renderBoard();

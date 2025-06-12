@@ -64,6 +64,7 @@ ipcMain.handle('get-queue', async () => {
     if (!o.status) { o.status = 'received'; updated = true; }
     if (typeof o.blanksStatus !== 'number') { o.blanksStatus = 0; updated = true; }
     if (typeof o.printsStatus !== 'number') { o.printsStatus = 0; updated = true; }
+    if (typeof o.bundle !== 'string') { o.bundle = ''; updated = true; }
     if (updated) {
       await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
     }
@@ -101,6 +102,18 @@ ipcMain.handle('update-ready', async (_e, orderId, blanksStatus, printsStatus) =
   throw new Error(`Order "${orderId}" not found`);
 });
 
+// ─── IPC: assign bundle to orders ─────────────────────────────────────────────
+ipcMain.handle('set-bundle', async (_e, orderIds, bundleName) => {
+  if (!Array.isArray(orderIds)) return;
+  const raw = await redis.lRange(QUEUE_KEY, 0, -1);
+  for (let i = 0; i < raw.length; i++) {
+    const o = JSON.parse(raw[i]);
+    if (orderIds.includes(o.name)) {
+      o.bundle = bundleName;
+      await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
+    }
+  }
+});
 
 // ─── IPC: process only the orders in “To Order” ──────────────────────────────
 ipcMain.handle('process-batch', async (_e, orderIds) => {
