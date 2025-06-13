@@ -261,6 +261,7 @@ function openDetail(o) {
   document.getElementById('detail-order-id').textContent   = `Order ${orderNum}`;
   document.getElementById('detail-cust-name').textContent = custName;
   document.getElementById('detail-notes').textContent = o.notes || 'No special instructions';
+  document.getElementById('detail-edit-notes-btn').onclick = () => openNotesModal(o);
 
   // line items
   const tbody = document.querySelector('#detail-items tbody');
@@ -446,6 +447,36 @@ async function confirmFileRemoval(order) {
   order.attachments = order.attachments.filter(f => !selectedFiles.has(f.name));
   cancelFileRemoval();
   renderFileList(order);
+}
+
+function openNotesModal(order) {
+  const overlay = document.getElementById('notes-overlay');
+  const input = document.getElementById('notes-input');
+  const confirmBtn = document.getElementById('notes-confirm');
+  const cancelBtn = document.getElementById('notes-cancel');
+
+  input.value = order.notes || 'No special instructions';
+
+  const cleanup = () => {
+    overlay.classList.add('hidden');
+    confirmBtn.onclick = null;
+    cancelBtn.onclick = null;
+    overlay.onclick = null;
+  };
+
+  confirmBtn.onclick = async () => {
+    const val = input.value;
+    await window.api.updateNotes(order.name, val);
+    order.notes = val;
+    document.getElementById('detail-notes').textContent = val || 'No special instructions';
+    cleanup();
+  };
+
+  cancelBtn.onclick = () => cleanup();
+  overlay.onclick = e => { if (e.target.id === 'notes-overlay') cleanup(); };
+
+  overlay.classList.remove('hidden');
+  input.focus();
 }
 
 // close handlers

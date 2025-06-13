@@ -622,12 +622,23 @@
       flex-direction: column;
       max-height: 60vh;
     }
-    #detail-notes {
-      padding-left: 5%;
-    }
     #detail-cust-name {
       padding-left: 5%;
       padding-top: 5%;
+      margin-bottom: 12px;
+    }
+    #detail-edit-notes-btn {
+      align-self: flex-end;
+      margin: 0 5% 8px;
+    }
+    #detail-notes-wrapper {
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      margin: 0 5% 16px;
+      padding: 8px 12px;
+    }
+    #detail-notes {
+      padding: 0;
     }
     #detail-overlay.visible #detail-card {
       transform: scale(1);
@@ -754,6 +765,38 @@
       justify-content: center;
     }
     .file-item .svg-placeholder { background: #ccc; }
+
+    /* Notes Modal ----------------------- */
+    #notes-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      display: grid;
+      place-items: center;
+      transition: opacity 0.3s;
+      z-index: 1550;
+    }
+    #notes-overlay.hidden { opacity: 0; pointer-events: none; }
+    #notes-modal {
+      background: #fff;
+      border-radius: 8px;
+      padding: 16px;
+      width: 400px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    #notes-modal textarea {
+      width: 100%;
+      height: 200px;
+      padding: 8px;
+      font-size: 1rem;
+    }
+    #notes-modal .buttons {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
     .section-header {
       display: flex;
       justify-content: space-between;
@@ -908,7 +951,10 @@
       <time id="detail-timestamp"></time>
     </div>
     <h3 id="detail-cust-name"></h3>
-    <p id="detail-notes"><em>No notes</em></p>
+    <button id="detail-edit-notes-btn" class="fullscreen-btn">Edit Notes</button>
+    <div id="detail-notes-wrapper">
+      <p id="detail-notes"><em>No special instructions</em></p>
+    </div>
     <div id="detail-items-wrapper">
       <table id="detail-items">
         <thead>
@@ -972,6 +1018,16 @@
       <button id="files-remove-btn">Remove Files</button>
       <button id="files-delete-btn" class="hidden">Delete</button>
       <button id="files-cancel-btn" class="hidden">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="notes-overlay" class="hidden">
+  <div id="notes-modal">
+    <textarea id="notes-input"></textarea>
+    <div class="buttons">
+      <button id="notes-confirm">Confirm</button>
+      <button id="notes-cancel">Cancel</button>
     </div>
   </div>
 </div>
