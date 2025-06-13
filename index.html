@@ -591,6 +591,9 @@
       transform: scale(0.8);
       transition: transform 0.3s;
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      max-height: 60vh;
     }
     #detail-notes {
       padding-left: 5%;
@@ -617,10 +620,14 @@
       justify-content: space-between;
       align-items: center;
     }
+    #detail-items-wrapper {
+      flex: 1;
+      overflow-y: auto;
+      margin: 16px 0;
+    }
     #detail-items {
       width: 100%;
       border-collapse: collapse;
-      margin: 16px 0;
     }
     #detail-items th,
     #detail-items td {
@@ -628,7 +635,17 @@
       padding: 8px;
       text-align: left;
     }
-    #detail-items tfoot td {
+    #detail-summary {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0 0 8px;
+    }
+    #detail-summary td {
+      border-bottom: 1px solid #eee;
+      padding: 8px;
+      text-align: left;
+    }
+    #detail-summary tr:nth-last-child(-n+2) td {
       font-weight: bold;
     }
     #ready-controls {
@@ -846,20 +863,30 @@
     </div>
     <h3 id="detail-cust-name"></h3>
     <p id="detail-notes"><em>No notes</em></p>
-    <table id="detail-items">
-      <thead>
+    <div id="detail-items-wrapper">
+      <table id="detail-items">
+        <thead>
+          <tr>
+            <th>Qty</th>
+            <th>Description</th>
+            <th>Variant</th>
+            <th>Price</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <table id="detail-summary">
+      <tbody>
         <tr>
-          <th>Qty</th>
-          <th>Description</th>
-          <th>Variant</th> 
-          <th>Price</th>
+          <td colspan="2">Discount</td>
+          <td id="detail-discount"></td>
         </tr>
-      </thead>
-      <tbody></tbody>
-      <tfoot>
-        <tr><td colspan="2">Discount</td><td id="detail-discount"></td></tr>
-        <tr><td colspan="2"><strong>Total</strong></td><td id="detail-total"></td></tr>
-      </tfoot>
+        <tr>
+          <td colspan="2"><strong>Total</strong></td>
+          <td id="detail-total"></td>
+        </tr>
+      </tbody>
     </table>
     <div style="text-align:right; padding:0 16px 8px;">
       <button id="detail-files-btn">Files</button>
