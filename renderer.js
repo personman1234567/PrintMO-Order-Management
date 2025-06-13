@@ -2,6 +2,7 @@
 
 let allOrders = [];
 let bundleMode = null; // {status, selected:Set<string>}
+let detailOrder = null;
 
 // utility to detect “print” items by SKU or title
 function isPrintItem(li) {
@@ -241,6 +242,7 @@ function closeBundleModal() {
 }
 
 function openDetail(o) {
+  detailOrder = o;
   // fill header
   document.getElementById('detail-timestamp').textContent = new Date(o.receivedAt).toLocaleString();
 
@@ -304,6 +306,8 @@ function openDetail(o) {
     }
   };
 
+  document.getElementById('detail-files-btn').onclick = () => openFilesModal(o);
+
   // show overlay
   document.getElementById('detail-overlay')
     .classList.replace('hidden', 'visible');
@@ -319,6 +323,75 @@ function closeDetail() {
   document.getElementById('detail-overlay').classList.remove('visible');
   document.body.classList.remove('detail-open');
   document.querySelector('.pipeline').classList.remove('no-delete');
+}
+
+function renderFileList(order) {
+  const container = document.getElementById('file-list');
+  const files = order.attachments || [];
+  container.innerHTML = files.map(f => {
+    let thumb = '';
+    if (/png|jpe?g/i.test(f.mime)) {
+      thumb = `<img src="data:${f.mime};base64,${f.data}" />`;
+    } else {
+      thumb = '<div class="svg-placeholder"></div>';
+    }
+    return `<div class="file-item" data-name="${f.name}">${thumb}<div>${f.name}</div></div>`;
+  }).join('');
+  container.querySelectorAll('.file-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const name = el.dataset.name;
+      const f = files.find(x => x.name === name);
+      if (!f) return;
+      const a = document.createElement('a');
+      a.href = `data:${f.mime};base64,${f.data}`;
+      a.download = f.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+  });
+}
+
+function openFilesModal(order) {
+  renderFileList(order);
+  const overlay = document.getElementById('files-overlay');
+  overlay.classList.remove('hidden');
+
+  const drop = document.getElementById('file-drop');
+  drop.classList.remove('over');
+  const onDragOver = e => { e.preventDefault(); drop.classList.add('over'); };
+  const onDragLeave = () => drop.classList.remove('over');
+  const onDrop = async e => {
+    e.preventDefault();
+    drop.classList.remove('over');
+    for (const file of e.dataTransfer.files) {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result.split(',')[1];
+        const obj = { name: file.name, mime: file.type || 'application/octet-stream', data: base64 };
+        await window.api.addFile(order.name, obj);
+        if (!Array.isArray(order.attachments)) order.attachments = [];
+        order.attachments.push(obj);
+        renderFileList(order);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+  drop.addEventListener('dragover', onDragOver);
+  drop.addEventListener('dragleave', onDragLeave);
+  drop.addEventListener('drop', onDrop);
+
+  overlay.onclick = e => { if (e.target.id === 'files-overlay') closeFilesModal(onDragOver,onDragLeave,onDrop); };
+}
+
+function closeFilesModal(ov, lv, dp) {
+  const overlay = document.getElementById('files-overlay');
+  overlay.classList.add('hidden');
+  const drop = document.getElementById('file-drop');
+  drop.removeEventListener('dragover', ov);
+  drop.removeEventListener('dragleave', lv);
+  drop.removeEventListener('drop', dp);
+  overlay.onclick = null;
 }
 
 // close handlers
