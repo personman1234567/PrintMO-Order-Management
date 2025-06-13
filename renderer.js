@@ -170,7 +170,7 @@ function makeCard(o, style = 'default') {
 
 function makeBundleCard(name, orders, style = 'pipeline') {
   const card = document.createElement('div');
-  card.className = 'bundle-card pipeline-card';
+  card.className = 'card bundle-card pipeline-card';
   card.dataset.bundleName = name;
   card.draggable = true;
 
