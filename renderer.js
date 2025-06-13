@@ -793,7 +793,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     c.addEventListener('click', async () => {
       const name = await promptBundleName();
-      if (name) await confirmBundle(name);
+      if (name) {
+        await confirmBundle(name);
+      } else {
+        cancelBundle();
+      }
       s.classList.remove('hidden');
       c.classList.add('hidden');
       x.classList.add('hidden');
