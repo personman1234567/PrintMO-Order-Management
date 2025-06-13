@@ -3,6 +3,8 @@
 let allOrders = [];
 let bundleMode = null; // {status, selected:Set<string>}
 let detailOrder = null;
+let fileRemoveMode = false;
+const selectedFiles = new Set();
 
 // utility to detect “print” items by SKU or title
 function isPrintItem(li) {
@@ -335,11 +337,22 @@ function renderFileList(order) {
     } else {
       thumb = '<div class="svg-placeholder"></div>';
     }
-    return `<div class="file-item" data-name="${f.name}">${thumb}<div>${f.name}</div></div>`;
+    const sel = selectedFiles.has(f.name) ? ' file-selected' : '';
+    return `<div class="file-item${sel}" data-name="${f.name}">${thumb}<div>${f.name}</div></div>`;
   }).join('');
   container.querySelectorAll('.file-item').forEach(el => {
-    el.addEventListener('click', () => {
+    el.onclick = () => {
       const name = el.dataset.name;
+      if (fileRemoveMode) {
+        if (selectedFiles.has(name)) {
+          selectedFiles.delete(name);
+          el.classList.remove('file-selected');
+        } else {
+          selectedFiles.add(name);
+          el.classList.add('file-selected');
+        }
+        return;
+      }
       const f = files.find(x => x.name === name);
       if (!f) return;
       const a = document.createElement('a');
@@ -348,11 +361,12 @@ function renderFileList(order) {
       document.body.appendChild(a);
       a.click();
       a.remove();
-    });
+    };
   });
 }
 
 function openFilesModal(order) {
+  cancelFileRemoval();
   renderFileList(order);
   const overlay = document.getElementById('files-overlay');
   overlay.classList.remove('hidden');
@@ -381,10 +395,15 @@ function openFilesModal(order) {
   drop.addEventListener('dragleave', onDragLeave);
   drop.addEventListener('drop', onDrop);
 
-  overlay.onclick = e => { if (e.target.id === 'files-overlay') closeFilesModal(onDragOver,onDragLeave,onDrop); };
+  document.getElementById('files-remove-btn').onclick = () => startFileRemoval(order);
+  document.getElementById('files-cancel-btn').onclick = cancelFileRemoval;
+  document.getElementById('files-delete-btn').onclick = () => confirmFileRemoval(order);
+
+  overlay.onclick = e => { if (e.target.id === 'files-overlay') { closeFilesModal(onDragOver,onDragLeave,onDrop); } };
 }
 
 function closeFilesModal(ov, lv, dp) {
+  cancelFileRemoval();
   const overlay = document.getElementById('files-overlay');
   overlay.classList.add('hidden');
   const drop = document.getElementById('file-drop');
@@ -392,6 +411,33 @@ function closeFilesModal(ov, lv, dp) {
   drop.removeEventListener('dragleave', lv);
   drop.removeEventListener('drop', dp);
   overlay.onclick = null;
+}
+
+function startFileRemoval(order) {
+  fileRemoveMode = true;
+  selectedFiles.clear();
+  document.getElementById('files-remove-btn').classList.add('hidden');
+  document.getElementById('files-delete-btn').classList.remove('hidden');
+  document.getElementById('files-cancel-btn').classList.remove('hidden');
+  renderFileList(order);
+}
+
+function cancelFileRemoval() {
+  fileRemoveMode = false;
+  selectedFiles.clear();
+  document.getElementById('files-remove-btn').classList.remove('hidden');
+  document.getElementById('files-delete-btn').classList.add('hidden');
+  document.getElementById('files-cancel-btn').classList.add('hidden');
+  if (detailOrder) renderFileList(detailOrder);
+}
+
+async function confirmFileRemoval(order) {
+  const names = Array.from(selectedFiles);
+  if (!names.length) { cancelFileRemoval(); return; }
+  await window.api.removeFiles(order.name, names);
+  order.attachments = order.attachments.filter(f => !selectedFiles.has(f.name));
+  cancelFileRemoval();
+  renderFileList(order);
 }
 
 // close handlers

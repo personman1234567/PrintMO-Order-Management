@@ -143,6 +143,21 @@ ipcMain.handle('add-file', async (_e, orderId, file) => {
   throw new Error(`Order "${orderId}" not found`);
 });
 
+// ─── IPC: remove attachments from an order ───────────────────────────────────
+ipcMain.handle('remove-files', async (_e, orderId, names) => {
+  const raw = await redis.lRange(QUEUE_KEY, 0, -1);
+  for (let i = 0; i < raw.length; i++) {
+    const o = JSON.parse(raw[i]);
+    if (o.name === orderId) {
+      if (!Array.isArray(o.attachments)) o.attachments = [];
+      o.attachments = o.attachments.filter(f => !names.includes(f.name));
+      await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
+      return;
+    }
+  }
+  throw new Error(`Order "${orderId}" not found`);
+});
+
 // ─── IPC: process only the orders in “To Order” ──────────────────────────────
 ipcMain.handle('process-batch', async (_e, orderIds) => {
   if (!Array.isArray(orderIds) || !orderIds.length) {

@@ -678,6 +678,21 @@
       gap: 12px;
       overflow-y: auto;
     }
+    #file-actions { text-align: right; }
+    #file-actions button {
+      background: #1a73e8;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    #file-actions button:hover { background: #1765c1; }
+    #files-remove-btn.hidden,
+    #files-delete-btn.hidden,
+    #files-cancel-btn.hidden { display: none; }
+    .file-selected { outline: 3px solid #1a73e8; border-radius: 6px; }
     .file-item {
       width: 80px;
       text-align: center;
@@ -880,6 +895,11 @@
   <div id="files-modal">
     <div id="file-drop" class="drag-area">Drop files here</div>
     <div id="file-list"></div>
+    <div id="file-actions">
+      <button id="files-remove-btn">Remove Files</button>
+      <button id="files-delete-btn" class="hidden">Delete</button>
+      <button id="files-cancel-btn" class="hidden">Cancel</button>
+    </div>
   </div>
 </div>
 

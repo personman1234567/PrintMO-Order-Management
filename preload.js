@@ -11,5 +11,6 @@ contextBridge.exposeInMainWorld('api', {
   setBundle:  (orderIds, name) => ipcRenderer.invoke('set-bundle', orderIds, name),
   updateBundleStatus: (bundleName, status) =>
     ipcRenderer.invoke('update-bundle-status', bundleName, status),
-  addFile: (orderId, file) => ipcRenderer.invoke('add-file', orderId, file)
+  addFile: (orderId, file) => ipcRenderer.invoke('add-file', orderId, file),
+  removeFiles: (orderId, names) => ipcRenderer.invoke('remove-files', orderId, names)
 });
