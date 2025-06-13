@@ -50,6 +50,14 @@ function timeAgo(isoDate) {
   return `${days}d ago`;
 }
 
+function sortBundlesByOldest(entries) {
+  return entries.sort(([, a], [, b]) => {
+    const aOldest = Math.min(...a.map(o => new Date(o.receivedAt).getTime()));
+    const bOldest = Math.min(...b.map(o => new Date(o.receivedAt).getTime()));
+    return aOldest - bOldest;
+  });
+}
+
 // shrink the font size of `el` until its text fits on one line
 function shrinkTextToFit(el, min = 8) {
   if (!el) return;
@@ -460,71 +468,71 @@ async function renderBoard() {
   const recs = allOrders.filter(x => x.status === 'received');
   const recEl = document.getElementById('col-received');
   recEl.innerHTML = '';
-  const recGroups = {};
+  const recGroups = {}, recSingles = [];
   recs.forEach(o => {
     if (o.bundle) {
       if (!recGroups[o.bundle]) recGroups[o.bundle] = [];
       recGroups[o.bundle].push(o);
     } else {
-      recEl.appendChild(makeCard(o, 'pipeline'));
+      recSingles.push(o);
     }
   });
-  Object.entries(recGroups).forEach(([n, arr]) => {
-    recEl.appendChild(makeBundleCard(n, arr));
-  });
+  sortBundlesByOldest(Object.entries(recGroups))
+    .forEach(([n, arr]) => recEl.appendChild(makeBundleCard(n, arr)));
+  recSingles.forEach(o => recEl.appendChild(makeCard(o, 'pipeline')));
   document.getElementById('pipeline-count').textContent = recs.length;
 
   // ToOrder picks
   const picks = allOrders.filter(o => o.status === 'toOrder');
   const pickedEl = document.getElementById('picked-cards');
   pickedEl.innerHTML = '';
-  const pickGroups = {};
+  const pickGroups = {}, pickSingles = [];
   picks.forEach(o => {
     if (o.bundle) {
       if (!pickGroups[o.bundle]) pickGroups[o.bundle] = [];
       pickGroups[o.bundle].push(o);
     } else {
-      pickedEl.appendChild(makeCard(o, 'picked'));
+      pickSingles.push(o);
     }
   });
-  Object.entries(pickGroups).forEach(([n, arr]) => {
-    pickedEl.appendChild(makeBundleCard(n, arr, 'picked'));
-  });
+  sortBundlesByOldest(Object.entries(pickGroups))
+    .forEach(([n, arr]) => pickedEl.appendChild(makeBundleCard(n, arr, 'picked')));
+  pickSingles.forEach(o => pickedEl.appendChild(makeCard(o, 'picked')));
   updateSummary();
 
   // Blanks Ordered
   const blanksEl = document.getElementById('col-blanks');
   blanksEl.innerHTML = '';
   const blankOrders = allOrders.filter(x => x.status === 'blanks');
-  const blankGroups = {};
+  const blankGroups = {}, blankSingles = [];
   blankOrders.forEach(o => {
     if (o.bundle) {
       if (!blankGroups[o.bundle]) blankGroups[o.bundle] = [];
       blankGroups[o.bundle].push(o);
     } else {
-      blanksEl.appendChild(makeCard(o, 'pipeline'));
+      blankSingles.push(o);
     }
   });
-  Object.entries(blankGroups).forEach(([n, arr]) => {
-    blanksEl.appendChild(makeBundleCard(n, arr));
-  });
+  sortBundlesByOldest(Object.entries(blankGroups))
+    .forEach(([n, arr]) => blanksEl.appendChild(makeBundleCard(n, arr)));
+  blankSingles.forEach(o => blanksEl.appendChild(makeCard(o, 'pipeline')));
 
   // Ready To Print
   const printEl = document.getElementById('col-print');
   printEl.innerHTML = '';
   const printOrders = allOrders.filter(x => x.status === 'print');
-  const printGroups = {};
+  const printGroups = {}, printSingles = [];
   printOrders.forEach(o => {
     if (o.bundle) {
       if (!printGroups[o.bundle]) printGroups[o.bundle] = [];
       printGroups[o.bundle].push(o);
     } else {
-      printEl.appendChild(makeCard(o, 'pipeline'));
+      printSingles.push(o);
     }
   });
-  Object.entries(printGroups).forEach(([n, arr]) => {
-    printEl.appendChild(makeBundleCard(n, arr));
-  });
+  sortBundlesByOldest(Object.entries(printGroups))
+    .forEach(([n, arr]) => printEl.appendChild(makeBundleCard(n, arr)));
+  printSingles.forEach(o => printEl.appendChild(makeCard(o, 'pipeline')));
 }
 
 // recalc summary from “toOrder” items
