@@ -620,7 +620,7 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      max-height: 60vh;
+      max-height: 80vh;
     }
     #detail-cust-name {
       padding-left: 5%;
@@ -628,14 +628,17 @@
       margin-bottom: 12px;
     }
     #detail-edit-notes-btn {
-      align-self: flex-end;
-      margin: 0 5% 8px;
+      margin: 0;
+    }
+    #detail-view-notes-btn {
+      margin: 0;
     }
     #detail-notes-wrapper {
       border: 1px solid #ccc;
       border-radius: 6px;
       margin: 0 5% 16px;
       padding: 8px 12px;
+      overflow-y: auto;
     }
     #detail-notes {
       padding: 0;
@@ -797,6 +800,26 @@
       justify-content: flex-end;
       gap: 8px;
     }
+    #view-notes-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      display: grid;
+      place-items: center;
+      transition: opacity 0.3s;
+      z-index: 1555;
+    }
+    #view-notes-overlay.hidden { opacity: 0; pointer-events: none; }
+    #view-notes-modal {
+      background: #fff;
+      border-radius: 8px;
+      padding: 16px;
+      width: 50vw;
+      max-width: 50vw;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    #view-notes-modal p { white-space: pre-wrap; }
     .section-header {
       display: flex;
       justify-content: space-between;
@@ -951,7 +974,10 @@
       <time id="detail-timestamp"></time>
     </div>
     <h3 id="detail-cust-name"></h3>
-    <button id="detail-edit-notes-btn" class="fullscreen-btn">Edit Notes</button>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin:0 5% 8px;">
+      <button id="detail-view-notes-btn" class="fullscreen-btn">See Notes</button>
+      <button id="detail-edit-notes-btn" class="fullscreen-btn">Edit Notes</button>
+    </div>
     <div id="detail-notes-wrapper">
       <p id="detail-notes"><em>No special instructions</em></p>
     </div>
@@ -1029,6 +1055,12 @@
       <button id="notes-confirm">Confirm</button>
       <button id="notes-cancel">Cancel</button>
     </div>
+  </div>
+</div>
+
+<div id="view-notes-overlay" class="hidden">
+  <div id="view-notes-modal">
+    <p id="view-notes-text"></p>
   </div>
 </div>
 

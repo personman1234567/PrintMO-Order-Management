@@ -5,6 +5,7 @@ let bundleMode = null; // {status, selected:Set<string>}
 let detailOrder = null;
 let fileRemoveMode = false;
 const selectedFiles = new Set();
+let notesResizeHandler = null;
 
 // utility to detect “print” items by SKU or title
 function isPrintItem(li) {
@@ -262,6 +263,7 @@ function openDetail(o) {
   document.getElementById('detail-cust-name').textContent = custName;
   document.getElementById('detail-notes').textContent = o.notes || 'No special instructions';
   document.getElementById('detail-edit-notes-btn').onclick = () => openNotesModal(o);
+  document.getElementById('detail-view-notes-btn').onclick = () => openViewNotesModal(o);
 
   // line items
   const tbody = document.querySelector('#detail-items tbody');
@@ -327,13 +329,26 @@ function openDetail(o) {
   document.body.classList.add('detail-open');
 
   document.querySelector('.pipeline').classList.add('no-delete');
+
+  const notesWrapper = document.getElementById('detail-notes-wrapper');
+  const detailCard = document.getElementById('detail-card');
+  const updateNotesLimit = () => {
+    notesWrapper.style.maxHeight = Math.round(detailCard.clientHeight * 0.15) + 'px';
+  };
+  setTimeout(updateNotesLimit, 0);
+  window.addEventListener('resize', updateNotesLimit);
+  notesResizeHandler = updateNotesLimit;
 }
 
 function closeDetail() {
-  document.getElementById('detail-close').addEventListener('click', closeDetail);
-  document.getElementById('detail-overlay').classList.remove('visible');
+  const overlay = document.getElementById('detail-overlay');
+  overlay.classList.replace('visible', 'hidden');
   document.body.classList.remove('detail-open');
   document.querySelector('.pipeline').classList.remove('no-delete');
+  if (notesResizeHandler) {
+    window.removeEventListener('resize', notesResizeHandler);
+    notesResizeHandler = null;
+  }
 }
 
 function renderFileList(order) {
@@ -479,15 +494,28 @@ function openNotesModal(order) {
   input.focus();
 }
 
+function openViewNotesModal(order) {
+  const overlay = document.getElementById('view-notes-overlay');
+  const text = document.getElementById('view-notes-text');
+
+  text.textContent = order.notes || 'No special instructions';
+
+  const cleanup = () => {
+    overlay.classList.add('hidden');
+    overlay.onclick = null;
+  };
+
+  overlay.onclick = e => { if (e.target.id === 'view-notes-overlay') cleanup(); };
+
+  overlay.classList.remove('hidden');
+}
+
 // close handlers
-document.getElementById('detail-close').addEventListener('click', () => {
-  document.getElementById('detail-overlay')
-    .classList.replace('visible','hidden');
-});
+document.getElementById('detail-close').addEventListener('click', closeDetail);
 document.getElementById('detail-overlay')
   .addEventListener('click', e => {
     if (e.target.id === 'detail-overlay') {
-      e.currentTarget.classList.replace('visible','hidden');
+      closeDetail();
     }
   });
 
