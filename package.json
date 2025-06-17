@@ -1,6 +1,6 @@
 {
   "name": "printmo-order-management",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Desktop app for managing PrintMO orders and batching to S&S Activewear",
   "author": "Ethan Duke ethan.duke@icloud.com",
   "main": "main.js",
