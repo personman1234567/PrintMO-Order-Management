@@ -7,6 +7,13 @@ let fileRemoveMode = false;
 const selectedFiles = new Set();
 let notesResizeHandler = null;
 
+const APPAREL_ICON = typeof window.getAssetPath === 'function'
+  ? window.getAssetPath('ApparelCount.svg')
+  : 'Assets/ApparelCount.svg';
+const PRINT_ICON   = typeof window.getAssetPath === 'function'
+  ? window.getAssetPath('PrintCount.svg')
+  : 'Assets/PrintCount.svg';
+
 // utility to detect “print” items by SKU or title
 function isPrintItem(li) {
   return PRINT_TITLES.has(li.title);
@@ -98,8 +105,8 @@ function makeCard(o, style = 'default') {
       <div class="card-body">
         <div class="cust-name">${custName}</div>
         <div class="counts">
-          <span class="apparel-count"><img class="count-icon" src="Assets/ApparelCount.svg" alt="" /> ${apparel}</span>
-          <span class="prints-count"><img class="count-icon" src="Assets/PrintCount.svg" alt="" /> ${prints}</span>
+          <span class="apparel-count"><img class="count-icon" src="${APPAREL_ICON}" alt="" /> ${apparel}</span>
+          <span class="prints-count"><img class="count-icon" src="${PRINT_ICON}" alt="" /> ${prints}</span>
         </div>
       </div>
       <div class="card-footer">
@@ -135,8 +142,8 @@ function makeCard(o, style = 'default') {
         <div class="normal-view">
           <div class="cust-name">${custName}</div>
           <div class="counts">
-            <span class="apparel-count"><img class="count-icon" src="Assets/ApparelCount.svg" alt="" /> ${apparel}</span>
-            <span class="prints-count"><img class="count-icon" src="Assets/PrintCount.svg" alt="" /> ${prints}</span>
+            <span class="apparel-count"><img class="count-icon" src="${APPAREL_ICON}" alt="" /> ${apparel}</span>
+            <span class="prints-count"><img class="count-icon" src="${PRINT_ICON}" alt="" /> ${prints}</span>
           </div>
         </div>
       </div>

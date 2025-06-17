@@ -29,6 +29,14 @@
         "from": ".env",
         "to": ".env",
         "filter": ["**/*"]
+        },
+      {
+        "from": "Assets/ApparelCount.svg",
+        "to": "Assets/ApparelCount.svg"
+      },
+      {
+        "from": "Assets/PrintCount.svg",
+        "to": "Assets/PrintCount.svg"
       }
     ],
     "files": [

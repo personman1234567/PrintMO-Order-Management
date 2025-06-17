@@ -36,6 +36,14 @@ const {
   SS_PAYMENT_PROFILE_EMAIL
 } = process.env;
 
+// ─── IPC: resolve an asset path for the renderer ────────────────────────
+ipcMain.on('get-asset-path', (event, file) => {
+  const base = app.isPackaged
+    ? path.join(process.resourcesPath, 'Assets')
+    : path.join(__dirname, 'Assets');
+  event.returnValue = path.join(base, file);
+});
+
 // ─── IPC: delete order ───────────────────────────────────────────────────
 ipcMain.handle('delete-order', async (event, orderName) => {
   // Pull the raw queue

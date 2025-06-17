@@ -16,3 +16,7 @@ contextBridge.exposeInMainWorld('api', {
   updateNotes: (orderId, notes) => ipcRenderer.invoke('update-notes', orderId, notes),
   updateProgress: (orderId, progress) => ipcRenderer.invoke('update-progress', orderId, progress)
 });
+
+contextBridge.exposeInMainWorld('getAssetPath', file =>
+  ipcRenderer.sendSync('get-asset-path', file)
+);
