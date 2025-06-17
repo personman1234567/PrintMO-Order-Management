@@ -13,5 +13,6 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('update-bundle-status', bundleName, status),
   addFile: (orderId, file) => ipcRenderer.invoke('add-file', orderId, file),
   removeFiles: (orderId, names) => ipcRenderer.invoke('remove-files', orderId, names),
-  updateNotes: (orderId, notes) => ipcRenderer.invoke('update-notes', orderId, notes)
+  updateNotes: (orderId, notes) => ipcRenderer.invoke('update-notes', orderId, notes),
+  updateProgress: (orderId, progress) => ipcRenderer.invoke('update-progress', orderId, progress)
 });

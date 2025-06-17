@@ -664,6 +664,24 @@
     #detail-notes {
       padding: 0;
     }
+    #progress-section {
+      margin: 0 5% 16px;
+    }
+    #progress-text { margin-bottom: 4px; }
+    #progress-row { display: flex; align-items: center; gap: 8px; }
+    #progress-bar-container {
+      background: #eee;
+      border-radius: 4px;
+      flex: 1;
+      height: 20px;
+      overflow: hidden;
+    }
+    #progress-bar {
+      background: #1a73e8;
+      height: 100%;
+      width: 0;
+      transition: width 0.3s;
+    }
     #detail-overlay.visible #detail-card {
       transform: scale(1);
     }
@@ -817,6 +835,32 @@
       font-size: 1rem;
     }
     #notes-modal .buttons {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    /* Progress Modal ----------------------- */
+    #progress-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      display: grid;
+      place-items: center;
+      transition: opacity 0.3s;
+      z-index: 1550;
+    }
+    #progress-overlay.hidden { opacity: 0; pointer-events: none; }
+    #progress-modal {
+      background: #fff;
+      border-radius: 8px;
+      padding: 16px;
+      width: 300px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    #progress-modal input { width: 100%; padding: 8px; font-size: 1rem; }
+    #progress-modal .buttons {
       display: flex;
       justify-content: flex-end;
       gap: 8px;
@@ -1002,6 +1046,16 @@
     <div id="detail-notes-wrapper">
       <p id="detail-notes"><em>No special instructions</em></p>
     </div>
+    <div id="progress-section">
+      <div id="progress-text"></div>
+      <div id="progress-row">
+        <div id="progress-bar-container">
+          <div id="progress-bar"></div>
+        </div>
+        <button id="progress-plus1" class="fullscreen-btn">+1</button>
+        <button id="progress-custom" class="fullscreen-btn">Custom Amount</button>
+      </div>
+    </div>
     <div id="detail-items-wrapper">
       <table id="detail-items">
         <thead>
@@ -1075,6 +1129,17 @@
     <div class="buttons">
       <button id="notes-confirm">Confirm</button>
       <button id="notes-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="progress-overlay" class="hidden">
+  <div id="progress-modal">
+    <label for="progress-input">Enter number of items completed</label>
+    <input id="progress-input" type="number" min="0" />
+    <div class="buttons">
+      <button id="progress-confirm">Confirm</button>
+      <button id="progress-cancel">Cancel</button>
     </div>
   </div>
 </div>

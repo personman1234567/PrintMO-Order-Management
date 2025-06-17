@@ -265,6 +265,27 @@ function openDetail(o) {
   document.getElementById('detail-edit-notes-btn').onclick = () => openNotesModal(o);
   document.getElementById('detail-view-notes-btn').onclick = () => openViewNotesModal(o);
 
+  // progress
+  const totalApparel = (o.items || []).reduce((sum, it) => sum + (isPrintItem(it) ? 0 : it.qty), 0);
+  o.totalApparel = totalApparel;
+  if (typeof o.progress !== 'number') o.progress = 0;
+  const progressText = document.getElementById('progress-text');
+  const progressBar = document.getElementById('progress-bar');
+  const updateProgressUI = () => {
+    progressText.textContent = `${o.progress} / ${totalApparel} pieces printed`;
+    const pct = totalApparel ? Math.min(100, (o.progress / totalApparel) * 100) : 0;
+    progressBar.style.width = pct + '%';
+  };
+  updateProgressUI();
+  document.getElementById('progress-plus1').onclick = async () => {
+    if (o.progress < totalApparel) {
+      o.progress += 1;
+      await window.api.updateProgress(o.name, o.progress);
+      updateProgressUI();
+    }
+  };
+  document.getElementById('progress-custom').onclick = () => openProgressModal(o, updateProgressUI);
+
   // line items
   const tbody = document.querySelector('#detail-items tbody');
   tbody.innerHTML = (o.items || []).map(i => {
@@ -508,6 +529,38 @@ function openViewNotesModal(order) {
   overlay.onclick = e => { if (e.target.id === 'view-notes-overlay') cleanup(); };
 
   overlay.classList.remove('hidden');
+}
+
+function openProgressModal(order, updateFn) {
+  const overlay = document.getElementById('progress-overlay');
+  const input = document.getElementById('progress-input');
+  const confirmBtn = document.getElementById('progress-confirm');
+  const cancelBtn = document.getElementById('progress-cancel');
+
+  input.value = order.progress;
+
+  const cleanup = () => {
+    overlay.classList.add('hidden');
+    confirmBtn.onclick = null;
+    cancelBtn.onclick = null;
+    overlay.onclick = null;
+  };
+
+  confirmBtn.onclick = async () => {
+    let val = parseInt(input.value, 10);
+    if (isNaN(val) || val < 0) val = 0;
+    if (val > order.totalApparel) val = order.totalApparel;
+    order.progress = val;
+    await window.api.updateProgress(order.name, order.progress);
+    updateFn();
+    cleanup();
+  };
+
+  cancelBtn.onclick = () => cleanup();
+  overlay.onclick = e => { if (e.target.id === 'progress-overlay') cleanup(); };
+
+  overlay.classList.remove('hidden');
+  input.focus();
 }
 
 // close handlers

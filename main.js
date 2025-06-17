@@ -67,6 +67,7 @@ ipcMain.handle('get-queue', async () => {
     if (typeof o.bundle !== 'string') { o.bundle = ''; updated = true; }
     if (!Array.isArray(o.attachments)) { o.attachments = []; updated = true; }
     if (typeof o.notes !== 'string') { o.notes = ''; updated = true; }
+    if (typeof o.progress !== 'number') { o.progress = 0; updated = true; }
     if (updated) {
       await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
     }
@@ -166,6 +167,20 @@ ipcMain.handle('update-notes', async (_e, orderId, notes) => {
     const o = JSON.parse(raw[i]);
     if (o.name === orderId) {
       o.notes = notes;
+      await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
+      return;
+    }
+  }
+  throw new Error(`Order "${orderId}" not found`);
+});
+
+// ─── IPC: update progress for an order ───────────────────────────────────────
+ipcMain.handle('update-progress', async (_e, orderId, progress) => {
+  const raw = await redis.lRange(QUEUE_KEY, 0, -1);
+  for (let i = 0; i < raw.length; i++) {
+    const o = JSON.parse(raw[i]);
+    if (o.name === orderId) {
+      o.progress = progress;
       await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
       return;
     }
