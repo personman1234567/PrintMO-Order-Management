@@ -98,8 +98,8 @@ function makeCard(o, style = 'default') {
       <div class="card-body">
         <div class="cust-name">${custName}</div>
         <div class="counts">
-          <span class="apparel-count">${apparel} pcs</span>
-          <span class="prints-count">${prints} prints</span>
+          <span class="apparel-count"><img class="count-icon" src="Assets/ApparelCount.svg" alt="" /> ${apparel}</span>
+          <span class="prints-count"><img class="count-icon" src="Assets/PrintCount.svg" alt="" /> ${prints}</span>
         </div>
       </div>
       <div class="card-footer">

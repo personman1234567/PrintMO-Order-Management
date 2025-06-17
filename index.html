@@ -150,6 +150,7 @@
       flex-direction: column;
       justify-content: center;
       text-align: left;
+      overflow-y: auto;
     }
     .pipeline-card .cust-name {
       font-size: 0.95rem;
@@ -165,6 +166,10 @@
       margin: 0 5px 5px;
       column-gap: 8px;
       white-space: nowrap; /* never break lines */
+    }
+    .pipeline-card .counts span {
+      display: flex;
+      align-items: center;
     }
 
     /* Footer bar */
@@ -256,6 +261,7 @@
       flex-direction: column;
       justify-content: center;
       text-align: left;        /* left‑align the content */
+      overflow-y: auto;
     }
     .pipeline-card .cust-name {
       font-size: 1rem;         /* slightly smaller */
@@ -268,6 +274,16 @@
       justify-content: space-between;
       font-size: 0.9rem;
       margin-top: auto;
+    }
+    .pipeline-card .counts span {
+      display: flex;
+      align-items: center;
+    }
+    .pipeline-card .counts .count-icon {
+      width: 18px;
+      height: 18px;
+      margin-right: 4px;
+      vertical-align: middle;
     }
 
     /* ─── FOOTER BAR ─────────────────────────────────────── */
