@@ -116,6 +116,44 @@ function makeCard(o, style = 'default') {
       hdr.classList.add(cls);
       if (ftr) ftr.classList.add(cls);
     }
+  } else if (style === 'printProgress') {
+    // Ready to Print style with progress percentage
+    const totalApparel = (o.items || []).reduce((sum, it) => sum + (isPrintItem(it) ? 0 : it.qty), 0);
+    const prog = typeof o.progress === 'number' ? o.progress : 0;
+    const pct = totalApparel ? Math.round((prog / totalApparel) * 100) : 0;
+    card.classList.add('pipeline-card', 'print-card');
+    card.innerHTML = `
+      <div class="card-header">
+        <span class="order-number">${orderNum}</span>
+        <span class="time-ago-pill">${timeAgo(o.receivedAt)}</span>
+      </div>
+      <div class="card-body">
+        <div class="progress-view">
+          <div class="cust-name">${custName}</div>
+          <div class="progress-pct">${pct}%</div>
+        </div>
+        <div class="normal-view">
+          <div class="cust-name">${custName}</div>
+          <div class="counts">
+            <span class="apparel-count"><img class="count-icon" src="Assets/ApparelCount.svg" alt="" /> ${apparel}</span>
+            <span class="prints-count"><img class="count-icon" src="Assets/PrintCount.svg" alt="" /> ${prints}</span>
+          </div>
+        </div>
+      </div>
+      <div class="card-footer">
+        <span class="footer-label">Subtotal</span>
+        <span class="footer-value">$${(o.subtotal||0).toFixed(2)}</span>
+      </div>
+    `;
+    const hdr = card.querySelector('.card-header');
+    const ftr = card.querySelector('.card-footer');
+    let cls = '';
+    if (o.blanksStatus && o.printsStatus) cls = 'status-green';
+    else if (o.blanksStatus || o.printsStatus) cls = 'status-yellow';
+    if (cls) {
+      hdr.classList.add(cls);
+      if (ftr) ftr.classList.add(cls);
+    }
   } else if (style === 'picked') {
     // picked card style for middle section
     card.classList.add('pipeline-card');
@@ -644,7 +682,7 @@ async function renderBoard() {
   });
   sortBundlesByOldest(Object.entries(printGroups))
     .forEach(([n, arr]) => printEl.appendChild(makeBundleCard(n, arr)));
-  printSingles.forEach(o => printEl.appendChild(makeCard(o, 'pipeline')));
+  printSingles.forEach(o => printEl.appendChild(makeCard(o, 'printProgress')));
 }
 
 // recalc summary from “toOrder” items

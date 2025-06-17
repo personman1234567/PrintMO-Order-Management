@@ -150,7 +150,7 @@
       flex-direction: column;
       justify-content: center;
       text-align: left;
-      overflow-y: auto;
+      overflow: hidden;        /* no scrollbars */
     }
     .pipeline-card .cust-name {
       font-size: 0.95rem;
@@ -234,6 +234,30 @@
       white-space: nowrap;
     }
 
+    /* Ready To Print progress view */
+    .print-card .card-body {
+      position: relative;
+    }
+    .print-card .progress-view,
+    .print-card .normal-view {
+      position: absolute;
+      inset: 0;
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      transition: opacity 0.3s;
+    }
+    .print-card .normal-view { opacity: 0; }
+    .print-card:hover .progress-view { opacity: 0; }
+    .print-card:hover .normal-view { opacity: 1; }
+    .print-card .progress-pct {
+      font-weight: bold;
+      font-size: 1.4rem;        /* smaller to prevent overflow */
+      text-align: center;
+      margin-top: 4px;
+    }
+
     .delete-btn {
       position: absolute;
       top: 4px;
@@ -261,7 +285,7 @@
       flex-direction: column;
       justify-content: center;
       text-align: left;        /* left‑align the content */
-      overflow-y: auto;
+      overflow: hidden;        /* no scrollbars */
     }
     .pipeline-card .cust-name {
       font-size: 1rem;         /* slightly smaller */
