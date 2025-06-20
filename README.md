@@ -59,5 +59,10 @@ PrintMO Order Management is a cross-platform desktop app (Electron + Node.js) I 
 | Kanban drag-and-drop | Vanilla JS + HTML/CSS | Visual, intuitive workflow |
 | Real-time pricing & batching | S&S Activewear REST API | Eliminates manual ordering |
 | Detail modal & time-ago badges | JS & CSS animations | Quick insight, faster decisions |
+| Bundle orders for batching | Electron + Redis | Move multiple orders through statuses together |
+| Attach and manage art files | Drag-and-drop File API | Centralize artwork with each order |
+| Editable customer notes | Modal editor + Redis | Capture special instructions per order |
+| Ready status checkboxes | Node.js IPC + UI | Track blanks and prints readiness visually |
+| Print progress tracking | Progress bars in UI | Monitor percentage of items printed |
 
 ---
