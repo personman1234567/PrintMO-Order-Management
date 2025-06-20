@@ -7,5 +7,16 @@ contextBridge.exposeInMainWorld('api', {
   processBatch:  indices => ipcRenderer.invoke('process-batch', indices),
   updateReady: (orderId, blanks, prints) =>
     ipcRenderer.invoke('update-ready', orderId, blanks, prints),
-  deleteOrder:   (orderName) => ipcRenderer.invoke('delete-order', orderName)
+  deleteOrder:   (orderName) => ipcRenderer.invoke('delete-order', orderName),
+  setBundle:  (orderIds, name) => ipcRenderer.invoke('set-bundle', orderIds, name),
+  updateBundleStatus: (bundleName, status) =>
+    ipcRenderer.invoke('update-bundle-status', bundleName, status),
+  addFile: (orderId, file) => ipcRenderer.invoke('add-file', orderId, file),
+  removeFiles: (orderId, names) => ipcRenderer.invoke('remove-files', orderId, names),
+  updateNotes: (orderId, notes) => ipcRenderer.invoke('update-notes', orderId, notes),
+  updateProgress: (orderId, progress) => ipcRenderer.invoke('update-progress', orderId, progress)
 });
+
+contextBridge.exposeInMainWorld('getAssetPath', file =>
+  ipcRenderer.sendSync('get-asset-path', file)
+);

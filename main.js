@@ -36,6 +36,14 @@ const {
   SS_PAYMENT_PROFILE_EMAIL
 } = process.env;
 
+// ─── IPC: resolve an asset path for the renderer ────────────────────────
+ipcMain.on('get-asset-path', (event, file) => {
+  const base = app.isPackaged
+    ? path.join(process.resourcesPath, 'Assets')
+    : path.join(__dirname, 'Assets');
+  event.returnValue = path.join(base, file);
+});
+
 // ─── IPC: delete order ───────────────────────────────────────────────────
 ipcMain.handle('delete-order', async (event, orderName) => {
   // Pull the raw queue
@@ -64,6 +72,10 @@ ipcMain.handle('get-queue', async () => {
     if (!o.status) { o.status = 'received'; updated = true; }
     if (typeof o.blanksStatus !== 'number') { o.blanksStatus = 0; updated = true; }
     if (typeof o.printsStatus !== 'number') { o.printsStatus = 0; updated = true; }
+    if (typeof o.bundle !== 'string') { o.bundle = ''; updated = true; }
+    if (!Array.isArray(o.attachments)) { o.attachments = []; updated = true; }
+    if (typeof o.notes !== 'string') { o.notes = ''; updated = true; }
+    if (typeof o.progress !== 'number') { o.progress = 0; updated = true; }
     if (updated) {
       await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
     }
@@ -86,6 +98,18 @@ ipcMain.handle('update-status', async (_e, orderId, status) => {
   throw new Error(`Order "${orderId}" not found`);
 });
 
+// ─── IPC: update status for all orders in a bundle ──────────────────────────
+ipcMain.handle('update-bundle-status', async (_e, bundleName, status) => {
+  const raw = await redis.lRange(QUEUE_KEY, 0, -1);
+  for (let i = 0; i < raw.length; i++) {
+    const o = JSON.parse(raw[i]);
+    if (o.bundle === bundleName) {
+      o.status = status;
+      await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
+    }
+  }
+});
+
 // ─── IPC: update blanks/prints readiness ─────────────────────────────────────
 ipcMain.handle('update-ready', async (_e, orderId, blanksStatus, printsStatus) => {
   const raw = await redis.lRange(QUEUE_KEY, 0, -1);
@@ -101,6 +125,76 @@ ipcMain.handle('update-ready', async (_e, orderId, blanksStatus, printsStatus) =
   throw new Error(`Order "${orderId}" not found`);
 });
 
+// ─── IPC: assign bundle to orders ─────────────────────────────────────────────
+ipcMain.handle('set-bundle', async (_e, orderIds, bundleName) => {
+  if (!Array.isArray(orderIds)) return;
+  const raw = await redis.lRange(QUEUE_KEY, 0, -1);
+  for (let i = 0; i < raw.length; i++) {
+    const o = JSON.parse(raw[i]);
+    if (orderIds.includes(o.name)) {
+      o.bundle = bundleName;
+      await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
+    }
+  }
+});
+
+// ─── IPC: add attachment to an order ─────────────────────────────────────────
+ipcMain.handle('add-file', async (_e, orderId, file) => {
+  const raw = await redis.lRange(QUEUE_KEY, 0, -1);
+  for (let i = 0; i < raw.length; i++) {
+    const o = JSON.parse(raw[i]);
+    if (o.name === orderId) {
+      if (!Array.isArray(o.attachments)) o.attachments = [];
+      o.attachments.push(file);
+      await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
+      return;
+    }
+  }
+  throw new Error(`Order "${orderId}" not found`);
+});
+
+// ─── IPC: remove attachments from an order ───────────────────────────────────
+ipcMain.handle('remove-files', async (_e, orderId, names) => {
+  const raw = await redis.lRange(QUEUE_KEY, 0, -1);
+  for (let i = 0; i < raw.length; i++) {
+    const o = JSON.parse(raw[i]);
+    if (o.name === orderId) {
+      if (!Array.isArray(o.attachments)) o.attachments = [];
+      o.attachments = o.attachments.filter(f => !names.includes(f.name));
+      await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
+      return;
+    }
+  }
+  throw new Error(`Order "${orderId}" not found`);
+});
+
+// ─── IPC: update notes for an order ───────────────────────────────────────────
+ipcMain.handle('update-notes', async (_e, orderId, notes) => {
+  const raw = await redis.lRange(QUEUE_KEY, 0, -1);
+  for (let i = 0; i < raw.length; i++) {
+    const o = JSON.parse(raw[i]);
+    if (o.name === orderId) {
+      o.notes = notes;
+      await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
+      return;
+    }
+  }
+  throw new Error(`Order "${orderId}" not found`);
+});
+
+// ─── IPC: update progress for an order ───────────────────────────────────────
+ipcMain.handle('update-progress', async (_e, orderId, progress) => {
+  const raw = await redis.lRange(QUEUE_KEY, 0, -1);
+  for (let i = 0; i < raw.length; i++) {
+    const o = JSON.parse(raw[i]);
+    if (o.name === orderId) {
+      o.progress = progress;
+      await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
+      return;
+    }
+  }
+  throw new Error(`Order "${orderId}" not found`);
+});
 
 // ─── IPC: process only the orders in “To Order” ──────────────────────────────
 ipcMain.handle('process-batch', async (_e, orderIds) => {

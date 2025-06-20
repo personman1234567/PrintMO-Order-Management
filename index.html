@@ -150,6 +150,7 @@
       flex-direction: column;
       justify-content: center;
       text-align: left;
+      overflow: hidden;        /* no scrollbars */
     }
     .pipeline-card .cust-name {
       font-size: 0.95rem;
@@ -165,6 +166,10 @@
       margin: 0 5px 5px;
       column-gap: 8px;
       white-space: nowrap; /* never break lines */
+    }
+    .pipeline-card .counts span {
+      display: flex;
+      align-items: center;
     }
 
     /* Footer bar */
@@ -207,6 +212,52 @@
     .status-yellow { background: #fdd835 !important; color: #000 !important; }
     .status-green { background: #43a047 !important; }
 
+    .bundle-card {
+      background: #1a73e8 !important;
+      color: #fff;
+    }
+    .bundle-card .card-header {
+      background: transparent;
+    }
+    .bundle-card .card-body {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      color: #fff;
+    }
+
+    .bundle-card .counts {
+      font-size: 2.2rem;
+      margin: 0;
+      white-space: nowrap;
+    }
+
+    /* Ready To Print progress view */
+    .print-card .card-body {
+      position: relative;
+    }
+    .print-card .progress-view,
+    .print-card .normal-view {
+      position: absolute;
+      inset: 0;
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      transition: opacity 0.3s;
+    }
+    .print-card .normal-view { opacity: 0; }
+    .print-card:hover .progress-view { opacity: 0; }
+    .print-card:hover .normal-view { opacity: 1; }
+    .print-card .progress-pct {
+      font-weight: bold;
+      font-size: 1.4rem;        /* smaller to prevent overflow */
+      text-align: center;
+      margin-top: 4px;
+    }
+
     .delete-btn {
       position: absolute;
       top: 4px;
@@ -234,6 +285,7 @@
       flex-direction: column;
       justify-content: center;
       text-align: left;        /* left‑align the content */
+      overflow: hidden;        /* no scrollbars */
     }
     .pipeline-card .cust-name {
       font-size: 1rem;         /* slightly smaller */
@@ -246,6 +298,16 @@
       justify-content: space-between;
       font-size: 0.9rem;
       margin-top: auto;
+    }
+    .pipeline-card .counts span {
+      display: flex;
+      align-items: center;
+    }
+    .pipeline-card .counts .count-icon {
+      width: 18px;
+      height: 18px;
+      margin-right: 4px;
+      vertical-align: middle;
     }
 
     /* ─── FOOTER BAR ─────────────────────────────────────── */
@@ -476,6 +538,113 @@
       display: none !important;
       pointer-events: none !important;
     }
+    .bundle-selected { outline: 3px solid #1a73e8; }
+    .bundle-btn,
+    .bundle-confirm,
+    .bundle-cancel {
+      margin-left: 8px;
+      background: #1a73e8;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .bundle-btn:hover,
+    .bundle-confirm:hover {
+      background: #1765c1;
+    }
+    .bundle-cancel {
+      background: #fff;
+      color: #1a73e8;
+      border: 1px solid #1a73e8;
+    }
+    .bundle-cancel:hover {
+      background: #e8f0fe;
+    }
+    .bundle-btn.hidden,
+    .bundle-confirm.hidden,
+    .bundle-cancel.hidden {
+      display: none;
+    }
+
+    #bundle-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      display: grid;
+      place-items: center;
+      transition: opacity 0.3s;
+      z-index: 1400;
+    }
+    #bundle-overlay.hidden { opacity: 0; pointer-events: none; }
+    #bundle-modal {
+      background: #fff;
+      border-radius: 8px;
+      width: 33vw;
+      height: 33vw;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+    }
+    #bundle-cards {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-content: flex-start;
+      gap: 1%;
+      flex: 1;
+      overflow-y: auto;
+    }
+    #bundle-destroy {
+      align-self: center;
+      margin-top: 12px;
+    }
+    #bundle-cards .pipeline-card {
+      flex: 0 0 calc((100% - 2%) / 3);
+      max-width: calc((100% - 2%) / 3);
+      aspect-ratio: 1 / 1;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      overflow: hidden;
+      padding: 0;
+    }
+
+    #bundle-name-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      display: grid;
+      place-items: center;
+      transition: opacity 0.3s;
+      z-index: 1450;
+    }
+    #bundle-name-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    #bundle-name-modal {
+      background: #fff;
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 300px;
+    }
+    #bundle-name-modal input {
+      padding: 8px;
+      font-size: 1rem;
+    }
+    #bundle-name-modal .buttons {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
     /* Detail Screen --------------------------------------- */
     #detail-overlay {
       position: fixed;
@@ -494,13 +663,48 @@
       transform: scale(0.8);
       transition: transform 0.3s;
       overflow: hidden;
-    }
-    #detail-notes {
-      padding-left: 5%;
+      display: flex;
+      flex-direction: column;
+      max-height: 90vh;
     }
     #detail-cust-name {
       padding-left: 5%;
       padding-top: 5%;
+      margin-bottom: 12px;
+    }
+    #detail-edit-notes-btn {
+      margin: 0;
+    }
+    #detail-view-notes-btn {
+      margin: 0;
+    }
+    #detail-notes-wrapper {
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      margin: 0 5% 16px;
+      padding: 8px 12px;
+      overflow-y: auto;
+    }
+    #detail-notes {
+      padding: 0;
+    }
+    #progress-section {
+      margin: 0 5% 16px;
+    }
+    #progress-text { margin-bottom: 4px; }
+    #progress-row { display: flex; align-items: center; gap: 8px; }
+    #progress-bar-container {
+      background: #eee;
+      border-radius: 4px;
+      flex: 1;
+      height: 20px;
+      overflow: hidden;
+    }
+    #progress-bar {
+      background: #1a73e8;
+      height: 100%;
+      width: 0;
+      transition: width 0.3s;
     }
     #detail-overlay.visible #detail-card {
       transform: scale(1);
@@ -520,10 +724,14 @@
       justify-content: space-between;
       align-items: center;
     }
+    #detail-items-wrapper {
+      flex: 1;
+      overflow-y: auto;
+      margin: 16px 0;
+    }
     #detail-items {
       width: 100%;
       border-collapse: collapse;
-      margin: 16px 0;
     }
     #detail-items th,
     #detail-items td {
@@ -531,7 +739,17 @@
       padding: 8px;
       text-align: left;
     }
-    #detail-items tfoot td {
+    #detail-summary {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0 0 8px;
+    }
+    #detail-summary td {
+      border-bottom: 1px solid #eee;
+      padding: 8px;
+      text-align: left;
+    }
+    #detail-summary tr:nth-last-child(-n+2) td {
       font-weight: bold;
     }
     #ready-controls {
@@ -543,6 +761,154 @@
     #ready-apply.hidden {
       display: none;
     }
+
+    /* Files Modal ----------------------- */
+    #files-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      display: grid;
+      place-items: center;
+      transition: opacity 0.3s;
+      z-index: 1600;
+    }
+    #files-overlay.hidden { opacity: 0; pointer-events: none; }
+    #files-modal {
+      background: #fff;
+      border-radius: 8px;
+      padding: 16px;
+      width: 400px;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    #file-drop {
+      border: 2px dashed #999;
+      border-radius: 6px;
+      height: 100px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #666;
+    }
+    #file-drop.over { background: #eee; }
+    #file-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      overflow-y: auto;
+    }
+    #file-actions { text-align: right; }
+    #file-actions button {
+      background: #1a73e8;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    #file-actions button:hover { background: #1765c1; }
+    #files-remove-btn.hidden,
+    #files-delete-btn.hidden,
+    #files-cancel-btn.hidden { display: none; }
+    .file-selected { outline: 3px solid #1a73e8; border-radius: 6px; }
+    .file-item {
+      width: 80px;
+      text-align: center;
+      cursor: pointer;
+      font-size: 0.75rem;
+    }
+    .file-item img,
+    .file-item .svg-placeholder {
+      width: 100%;
+      height: 80px;
+      object-fit: cover;
+      background: #f0f0f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .file-item .svg-placeholder { background: #ccc; }
+
+    /* Notes Modal ----------------------- */
+    #notes-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      display: grid;
+      place-items: center;
+      transition: opacity 0.3s;
+      z-index: 1550;
+    }
+    #notes-overlay.hidden { opacity: 0; pointer-events: none; }
+    #notes-modal {
+      background: #fff;
+      border-radius: 8px;
+      padding: 16px;
+      width: 400px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    #notes-modal textarea {
+      width: 100%;
+      height: 200px;
+      padding: 8px;
+      font-size: 1rem;
+    }
+    #notes-modal .buttons {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    /* Progress Modal ----------------------- */
+    #progress-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      display: grid;
+      place-items: center;
+      transition: opacity 0.3s;
+      z-index: 1550;
+    }
+    #progress-overlay.hidden { opacity: 0; pointer-events: none; }
+    #progress-modal {
+      background: #fff;
+      border-radius: 8px;
+      padding: 16px;
+      width: 300px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    #progress-modal input { width: 100%; padding: 8px; font-size: 1rem; }
+    #progress-modal .buttons {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    #view-notes-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      display: grid;
+      place-items: center;
+      transition: opacity 0.3s;
+      z-index: 1555;
+    }
+    #view-notes-overlay.hidden { opacity: 0; pointer-events: none; }
+    #view-notes-modal {
+      background: #fff;
+      border-radius: 8px;
+      padding: 16px;
+      width: 50vw;
+      max-width: 50vw;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    #view-notes-modal p { white-space: pre-wrap; }
     .section-header {
       display: flex;
       justify-content: space-between;
@@ -550,11 +916,30 @@
       padding: 12px 16px;
       border-bottom: 1px solid #eee;
     }
+    #blanks-section.fullscreen .section-header,
+    #print-section.fullscreen .section-header {
+      justify-content: center;
+    }
+    #blanks-section.fullscreen .section-header h3,
+    #print-section.fullscreen .section-header h3 {
+      font-size: 2rem;
+    }
+    #blanks-section.fullscreen .section-header button,
+    #print-section.fullscreen .section-header button {
+      display: none;
+    }
     .fullscreen-btn {
-      background: none;
+      background: #1a73e8;
+      color: #fff;
       border: none;
+      border-radius: 4px;
+      padding: 6px 12px;
       cursor: pointer;
       font-size: 0.85rem;
+      transition: background 0.2s;
+    }
+    .fullscreen-btn:hover {
+      background: #1765c1;
     }
     #blanks-overlay {
       position: fixed;
@@ -618,6 +1003,9 @@
       <div class="panel-header">
         ORDER PIPELINE
         <span id="pipeline-count">0</span>
+        <button id="received-bundle-start" class="bundle-btn">Bundle</button>
+        <button id="received-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
+        <button id="received-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
       </div>
       <div class="panel-body cards" id="col-received"></div>
     </div>
@@ -646,6 +1034,9 @@
           <div class="section-header">
             <h3>Blanks Ordered</h3>
             <button id="blanks-fullscreen-btn" class="fullscreen-btn">Fullscreen</button>
+            <button id="blanks-bundle-start" class="bundle-btn">Bundle</button>
+            <button id="blanks-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
+            <button id="blanks-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
           </div>
           <div class="cards" id="col-blanks"></div>
         </div>
@@ -653,6 +1044,9 @@
           <div class="section-header">
             <h3>Ready To Print</h3>
             <button id="print-fullscreen-btn" class="fullscreen-btn">Fullscreen</button>
+            <button id="print-bundle-start" class="bundle-btn">Bundle</button>
+            <button id="print-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
+            <button id="print-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
           </div>
           <div class="cards" id="col-print"></div>
         </div>
@@ -669,27 +1063,114 @@
       <time id="detail-timestamp"></time>
     </div>
     <h3 id="detail-cust-name"></h3>
-    <p id="detail-notes"><em>No notes</em></p>
-    <table id="detail-items">
-      <thead>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin:0 5% 8px;">
+      <button id="detail-view-notes-btn" class="fullscreen-btn">See Notes</button>
+      <button id="detail-edit-notes-btn" class="fullscreen-btn">Edit Notes</button>
+    </div>
+    <div id="detail-notes-wrapper">
+      <p id="detail-notes"><em>No special instructions</em></p>
+    </div>
+    <div id="progress-section">
+      <div id="progress-text"></div>
+      <div id="progress-row">
+        <div id="progress-bar-container">
+          <div id="progress-bar"></div>
+        </div>
+        <button id="progress-plus1" class="fullscreen-btn">+1</button>
+        <button id="progress-custom" class="fullscreen-btn">Custom Amount</button>
+      </div>
+    </div>
+    <div id="detail-items-wrapper">
+      <table id="detail-items">
+        <thead>
+          <tr>
+            <th>Qty</th>
+            <th>Description</th>
+            <th>Variant</th>
+            <th>Price</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <table id="detail-summary">
+      <tbody>
         <tr>
-          <th>Qty</th>
-          <th>Description</th>
-          <th>Variant</th> 
-          <th>Price</th>
+          <td colspan="2">Discount</td>
+          <td id="detail-discount"></td>
         </tr>
-      </thead>
-      <tbody></tbody>
-      <tfoot>
-        <tr><td colspan="2">Discount</td><td id="detail-discount"></td></tr>
-        <tr><td colspan="2"><strong>Total</strong></td><td id="detail-total"></td></tr>
-      </tfoot>
+        <tr>
+          <td colspan="2"><strong>Total</strong></td>
+          <td id="detail-total"></td>
+        </tr>
+      </tbody>
     </table>
+    <div style="text-align:right; padding:0 16px 8px;">
+      <button id="detail-files-btn">Files</button>
+    </div>
     <div id="ready-controls">
       <label><input type="checkbox" id="chk-blanks"> Blanks Ready</label>
       <label><input type="checkbox" id="chk-prints"> Prints Ready</label>
       <button id="ready-apply" class="hidden">Apply</button>
     </div>
+  </div>
+</div>
+
+<div id="bundle-overlay" class="hidden">
+  <div id="bundle-modal">
+    <h2 id="bundle-title"></h2>
+    <div id="bundle-cards"></div>
+    <button id="bundle-destroy" class="fullscreen-btn">Destroy Bundle</button>
+  </div>
+</div>
+
+<div id="bundle-name-overlay" class="hidden">
+  <div id="bundle-name-modal">
+    <h2>Please Name Bundle</h2>
+    <input id="bundle-name-input" type="text" />
+    <div class="buttons">
+      <button id="bundle-name-confirm">Confirm</button>
+      <button id="bundle-name-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="files-overlay" class="hidden">
+  <div id="files-modal">
+    <div id="file-drop" class="drag-area">Drop files here</div>
+    <div id="file-list"></div>
+    <div id="file-actions">
+      <button id="files-remove-btn">Remove Files</button>
+      <button id="files-delete-btn" class="hidden">Delete</button>
+      <button id="files-cancel-btn" class="hidden">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="notes-overlay" class="hidden">
+  <div id="notes-modal">
+    <textarea id="notes-input"></textarea>
+    <div class="buttons">
+      <button id="notes-confirm">Confirm</button>
+      <button id="notes-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="progress-overlay" class="hidden">
+  <div id="progress-modal">
+    <label for="progress-input">Enter number of items completed</label>
+    <input id="progress-input" type="number" min="0" />
+    <div class="buttons">
+      <button id="progress-confirm">Confirm</button>
+      <button id="progress-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="view-notes-overlay" class="hidden">
+  <div id="view-notes-modal">
+    <p id="view-notes-text"></p>
   </div>
 </div>
 

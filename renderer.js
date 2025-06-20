@@ -1,6 +1,18 @@
 // renderer.js
 
 let allOrders = [];
+let bundleMode = null; // {status, selected:Set<string>}
+let detailOrder = null;
+let fileRemoveMode = false;
+const selectedFiles = new Set();
+let notesResizeHandler = null;
+
+const APPAREL_ICON = typeof window.getAssetPath === 'function'
+  ? window.getAssetPath('ApparelCount.svg')
+  : 'Assets/ApparelCount.svg';
+const PRINT_ICON   = typeof window.getAssetPath === 'function'
+  ? window.getAssetPath('PrintCount.svg')
+  : 'Assets/PrintCount.svg';
 
 // utility to detect “print” items by SKU or title
 function isPrintItem(li) {
@@ -46,6 +58,14 @@ function timeAgo(isoDate) {
   return `${days}d ago`;
 }
 
+function sortBundlesByOldest(entries) {
+  return entries.sort(([, a], [, b]) => {
+    const aOldest = Math.min(...a.map(o => new Date(o.receivedAt).getTime()));
+    const bOldest = Math.min(...b.map(o => new Date(o.receivedAt).getTime()));
+    return aOldest - bOldest;
+  });
+}
+
 // shrink the font size of `el` until its text fits on one line
 function shrinkTextToFit(el, min = 8) {
   if (!el) return;
@@ -85,8 +105,46 @@ function makeCard(o, style = 'default') {
       <div class="card-body">
         <div class="cust-name">${custName}</div>
         <div class="counts">
-          <span class="apparel-count">${apparel} pcs</span>
-          <span class="prints-count">${prints} prints</span>
+          <span class="apparel-count"><img class="count-icon" src="${APPAREL_ICON}" alt="" /> ${apparel}</span>
+          <span class="prints-count"><img class="count-icon" src="${PRINT_ICON}" alt="" /> ${prints}</span>
+        </div>
+      </div>
+      <div class="card-footer">
+        <span class="footer-label">Subtotal</span>
+        <span class="footer-value">$${(o.subtotal||0).toFixed(2)}</span>
+      </div>
+    `;
+    const hdr = card.querySelector('.card-header');
+    const ftr = card.querySelector('.card-footer');
+    let cls = '';
+    if (o.blanksStatus && o.printsStatus) cls = 'status-green';
+    else if (o.blanksStatus || o.printsStatus) cls = 'status-yellow';
+    if (cls) {
+      hdr.classList.add(cls);
+      if (ftr) ftr.classList.add(cls);
+    }
+  } else if (style === 'printProgress') {
+    // Ready to Print style with progress percentage
+    const totalApparel = (o.items || []).reduce((sum, it) => sum + (isPrintItem(it) ? 0 : it.qty), 0);
+    const prog = typeof o.progress === 'number' ? o.progress : 0;
+    const pct = totalApparel ? Math.round((prog / totalApparel) * 100) : 0;
+    card.classList.add('pipeline-card', 'print-card');
+    card.innerHTML = `
+      <div class="card-header">
+        <span class="order-number">${orderNum}</span>
+        <span class="time-ago-pill">${timeAgo(o.receivedAt)}</span>
+      </div>
+      <div class="card-body">
+        <div class="progress-view">
+          <div class="cust-name">${custName}</div>
+          <div class="progress-pct">${pct}%</div>
+        </div>
+        <div class="normal-view">
+          <div class="cust-name">${custName}</div>
+          <div class="counts">
+            <span class="apparel-count"><img class="count-icon" src="${APPAREL_ICON}" alt="" /> ${apparel}</span>
+            <span class="prints-count"><img class="count-icon" src="${PRINT_ICON}" alt="" /> ${prints}</span>
+          </div>
         </div>
       </div>
       <div class="card-footer">
@@ -167,7 +225,80 @@ function makeCard(o, style = 'default') {
   return card;
 }
 
+function makeBundleCard(name, orders, style = 'pipeline') {
+  const card = document.createElement('div');
+  card.className = 'card bundle-card pipeline-card';
+  card.dataset.bundleName = name;
+  card.draggable = true;
+
+  let allReady = true,
+      anyReady = false;
+  orders.forEach(o => {
+    if (!(o.blanksStatus && o.printsStatus)) allReady = false;
+    if (o.blanksStatus || o.printsStatus) anyReady = true;
+  });
+
+  let bodyHtml = `<div class="counts"><strong>${orders.length} Orders</strong></div>`;
+  if (style === 'picked') {
+    let apparel = 0;
+    orders.forEach(o => (o.items || []).forEach(it => {
+      if (!isPrintItem(it)) apparel += it.qty;
+    }));
+    bodyHtml = `<div class="counts"><strong>${apparel}</strong></div>`;
+  }
+  card.innerHTML = `
+    <div class="card-header"><span class="cust-name">${name}</span></div>
+    <div class="card-body">${bodyHtml}</div>
+  `;
+
+  if (allReady) card.classList.add('status-green');
+  else if (anyReady) card.classList.add('status-yellow');
+
+  card.addEventListener('click', () => openBundleModal(name, orders));
+
+  card.addEventListener('dragstart', e => {
+    document.body.classList.add('dragging-cursor');
+    card.classList.add('dragging');
+    e.dataTransfer.setData('text/plain', `bundle:${name}`);
+  });
+
+  card.addEventListener('dragend', () => {
+    document.body.classList.remove('dragging-cursor');
+    card.classList.remove('dragging');
+  });
+
+  return card;
+}
+
+function openBundleModal(name, orders) {
+  const overlay = document.getElementById('bundle-overlay');
+  document.getElementById('bundle-title').textContent = name;
+  const container = document.getElementById('bundle-cards');
+  container.innerHTML = '';
+  orders.forEach(o => container.appendChild(makeCard(o, 'pipeline')));
+  const destroyBtn = document.getElementById('bundle-destroy');
+  destroyBtn.onclick = async () => {
+    if (!confirm(`Destroy bundle "${name}"?`)) return;
+    const ids = orders.map(o => o.name);
+    await window.api.setBundle(ids, '');
+    closeBundleModal();
+    await renderBoard();
+  };
+  const onOverlayClick = e => {
+    if (e.target.id === 'bundle-overlay') closeBundleModal();
+  };
+  overlay.classList.remove('hidden');
+  overlay.onclick = onOverlayClick;
+}
+
+function closeBundleModal() {
+  const overlay = document.getElementById('bundle-overlay');
+  overlay.classList.add('hidden');
+  overlay.onclick = null;
+}
+
 function openDetail(o) {
+  detailOrder = o;
   // fill header
   document.getElementById('detail-timestamp').textContent = new Date(o.receivedAt).toLocaleString();
 
@@ -176,6 +307,29 @@ function openDetail(o) {
   document.getElementById('detail-order-id').textContent   = `Order ${orderNum}`;
   document.getElementById('detail-cust-name').textContent = custName;
   document.getElementById('detail-notes').textContent = o.notes || 'No special instructions';
+  document.getElementById('detail-edit-notes-btn').onclick = () => openNotesModal(o);
+  document.getElementById('detail-view-notes-btn').onclick = () => openViewNotesModal(o);
+
+  // progress
+  const totalApparel = (o.items || []).reduce((sum, it) => sum + (isPrintItem(it) ? 0 : it.qty), 0);
+  o.totalApparel = totalApparel;
+  if (typeof o.progress !== 'number') o.progress = 0;
+  const progressText = document.getElementById('progress-text');
+  const progressBar = document.getElementById('progress-bar');
+  const updateProgressUI = () => {
+    progressText.textContent = `${o.progress} / ${totalApparel} pieces printed`;
+    const pct = totalApparel ? Math.min(100, (o.progress / totalApparel) * 100) : 0;
+    progressBar.style.width = pct + '%';
+  };
+  updateProgressUI();
+  document.getElementById('progress-plus1').onclick = async () => {
+    if (o.progress < totalApparel) {
+      o.progress += 1;
+      await window.api.updateProgress(o.name, o.progress);
+      updateProgressUI();
+    }
+  };
+  document.getElementById('progress-custom').onclick = () => openProgressModal(o, updateProgressUI);
 
   // line items
   const tbody = document.querySelector('#detail-items tbody');
@@ -221,7 +375,17 @@ function openDetail(o) {
     await window.api.updateReady(o.name, blanks, prints);
     await renderBoard();
     applyBtn.classList.add('hidden');
+    const bundleOverlay = document.getElementById('bundle-overlay');
+    if (!bundleOverlay.classList.contains('hidden')) {
+      const bundleName = document.getElementById('bundle-title').textContent;
+      const bundleOrders = allOrders.filter(x => x.bundle === bundleName);
+      const container = document.getElementById('bundle-cards');
+      container.innerHTML = '';
+      bundleOrders.forEach(ord => container.appendChild(makeCard(ord, 'pipeline')));
+    }
   };
+
+  document.getElementById('detail-files-btn').onclick = () => openFilesModal(o);
 
   // show overlay
   document.getElementById('detail-overlay')
@@ -231,24 +395,225 @@ function openDetail(o) {
   document.body.classList.add('detail-open');
 
   document.querySelector('.pipeline').classList.add('no-delete');
+
+  const notesWrapper = document.getElementById('detail-notes-wrapper');
+  const detailCard = document.getElementById('detail-card');
+  const updateNotesLimit = () => {
+    notesWrapper.style.maxHeight = Math.round(detailCard.clientHeight * 0.15) + 'px';
+  };
+  setTimeout(updateNotesLimit, 0);
+  window.addEventListener('resize', updateNotesLimit);
+  notesResizeHandler = updateNotesLimit;
 }
 
 function closeDetail() {
-  document.getElementById('detail-close').addEventListener('click', closeDetail);
-  document.getElementById('detail-overlay').classList.remove('visible');
+  const overlay = document.getElementById('detail-overlay');
+  overlay.classList.replace('visible', 'hidden');
   document.body.classList.remove('detail-open');
   document.querySelector('.pipeline').classList.remove('no-delete');
+  if (notesResizeHandler) {
+    window.removeEventListener('resize', notesResizeHandler);
+    notesResizeHandler = null;
+  }
+}
+
+function renderFileList(order) {
+  const container = document.getElementById('file-list');
+  const files = order.attachments || [];
+  container.innerHTML = files.map(f => {
+    let thumb = '';
+    if (/png|jpe?g/i.test(f.mime)) {
+      thumb = `<img src="data:${f.mime};base64,${f.data}" />`;
+    } else {
+      thumb = '<div class="svg-placeholder"></div>';
+    }
+    const sel = selectedFiles.has(f.name) ? ' file-selected' : '';
+    return `<div class="file-item${sel}" data-name="${f.name}">${thumb}<div>${f.name}</div></div>`;
+  }).join('');
+  container.querySelectorAll('.file-item').forEach(el => {
+    el.onclick = () => {
+      const name = el.dataset.name;
+      if (fileRemoveMode) {
+        if (selectedFiles.has(name)) {
+          selectedFiles.delete(name);
+          el.classList.remove('file-selected');
+        } else {
+          selectedFiles.add(name);
+          el.classList.add('file-selected');
+        }
+        return;
+      }
+      const f = files.find(x => x.name === name);
+      if (!f) return;
+      const a = document.createElement('a');
+      a.href = `data:${f.mime};base64,${f.data}`;
+      a.download = f.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    };
+  });
+}
+
+function openFilesModal(order) {
+  cancelFileRemoval();
+  renderFileList(order);
+  const overlay = document.getElementById('files-overlay');
+  overlay.classList.remove('hidden');
+
+  const drop = document.getElementById('file-drop');
+  drop.classList.remove('over');
+  const onDragOver = e => { e.preventDefault(); drop.classList.add('over'); };
+  const onDragLeave = () => drop.classList.remove('over');
+  const onDrop = async e => {
+    e.preventDefault();
+    drop.classList.remove('over');
+    for (const file of e.dataTransfer.files) {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result.split(',')[1];
+        const obj = { name: file.name, mime: file.type || 'application/octet-stream', data: base64 };
+        await window.api.addFile(order.name, obj);
+        if (!Array.isArray(order.attachments)) order.attachments = [];
+        order.attachments.push(obj);
+        renderFileList(order);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+  drop.addEventListener('dragover', onDragOver);
+  drop.addEventListener('dragleave', onDragLeave);
+  drop.addEventListener('drop', onDrop);
+
+  document.getElementById('files-remove-btn').onclick = () => startFileRemoval(order);
+  document.getElementById('files-cancel-btn').onclick = cancelFileRemoval;
+  document.getElementById('files-delete-btn').onclick = () => confirmFileRemoval(order);
+
+  overlay.onclick = e => { if (e.target.id === 'files-overlay') { closeFilesModal(onDragOver,onDragLeave,onDrop); } };
+}
+
+function closeFilesModal(ov, lv, dp) {
+  cancelFileRemoval();
+  const overlay = document.getElementById('files-overlay');
+  overlay.classList.add('hidden');
+  const drop = document.getElementById('file-drop');
+  drop.removeEventListener('dragover', ov);
+  drop.removeEventListener('dragleave', lv);
+  drop.removeEventListener('drop', dp);
+  overlay.onclick = null;
+}
+
+function startFileRemoval(order) {
+  fileRemoveMode = true;
+  selectedFiles.clear();
+  document.getElementById('files-remove-btn').classList.add('hidden');
+  document.getElementById('files-delete-btn').classList.remove('hidden');
+  document.getElementById('files-cancel-btn').classList.remove('hidden');
+  renderFileList(order);
+}
+
+function cancelFileRemoval() {
+  fileRemoveMode = false;
+  selectedFiles.clear();
+  document.getElementById('files-remove-btn').classList.remove('hidden');
+  document.getElementById('files-delete-btn').classList.add('hidden');
+  document.getElementById('files-cancel-btn').classList.add('hidden');
+  if (detailOrder) renderFileList(detailOrder);
+}
+
+async function confirmFileRemoval(order) {
+  const names = Array.from(selectedFiles);
+  if (!names.length) { cancelFileRemoval(); return; }
+  await window.api.removeFiles(order.name, names);
+  order.attachments = order.attachments.filter(f => !selectedFiles.has(f.name));
+  cancelFileRemoval();
+  renderFileList(order);
+}
+
+function openNotesModal(order) {
+  const overlay = document.getElementById('notes-overlay');
+  const input = document.getElementById('notes-input');
+  const confirmBtn = document.getElementById('notes-confirm');
+  const cancelBtn = document.getElementById('notes-cancel');
+
+  input.value = order.notes || 'No special instructions';
+
+  const cleanup = () => {
+    overlay.classList.add('hidden');
+    confirmBtn.onclick = null;
+    cancelBtn.onclick = null;
+    overlay.onclick = null;
+  };
+
+  confirmBtn.onclick = async () => {
+    const val = input.value;
+    await window.api.updateNotes(order.name, val);
+    order.notes = val;
+    document.getElementById('detail-notes').textContent = val || 'No special instructions';
+    cleanup();
+  };
+
+  cancelBtn.onclick = () => cleanup();
+  overlay.onclick = e => { if (e.target.id === 'notes-overlay') cleanup(); };
+
+  overlay.classList.remove('hidden');
+  input.focus();
+}
+
+function openViewNotesModal(order) {
+  const overlay = document.getElementById('view-notes-overlay');
+  const text = document.getElementById('view-notes-text');
+
+  text.textContent = order.notes || 'No special instructions';
+
+  const cleanup = () => {
+    overlay.classList.add('hidden');
+    overlay.onclick = null;
+  };
+
+  overlay.onclick = e => { if (e.target.id === 'view-notes-overlay') cleanup(); };
+
+  overlay.classList.remove('hidden');
+}
+
+function openProgressModal(order, updateFn) {
+  const overlay = document.getElementById('progress-overlay');
+  const input = document.getElementById('progress-input');
+  const confirmBtn = document.getElementById('progress-confirm');
+  const cancelBtn = document.getElementById('progress-cancel');
+
+  input.value = order.progress;
+
+  const cleanup = () => {
+    overlay.classList.add('hidden');
+    confirmBtn.onclick = null;
+    cancelBtn.onclick = null;
+    overlay.onclick = null;
+  };
+
+  confirmBtn.onclick = async () => {
+    let val = parseInt(input.value, 10);
+    if (isNaN(val) || val < 0) val = 0;
+    if (val > order.totalApparel) val = order.totalApparel;
+    order.progress = val;
+    await window.api.updateProgress(order.name, order.progress);
+    updateFn();
+    cleanup();
+  };
+
+  cancelBtn.onclick = () => cleanup();
+  overlay.onclick = e => { if (e.target.id === 'progress-overlay') cleanup(); };
+
+  overlay.classList.remove('hidden');
+  input.focus();
 }
 
 // close handlers
-document.getElementById('detail-close').addEventListener('click', () => {
-  document.getElementById('detail-overlay')
-    .classList.replace('visible','hidden');
-});
+document.getElementById('detail-close').addEventListener('click', closeDetail);
 document.getElementById('detail-overlay')
   .addEventListener('click', e => {
     if (e.target.id === 'detail-overlay') {
-      e.currentTarget.classList.replace('visible','hidden');
+      closeDetail();
     }
   });
 
@@ -260,27 +625,71 @@ async function renderBoard() {
   const recs = allOrders.filter(x => x.status === 'received');
   const recEl = document.getElementById('col-received');
   recEl.innerHTML = '';
-  recs.forEach(o => recEl.appendChild(makeCard(o, 'pipeline')));
+  const recGroups = {}, recSingles = [];
+  recs.forEach(o => {
+    if (o.bundle) {
+      if (!recGroups[o.bundle]) recGroups[o.bundle] = [];
+      recGroups[o.bundle].push(o);
+    } else {
+      recSingles.push(o);
+    }
+  });
+  sortBundlesByOldest(Object.entries(recGroups))
+    .forEach(([n, arr]) => recEl.appendChild(makeBundleCard(n, arr)));
+  recSingles.forEach(o => recEl.appendChild(makeCard(o, 'pipeline')));
   document.getElementById('pipeline-count').textContent = recs.length;
 
   // ToOrder picks
   const picks = allOrders.filter(o => o.status === 'toOrder');
   const pickedEl = document.getElementById('picked-cards');
   pickedEl.innerHTML = '';
-  picks.forEach(o => pickedEl.appendChild(makeCard(o, 'picked')));
+  const pickGroups = {}, pickSingles = [];
+  picks.forEach(o => {
+    if (o.bundle) {
+      if (!pickGroups[o.bundle]) pickGroups[o.bundle] = [];
+      pickGroups[o.bundle].push(o);
+    } else {
+      pickSingles.push(o);
+    }
+  });
+  sortBundlesByOldest(Object.entries(pickGroups))
+    .forEach(([n, arr]) => pickedEl.appendChild(makeBundleCard(n, arr, 'picked')));
+  pickSingles.forEach(o => pickedEl.appendChild(makeCard(o, 'picked')));
   updateSummary();
 
   // Blanks Ordered
   const blanksEl = document.getElementById('col-blanks');
   blanksEl.innerHTML = '';
-  allOrders.filter(x => x.status === 'blanks')
-           .forEach(o => blanksEl.appendChild(makeCard(o, 'pipeline')));
+  const blankOrders = allOrders.filter(x => x.status === 'blanks');
+  const blankGroups = {}, blankSingles = [];
+  blankOrders.forEach(o => {
+    if (o.bundle) {
+      if (!blankGroups[o.bundle]) blankGroups[o.bundle] = [];
+      blankGroups[o.bundle].push(o);
+    } else {
+      blankSingles.push(o);
+    }
+  });
+  sortBundlesByOldest(Object.entries(blankGroups))
+    .forEach(([n, arr]) => blanksEl.appendChild(makeBundleCard(n, arr)));
+  blankSingles.forEach(o => blanksEl.appendChild(makeCard(o, 'pipeline')));
 
   // Ready To Print
   const printEl = document.getElementById('col-print');
   printEl.innerHTML = '';
-  allOrders.filter(x => x.status === 'print')
-           .forEach(o => printEl.appendChild(makeCard(o, 'pipeline')));
+  const printOrders = allOrders.filter(x => x.status === 'print');
+  const printGroups = {}, printSingles = [];
+  printOrders.forEach(o => {
+    if (o.bundle) {
+      if (!printGroups[o.bundle]) printGroups[o.bundle] = [];
+      printGroups[o.bundle].push(o);
+    } else {
+      printSingles.push(o);
+    }
+  });
+  sortBundlesByOldest(Object.entries(printGroups))
+    .forEach(([n, arr]) => printEl.appendChild(makeBundleCard(n, arr)));
+  printSingles.forEach(o => printEl.appendChild(makeCard(o, 'printProgress')));
 }
 
 // recalc summary from “toOrder” items
@@ -299,6 +708,89 @@ function updateSummary() {
     .join('');
   document.getElementById('cart-total').textContent =
     `Total items: ${summary.Apparel}`;
+}
+
+function startBundle(status) {
+  if (bundleMode) return;
+  const colId = status === 'received' ? 'col-received'
+               : status === 'blanks' ? 'col-blanks'
+               : 'col-print';
+  const container = document.getElementById(colId);
+  bundleMode = { status, container, selected: new Set() };
+  container.querySelectorAll('.pipeline-card:not(.bundle-card)').forEach(c => {
+    c.addEventListener('click', toggleBundleSelect, true);
+  });
+}
+
+function toggleBundleSelect(e) {
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+  const card = e.currentTarget;
+  const id = card.dataset.orderId;
+  if (bundleMode.selected.has(id)) {
+    bundleMode.selected.delete(id);
+    card.classList.remove('bundle-selected');
+  } else {
+    bundleMode.selected.add(id);
+    card.classList.add('bundle-selected');
+  }
+}
+
+function cancelBundle() {
+  if (!bundleMode) return;
+  bundleMode.container.querySelectorAll('.pipeline-card:not(.bundle-card)').forEach(c => {
+    c.removeEventListener('click', toggleBundleSelect, true);
+    c.classList.remove('bundle-selected');
+  });
+  bundleMode = null;
+}
+
+async function confirmBundle(name) {
+  if (!bundleMode) return;
+  const ids = Array.from(bundleMode.selected);
+  await window.api.setBundle(ids, name);
+  cancelBundle();
+  await renderBoard();
+}
+
+function promptBundleName() {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('bundle-name-overlay');
+    const input = document.getElementById('bundle-name-input');
+    const confirmBtn = document.getElementById('bundle-name-confirm');
+    const cancelBtn = document.getElementById('bundle-name-cancel');
+
+    function cleanup() {
+      overlay.classList.add('hidden');
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      input.removeEventListener('keydown', onKey);
+    }
+
+    function onConfirm() {
+      const val = input.value.trim();
+      cleanup();
+      resolve(val);
+    }
+
+    function onCancel() {
+      cleanup();
+      resolve('');
+    }
+
+    function onKey(e) {
+      if (e.key === 'Enter') onConfirm();
+      if (e.key === 'Escape') onCancel();
+    }
+
+    overlay.classList.remove('hidden');
+    input.value = '';
+    input.focus();
+
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    input.addEventListener('keydown', onKey);
+  });
 }
 
 function makeDropZone(el, status) {
@@ -323,15 +815,18 @@ function makeDropZone(el, status) {
     const id = e.dataTransfer.getData('text/plain');
     console.log(`→ drop: id="${id}" status="${status}"`);
 
-    // 2) Bail if it's empty (no point in calling updateStatus)
     if (!id) {
       console.warn('Drop ignored: no order ID present');
       return;
     }
 
-    // 3) Proceed with your normal update + re-render
     try {
-      await window.api.updateStatus(id, status);
+      if (id.startsWith('bundle:')) {
+        const name = id.slice(7);
+        await window.api.updateBundleStatus(name, status);
+      } else {
+        await window.api.updateStatus(id, status);
+      }
       await renderBoard();
     } catch (err) {
       console.error('Error updating status on drop:', err);
@@ -437,6 +932,42 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // Bundle buttons
+  const bundleConfigs = [
+    { start: 'received-bundle-start', confirm: 'received-bundle-confirm', cancel: 'received-bundle-cancel', status: 'received' },
+    { start: 'blanks-bundle-start', confirm: 'blanks-bundle-confirm', cancel: 'blanks-bundle-cancel', status: 'blanks' },
+    { start: 'print-bundle-start', confirm: 'print-bundle-confirm', cancel: 'print-bundle-cancel', status: 'print' }
+  ];
+  bundleConfigs.forEach(cfg => {
+    const s = document.getElementById(cfg.start);
+    const c = document.getElementById(cfg.confirm);
+    const x = document.getElementById(cfg.cancel);
+    if (!s || !c || !x) return;
+    s.addEventListener('click', () => {
+      startBundle(cfg.status);
+      s.classList.add('hidden');
+      c.classList.remove('hidden');
+      x.classList.remove('hidden');
+    });
+    x.addEventListener('click', () => {
+      cancelBundle();
+      s.classList.remove('hidden');
+      c.classList.add('hidden');
+      x.classList.add('hidden');
+    });
+    c.addEventListener('click', async () => {
+      const name = await promptBundleName();
+      if (name) {
+        await confirmBundle(name);
+      } else {
+        cancelBundle();
+      }
+      s.classList.remove('hidden');
+      c.classList.add('hidden');
+      x.classList.add('hidden');
+    });
+  });
 
   setupDropZones();
   renderBoard();
