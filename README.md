@@ -22,29 +22,41 @@ PrintMO Order Management is a cross-platform desktop app (Electron + Node.js) I 
    - Perfect-square cards with shimmer animation, live “time-ago” badges, and delete controls.  
    - **Detail modal** shows variant info, line-item quantities, per-item cost, discounts, and totals.
 
-    **This here is a visualization of what the dashboard looks like. It was just deployed, but when more orders come in, the cards auto layout to fit cleanly**
+    **This here is a visualization of what the dashboard looks like**
    
-   ![image](https://github.com/user-attachments/assets/f68fadc7-8d32-4482-a87e-7a544896651f)
+   ![image](https://github.com/user-attachments/assets/942b1fcf-a8f6-468c-8548-21eb77c0dfeb)
 
    **Upon clicking an order card, it will open a detail modal to show all of the details about the order**
    
-    ![image](https://github.com/user-attachments/assets/f5bdb4a5-2296-40c1-9bdd-21eddce4fdad)
+    ![image](https://github.com/user-attachments/assets/1b5cd760-2705-4146-af0a-f46a76148553)
 
 
+4. **Order Management Enhancements**
+   - Bundle cards together for batching related jobs.
+   - Attach art files by dragging them onto an order card.
+   - Edit customer notes inline to capture special instructions.
+   - Check off blanks readiness and track print progress visually. Cards change colors to indicate the materials for the order that are ready.
+  
+   **Art files are centralized to each order, and accessible to each of us in the business**
+   ![image](https://github.com/user-attachments/assets/600ccb99-ccf4-4c7d-8b91-1cc3d75a718b)
 
-5. **Batch & Submit in One Click**  
-   - Drag multiple cards into the **Create Blanks Order** zone.  
+   **A progress bar indicates how far along we are on an order, to help us prioritize what needs to be done**
+   ![image](https://github.com/user-attachments/assets/b558a0cf-7d17-4835-b04f-9795d7894ec3)
+
+   **Orders can be bundled together to help prevent clutter on the dashboard**
+   ![image](https://github.com/user-attachments/assets/9722cabb-41a2-4f40-97c7-18e20373577b)
+
+
+6. **Batch & Submit in One Click**
+   - Drag multiple cards into the **Create Blanks Order** zone.
    - Real-time totals update instantly.  
    - Press **Submit to S&S** → app aggregates SKUs, calls S&S API, then advances cards to `Blanks Ordered`.
 
-   ![image](https://github.com/user-attachments/assets/75bbf7a5-de5d-4dc4-a0ab-8db940081937)
+   ![image](https://github.com/user-attachments/assets/3d6ff0d2-0593-4f06-916f-ec7640c0457e)
 
    **When you click Submit, the app aggregates every SKU in the selected cards and fires a single request to the S&S Activewear API—placing one consolidated blank-apparel order.**
    
    ![image](https://github.com/user-attachments/assets/80ef7c13-d935-4767-84ef-135fb3a80fcc)
-   
-   *Note: The SKU for one of the items were not put in at the time of this screenshot, so it is missing the sweatpants in this order. This issue has since been fixed*
-
 
 
 ---
