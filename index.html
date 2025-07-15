@@ -667,11 +667,15 @@
       flex-direction: column;
       max-height: 90vh;
     }
-    #detail-cust-name {
-      padding-left: 5%;
-      padding-top: 5%;
+    #detail-name-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5% 5% 0;
       margin-bottom: 12px;
     }
+    #detail-cust-name { flex: 1; }
+    #detail-edit-name-btn { margin: 0; }
     #detail-edit-notes-btn {
       margin: 0;
     }
@@ -860,6 +864,32 @@
       font-size: 1rem;
     }
     #notes-modal .buttons {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    /* Name Modal ----------------------- */
+    #name-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      display: grid;
+      place-items: center;
+      transition: opacity 0.3s;
+      z-index: 1550;
+    }
+    #name-overlay.hidden { opacity: 0; pointer-events: none; }
+    #name-modal {
+      background: #fff;
+      border-radius: 8px;
+      padding: 16px;
+      width: 300px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    #name-modal input { width: 100%; padding: 8px; font-size: 1rem; }
+    #name-modal .buttons {
       display: flex;
       justify-content: flex-end;
       gap: 8px;
@@ -1063,7 +1093,10 @@
       <h2 id="detail-order-id"></h2>
       <time id="detail-timestamp"></time>
     </div>
-    <h3 id="detail-cust-name"></h3>
+    <div id="detail-name-row">
+      <h3 id="detail-cust-name"></h3>
+      <button id="detail-edit-name-btn" class="fullscreen-btn">Edit</button>
+    </div>
     <div style="display:flex; justify-content:flex-end; gap:8px; margin:0 5% 8px;">
       <button id="detail-view-notes-btn" class="fullscreen-btn">See Notes</button>
       <button id="detail-edit-notes-btn" class="fullscreen-btn">Edit Notes</button>
@@ -1156,6 +1189,16 @@
     <div class="buttons">
       <button id="notes-confirm">Confirm</button>
       <button id="notes-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="name-overlay" class="hidden">
+  <div id="name-modal">
+    <input id="name-input" type="text" />
+    <div class="buttons">
+      <button id="name-confirm">Confirm</button>
+      <button id="name-cancel">Cancel</button>
     </div>
   </div>
 </div>

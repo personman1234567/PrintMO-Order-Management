@@ -81,6 +81,19 @@ function shrinkTextToFit(el, min = 8) {
   }
 }
 
+// shorten name to first name + last initial if it wraps
+function shortenNameIfWrapped(el) {
+  if (!el) return;
+  const lineHeight = parseFloat(getComputedStyle(el).lineHeight);
+  if (el.scrollHeight > lineHeight * 1.1) {
+    const txt = el.textContent.trim();
+    const idx = txt.indexOf(' ');
+    if (idx > 0 && idx < txt.length - 1) {
+      el.textContent = `${txt.slice(0, idx)} ${txt[idx + 1]}.`;
+    }
+  }
+}
+
 // build a card from the record’s `items` array
 function makeCard(o, style = 'default') {
   const card = document.createElement('div');
@@ -119,6 +132,9 @@ function makeCard(o, style = 'default') {
         <span class="footer-value">$${(o.subtotal||0).toFixed(2)}</span>
       </div>
     `;
+    requestAnimationFrame(() => {
+      card.querySelectorAll('.cust-name').forEach(shortenNameIfWrapped);
+    });
     const hdr = card.querySelector('.card-header');
     const ftr = card.querySelector('.card-footer');
     let cls = '';
@@ -157,6 +173,9 @@ function makeCard(o, style = 'default') {
         <span class="footer-value">$${(o.subtotal||0).toFixed(2)}</span>
       </div>
     `;
+    requestAnimationFrame(() => {
+      card.querySelectorAll('.cust-name').forEach(shortenNameIfWrapped);
+    });
     const hdr = card.querySelector('.card-header');
     const ftr = card.querySelector('.card-footer');
     let cls = '';
@@ -176,7 +195,9 @@ function makeCard(o, style = 'default') {
       </div>
     `;
     requestAnimationFrame(() => {
-      shrinkTextToFit(card.querySelector('.cust-name'));
+      const nameEl = card.querySelector('.cust-name');
+      shrinkTextToFit(nameEl);
+      shortenNameIfWrapped(nameEl);
       shrinkTextToFit(card.querySelector('.counts strong'), 10);
     });
     const hdr = card.querySelector('.card-header');
@@ -191,6 +212,9 @@ function makeCard(o, style = 'default') {
       <div class="order-cust">${custName}</div>
       <div class="counts">Apparel: ${apparel}, Prints: ${prints}</div>
     `;
+    requestAnimationFrame(() => {
+      card.querySelectorAll('.order-cust').forEach(shortenNameIfWrapped);
+    });
   }
 
   card.style.position = 'relative';
@@ -312,6 +336,7 @@ function openDetail(o) {
   document.getElementById('detail-order-id').textContent   = `Order ${orderNum}`;
   document.getElementById('detail-cust-name').textContent = custName;
   document.getElementById('detail-notes').textContent = o.notes || 'No special instructions';
+  document.getElementById('detail-edit-name-btn').onclick = () => openNameModal(o);
   document.getElementById('detail-edit-notes-btn').onclick = () => openNotesModal(o);
   document.getElementById('detail-view-notes-btn').onclick = () => openViewNotesModal(o);
 
@@ -571,6 +596,38 @@ function openNotesModal(order) {
 
   cancelBtn.onclick = () => cleanup();
   overlay.onclick = e => { if (e.target.id === 'notes-overlay') cleanup(); };
+
+  overlay.classList.remove('hidden');
+  input.focus();
+}
+
+function openNameModal(order) {
+  const overlay = document.getElementById('name-overlay');
+  const input = document.getElementById('name-input');
+  const confirmBtn = document.getElementById('name-confirm');
+  const cancelBtn = document.getElementById('name-cancel');
+
+  const [orderNum, custName = ''] = (order.name || '').split(' – ');
+  input.value = custName;
+
+  const cleanup = () => {
+    overlay.classList.add('hidden');
+    confirmBtn.onclick = null;
+    cancelBtn.onclick = null;
+    overlay.onclick = null;
+  };
+
+  confirmBtn.onclick = async () => {
+    const val = input.value.trim();
+    await window.api.updateName(order.name, val);
+    order.name = `${orderNum} – ${val}`;
+    document.getElementById('detail-cust-name').textContent = val;
+    cleanup();
+    await renderBoard();
+  };
+
+  cancelBtn.onclick = () => cleanup();
+  overlay.onclick = e => { if (e.target.id === 'name-overlay') cleanup(); };
 
   overlay.classList.remove('hidden');
   input.focus();

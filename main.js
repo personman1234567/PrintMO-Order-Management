@@ -186,6 +186,21 @@ ipcMain.handle('update-notes', async (_e, orderId, notes) => {
   throw new Error(`Order "${orderId}" not found`);
 });
 
+// ─── IPC: update customer name for an order ─────────────────────────────────
+ipcMain.handle('update-name', async (_e, orderId, newCust) => {
+  const raw = await redis.lRange(QUEUE_KEY, 0, -1);
+  for (let i = 0; i < raw.length; i++) {
+    const o = JSON.parse(raw[i]);
+    if (o.name === orderId) {
+      const [orderNum] = o.name.split(' – ');
+      o.name = `${orderNum} – ${newCust}`;
+      await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
+      return;
+    }
+  }
+  throw new Error(`Order "${orderId}" not found`);
+});
+
 // ─── IPC: update progress for an order ───────────────────────────────────────
 ipcMain.handle('update-progress', async (_e, orderId, progress) => {
   const raw = await redis.lRange(QUEUE_KEY, 0, -1);

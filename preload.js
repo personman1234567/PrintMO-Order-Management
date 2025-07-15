@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('api', {
   addFile: (orderId, file) => ipcRenderer.invoke('add-file', orderId, file),
   removeFiles: (orderId, names) => ipcRenderer.invoke('remove-files', orderId, names),
   updateNotes: (orderId, notes) => ipcRenderer.invoke('update-notes', orderId, notes),
+  updateName:  (orderId, name) => ipcRenderer.invoke('update-name', orderId, name),
   updateProgress: (orderId, progress) => ipcRenderer.invoke('update-progress', orderId, progress)
 });
 
