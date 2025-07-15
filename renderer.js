@@ -13,7 +13,12 @@ const APPAREL_ICON = typeof window.getAssetPath === 'function'
 const PRINT_ICON   = typeof window.getAssetPath === 'function'
   ? window.getAssetPath('PrintCount.svg')
   : 'Assets/PrintCount.svg';
-
+const APPAREL_ICON_GREEN = typeof window.getAssetPath === 'function'
+  ? window.getAssetPath('ApparelCountGreen.svg')
+  : 'Assets/ApparelCountGreen.svg';
+const PRINT_ICON_GREEN   = typeof window.getAssetPath === 'function'
+  ? window.getAssetPath('PrintCountGreen.svg')
+  : 'Assets/PrintCountGreen.svg';
 // utility to detect “print” items by SKU or title
 function isPrintItem(li) {
   return PRINT_TITLES.has(li.title);
@@ -105,8 +110,8 @@ function makeCard(o, style = 'default') {
       <div class="card-body">
         <div class="cust-name">${custName}</div>
         <div class="counts">
-          <span class="apparel-count"><img class="count-icon" src="${APPAREL_ICON}" alt="" /> ${apparel}</span>
-          <span class="prints-count"><img class="count-icon" src="${PRINT_ICON}" alt="" /> ${prints}</span>
+          <span class="apparel-count"><img class="count-icon" src="${o.blanksOrdered ? APPAREL_ICON_GREEN : APPAREL_ICON}" alt="" /> ${apparel}</span>
+          <span class="prints-count"><img class="count-icon" src="${o.printsOrdered ? PRINT_ICON_GREEN : PRINT_ICON}" alt="" /> ${prints}</span>
         </div>
       </div>
       <div class="card-footer">
@@ -142,8 +147,8 @@ function makeCard(o, style = 'default') {
         <div class="normal-view">
           <div class="cust-name">${custName}</div>
           <div class="counts">
-            <span class="apparel-count"><img class="count-icon" src="${APPAREL_ICON}" alt="" /> ${apparel}</span>
-            <span class="prints-count"><img class="count-icon" src="${PRINT_ICON}" alt="" /> ${prints}</span>
+            <span class="apparel-count"><img class="count-icon" src="${o.blanksOrdered ? APPAREL_ICON_GREEN : APPAREL_ICON}" alt="" /> ${apparel}</span>
+            <span class="prints-count"><img class="count-icon" src="${o.printsOrdered ? PRINT_ICON_GREEN : PRINT_ICON}" alt="" /> ${prints}</span>
           </div>
         </div>
       </div>
@@ -354,25 +359,36 @@ function openDetail(o) {
 
   const chkBlanks = document.getElementById('chk-blanks');
   const chkPrints = document.getElementById('chk-prints');
+  const chkBlanksOrd = document.getElementById('chk-blanks-ordered');
+  const chkPrintsOrd = document.getElementById('chk-prints-ordered');
   const applyBtn  = document.getElementById('ready-apply');
   chkBlanks.checked = !!o.blanksStatus;
   chkPrints.checked = !!o.printsStatus;
+  chkBlanksOrd.checked = !!o.blanksOrdered;
+  chkPrintsOrd.checked = !!o.printsOrdered;
   applyBtn.classList.add('hidden');
 
   const updateApply = () => {
-    const b = chkBlanks.checked ? 1 : 0;
-    const p = chkPrints.checked ? 1 : 0;
-    if (b !== (o.blanksStatus || 0) || p !== (o.printsStatus || 0)) {
+    const b  = chkBlanks.checked ? 1 : 0;
+    const p  = chkPrints.checked ? 1 : 0;
+    const bo = chkBlanksOrd.checked ? 1 : 0;
+    const po = chkPrintsOrd.checked ? 1 : 0;
+    if (b !== (o.blanksStatus || 0) || p !== (o.printsStatus || 0) ||
+        bo !== (o.blanksOrdered || 0) || po !== (o.printsOrdered || 0)) {
       applyBtn.classList.remove('hidden');
     } else {
       applyBtn.classList.add('hidden');
     }
   };
-  chkBlanks.onchange = chkPrints.onchange = updateApply;
+  [chkBlanks, chkPrints, chkBlanksOrd, chkPrintsOrd].forEach(el => {
+    el.onchange = updateApply;
+  });
   applyBtn.onclick = async () => {
     const blanks = chkBlanks.checked ? 1 : 0;
     const prints = chkPrints.checked ? 1 : 0;
-    await window.api.updateReady(o.name, blanks, prints);
+    const blanksOrd = chkBlanksOrd.checked ? 1 : 0;
+    const printsOrd = chkPrintsOrd.checked ? 1 : 0;
+    await window.api.updateReady(o.name, blanks, prints, blanksOrd, printsOrd);
     await renderBoard();
     applyBtn.classList.add('hidden');
     const bundleOverlay = document.getElementById('bundle-overlay');

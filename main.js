@@ -72,6 +72,8 @@ ipcMain.handle('get-queue', async () => {
     if (!o.status) { o.status = 'received'; updated = true; }
     if (typeof o.blanksStatus !== 'number') { o.blanksStatus = 0; updated = true; }
     if (typeof o.printsStatus !== 'number') { o.printsStatus = 0; updated = true; }
+    if (typeof o.blanksOrdered !== 'number') { o.blanksOrdered = 0; updated = true; }
+    if (typeof o.printsOrdered !== 'number') { o.printsOrdered = 0; updated = true; }
     if (typeof o.bundle !== 'string') { o.bundle = ''; updated = true; }
     if (!Array.isArray(o.attachments)) { o.attachments = []; updated = true; }
     if (typeof o.notes !== 'string') { o.notes = ''; updated = true; }
@@ -111,13 +113,15 @@ ipcMain.handle('update-bundle-status', async (_e, bundleName, status) => {
 });
 
 // ─── IPC: update blanks/prints readiness ─────────────────────────────────────
-ipcMain.handle('update-ready', async (_e, orderId, blanksStatus, printsStatus) => {
+ipcMain.handle('update-ready', async (_e, orderId, blanksStatus, printsStatus, blanksOrdered, printsOrdered) => {
   const raw = await redis.lRange(QUEUE_KEY, 0, -1);
   for (let i = 0; i < raw.length; i++) {
     const o = JSON.parse(raw[i]);
     if (o.name === orderId) {
       o.blanksStatus = blanksStatus;
       o.printsStatus = printsStatus;
+      if (typeof blanksOrdered === 'number') o.blanksOrdered = blanksOrdered;
+      if (typeof printsOrdered === 'number') o.printsOrdered = printsOrdered;
       await redis.lSet(QUEUE_KEY, i, JSON.stringify(o));
       return;
     }

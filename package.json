@@ -37,6 +37,14 @@
       {
         "from": "Assets/PrintCount.svg",
         "to": "Assets/PrintCount.svg"
+        },
+      {
+        "from": "Assets/ApparelCountGreen.svg",
+        "to": "Assets/ApparelCountGreen.svg"
+      },
+      {
+        "from": "Assets/PrintCountGreen.svg",
+        "to": "Assets/PrintCountGreen.svg"
       }
     ],
     "files": [
