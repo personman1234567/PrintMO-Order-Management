@@ -326,8 +326,66 @@ function closeBundleModal() {
   overlay.onclick = null;
 }
 
+function renderOrderAssets(order) {
+  const listEl = document.getElementById('detail-asset-list');
+  const placeholder = document.getElementById('detail-assets-placeholder');
+  if (!listEl || !placeholder) return;
+
+  listEl.innerHTML = '';
+
+  const assets = [];
+  (order.items || []).forEach(item => {
+    (item.assets || []).forEach(asset => {
+      const url = typeof asset === 'string' ? asset : asset && asset.url;
+      if (typeof url !== 'string') return;
+      if (!url.toLowerCase().includes('/orders/')) return;
+      const isSvg = /\.svg(\?|$)/i.test(url);
+      assets.push({ url, isSvg });
+    });
+  });
+
+  if (!assets.length) {
+    placeholder.classList.remove('hidden');
+    return;
+  }
+
+  placeholder.classList.add('hidden');
+
+  assets.forEach(({ url, isSvg }, idx) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'detail-asset';
+
+    if (isSvg) {
+      const link = document.createElement('a');
+      link.href = url;
+      link.textContent = 'Download SVG';
+      link.download = url.split('/').pop() || `order-asset-${idx + 1}.svg`;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      wrapper.appendChild(link);
+    } else {
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = `Order asset ${idx + 1}`;
+      img.loading = 'lazy';
+      wrapper.appendChild(img);
+
+      const link = document.createElement('a');
+      link.href = url;
+      link.textContent = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.className = 'detail-asset-link';
+      wrapper.appendChild(link);
+    }
+
+    listEl.appendChild(wrapper);
+  });
+}
+
 function openDetail(o) {
   detailOrder = o;
+  renderOrderAssets(o);
   // fill header
   document.getElementById('detail-timestamp').textContent = new Date(o.receivedAt).toLocaleString();
 
