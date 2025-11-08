@@ -15,7 +15,8 @@ contextBridge.exposeInMainWorld('api', {
   removeFiles: (orderId, names) => ipcRenderer.invoke('remove-files', orderId, names),
   updateNotes: (orderId, notes) => ipcRenderer.invoke('update-notes', orderId, notes),
   updateName:  (orderId, name) => ipcRenderer.invoke('update-name', orderId, name),
-  updateProgress: (orderId, progress) => ipcRenderer.invoke('update-progress', orderId, progress)
+  updateProgress: (orderId, progress) => ipcRenderer.invoke('update-progress', orderId, progress),
+  downloadAsset: (url, filename) => ipcRenderer.invoke('download-asset', url, filename)
 });
 
 contextBridge.exposeInMainWorld('getAssetPath', file =>

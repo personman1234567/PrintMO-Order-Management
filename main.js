@@ -1,5 +1,5 @@
 // main.js
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const dotenv = require('dotenv');
@@ -22,6 +22,10 @@ if (fs.existsSync(envPath)) {
 
 const { createClient } = require('redis');
 const fetch = require('node-fetch');
+
+function safeDownloadName(name) {
+  return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+}
 
 // ─── Redis & Env Setup ───────────────────────────────────────────────────────
 const redis = createClient({ url: process.env.REDIS_URL });
@@ -293,6 +297,23 @@ ipcMain.handle('process-batch', async (_e, orderIds) => {
   return { orderNumber: created.orderNumber, count: toProcess.length };
 });
 
+
+ipcMain.handle('download-asset', async (_event, url, suggestedName) => {
+  const safeName = safeDownloadName((suggestedName || 'order-asset').trim() || 'order-asset');
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    defaultPath: safeName
+  });
+  if (canceled || !filePath) {
+    return { canceled: true };
+  }
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch asset (${resp.status})`);
+  }
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  await fs.promises.writeFile(filePath, buffer);
+  return { canceled: false, filePath };
+});
 // ─── Create the window ────────────────────────────────────────────────────────
 function createWindow() {
   const win = new BrowserWindow({

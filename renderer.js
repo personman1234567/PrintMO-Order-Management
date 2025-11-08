@@ -6,6 +6,8 @@ let detailOrder = null;
 let fileRemoveMode = false;
 const selectedFiles = new Set();
 let notesResizeHandler = null;
+let detailAssetRenderToken = 0;
+const detailAssetBlobUrls = new Set();
 
 const APPAREL_ICON = typeof window.getAssetPath === 'function'
   ? window.getAssetPath('ApparelCount.svg')
@@ -326,11 +328,110 @@ function closeBundleModal() {
   overlay.onclick = null;
 }
 
+const ASSET_PREVIEW_MAX_ATTEMPTS = 3;
+const ASSET_PREVIEW_RETRY_DELAY = 800;
+
+function cleanupDetailAssetPreviews() {
+  detailAssetBlobUrls.forEach(url => URL.revokeObjectURL(url));
+  detailAssetBlobUrls.clear();
+}
+
+function detailAssetFilename(url, idx) {
+  try {
+    const parsed = new URL(url);
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    if (parts.length) return parts[parts.length - 1];
+  } catch (err) {
+    // ignore parse issues
+  }
+  return `order-asset-${idx + 1}`;
+}
+
+function addCacheBustParam(url, attempt) {
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}cb=${Date.now()}_${attempt}`;
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function fetchAssetBlobWithRetry(url, attempts = ASSET_PREVIEW_MAX_ATTEMPTS, delayMs = ASSET_PREVIEW_RETRY_DELAY) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const resp = await fetch(url, { cache: 'no-store' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return await resp.blob();
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) {
+        await delay(delayMs);
+      }
+    }
+  }
+  throw lastErr;
+}
+
+async function loadSvgPreview(url, token) {
+  const blob = await fetchAssetBlobWithRetry(url);
+  const objectUrl = URL.createObjectURL(blob);
+  if (token !== detailAssetRenderToken) {
+    URL.revokeObjectURL(objectUrl);
+    return null;
+  }
+  detailAssetBlobUrls.add(objectUrl);
+  return objectUrl;
+}
+
+function loadRasterPreview(img, url, token, onFail) {
+  let attempt = 0;
+  const setSrc = () => {
+    if (token !== detailAssetRenderToken) return;
+    attempt += 1;
+    img.src = attempt === 1 ? url : addCacheBustParam(url, attempt);
+  };
+  const handleError = () => {
+    if (token !== detailAssetRenderToken) return;
+    if (attempt < ASSET_PREVIEW_MAX_ATTEMPTS) {
+      setTimeout(setSrc, ASSET_PREVIEW_RETRY_DELAY);
+    } else if (typeof onFail === 'function') {
+      onFail();
+    }
+  };
+  img.addEventListener('error', handleError);
+  img.addEventListener('load', () => {
+    img.dataset.loaded = 'true';
+  }, { once: true });
+  setSrc();
+}
+
+async function handleAssetDownload(url, filename, btn) {
+  if (!window.api || typeof window.api.downloadAsset !== 'function') {
+    alert('Download is not available in this build.');
+    return;
+  }
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Downloading...';
+  try {
+    await window.api.downloadAsset(url, filename);
+  } catch (err) {
+    console.error('Failed to download asset', err);
+    alert(`Download failed: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
 function renderOrderAssets(order) {
   const listEl = document.getElementById('detail-asset-list');
   const placeholder = document.getElementById('detail-assets-placeholder');
   if (!listEl || !placeholder) return;
 
+  const token = ++detailAssetRenderToken;
+  cleanupDetailAssetPreviews();
   listEl.innerHTML = '';
 
   const assets = [];
@@ -352,31 +453,55 @@ function renderOrderAssets(order) {
   placeholder.classList.add('hidden');
 
   assets.forEach(({ url, isSvg }, idx) => {
+    if (token !== detailAssetRenderToken) return;
     const wrapper = document.createElement('div');
     wrapper.className = 'detail-asset';
 
-    if (isSvg) {
-      const link = document.createElement('a');
-      link.href = url;
-      link.textContent = 'Download SVG';
-      link.download = url.split('/').pop() || `order-asset-${idx + 1}.svg`;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      wrapper.appendChild(link);
-    } else {
-      const img = document.createElement('img');
-      img.src = url;
-      img.alt = `Order asset ${idx + 1}`;
-      img.loading = 'lazy';
-      wrapper.appendChild(img);
+    const img = document.createElement('img');
+    img.alt = `Order asset ${idx + 1}`;
+    img.loading = 'lazy';
+    wrapper.appendChild(img);
 
-      const link = document.createElement('a');
-      link.href = url;
-      link.textContent = url;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.className = 'detail-asset-link';
-      wrapper.appendChild(link);
+    const status = document.createElement('p');
+    status.className = 'detail-asset-status hidden';
+    status.textContent = 'Preview unavailable';
+    wrapper.appendChild(status);
+
+    const downloadBtn = document.createElement('button');
+    downloadBtn.className = 'detail-asset-download';
+    downloadBtn.textContent = 'Download';
+    const filename = detailAssetFilename(url, idx);
+    downloadBtn.addEventListener('click', () => handleAssetDownload(url, filename, downloadBtn));
+    wrapper.appendChild(downloadBtn);
+
+    const showUnavailable = () => {
+      if (status.classList.contains('hidden')) {
+        status.classList.remove('hidden');
+      }
+    };
+
+    if (isSvg) {
+      loadSvgPreview(url, token)
+        .then(objectUrl => {
+          if (objectUrl && token === detailAssetRenderToken) {
+            img.src = objectUrl;
+          } else if (objectUrl) {
+            URL.revokeObjectURL(objectUrl);
+          }
+        })
+        .catch(err => {
+          console.warn('Unable to load SVG preview', err);
+          if (token === detailAssetRenderToken) {
+            img.remove();
+            showUnavailable();
+          }
+        });
+    } else {
+      loadRasterPreview(img, url, token, () => {
+        if (token !== detailAssetRenderToken) return;
+        img.remove();
+        showUnavailable();
+      });
     }
 
     listEl.appendChild(wrapper);
@@ -509,6 +634,11 @@ function closeDetail() {
   const overlay = document.getElementById('detail-overlay');
   overlay.classList.replace('visible', 'hidden');
   document.body.classList.remove('detail-open');
+  cleanupDetailAssetPreviews();
+  const assetList = document.getElementById('detail-asset-list');
+  if (assetList) assetList.innerHTML = '';
+  const placeholder = document.getElementById('detail-assets-placeholder');
+  if (placeholder) placeholder.classList.remove('hidden');
   document.querySelector('.pipeline').classList.remove('no-delete');
   if (notesResizeHandler) {
     window.removeEventListener('resize', notesResizeHandler);

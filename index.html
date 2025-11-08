@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: blob: https:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https:; font-src 'self' data:;">
   <title>PrintMO Order Management</title>
   <style>
     /* ─── Global & Layout ─────────────────────────────────── */
@@ -706,9 +708,26 @@
       border-radius: 4px;
       background: #fafafa;
     }
-    .detail-asset-link {
-      word-break: break-all;
+    .detail-asset-download {
+      align-self: flex-start;
+      padding: 6px 12px;
+      border-radius: 4px;
+      border: 1px solid #1a73e8;
+      background: #1a73e8;
+      color: #fff;
       font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .detail-asset-download:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .detail-asset-status {
+      font-size: 0.8rem;
+      color: #a00;
+    }
+    .detail-asset-status.hidden {
+      display: none;
     }
     .detail-assets-empty {
       font-size: 0.9rem;
