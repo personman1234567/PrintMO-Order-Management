@@ -347,6 +347,45 @@ function detailAssetFilename(url, idx) {
   return `order-asset-${idx + 1}`;
 }
 
+function assetLabelFromUrl(url, idx) {
+  const base = detailAssetFilename(url, idx);
+  const noQuery = base.split('?')[0];
+  const trimmed = noQuery.replace(/\.(png|svg|jpe?g)$/i, '');
+  return trimmed || base;
+}
+
+function splitOrderAssets(order) {
+  const seen = new Set();
+  const buckets = { mockups: [], front: [], back: [], extras: [] };
+  (order.items || []).forEach(item => {
+    (item.assets || []).forEach(asset => {
+      const url = typeof asset === 'string' ? asset : asset && asset.url;
+      if (typeof url !== 'string') return;
+      if (!url.toLowerCase().includes('/orders/')) return;
+      const norm = url.toLowerCase();
+      if (seen.has(norm)) return;
+      seen.add(norm);
+
+      const isSvg = /\.svg(\?|$)/i.test(url);
+      const isMockup = /side\.png(\?|$)/i.test(norm);
+      const isFront = /(front\.(svg|png|jpe?g)|_front(?:\.[a-z0-9]+)?)(\?|$)/i.test(norm);
+      const isBack = /(back\.(svg|png|jpe?g)|_back(?:\.[a-z0-9]+)?)(\?|$)/i.test(norm);
+
+      const entry = { url, isSvg };
+      if (isMockup) {
+        buckets.mockups.push(entry);
+      } else if (isFront) {
+        buckets.front.push(entry);
+      } else if (isBack) {
+        buckets.back.push(entry);
+      } else {
+        buckets.extras.push(entry);
+      }
+    });
+  });
+  return buckets;
+}
+
 function addCacheBustParam(url, attempt) {
   const sep = url.includes('?') ? '&' : '?';
   return `${url}${sep}cb=${Date.now()}_${attempt}`;
@@ -406,6 +445,22 @@ function loadRasterPreview(img, url, token, onFail) {
   setSrc();
 }
 
+function openAssetViewer(url) {
+  const overlay = document.getElementById('asset-viewer');
+  const img = document.getElementById('asset-viewer-img');
+  if (!overlay || !img) return;
+  img.src = url;
+  overlay.classList.remove('hidden');
+}
+
+function closeAssetViewer() {
+  const overlay = document.getElementById('asset-viewer');
+  const img = document.getElementById('asset-viewer-img');
+  if (!overlay || !img) return;
+  img.src = '';
+  overlay.classList.add('hidden');
+}
+
 async function handleAssetDownload(url, filename, btn) {
   if (!window.api || typeof window.api.downloadAsset !== 'function') {
     alert('Download is not available in this build.');
@@ -426,86 +481,159 @@ async function handleAssetDownload(url, filename, btn) {
 }
 
 function renderOrderAssets(order) {
-  const listEl = document.getElementById('detail-asset-list');
-  const placeholder = document.getElementById('detail-assets-placeholder');
-  if (!listEl || !placeholder) return;
+  const mockupTrack = document.getElementById('detail-mockups-track');
+  const mockupPlaceholder = document.getElementById('detail-mockups-placeholder');
+  const designPlaceholder = document.getElementById('detail-designs-placeholder');
+  const lists = {
+    front: document.getElementById('design-front-list'),
+    back: document.getElementById('design-back-list'),
+    extras: document.getElementById('design-extras-list'),
+  };
+  const groups = {
+    front: document.getElementById('design-group-front'),
+    back: document.getElementById('design-group-back'),
+    extras: document.getElementById('design-group-extras'),
+  };
+  if (!mockupTrack || !mockupPlaceholder || !designPlaceholder ||
+      !lists.front || !lists.back || !lists.extras ||
+      !groups.front || !groups.back || !groups.extras) return;
 
   const token = ++detailAssetRenderToken;
   cleanupDetailAssetPreviews();
-  listEl.innerHTML = '';
+  mockupTrack.innerHTML = '';
+  Object.values(lists).forEach(list => { list.innerHTML = ''; });
+  Object.values(groups).forEach(g => g.classList.remove('hidden'));
 
-  const assets = [];
-  (order.items || []).forEach(item => {
-    (item.assets || []).forEach(asset => {
-      const url = typeof asset === 'string' ? asset : asset && asset.url;
-      if (typeof url !== 'string') return;
-      if (!url.toLowerCase().includes('/orders/')) return;
-      const isSvg = /\.svg(\?|$)/i.test(url);
-      assets.push({ url, isSvg });
+  const assets = splitOrderAssets(order);
+
+  if (!assets.mockups.length) {
+    mockupPlaceholder.classList.remove('hidden');
+  } else {
+    mockupPlaceholder.classList.add('hidden');
+    assets.mockups.forEach(({ url, isSvg }, idx) => {
+      if (token !== detailAssetRenderToken) return;
+      const thumb = document.createElement('div');
+      thumb.className = 'mockup-thumb';
+
+      const img = document.createElement('img');
+      img.alt = `Mockup ${idx + 1}`;
+      img.loading = 'lazy';
+      thumb.appendChild(img);
+
+      thumb.addEventListener('click', () => openAssetViewer(img.src || url));
+
+      const showUnavailable = () => {
+        if (!thumb.querySelector('.detail-asset-status')) {
+          const status = document.createElement('div');
+          status.className = 'detail-asset-status';
+          status.textContent = 'Preview unavailable';
+          thumb.appendChild(status);
+        }
+      };
+
+      if (isSvg) {
+        loadSvgPreview(url, token)
+          .then(objectUrl => {
+            if (objectUrl && token === detailAssetRenderToken) {
+              img.src = objectUrl;
+            } else if (objectUrl) {
+              URL.revokeObjectURL(objectUrl);
+            }
+          })
+          .catch(err => {
+            console.warn('Unable to load SVG preview', err);
+            if (token === detailAssetRenderToken) {
+              img.remove();
+              showUnavailable();
+            }
+          });
+      } else {
+        loadRasterPreview(img, url, token, () => {
+          if (token !== detailAssetRenderToken) return;
+          img.remove();
+          showUnavailable();
+        });
+      }
+
+      mockupTrack.appendChild(thumb);
     });
-  });
-
-  if (!assets.length) {
-    placeholder.classList.remove('hidden');
-    return;
   }
 
-  placeholder.classList.add('hidden');
+  const totalDesigns = assets.front.length + assets.back.length + assets.extras.length;
+  designPlaceholder.classList.toggle('hidden', totalDesigns > 0);
 
-  assets.forEach(({ url, isSvg }, idx) => {
-    if (token !== detailAssetRenderToken) return;
-    const wrapper = document.createElement('div');
-    wrapper.className = 'detail-asset';
+  const renderDesignGroup = (listEl, wrapEl, items) => {
+    wrapEl.classList.toggle('hidden', !items.length);
+    if (!items.length) return;
+    items.forEach(({ url, isSvg }, idx) => {
+      if (token !== detailAssetRenderToken) return;
+      const tile = document.createElement('div');
+      tile.className = 'design-tile';
 
-    const img = document.createElement('img');
-    img.alt = `Order asset ${idx + 1}`;
-    img.loading = 'lazy';
-    wrapper.appendChild(img);
+      const thumb = document.createElement('div');
+      thumb.className = 'design-thumb';
+      const img = document.createElement('img');
+      img.alt = assetLabelFromUrl(url, idx);
+      img.loading = 'lazy';
+      thumb.appendChild(img);
+      thumb.addEventListener('click', () => openAssetViewer(img.src || url));
+      tile.appendChild(thumb);
 
-    const status = document.createElement('p');
-    status.className = 'detail-asset-status hidden';
-    status.textContent = 'Preview unavailable';
-    wrapper.appendChild(status);
+      const label = document.createElement('div');
+      label.className = 'design-label';
+      label.textContent = assetLabelFromUrl(url, idx);
+      tile.appendChild(label);
 
-    const downloadBtn = document.createElement('button');
-    downloadBtn.className = 'detail-asset-download';
-    downloadBtn.textContent = 'Download';
-    const filename = detailAssetFilename(url, idx);
-    downloadBtn.addEventListener('click', () => handleAssetDownload(url, filename, downloadBtn));
-    wrapper.appendChild(downloadBtn);
+      const actions = document.createElement('div');
+      actions.className = 'design-actions';
+      const downloadBtn = document.createElement('button');
+      downloadBtn.className = 'detail-asset-download';
+      downloadBtn.textContent = 'Download';
+      const filename = detailAssetFilename(url, idx);
+      downloadBtn.addEventListener('click', () => handleAssetDownload(url, filename, downloadBtn));
+      actions.appendChild(downloadBtn);
+      tile.appendChild(actions);
 
-    const showUnavailable = () => {
-      if (status.classList.contains('hidden')) {
+      const status = document.createElement('div');
+      status.className = 'detail-asset-status hidden';
+      status.textContent = 'Preview unavailable';
+      tile.appendChild(status);
+
+      const showUnavailable = () => {
         status.classList.remove('hidden');
-      }
-    };
+      };
 
-    if (isSvg) {
-      loadSvgPreview(url, token)
-        .then(objectUrl => {
-          if (objectUrl && token === detailAssetRenderToken) {
-            img.src = objectUrl;
-          } else if (objectUrl) {
-            URL.revokeObjectURL(objectUrl);
-          }
-        })
-        .catch(err => {
-          console.warn('Unable to load SVG preview', err);
-          if (token === detailAssetRenderToken) {
-            img.remove();
-            showUnavailable();
-          }
+      if (isSvg) {
+        loadSvgPreview(url, token)
+          .then(objectUrl => {
+            if (objectUrl && token === detailAssetRenderToken) {
+              img.src = objectUrl;
+            } else if (objectUrl) {
+              URL.revokeObjectURL(objectUrl);
+            }
+          })
+          .catch(err => {
+            console.warn('Unable to load SVG preview', err);
+            if (token === detailAssetRenderToken) {
+              img.remove();
+              showUnavailable();
+            }
+          });
+      } else {
+        loadRasterPreview(img, url, token, () => {
+          if (token !== detailAssetRenderToken) return;
+          img.remove();
+          showUnavailable();
         });
-    } else {
-      loadRasterPreview(img, url, token, () => {
-        if (token !== detailAssetRenderToken) return;
-        img.remove();
-        showUnavailable();
-      });
-    }
+      }
 
-    listEl.appendChild(wrapper);
-  });
+      listEl.appendChild(tile);
+    });
+  };
+
+  renderDesignGroup(lists.front, groups.front, assets.front);
+  renderDesignGroup(lists.back, groups.back, assets.back);
+  renderDesignGroup(lists.extras, groups.extras, assets.extras);
 }
 
 function openDetail(o) {
@@ -635,10 +763,21 @@ function closeDetail() {
   overlay.classList.replace('visible', 'hidden');
   document.body.classList.remove('detail-open');
   cleanupDetailAssetPreviews();
-  const assetList = document.getElementById('detail-asset-list');
-  if (assetList) assetList.innerHTML = '';
-  const placeholder = document.getElementById('detail-assets-placeholder');
-  if (placeholder) placeholder.classList.remove('hidden');
+  const mockupTrack = document.getElementById('detail-mockups-track');
+  if (mockupTrack) mockupTrack.innerHTML = '';
+  const mockupPlaceholder = document.getElementById('detail-mockups-placeholder');
+  if (mockupPlaceholder) mockupPlaceholder.classList.remove('hidden');
+  const designPlaceholder = document.getElementById('detail-designs-placeholder');
+  if (designPlaceholder) designPlaceholder.classList.remove('hidden');
+  ['design-front-list', 'design-back-list', 'design-extras-list'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '';
+  });
+  ['design-group-front', 'design-group-back', 'design-group-extras'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('hidden');
+  });
+  closeAssetViewer();
   document.querySelector('.pipeline').classList.remove('no-delete');
   if (notesResizeHandler) {
     window.removeEventListener('resize', notesResizeHandler);
@@ -1228,6 +1367,20 @@ document.addEventListener('DOMContentLoaded', () => {
       c.classList.add('hidden');
       x.classList.add('hidden');
     });
+  });
+
+  const assetViewer = document.getElementById('asset-viewer');
+  const assetViewerClose = document.getElementById('asset-viewer-close');
+  if (assetViewer) {
+    assetViewer.addEventListener('click', (e) => {
+      if (e.target === assetViewer) closeAssetViewer();
+    });
+  }
+  if (assetViewerClose) {
+    assetViewerClose.addEventListener('click', closeAssetViewer);
+  }
+  document.addEventListener('keyup', (e) => {
+    if (e.key === 'Escape') closeAssetViewer();
   });
 
   setupDropZones();

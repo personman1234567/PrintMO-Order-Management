@@ -678,45 +678,145 @@
       flex: 1;
       min-height: 0;
     }
-    #detail-assets-column {
-      width: 260px;
-      border-right: 1px solid #eee;
-      padding-right: 16px;
+    #detail-mockups-strip {
+      flex: 0 0 15vh;
+      min-height: 100px;
+      max-height: 170px;
+      padding: 12px 16px;
+      background: #f6f7fb;
+      border-bottom: 1px solid #e6e8ef;
+      display: flex;
+      align-items: center;
+      overflow: hidden;
+      position: relative;
+    }
+    #detail-mockups-track {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      overflow-x: auto;
+      padding-bottom: 6px;
+      width: 100%;
+      height: 100%;
+      scrollbar-width: thin;
+    }
+    #detail-mockups-track::-webkit-scrollbar {
+      height: 8px;
+    }
+    #detail-mockups-track::-webkit-scrollbar-thumb {
+      background: #c8d2e6;
+      border-radius: 999px;
+    }
+    .mockup-thumb {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #fff;
+      border: 1px solid #e0e6f0;
+      border-radius: 10px;
+      padding: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      min-width: 90px;
+      cursor: pointer;
+    }
+    .mockup-thumb img {
+      height: 100%;
+      width: auto;
+      object-fit: contain;
+      display: block;
+    }
+    .detail-assets-empty {
+      font-size: 0.9rem;
+      color: #666;
+    }
+    #detail-design-panel {
+      width: 320px;
+      flex: 0 0 320px;
+      border-left: 1px solid #eee;
+      padding-left: 12px;
       display: flex;
       flex-direction: column;
+      background: #fafbff;
       min-height: 0;
     }
-    #detail-assets-column h4 {
-      margin: 0 0 8px;
+    .design-panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 0 10px;
     }
-    #detail-assets-scroll {
+    .design-panel-body {
       flex: 1;
       overflow-y: auto;
-      padding-right: 4px;
-    }
-    .detail-asset {
+      padding-right: 6px;
       display: flex;
       flex-direction: column;
-      gap: 4px;
-      margin-bottom: 16px;
+      gap: 12px;
     }
-    .detail-asset img {
+    .design-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .design-group-title {
+      font-weight: bold;
+      color: #1f2d3d;
+    }
+    .design-tiles {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+      gap: 10px;
+    }
+    .design-tile {
+      background: #fff;
+      border: 1px solid #e3e7ef;
+      border-radius: 10px;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .design-thumb {
       width: 100%;
-      max-width: 100%;
-      object-fit: contain;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      background: #fafafa;
+      aspect-ratio: 1 / 1;
+      background: #f6f7fb;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      border: 1px solid #e0e6f0;
+      cursor: pointer;
+    }
+    .design-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .design-label {
+      font-size: 0.85rem;
+      color: #2f3a4a;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .design-actions {
+      display: flex;
+      gap: 6px;
     }
     .detail-asset-download {
-      align-self: flex-start;
-      padding: 6px 12px;
-      border-radius: 4px;
+      padding: 6px 8px;
+      border-radius: 6px;
       border: 1px solid #1a73e8;
       background: #1a73e8;
       color: #fff;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       cursor: pointer;
+      flex: 1;
+      text-align: center;
     }
     .detail-asset-download:disabled {
       opacity: 0.6;
@@ -729,9 +829,52 @@
     .detail-asset-status.hidden {
       display: none;
     }
-    .detail-assets-empty {
-      font-size: 0.9rem;
-      color: #666;
+
+    /* Asset viewer */
+    #asset-viewer {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      display: grid;
+      place-items: center;
+      z-index: 1700;
+      transition: opacity 0.2s;
+    }
+    #asset-viewer.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    #asset-viewer .viewer-content {
+      position: relative;
+      max-width: 90vw;
+      max-height: 90vh;
+      background: #000;
+      border-radius: 8px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+      padding: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #asset-viewer img {
+      max-width: 88vw;
+      max-height: 88vh;
+      object-fit: contain;
+      display: block;
+    }
+    #asset-viewer-close {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      background: rgba(0,0,0,0.6);
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
     }
     #detail-main-column {
       flex: 1;
@@ -1172,14 +1315,11 @@
       <h2 id="detail-order-id"></h2>
       <time id="detail-timestamp"></time>
     </div>
+    <div id="detail-mockups-strip">
+      <div id="detail-mockups-track"></div>
+      <p id="detail-mockups-placeholder" class="detail-assets-empty">No mockup previews available</p>
+    </div>
     <div id="detail-content">
-      <aside id="detail-assets-column">
-        <h4>Order Assets</h4>
-        <div id="detail-assets-scroll">
-          <p id="detail-assets-placeholder" class="detail-assets-empty">No order assets available</p>
-          <div id="detail-asset-list"></div>
-        </div>
-      </aside>
       <div id="detail-main-column">
         <div id="detail-name-row">
           <h3 id="detail-cust-name"></h3>
@@ -1238,6 +1378,26 @@
           <button id="ready-apply" class="hidden">Apply</button>
         </div>
       </div>
+      <aside id="detail-design-panel">
+        <div class="design-panel-header">
+          <h4>Design Files</h4>
+        </div>
+        <div class="design-panel-body">
+          <div class="design-group" id="design-group-front">
+            <div class="design-group-title">Front Prints</div>
+            <div class="design-tiles" id="design-front-list"></div>
+          </div>
+          <div class="design-group" id="design-group-back">
+            <div class="design-group-title">Back Prints</div>
+            <div class="design-tiles" id="design-back-list"></div>
+          </div>
+          <div class="design-group" id="design-group-extras">
+            <div class="design-group-title">Extras</div>
+            <div class="design-tiles" id="design-extras-list"></div>
+          </div>
+          <p id="detail-designs-placeholder" class="detail-assets-empty">No design files found</p>
+        </div>
+      </aside>
     </div>
   </div>
 </div>
@@ -1304,11 +1464,18 @@
   </div>
 </div>
 
-<div id="view-notes-overlay" class="hidden">
-  <div id="view-notes-modal">
-    <p id="view-notes-text"></p>
+  <div id="view-notes-overlay" class="hidden">
+    <div id="view-notes-modal">
+      <p id="view-notes-text"></p>
+    </div>
   </div>
-</div>
+
+  <div id="asset-viewer" class="hidden">
+    <div class="viewer-content">
+      <button id="asset-viewer-close">×</button>
+      <img id="asset-viewer-img" alt="Asset preview" />
+    </div>
+  </div>
 
 <div id="blanks-overlay" class="hidden"></div>
 <div id="print-overlay" class="hidden"></div>
