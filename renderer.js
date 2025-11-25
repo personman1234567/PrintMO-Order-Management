@@ -507,9 +507,12 @@ function renderOrderAssets(order) {
   const assets = splitOrderAssets(order);
 
   if (!assets.mockups.length) {
+    mockupTrack.classList.remove('left-align', 'center-align');
     mockupPlaceholder.classList.remove('hidden');
   } else {
     mockupPlaceholder.classList.add('hidden');
+    mockupTrack.classList.remove('left-align', 'center-align');
+    mockupTrack.classList.add(assets.mockups.length >= 4 ? 'left-align' : 'center-align');
     assets.mockups.forEach(({ url, isSvg }, idx) => {
       if (token !== detailAssetRenderToken) return;
       const thumb = document.createElement('div');
