@@ -113,6 +113,8 @@ function makeCard(o, style = 'default') {
     if (isPrintItem(it)) prints += it.qty;
     else apparel += it.qty;
   });
+  const firstMockupUrl = getFirstMockupUrl(o);
+  const hasMockup = !!firstMockupUrl;
 
   if (style === 'pipeline') {
     // PIPELINE style
@@ -122,7 +124,12 @@ function makeCard(o, style = 'default') {
         <span class="order-number">${orderNum}</span>
         <span class="time-ago-pill">${timeAgo(o.receivedAt)}</span>
       </div>
-      <div class="card-body">
+      <div class="card-body ${hasMockup ? 'has-mockup' : 'no-mockup'}">
+        ${hasMockup ? `
+          <div class="mockup-slot">
+            <img src="${firstMockupUrl}" alt="Mockup preview" loading="lazy" />
+          </div>
+        ` : ''}
         <div class="cust-name">${custName}</div>
         <div class="counts">
           <span class="apparel-count"><img class="count-icon" src="${o.blanksOrdered ? APPAREL_ICON_GREEN : APPAREL_ICON}" alt="" /> ${apparel}</span>
@@ -445,6 +452,12 @@ function splitOrderAssets(order) {
     });
   });
   return buckets;
+}
+
+function getFirstMockupUrl(order) {
+  const assets = splitOrderAssets(order);
+  const entry = assets.mockups[0];
+  return entry ? getAssetUrlValue(entry) : '';
 }
 
 function addCacheBustParam(url, attempt) {

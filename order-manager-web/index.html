@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -6,7 +6,7 @@
         content="default-src 'self'; img-src 'self' data: blob: https:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https:; font-src 'self' data:;">
   <title>PrintMO Order Management</title>
   <style>
-    /* ─── Global & Layout ─────────────────────────────────── */
+    /* Global & Layout */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; overflow: hidden; font-family: sans-serif; }
     .hidden { display: none !important; }
@@ -21,7 +21,7 @@
       align-items: stretch;
     }
 
-    /* ─── Panel Base ───────────────────────────────────────── */
+    /* Panel Base */
     .panel {
       background: #fff;
       border-radius: 25px;
@@ -58,7 +58,7 @@
       .fulfillment { gap: 12px; padding: 12px; }
     }
 
-    /* ─── Order Pipeline (Left) ───────────────────────────── */
+    /* Order Pipeline (Left) */
     /* AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA */
     /* Panel container */
     .pipeline {
@@ -83,7 +83,7 @@
       right: 16px;
     }
 
-    /* Cards container: 3‑col flex grid, percent gaps */
+    /* Cards container: 3-col flex grid, percent gaps */
     .pipeline .cards {
       display: flex;
       flex-direction: row;
@@ -97,11 +97,13 @@
       overflow-y: auto;
     }
 
-    /* Each card: 32% width → three across, perfect square */
+    /* Each card: 32% width -> three across, perfect square */
     .cards .pipeline-card {
       flex: 0 0 calc((100% - 2%) / 3);
       max-width: calc((100% - 2%) / 3);
-      aspect-ratio: 1 / 1;
+      max-height: 30%;
+      aspect-ratio: auto;
+      min-height: 250px;
       display: flex;
       flex-direction: column;
       background: #fff;
@@ -168,18 +170,21 @@
 
     /* Body */
     .pipeline-card .card-body {
-      padding: 8px 12px;
+      padding: 10px 12px;
       flex: 1;
       display: flex;
       flex-direction: column;
-      justify-content: center;
-      text-align: left;
+      align-items: center;
+      justify-content: flex-start;
+      text-align: center;
       overflow: hidden;        /* no scrollbars */
     }
     .pipeline-card .cust-name {
-      font-size: 0.95rem;
-      margin: 8px 12px 4px;
-      line-height: 1.2;
+      font-size: 1rem;
+      font-weight: 700;
+      margin: 4px 0 2px;
+      line-height: 1.25;
+      width: 100%;
     }
 
     /* Counts: no wrapping + 8px inner gap */
@@ -188,12 +193,46 @@
       justify-content: center;
       font-size: 0.9rem;
       margin: 0 5px 5px;
-      column-gap: 8px;
+      column-gap: 12px;
+      row-gap: 4px;
       white-space: nowrap; /* never break lines */
+      width: 100%;
     }
     .pipeline-card .counts span {
       display: flex;
       align-items: center;
+    }
+    .pipeline-card .counts span:last-child {
+      margin-left: 2px;
+    }
+    .pipeline-card .mockup-slot {
+      width: 100%;
+      max-width: 180px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .pipeline-card .mockup-slot img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .pipeline-card .card-body.has-mockup {
+      justify-content: flex-start;
+    }
+    .pipeline-card .card-body.no-mockup {
+      justify-content: center;
+      align-items: flex-start;
+      text-align: left;
+    }
+    .pipeline-card .card-body.no-mockup .cust-name {
+      text-align: left;
+    }
+    .pipeline-card .card-body.no-mockup .counts {
+      justify-content: space-between;
     }
 
     /* Footer bar */
@@ -214,7 +253,7 @@
       margin: 0;
     }
 
-    /* ─── HEADER BAR ─────────────────────────────────────── */
+    /* HEADER BAR */
     .pipeline-card .card-header {
       background: #1a73e8;
       color: #fff;
@@ -301,27 +340,34 @@
       background: rgba(0,0,0,0.3);
     }
 
-    /* ─── BODY ───────────────────────────────────────────── */
+    /* BODY */
     .pipeline-card .card-body {
-      padding: 8px 12px;       /* tighter padding for more room */
+      padding: 10px 12px;       /* tighter padding for more room */
       flex: 1;
       display: flex;
       flex-direction: column;
-      justify-content: center;
-      text-align: left;        /* left‑align the content */
+      justify-content: flex-start;
+      align-items: center;
+      text-align: center;        /* center align the content */
+      gap: 8px;
       overflow: hidden;        /* no scrollbars */
     }
     .pipeline-card .cust-name {
       font-size: 1rem;         /* slightly smaller */
-      font-weight: bold;
-      margin: 0 0 4px 0;       /* small bottom gap */
-      line-height: 1.2;
+      font-weight: 700;
+      margin: 4px 0 2px 0;       /* small bottom gap */
+      line-height: 1.25;
+      width: 100%;
     }
     .pipeline-card .counts {
       display: flex;
-      justify-content: space-between;
+      justify-content: center;
       font-size: 0.9rem;
+      margin: 0 5px 5px;
       margin-top: auto;
+      column-gap: 12px;
+      row-gap: 4px;
+      width: 100%;
     }
     .pipeline-card .counts span {
       display: flex;
@@ -334,7 +380,7 @@
       vertical-align: middle;
     }
 
-    /* ─── FOOTER BAR ─────────────────────────────────────── */
+    /* FOOTER BAR */
     .pipeline-card .card-footer {
       background: #1a73e8;
       color: #fff;
@@ -348,7 +394,7 @@
       margin: 0;               /* flush to bottom */
     }
 
-    /* ─── Create Blanks Order (Middle) ────────────────────── */
+    /* Create Blanks Order (Middle) */
     .create {
       /* allow this panel to stretch with the grid */
       align-self: stretch;
@@ -485,7 +531,7 @@
       cursor: default;
     }
 
-    /* ─── Production & Fulfillment (Right) ───────────────── */
+    /* Production & Fulfillment (Right) */
     .fulfillment {
       display: flex;
       gap: 16px;      
@@ -515,7 +561,7 @@
       flex-wrap: wrap;
       justify-content: space-between;  /* three per row; center if fewer */
       align-content: flex-start;       /* rows start at top */
-      gap: 1%;                         /* percent‑based gutter */
+      gap: 1%;                         /* percent-based gutter */
       padding: 16px;
       overflow-y: auto;                /* vertical scrolling when needed */
       background: transparent;
@@ -529,7 +575,7 @@
       flex-direction: column;
     }
 
-    /* ─── Cards (all sections) ───────────────────────────── */
+    /* Cards (all sections) */
     .card {
       background: #fff;
       border-radius: 6px;
@@ -554,7 +600,7 @@
     .card .order-cust,
     .card .counts {
       white-space: normal;
-      overflow: hidden;
+      overflow: clip;
       word-break: break-word;
     }
     .card .order-number {
@@ -1370,7 +1416,7 @@
   <!-- order detail modal -->
 <div id="detail-overlay" class="hidden">
   <div id="detail-card">
-    <button id="detail-close">×</button>
+    <button id="detail-close">&times;</button>
     <div id="detail-header">
       <h2 id="detail-order-id"></h2>
       <time id="detail-timestamp"></time>
@@ -1532,7 +1578,7 @@
 
   <div id="asset-viewer" class="hidden">
     <div class="viewer-content">
-      <button id="asset-viewer-close">×</button>
+      <button id="asset-viewer-close">&times;</button>
       <img id="asset-viewer-img" alt="Asset preview" />
     </div>
   </div>
