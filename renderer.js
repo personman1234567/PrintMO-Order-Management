@@ -1,6 +1,14 @@
 // renderer.js
 
 let allOrders = [];
+let renderTimer = null;
+function scheduleRender() {
+  if (renderTimer) return;
+  renderTimer = setTimeout(async () => {
+    renderTimer = null;
+    await renderBoard();
+  }, 200);
+}
 let bundleMode = null; // {status, selected:Set<string>}
 let detailOrder = null;
 let fileRemoveMode = false;
@@ -51,6 +59,69 @@ const PRINT_TITLES = new Set([
   'Tote Bag Full Print',
   'DTF Print'
 ]);
+
+const MOBILE_TAB_BREAKPOINT = 900;
+const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint'];
+let activeMobileTab = MOBILE_TABS[0];
+let isMobileViewport = false;
+let mobileMediaQuery = null;
+
+/**
+ * Apply the current mobile tab so CSS can scope visibility without re-rendering.
+ * This keeps tab switches instant while providing a single hook for future
+ * selection-mode UI to anchor itself to the active stage.
+ * @param {string} tab - One of MOBILE_TABS to activate.
+ * @param {{scrollTop?: boolean}} [opts] - Allows skipping scroll reset when the tab is applied programmatically.
+ */
+function setActiveMobileTab(tab, opts = {}) {
+  const { scrollTop = true } = opts;
+  const nextTab = MOBILE_TABS.includes(tab) ? tab : MOBILE_TABS[0];
+  activeMobileTab = nextTab;
+  if (document.body) {
+    document.body.dataset.activeTab = nextTab;
+  }
+  document.querySelectorAll('.mobile-tab').forEach(btn => {
+    const isActive = btn.dataset.tab === nextTab;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+  if (scrollTop && isMobileViewport) {
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+}
+
+/**
+ * Sync a cached mobile flag with the breakpoint so other behaviors (such as
+ * future selection mode) can branch cleanly without re-querying media state.
+ * @param {boolean} matches - Whether the mobile media query currently matches.
+ */
+function updateMobileViewportFlag(matches) {
+  isMobileViewport = matches;
+  if (document.body) {
+    document.body.classList.toggle('mobile-mode', matches);
+  }
+  if (matches) {
+    setActiveMobileTab(activeMobileTab, { scrollTop: false });
+  }
+}
+
+/**
+ * Initialize the mobile tab bar so only one stage renders at a time on small
+ * screens. The layout is handled by mobile.css; this just tracks state and
+ * wires up taps.
+ */
+function initMobileTabs() {
+  mobileMediaQuery = window.matchMedia(`(max-width: ${MOBILE_TAB_BREAKPOINT}px)`);
+  updateMobileViewportFlag(mobileMediaQuery.matches);
+  mobileMediaQuery.addEventListener('change', ev => updateMobileViewportFlag(ev.matches));
+
+  const initialTab = document.body?.dataset.activeTab || activeMobileTab;
+  setActiveMobileTab(initialTab, { scrollTop: false });
+
+  document.querySelectorAll('.mobile-tab').forEach(btn => {
+    btn.addEventListener('click', () => setActiveMobileTab(btn.dataset.tab));
+  });
+}
 
 
 function timeAgo(isoDate) {
@@ -1330,58 +1401,87 @@ function setupDropZones() {
   makeDropZone(document.getElementById('col-print'), 'print');
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  // --- real-time: debounce renders so bursts of updates don't spam the UI ---
+  let renderTimer = null;
+  function scheduleRender() {
+    if (renderTimer) return;
+    renderTimer = setTimeout(async () => {
+      renderTimer = null;
+      await renderBoard();
+    }, 200);
+  }
+
+  // Subscribe to server push updates (via web-shim)
+  if (window.api && typeof window.api.subscribeQueueChanges === 'function') {
+    window.api.subscribeQueueChanges((evt) => {
+      if (evt?.type === 'queue_changed') scheduleRender();
+    });
+  } else {
+    console.warn('⚠️ window.api.subscribeQueueChanges is not available (check web-shim.js)');
+  }
+
+  initMobileTabs();
+
   // wire up the four zones
 
   // Submit button
-  document.getElementById('order-submit').addEventListener('click', async () => {
-    const toOrder = allOrders.filter(x => x.status === 'toOrder').map(x => x.name);
-    if (!toOrder.length) {
-      return alert('Drag some cards into “Drag cards here” first.');
-    }
-
-    const btn = document.getElementById('order-submit');
-    btn.textContent = 'Submitting…';
-    btn.disabled = true;
-
-    try {
-      await window.api.processBatch(toOrder);
-      // auto‑move into Blanks Ordered
-      for (const id of toOrder) {
-        await window.api.updateStatus(id, 'blanks');
+  const submitBtn = document.getElementById('order-submit');
+  if (!submitBtn) {
+    console.warn('⚠️ #order-submit button not found');
+  } else {
+    submitBtn.addEventListener('click', async () => {
+      const toOrder = allOrders.filter(x => x.status === 'toOrder').map(x => x.name);
+      if (!toOrder.length) {
+        return alert('Drag some cards into “Drag cards here” first.');
       }
-      await renderBoard();
-      btn.textContent = '✅ Submitted';
 
-      setTimeout(() => {
-        btn.textContent = 'Submit To S&S';
-      }, 3000);
+      submitBtn.textContent = 'Submitting…';
+      submitBtn.disabled = true;
 
-    } catch (err) {
-      btn.textContent = `❌ ${err.message}`;
-    } finally {
-      btn.disabled = false;
-    }
-  });
+      try {
+        await window.api.processBatch(toOrder);
+
+        // auto-move into Blanks Ordered
+        for (const id of toOrder) {
+          await window.api.updateStatus(id, 'blanks');
+        }
+
+        await renderBoard();
+        submitBtn.textContent = '✅ Submitted';
+
+        setTimeout(() => {
+          submitBtn.textContent = 'Submit To S&S';
+        }, 3000);
+
+      } catch (err) {
+        submitBtn.textContent = `❌ ${err?.message || err}`;
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  }
 
   const clearBtn = document.getElementById('clear-picked');
   if (!clearBtn) {
     console.warn('⚠️ #clear-picked button not found');
   } else {
     clearBtn.addEventListener('click', async () => {
-      // grab all currently “toOrder”
       const toOrder = allOrders
         .filter(o => o.status === 'toOrder')
         .map(o => o.name);
-      if (!toOrder.length) return;           // nothing to clear
+
+      if (!toOrder.length) return;
 
       clearBtn.disabled = true;
-      // move each back to “received”
-      for (const id of toOrder) {
-        await window.api.updateStatus(id, 'received');
+      try {
+        for (const id of toOrder) {
+          await window.api.updateStatus(id, 'received');
+        }
+        await renderBoard();
+      } finally {
+        clearBtn.disabled = false;
       }
-      await renderBoard();
-      clearBtn.disabled = false;
     });
   }
 
@@ -1428,18 +1528,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const c = document.getElementById(cfg.confirm);
     const x = document.getElementById(cfg.cancel);
     if (!s || !c || !x) return;
+
     s.addEventListener('click', () => {
       startBundle(cfg.status);
       s.classList.add('hidden');
       c.classList.remove('hidden');
       x.classList.remove('hidden');
     });
+
     x.addEventListener('click', () => {
       cancelBundle();
       s.classList.remove('hidden');
       c.classList.add('hidden');
       x.classList.add('hidden');
     });
+
     c.addEventListener('click', async () => {
       const name = await promptBundleName();
       if (name) {
@@ -1468,5 +1571,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   setupDropZones();
-  renderBoard();
+
+  // Initial render (await so allOrders is populated before interactions happen)
+  await renderBoard();
 });

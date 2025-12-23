@@ -60,6 +60,69 @@ const PRINT_TITLES = new Set([
   'DTF Print'
 ]);
 
+const MOBILE_TAB_BREAKPOINT = 900;
+const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint'];
+let activeMobileTab = MOBILE_TABS[0];
+let isMobileViewport = false;
+let mobileMediaQuery = null;
+
+/**
+ * Apply the current mobile tab so CSS can scope visibility without re-rendering.
+ * This keeps tab switches instant while providing a single hook for future
+ * selection-mode UI to anchor itself to the active stage.
+ * @param {string} tab - One of MOBILE_TABS to activate.
+ * @param {{scrollTop?: boolean}} [opts] - Allows skipping scroll reset when the tab is applied programmatically.
+ */
+function setActiveMobileTab(tab, opts = {}) {
+  const { scrollTop = true } = opts;
+  const nextTab = MOBILE_TABS.includes(tab) ? tab : MOBILE_TABS[0];
+  activeMobileTab = nextTab;
+  if (document.body) {
+    document.body.dataset.activeTab = nextTab;
+  }
+  document.querySelectorAll('.mobile-tab').forEach(btn => {
+    const isActive = btn.dataset.tab === nextTab;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+  if (scrollTop && isMobileViewport) {
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+}
+
+/**
+ * Sync a cached mobile flag with the breakpoint so other behaviors (such as
+ * future selection mode) can branch cleanly without re-querying media state.
+ * @param {boolean} matches - Whether the mobile media query currently matches.
+ */
+function updateMobileViewportFlag(matches) {
+  isMobileViewport = matches;
+  if (document.body) {
+    document.body.classList.toggle('mobile-mode', matches);
+  }
+  if (matches) {
+    setActiveMobileTab(activeMobileTab, { scrollTop: false });
+  }
+}
+
+/**
+ * Initialize the mobile tab bar so only one stage renders at a time on small
+ * screens. The layout is handled by mobile.css; this just tracks state and
+ * wires up taps.
+ */
+function initMobileTabs() {
+  mobileMediaQuery = window.matchMedia(`(max-width: ${MOBILE_TAB_BREAKPOINT}px)`);
+  updateMobileViewportFlag(mobileMediaQuery.matches);
+  mobileMediaQuery.addEventListener('change', ev => updateMobileViewportFlag(ev.matches));
+
+  const initialTab = document.body?.dataset.activeTab || activeMobileTab;
+  setActiveMobileTab(initialTab, { scrollTop: false });
+
+  document.querySelectorAll('.mobile-tab').forEach(btn => {
+    btn.addEventListener('click', () => setActiveMobileTab(btn.dataset.tab));
+  });
+}
+
 
 function timeAgo(isoDate) {
   const then = new Date(isoDate);
@@ -1357,6 +1420,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   } else {
     console.warn('⚠️ window.api.subscribeQueueChanges is not available (check web-shim.js)');
   }
+
+  initMobileTabs();
 
   // wire up the four zones
 

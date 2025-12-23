@@ -1384,8 +1384,9 @@
       max-width: calc((100% - 4%) / 5);
     }
   </style>
+  <link rel="stylesheet" href="./mobile.css" />
 </head>
-<body>
+<body data-active-tab="pipeline">
   <div class="container">
     <!-- LEFT: Pipeline -->
     <div class="panel pipeline">
@@ -1395,6 +1396,9 @@
         <button id="received-bundle-start" class="bundle-btn">Bundle</button>
         <button id="received-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
         <button id="received-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
+      </div>
+      <div id="pipeline-selection-shell" class="mobile-selection-shell" aria-hidden="true">
+        <div class="selection-toolbar-placeholder" aria-hidden="true">Selection actions will appear here when selection mode is enabled.</div>
       </div>
       <div class="panel-body cards" id="col-received"></div>
     </div>
@@ -1615,6 +1619,13 @@
 
 <div id="blanks-overlay" class="hidden"></div>
 <div id="print-overlay" class="hidden"></div>
+
+  <nav id="mobile-tab-bar" class="mobile-tab-bar" aria-label="Order manager navigation">
+    <button class="mobile-tab" type="button" data-tab="pipeline">Pipeline</button>
+    <button class="mobile-tab" type="button" data-tab="blanksCart">Blanks Cart</button>
+    <button class="mobile-tab" type="button" data-tab="blanksOrdered">Blanks Ordered</button>
+    <button class="mobile-tab" type="button" data-tab="readyToPrint">Ready To Print</button>
+  </nav>
 
   <!-- existing renderer logic -->
   <script src="./web-shim.js"></script>
