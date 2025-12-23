@@ -2,24 +2,48 @@
 const API_BASE = "https://order-manager-proxy.printmobusiness.workers.dev";
 
 async function apiFetch(path, opts = {}) {
+  const { rawResponse, expect, ...rest } = opts;
   const res = await fetch(`${API_BASE}${path}`, {
-    ...opts,
+    ...rest,
     headers: {
       "Content-Type": "application/json",
-      ...(opts.headers || {}),
+      ...(rest.headers || {}),
     },
   });
 
+  const parseErrorBody = async () => {
+    try {
+      const text = await res.text();
+      if (!text) return "";
+      try {
+        const data = JSON.parse(text);
+        const msg = data?.error || data?.message || data?.msg;
+        if (msg) return String(msg);
+      } catch (_) {
+        // not JSON, fall through
+      }
+      return text;
+    } catch (_) {
+      return "";
+    }
+  };
+
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${res.statusText} ${text}`);
+    const msg = await parseErrorBody();
+    const base = `${res.status} ${res.statusText}`.trim();
+    throw new Error([base, msg].filter(Boolean).join(" - "));
   }
 
+  if (rawResponse) return res;
+
   const ct = res.headers.get("content-type") || "";
+  if (expect === "blob") return res.blob();
+  if (expect === "text") return res.text();
   return ct.includes("application/json") ? res.json() : null;
 }
 
 window.api = window.api || {};
+window.api.transport = "http";
 
 // 1) Populate dashboard
 window.api.getQueue = async () => {
@@ -53,11 +77,26 @@ window.api.setBundle = async (a, b) => {
 };
 
 window.api.updateReady = async (...args) => {
-  // supports either (obj) or (name, partialObj)
-  const payload =
-    (args[0] && typeof args[0] === "object")
-      ? args[0]
-      : { name: args[0], ...(args[1] || {}) };
+  let payload = null;
+  // full object or partial object already
+  if (args[0] && typeof args[0] === "object" && !Array.isArray(args[0])) {
+    payload = { ...args[0] };
+  } else if (typeof args[0] === "string") {
+    const [blanksStatus, printsStatus, blanksOrdered, printsOrdered] = args.slice(1);
+    if (args[1] && typeof args[1] === "object" && !Array.isArray(args[1])) {
+      payload = { name: args[0], ...args[1] };
+    } else {
+      payload = { name: args[0] };
+      if (typeof blanksStatus === "number") payload.blanksStatus = blanksStatus;
+      if (typeof printsStatus === "number") payload.printsStatus = printsStatus;
+      if (typeof blanksOrdered === "number") payload.blanksOrdered = blanksOrdered;
+      if (typeof printsOrdered === "number") payload.printsOrdered = printsOrdered;
+    }
+  }
+
+  if (!payload || !payload.name) {
+    throw new Error("updateReady requires an order name");
+  }
 
   return apiFetch("/order-manager/orders/ready", {
     method: "PATCH",
@@ -87,4 +126,100 @@ window.api.deleteOrder = async (a) => {
     method: "POST",
     body: JSON.stringify(payload),
   });
+};
+
+window.api.updateBundleStatus = async (bundleName, status) => {
+  const payload = (bundleName && typeof bundleName === "object")
+    ? bundleName
+    : { bundle: bundleName, name: bundleName, status };
+
+  return apiFetch("/order-manager/orders/bundle/status", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+};
+
+window.api.processBatch = async (orderIds) => {
+  const names = Array.isArray(orderIds) ? orderIds : [];
+  return apiFetch("/order-manager/orders/process-batch", {
+    method: "POST",
+    body: JSON.stringify({ names }),
+  });
+};
+
+window.api.addFile = async (a, b) => {
+  const payload = (a && typeof a === "object" && !b)
+    ? a
+    : { name: a, orderId: a, file: b };
+
+  return apiFetch("/order-manager/orders/files/add", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+};
+
+window.api.removeFiles = async (a, b) => {
+  const payload = (a && typeof a === "object" && !Array.isArray(b))
+    ? a
+    : { name: a, orderId: a, names: b };
+
+  return apiFetch("/order-manager/orders/files/remove", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+};
+
+function filenameFromDisposition(disposition = "", fallback = "order-asset") {
+  const match = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i.exec(disposition);
+  if (match && match[1]) {
+    return match[1].replace(/['"]/g, "") || fallback;
+  }
+  return fallback;
+}
+
+function triggerBlobDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+window.api.downloadAsset = async (url, filename) => {
+  if (!url) throw new Error("Asset URL is required");
+
+  const res = await apiFetch("/order-manager/assets/download", {
+    method: "POST",
+    body: JSON.stringify({ url, filename }),
+    rawResponse: true,
+  });
+
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) {
+    const data = await res.json();
+    const dlUrl = data?.downloadUrl || data?.url;
+    const name = data?.filename || data?.name || filename || "order-asset";
+    if (dlUrl) {
+      const follow = await fetch(dlUrl);
+      if (!follow.ok) {
+        const msg = `${follow.status} ${follow.statusText}`;
+        throw new Error(`Download failed - ${msg}`);
+      }
+      const blob = await follow.blob();
+      triggerBlobDownload(blob, name);
+    } else if (data?.data && data?.mime) {
+      const bytes = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
+      triggerBlobDownload(new Blob([bytes], { type: data.mime }), name);
+    }
+    return data;
+  }
+
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition") || "";
+  const safeName = filenameFromDisposition(disposition, filename || "order-asset");
+  triggerBlobDownload(blob, safeName);
+  return true;
 };

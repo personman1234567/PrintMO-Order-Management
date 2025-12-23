@@ -48,7 +48,8 @@ const PRINT_TITLES = new Set([
   'Drawstring Bag Small Print',
   'Tote Bag Small Print',
   'Tote Bag Half Print',
-  'Tote Bag Full Print'
+  'Tote Bag Full Print',
+  'DTF Print'
 ]);
 
 
@@ -804,6 +805,10 @@ function openDetail(o) {
     const blanksOrd = chkBlanksOrd.checked ? 1 : 0;
     const printsOrd = chkPrintsOrd.checked ? 1 : 0;
     await window.api.updateReady(o.name, blanks, prints, blanksOrd, printsOrd);
+    o.blanksStatus = blanks;
+    o.printsStatus = prints;
+    o.blanksOrdered = blanksOrd;
+    o.printsOrdered = printsOrd;
     await renderBoard();
     applyBtn.classList.add('hidden');
     const bundleOverlay = document.getElementById('bundle-overlay');
