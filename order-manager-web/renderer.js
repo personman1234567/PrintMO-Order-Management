@@ -67,6 +67,7 @@ let isMobileViewport = false;
 let mobileMediaQuery = null;
 let mobilePipelineSelectionMode = false;
 const mobileSelectedOrders = new Set();
+let mobileDetailDragCleanup = null;
 
 /**
  * Whether mobile selection behavior should hijack card taps for the given order.
@@ -215,6 +216,9 @@ function updateMobileViewportFlag(matches) {
     setActiveMobileTab(activeMobileTab, { scrollTop: false });
   } else {
     setMobileSelectionMode(false);
+    document.body.classList.remove('mobile-detail-open');
+    const overlay = document.getElementById('detail-overlay');
+    if (overlay) overlay.classList.remove('mobile-bottomsheet');
   }
 }
 
@@ -234,6 +238,69 @@ function initMobileTabs() {
   document.querySelectorAll('.mobile-tab').forEach(btn => {
     btn.addEventListener('click', () => setActiveMobileTab(btn.dataset.tab));
   });
+}
+
+/**
+ * Attach mobile-only drag-to-close gesture for the detail bottom sheet.
+ * @param {HTMLElement} card - The detail card acting as the sheet.
+ * @returns {() => void} Cleanup function to remove listeners.
+ */
+function setupMobileDetailDrag(card) {
+  if (!card) return () => {};
+  let startY = 0;
+  let dragging = false;
+
+  const onStart = (e) => {
+    if (!isMobileViewport || e.touches.length !== 1) return;
+    if (card.scrollTop > 0) return; // allow scroll first
+    startY = e.touches[0].clientY;
+    dragging = false;
+  };
+
+  const onMove = (e) => {
+    if (!isMobileViewport || e.touches.length !== 1 || startY === 0) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy > 0 && card.scrollTop <= 0) {
+      dragging = true;
+      card.style.transition = 'none';
+      card.style.transform = `translateY(${Math.min(dy, 140)}px)`;
+      e.preventDefault();
+    } else if (dragging) {
+      card.style.transform = 'translateY(0)';
+    }
+  };
+
+  const onEnd = (e) => {
+    if (!dragging) {
+      card.style.transition = 'transform 0.2s ease';
+      card.style.transform = 'translateY(0)';
+      startY = 0;
+      return;
+    }
+    const dy = (e.changedTouches?.[0]?.clientY || startY) - startY;
+    card.style.transition = 'transform 0.2s ease';
+    if (dy > 80) {
+      closeDetail();
+    } else {
+      card.style.transform = 'translateY(0)';
+    }
+    startY = 0;
+    dragging = false;
+  };
+
+  card.addEventListener('touchstart', onStart, { passive: true });
+  card.addEventListener('touchmove', onMove, { passive: false });
+  card.addEventListener('touchend', onEnd, { passive: true });
+  card.addEventListener('touchcancel', onEnd, { passive: true });
+
+  return () => {
+    card.removeEventListener('touchstart', onStart);
+    card.removeEventListener('touchmove', onMove);
+    card.removeEventListener('touchend', onEnd);
+    card.removeEventListener('touchcancel', onEnd);
+    card.style.transition = '';
+    card.style.transform = '';
+  };
 }
 
 /**
@@ -1042,28 +1109,80 @@ function openDetail(o) {
   document.getElementById('detail-files-btn').onclick = () => openFilesModal(o);
 
   // show overlay
-  document.getElementById('detail-overlay')
-    .classList.replace('hidden', 'visible');
+  const overlay = document.getElementById('detail-overlay');
+  const detailCard = document.getElementById('detail-card');
+  if (mobileDetailDragCleanup) {
+    mobileDetailDragCleanup();
+    mobileDetailDragCleanup = null;
+  }
+  if (overlay) {
+    overlay.classList.replace('hidden', 'visible');
+    overlay.classList.add('visible');
+    if (isMobileViewport) {
+      overlay.classList.add('mobile-bottomsheet');
+      document.body.classList.add('mobile-detail-open');
+      if (detailCard) {
+        detailCard.style.transition = 'transform 0.25s ease';
+        detailCard.style.transform = 'translateY(100%)';
+        requestAnimationFrame(() => {
+          detailCard.style.transform = 'translateY(0)';
+        });
+        mobileDetailDragCleanup = setupMobileDetailDrag(detailCard);
+      }
+    } else {
+      overlay.classList.remove('mobile-bottomsheet');
+      document.body.classList.remove('mobile-detail-open');
+    }
+  }
 
-  document.getElementById('detail-overlay').classList.add('visible');
   document.body.classList.add('detail-open');
 
   document.querySelector('.pipeline').classList.add('no-delete');
 
   const notesWrapper = document.getElementById('detail-notes-wrapper');
-  const detailCard = document.getElementById('detail-card');
+  const detailCardEl = document.getElementById('detail-card');
   const updateNotesLimit = () => {
-    notesWrapper.style.maxHeight = Math.round(detailCard.clientHeight * 0.15) + 'px';
+    notesWrapper.style.maxHeight = Math.round(detailCardEl.clientHeight * 0.15) + 'px';
   };
   setTimeout(updateNotesLimit, 0);
   window.addEventListener('resize', updateNotesLimit);
   notesResizeHandler = updateNotesLimit;
 }
 
+/**
+ * Close the order detail overlay. On mobile this animates the bottom sheet
+ * downward and reuses the same handler invoked by the header close button,
+ * overlay tap, or drag gesture so future detail extensions stay centralized.
+ */
 function closeDetail() {
   const overlay = document.getElementById('detail-overlay');
-  overlay.classList.replace('visible', 'hidden');
-  document.body.classList.remove('detail-open');
+  const detailCard = document.getElementById('detail-card');
+  const finishClose = () => {
+    if (overlay) {
+      overlay.classList.replace('visible', 'hidden');
+      overlay.classList.remove('mobile-bottomsheet');
+    }
+    if (detailCard) {
+      detailCard.style.transition = '';
+      detailCard.style.transform = '';
+    }
+    document.body.classList.remove('detail-open');
+    document.body.classList.remove('mobile-detail-open');
+  };
+
+  if (mobileDetailDragCleanup) {
+    mobileDetailDragCleanup();
+    mobileDetailDragCleanup = null;
+  }
+
+  if (isMobileViewport && overlay && detailCard && overlay.classList.contains('mobile-bottomsheet')) {
+    detailCard.style.transition = 'transform 0.2s ease';
+    detailCard.style.transform = 'translateY(100%)';
+    setTimeout(finishClose, 220);
+  } else {
+    finishClose();
+  }
+
   cleanupDetailAssetPreviews();
   const mockupTrack = document.getElementById('detail-mockups-track');
   if (mockupTrack) mockupTrack.innerHTML = '';
