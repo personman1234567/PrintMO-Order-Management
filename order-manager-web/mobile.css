@@ -7,6 +7,7 @@
   :root {
     --mobile-tab-bar-height: calc(72px + env(safe-area-inset-bottom));
     --mobile-card-gap: 4%;
+    --mobile-selection-bar-gap: 12px;
   }
 
   html, body {
@@ -18,7 +19,7 @@
 
   body {
     background: #f6f5f6;
-    padding-bottom: calc(var(--mobile-tab-bar-height) + 8px);
+    padding-bottom: calc(var(--mobile-tab-bar-height) + 8px + var(--mobile-selection-bar-gap));
   }
 
   .container {
@@ -163,9 +164,11 @@
 
   .mobile-tab-bar {
     position: fixed;
-    bottom: 8px;
+    bottom: 0px;
     left: 0;
     right: 0;
+    margin-left: 8%;
+    margin-right: 8%;
     grid-template-columns: repeat(4, 1fr);
     gap: 8px;
     padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
@@ -174,6 +177,94 @@
     border-radius: 16px 16px calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-bottom));
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
     z-index: 1200;
+  }
+
+  .mobile-selection-actions {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(var(--mobile-tab-bar-height) + var(--mobile-selection-bar-gap));
+    display: none;
+    gap: 10px;
+    padding: 10px 16px;
+    z-index: 1250;
+  }
+
+  body.mobile-selection-mode .mobile-selection-actions {
+    display: flex;
+  }
+
+  .mobile-primary,
+  .mobile-secondary {
+    border: none;
+    border-radius: 12px;
+    padding: 14px 12px;
+    font-size: 1rem;
+    font-weight: 700;
+    min-height: 48px;
+  }
+
+  .mobile-primary {
+    flex: 1.25;
+    background: #1a73e8;
+    color: #fff;
+    box-shadow: 0 4px 10px rgba(26, 115, 232, 0.35);
+  }
+
+  .mobile-primary:disabled,
+  .mobile-primary[aria-disabled="true"] {
+    background: #9dbaf0;
+    color: #f1f4fb;
+    box-shadow: none;
+  }
+
+  .mobile-secondary {
+    flex: 1;
+    background: #e5eaf2;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+  }
+
+  .mobile-select-toggle {
+    display: none;
+  }
+
+  body.mobile-mode .mobile-select-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid #cbd5e1;
+    background: #f1f5f9;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #1a73e8;
+  }
+
+  .mobile-select-toggle[aria-pressed="true"] {
+    background: #e8f1ff;
+    border-color: #1a73e8;
+    color: #0f55b4;
+  }
+
+  body.mobile-selection-mode #pipeline-selection-shell {
+    display: flex;
+  }
+
+  .mobile-selection-shell {
+    display: none;
+  }
+
+  .mobile-selectable {
+    cursor: pointer;
+  }
+
+  .mobile-selected {
+    outline: 2px solid #1a73e8;
+    box-shadow: 0 0 0 4px rgba(26, 115, 232, 0.15);
+    background: linear-gradient(180deg, #f6f9ff 0%, #eef3ff 100%);
   }
 
   .mobile-tab {

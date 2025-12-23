@@ -1395,6 +1395,7 @@
         <button id="received-bundle-start" class="bundle-btn">Bundle</button>
         <button id="received-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
         <button id="received-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
+        <button id="mobile-selection-toggle" class="mobile-select-toggle" type="button" aria-pressed="false" title="Toggle selection mode">Select</button>
       </div>
       <div id="pipeline-selection-shell" class="mobile-selection-shell" aria-hidden="true">
         <div class="selection-toolbar-placeholder" aria-hidden="true">Selection actions will appear here when selection mode is enabled.</div>
@@ -1618,6 +1619,11 @@
 
 <div id="blanks-overlay" class="hidden"></div>
 <div id="print-overlay" class="hidden"></div>
+
+  <div id="mobile-selection-actions" class="mobile-selection-actions" aria-label="Selection actions">
+    <button id="mobile-selection-add" class="mobile-primary" type="button" disabled aria-disabled="true">Add (0) to Blanks Cart</button>
+    <button id="mobile-selection-cancel" class="mobile-secondary" type="button">Cancel</button>
+  </div>
 
   <nav id="mobile-tab-bar" class="mobile-tab-bar" aria-label="Order manager navigation">
     <button class="mobile-tab" type="button" data-tab="pipeline">Pipeline</button>

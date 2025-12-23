@@ -65,6 +65,117 @@ const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint'];
 let activeMobileTab = MOBILE_TABS[0];
 let isMobileViewport = false;
 let mobileMediaQuery = null;
+let mobilePipelineSelectionMode = false;
+const mobileSelectedOrders = new Set();
+
+/**
+ * Whether mobile selection behavior should hijack card taps for the given order.
+ * Keeps selection logic isolated to the Pipeline tab and mobile view.
+ * @param {{status?: string}} order - Order object to evaluate.
+ * @returns {boolean} True if selection mode should handle taps.
+ */
+function shouldHandleMobilePipelineSelection(order) {
+  return Boolean(
+    isMobileViewport &&
+    activeMobileTab === 'pipeline' &&
+    mobilePipelineSelectionMode &&
+    order &&
+    order.status === 'received'
+  );
+}
+
+/**
+ * Apply or clear selection visuals for a single card in the Pipeline tab.
+ * @param {HTMLElement} card - The card element to update.
+ * @param {string} orderId - The order ID associated with the card.
+ */
+function applyMobileSelectionState(card, orderId) {
+  if (!card || !orderId) return;
+  const isSelected = mobileSelectedOrders.has(orderId);
+  card.classList.toggle('mobile-selectable', mobilePipelineSelectionMode);
+  card.classList.toggle('mobile-selected', mobilePipelineSelectionMode && isSelected);
+}
+
+/**
+ * Sync the sticky action bar and toggle button to the current selection state.
+ * Centralized so renders and state mutations stay consistent.
+ */
+function refreshMobileSelectionUI() {
+  const toggleBtn = document.getElementById('mobile-selection-toggle');
+  const addBtn = document.getElementById('mobile-selection-add');
+  const cancelBtn = document.getElementById('mobile-selection-cancel');
+  const selectedCount = mobileSelectedOrders.size;
+
+  if (document.body) {
+    document.body.classList.toggle('mobile-selection-mode', mobilePipelineSelectionMode);
+  }
+
+  if (toggleBtn) {
+    toggleBtn.setAttribute('aria-pressed', mobilePipelineSelectionMode ? 'true' : 'false');
+  }
+  if (addBtn) {
+    addBtn.textContent = `Add (${selectedCount}) to Blanks Cart`;
+    const disabled = selectedCount === 0;
+    addBtn.disabled = disabled;
+    addBtn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+  }
+  if (cancelBtn) {
+    cancelBtn.disabled = !mobilePipelineSelectionMode;
+  }
+
+  document.querySelectorAll('#col-received .card').forEach(card => {
+    const id = card.dataset.orderId;
+    applyMobileSelectionState(card, id);
+  });
+}
+
+/**
+ * Toggle selection mode for the mobile Pipeline tab.
+ * Clears current selection when turning off.
+ * @param {boolean} [next] - Optional explicit value; otherwise toggles.
+ */
+function setMobileSelectionMode(next) {
+  const target = typeof next === 'boolean' ? next : !mobilePipelineSelectionMode;
+  mobilePipelineSelectionMode = target;
+  if (!target) {
+    mobileSelectedOrders.clear();
+  }
+  refreshMobileSelectionUI();
+}
+
+/**
+ * Toggle selection for a specific order card without opening detail.
+ * @param {string} orderId - Order ID to toggle.
+ * @param {HTMLElement} card - Card element for immediate visual sync.
+ */
+function toggleMobileCardSelection(orderId, card) {
+  if (!orderId) return;
+  if (mobileSelectedOrders.has(orderId)) {
+    mobileSelectedOrders.delete(orderId);
+  } else {
+    mobileSelectedOrders.add(orderId);
+  }
+  applyMobileSelectionState(card, orderId);
+  refreshMobileSelectionUI();
+}
+
+/**
+ * Move all selected Pipeline orders into the Blanks Cart (toOrder) stage.
+ * Clears selection and exits selection mode after successful updates.
+ */
+async function moveSelectedToBlanksCart() {
+  const ids = Array.from(mobileSelectedOrders);
+  if (!ids.length) return;
+  try {
+    await Promise.all(ids.map(id => window.api.updateStatus(id, 'toOrder')));
+    setMobileSelectionMode(false);
+    await renderBoard();
+    setActiveMobileTab('blanksCart', { scrollTop: false });
+  } catch (err) {
+    console.error('Failed to move selected to Blanks Cart', err);
+    alert('Could not move selected orders. Please try again.');
+  }
+}
 
 /**
  * Apply the current mobile tab so CSS can scope visibility without re-rendering.
@@ -102,6 +213,8 @@ function updateMobileViewportFlag(matches) {
   }
   if (matches) {
     setActiveMobileTab(activeMobileTab, { scrollTop: false });
+  } else {
+    setMobileSelectionMode(false);
   }
 }
 
@@ -121,6 +234,32 @@ function initMobileTabs() {
   document.querySelectorAll('.mobile-tab').forEach(btn => {
     btn.addEventListener('click', () => setActiveMobileTab(btn.dataset.tab));
   });
+}
+
+/**
+ * Wire up mobile selection controls (toggle, action bar) once the DOM is ready.
+ * Keeps handlers isolated to mobile UX without impacting desktop.
+ */
+function initMobileSelectionControls() {
+  const toggleBtn = document.getElementById('mobile-selection-toggle');
+  const addBtn = document.getElementById('mobile-selection-add');
+  const cancelBtn = document.getElementById('mobile-selection-cancel');
+
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      setMobileSelectionMode();
+      if (mobilePipelineSelectionMode && activeMobileTab !== 'pipeline') {
+        setActiveMobileTab('pipeline');
+      }
+    });
+  }
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => setMobileSelectionMode(false));
+  }
+  if (addBtn) {
+    addBtn.addEventListener('click', moveSelectedToBlanksCart);
+  }
+  refreshMobileSelectionUI();
 }
 
 
@@ -330,7 +469,15 @@ function makeCard(o, style = 'default') {
     card.style.setProperty('--shimmer-delay', delay);
   }
 
-  card.addEventListener('click', () => openDetail(o));
+  card.addEventListener('click', (ev) => {
+    if (shouldHandleMobilePipelineSelection(o)) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      toggleMobileCardSelection(o.name, card);
+      return;
+    }
+    openDetail(o);
+  });
 
   return card;
 }
@@ -1245,6 +1392,8 @@ async function renderBoard() {
   sortBundlesByOldest(Object.entries(printGroups))
     .forEach(([n, arr]) => printEl.appendChild(makeBundleCard(n, arr)));
   printSingles.forEach(o => printEl.appendChild(makeCard(o, 'printProgress')));
+
+  refreshMobileSelectionUI();
 }
 
 // recalc summary from “toOrder” items
@@ -1422,6 +1571,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   initMobileTabs();
+  initMobileSelectionControls();
 
   // wire up the four zones
 
