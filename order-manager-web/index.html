@@ -1,9 +1,17 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' data: blob: https:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https:; font-src 'self' data:;">
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    img-src 'self' data: blob: https:;
+    script-src 'self' https: 'unsafe-inline';
+    style-src 'self' https: 'unsafe-inline';
+    connect-src 'self' https: wss://order-manager-proxy.printmobusiness.workers.dev;
+    font-src 'self' data: https:;
+    object-src 'none';
+    base-uri 'self';
+  ">
   <title>PrintMO Order Management</title>
   <style>
     /* Global & Layout */

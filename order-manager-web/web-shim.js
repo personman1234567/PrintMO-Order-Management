@@ -223,3 +223,36 @@ window.api.downloadAsset = async (url, filename) => {
   triggerBlobDownload(blob, safeName);
   return true;
 };
+
+window.api.subscribeQueueChanges = (onEvent) => {
+  let ws = null;
+  let stopped = false;
+  let retryMs = 500;
+
+  const wsUrl = API_BASE.replace(/^http/, "ws").replace(/\/+$/, "") + "/order-manager/ws";
+
+  function connect() {
+    if (stopped) return;
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => { retryMs = 500; };
+    ws.onmessage = (ev) => {
+      try { onEvent(JSON.parse(ev.data)); } catch {}
+    };
+    ws.onclose = () => {
+      if (stopped) return;
+      setTimeout(connect, retryMs);
+      retryMs = Math.min(8000, Math.floor(retryMs * 1.6));
+    };
+    ws.onerror = () => {
+      try { ws.close(); } catch {}
+    };
+  }
+
+  connect();
+
+  return () => {
+    stopped = true;
+    try { ws && ws.close(); } catch {}
+  };
+};

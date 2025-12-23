@@ -1,6 +1,14 @@
 // renderer.js
 
 let allOrders = [];
+let renderTimer = null;
+function scheduleRender() {
+  if (renderTimer) return;
+  renderTimer = setTimeout(async () => {
+    renderTimer = null;
+    await renderBoard();
+  }, 200);
+}
 let bundleMode = null; // {status, selected:Set<string>}
 let detailOrder = null;
 let fileRemoveMode = false;
@@ -1330,58 +1338,85 @@ function setupDropZones() {
   makeDropZone(document.getElementById('col-print'), 'print');
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  // --- real-time: debounce renders so bursts of updates don't spam the UI ---
+  let renderTimer = null;
+  function scheduleRender() {
+    if (renderTimer) return;
+    renderTimer = setTimeout(async () => {
+      renderTimer = null;
+      await renderBoard();
+    }, 200);
+  }
+
+  // Subscribe to server push updates (via web-shim)
+  if (window.api && typeof window.api.subscribeQueueChanges === 'function') {
+    window.api.subscribeQueueChanges((evt) => {
+      if (evt?.type === 'queue_changed') scheduleRender();
+    });
+  } else {
+    console.warn('⚠️ window.api.subscribeQueueChanges is not available (check web-shim.js)');
+  }
+
   // wire up the four zones
 
   // Submit button
-  document.getElementById('order-submit').addEventListener('click', async () => {
-    const toOrder = allOrders.filter(x => x.status === 'toOrder').map(x => x.name);
-    if (!toOrder.length) {
-      return alert('Drag some cards into “Drag cards here” first.');
-    }
-
-    const btn = document.getElementById('order-submit');
-    btn.textContent = 'Submitting…';
-    btn.disabled = true;
-
-    try {
-      await window.api.processBatch(toOrder);
-      // auto‑move into Blanks Ordered
-      for (const id of toOrder) {
-        await window.api.updateStatus(id, 'blanks');
+  const submitBtn = document.getElementById('order-submit');
+  if (!submitBtn) {
+    console.warn('⚠️ #order-submit button not found');
+  } else {
+    submitBtn.addEventListener('click', async () => {
+      const toOrder = allOrders.filter(x => x.status === 'toOrder').map(x => x.name);
+      if (!toOrder.length) {
+        return alert('Drag some cards into “Drag cards here” first.');
       }
-      await renderBoard();
-      btn.textContent = '✅ Submitted';
 
-      setTimeout(() => {
-        btn.textContent = 'Submit To S&S';
-      }, 3000);
+      submitBtn.textContent = 'Submitting…';
+      submitBtn.disabled = true;
 
-    } catch (err) {
-      btn.textContent = `❌ ${err.message}`;
-    } finally {
-      btn.disabled = false;
-    }
-  });
+      try {
+        await window.api.processBatch(toOrder);
+
+        // auto-move into Blanks Ordered
+        for (const id of toOrder) {
+          await window.api.updateStatus(id, 'blanks');
+        }
+
+        await renderBoard();
+        submitBtn.textContent = '✅ Submitted';
+
+        setTimeout(() => {
+          submitBtn.textContent = 'Submit To S&S';
+        }, 3000);
+
+      } catch (err) {
+        submitBtn.textContent = `❌ ${err?.message || err}`;
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  }
 
   const clearBtn = document.getElementById('clear-picked');
   if (!clearBtn) {
     console.warn('⚠️ #clear-picked button not found');
   } else {
     clearBtn.addEventListener('click', async () => {
-      // grab all currently “toOrder”
       const toOrder = allOrders
         .filter(o => o.status === 'toOrder')
         .map(o => o.name);
-      if (!toOrder.length) return;           // nothing to clear
+
+      if (!toOrder.length) return;
 
       clearBtn.disabled = true;
-      // move each back to “received”
-      for (const id of toOrder) {
-        await window.api.updateStatus(id, 'received');
+      try {
+        for (const id of toOrder) {
+          await window.api.updateStatus(id, 'received');
+        }
+        await renderBoard();
+      } finally {
+        clearBtn.disabled = false;
       }
-      await renderBoard();
-      clearBtn.disabled = false;
     });
   }
 
@@ -1428,18 +1463,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const c = document.getElementById(cfg.confirm);
     const x = document.getElementById(cfg.cancel);
     if (!s || !c || !x) return;
+
     s.addEventListener('click', () => {
       startBundle(cfg.status);
       s.classList.add('hidden');
       c.classList.remove('hidden');
       x.classList.remove('hidden');
     });
+
     x.addEventListener('click', () => {
       cancelBundle();
       s.classList.remove('hidden');
       c.classList.add('hidden');
       x.classList.add('hidden');
     });
+
     c.addEventListener('click', async () => {
       const name = await promptBundleName();
       if (name) {
@@ -1468,5 +1506,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   setupDropZones();
-  renderBoard();
+
+  // Initial render (await so allOrders is populated before interactions happen)
+  await renderBoard();
 });
