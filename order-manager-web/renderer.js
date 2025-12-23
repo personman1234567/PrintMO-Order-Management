@@ -68,6 +68,8 @@ let mobileMediaQuery = null;
 let mobilePipelineSelectionMode = false;
 const mobileSelectedOrders = new Set();
 let mobileDetailDragCleanup = null;
+let mobileNotesEditing = false;
+let mobileItemsExpanded = false;
 
 /**
  * Whether mobile selection behavior should hijack card taps for the given order.
@@ -158,6 +160,43 @@ function toggleMobileCardSelection(orderId, card) {
   }
   applyMobileSelectionState(card, orderId);
   refreshMobileSelectionUI();
+}
+
+/**
+ * Toggle the inline mobile notes editing state, reusing existing notes storage.
+ * @param {boolean} editing - True to enable editing, false to return to read-only.
+ */
+function setMobileNotesEditing(editing) {
+  mobileNotesEditing = editing;
+  const notesDisplay = document.getElementById('detail-notes');
+  const notesInput = document.getElementById('detail-notes-input');
+  const saveBtn = document.getElementById('mobile-notes-save');
+  const editBtn = document.getElementById('mobile-notes-edit');
+  if (!notesDisplay || !notesInput) return;
+  if (editing) {
+    notesInput.classList.remove('hidden');
+    notesDisplay.classList.add('hidden');
+    saveBtn?.classList.remove('hidden');
+  } else {
+    notesInput.classList.add('hidden');
+    notesDisplay.classList.remove('hidden');
+    saveBtn?.classList.add('hidden');
+  }
+  if (editBtn) {
+    editBtn.setAttribute('aria-pressed', editing ? 'true' : 'false');
+  }
+}
+
+/**
+ * Manage the mobile line-items collapse/expand affordance without changing data.
+ * @param {boolean} expanded - Whether the items table should expand to full height.
+ */
+function setMobileItemsExpanded(expanded) {
+  mobileItemsExpanded = expanded;
+  const wrapper = document.getElementById('detail-items-wrapper');
+  const btn = document.getElementById('mobile-items-expand');
+  if (wrapper) wrapper.classList.toggle('mobile-expanded', expanded);
+  if (btn) btn.textContent = expanded ? 'Collapse' : 'Expand';
 }
 
 /**
@@ -327,6 +366,47 @@ function initMobileSelectionControls() {
     addBtn.addEventListener('click', moveSelectedToBlanksCart);
   }
   refreshMobileSelectionUI();
+}
+
+/**
+ * Wire up mobile detail affordances (inline notes edit, line-items expand).
+ * Keeps interactions declarative while reusing existing update APIs.
+ */
+function initMobileDetailUI() {
+  const editBtn = document.getElementById('mobile-notes-edit');
+  const saveBtn = document.getElementById('mobile-notes-save');
+  const notesInput = document.getElementById('detail-notes-input');
+  const expandBtn = document.getElementById('mobile-items-expand');
+
+  if (editBtn && notesInput) {
+    editBtn.addEventListener('click', () => {
+      setMobileNotesEditing(true);
+      requestAnimationFrame(() => {
+        notesInput.focus();
+        notesInput.setSelectionRange(notesInput.value.length, notesInput.value.length);
+      });
+    });
+  }
+  if (saveBtn && notesInput) {
+    saveBtn.addEventListener('click', async () => {
+      if (!detailOrder) {
+        setMobileNotesEditing(false);
+        return;
+      }
+      const val = notesInput.value;
+      try {
+        await window.api.updateNotes(detailOrder.name, val);
+        detailOrder.notes = val;
+        document.getElementById('detail-notes').textContent = val || 'No special instructions';
+        setMobileNotesEditing(false);
+      } catch (err) {
+        alert(`Could not save notes: ${err?.message || err}`);
+      }
+    });
+  }
+  if (expandBtn) {
+    expandBtn.addEventListener('click', () => setMobileItemsExpanded(!mobileItemsExpanded));
+  }
 }
 
 
@@ -1012,6 +1092,10 @@ function openDetail(o) {
   document.getElementById('detail-order-id').textContent   = `Order ${orderNum}`;
   document.getElementById('detail-cust-name').textContent = custName;
   document.getElementById('detail-notes').textContent = o.notes || 'No special instructions';
+  const notesInput = document.getElementById('detail-notes-input');
+  if (notesInput) notesInput.value = o.notes || '';
+  setMobileNotesEditing(false);
+  setMobileItemsExpanded(false);
   document.getElementById('detail-edit-name-btn').onclick = () => openNameModal(o);
   document.getElementById('detail-edit-notes-btn').onclick = () => openNotesModal(o);
   document.getElementById('detail-view-notes-btn').onclick = () => openViewNotesModal(o);
@@ -1691,6 +1775,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   initMobileTabs();
   initMobileSelectionControls();
+  initMobileDetailUI();
 
   // wire up the four zones
 
