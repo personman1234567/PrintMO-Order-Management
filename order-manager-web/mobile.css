@@ -10,10 +10,10 @@
   }
 
   html, body {
-    height: auto;
+    height: 100%;
     min-height: 100%;
+    overflow: hidden;
     overflow-x: hidden;
-    overflow-y: auto;
   }
 
   body {
@@ -25,31 +25,68 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    height: auto;
-    min-height: calc(100vh - var(--mobile-tab-bar-height));
+    height: calc(100vh - 0px);
+    min-height: 100vh;
     padding: 12px 12px calc(12px + var(--mobile-tab-bar-height));
+    overflow: hidden;
   }
 
   .panel {
     min-height: 0;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
   }
 
   .panel-body {
-    overflow: visible;
+    overflow: hidden;
+    flex: 1;
   }
 
   .cards {
+    flex: 1;
     padding: 12px;
     gap: var(--mobile-card-gap);
     row-gap: 14px;
-    overflow: visible;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    min-height: 0;
   }
 
+  .cards .card,
   .cards .pipeline-card {
     flex: 0 0 calc((100% - var(--mobile-card-gap)) / 2);
     max-width: calc((100% - var(--mobile-card-gap)) / 2);
     margin-bottom: 6px;
+  }
+
+  .fulfillment .sub-section .cards {
+    gap: var(--mobile-card-gap);
+    row-gap: 14px;
+    justify-content: space-between;
+  }
+
+  .fulfillment .sub-section .cards .card {
+    flex: 0 0 calc((100% - var(--mobile-card-gap)) / 2);
+    max-width: calc((100% - var(--mobile-card-gap)) / 2);
+    aspect-ratio: auto;
+  }
+
+  .panel.fulfillment {
+    gap: 12px;
+  }
+
+  .panel.fulfillment .sub-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .panel.fulfillment .sub-section .cards {
+    flex: 1;
   }
 
   .panel.pipeline,
@@ -75,17 +112,20 @@
   }
 
   body[data-active-tab="blanksOrdered"] #print-section {
-    display: none;
+    display: none !important;
   }
 
   body[data-active-tab="readyToPrint"] #blanks-section {
-    display: none;
+    display: none !important;
   }
 
   .panel.create .create-body {
     display: flex;
     flex-direction: column;
     gap: 12px;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .drag-area {
@@ -98,6 +138,9 @@
   .picked-cards {
     margin: 0;
     padding: 12px 0;
+    max-height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .summary {
@@ -107,6 +150,7 @@
 
   .panel.fulfillment {
     gap: 12px;
+    overflow: hidden;
   }
 
   .panel.fulfillment .sub-section + .sub-section {
