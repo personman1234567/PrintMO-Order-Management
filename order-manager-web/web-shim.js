@@ -147,28 +147,6 @@ window.api.processBatch = async (orderIds) => {
   });
 };
 
-window.api.addFile = async (a, b) => {
-  const payload = (a && typeof a === "object" && !b)
-    ? a
-    : { name: a, orderId: a, file: b };
-
-  return apiFetch("/order-manager/orders/files/add", {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
-};
-
-window.api.removeFiles = async (a, b) => {
-  const payload = (a && typeof a === "object" && !Array.isArray(b))
-    ? a
-    : { name: a, orderId: a, names: b };
-
-  return apiFetch("/order-manager/orders/files/remove", {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
-};
-
 function filenameFromDisposition(disposition = "", fallback = "order-asset") {
   const match = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i.exec(disposition);
   if (match && match[1]) {

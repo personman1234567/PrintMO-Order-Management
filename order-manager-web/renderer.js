@@ -11,8 +11,6 @@ function scheduleRender() {
 }
 let bundleMode = null; // {status, selected:Set<string>}
 let detailOrder = null;
-let fileRemoveMode = false;
-const selectedFiles = new Set();
 let notesResizeHandler = null;
 let detailAssetRenderToken = 0;
 const detailAssetBlobUrls = new Set();
@@ -60,6 +58,10 @@ const PRINT_TITLES = new Set([
   'DTF Print'
 ]);
 
+/**
+ * Layout styling is split by viewport: desktop.css for >=901px, mobile.css for <=900px.
+ * Keep visual changes in the appropriate stylesheet; renderer.js stays behavior-only.
+ */
 const MOBILE_TAB_BREAKPOINT = 900;
 const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint'];
 let activeMobileTab = MOBILE_TABS[0];
@@ -288,25 +290,59 @@ function setupMobileDetailDrag(card) {
   if (!card) return () => {};
   let startY = 0;
   let dragging = false;
+  let canDismiss = false;
+  let scrollTarget = null;
+  const dragThreshold = 12;
+
+  /**
+   * Resolve the scroll container for the gesture start target inside the sheet.
+   * Falls back to #detail-content if no scrollable ancestor is found.
+   * @param {EventTarget} target - Touch start target.
+   * @returns {HTMLElement|null} Scroll container element.
+   */
+  const resolveScrollContainer = (target) => {
+    const fallback = document.getElementById('detail-content');
+    let el = target instanceof HTMLElement ? target : null;
+    while (el && el !== card) {
+      if (el.scrollHeight > el.clientHeight) {
+        const overflowY = window.getComputedStyle(el).overflowY;
+        if (overflowY === 'auto' || overflowY === 'scroll') {
+          return el;
+        }
+      }
+      el = el.parentElement;
+    }
+    return fallback || card;
+  };
 
   const onStart = (e) => {
     if (!isMobileViewport || e.touches.length !== 1) return;
-    if (card.scrollTop > 0) return; // allow scroll first
     startY = e.touches[0].clientY;
+    scrollTarget = resolveScrollContainer(e.target);
+    canDismiss = (scrollTarget?.scrollTop || 0) <= 0;
     dragging = false;
   };
 
   const onMove = (e) => {
     if (!isMobileViewport || e.touches.length !== 1 || startY === 0) return;
     const dy = e.touches[0].clientY - startY;
-    if (dy > 0 && card.scrollTop <= 0) {
-      dragging = true;
-      card.style.transition = 'none';
-      card.style.transform = `translateY(${Math.min(dy, 140)}px)`;
-      e.preventDefault();
-    } else if (dragging) {
-      card.style.transform = 'translateY(0)';
+    if (!canDismiss) return;
+    if (!dragging) {
+      if (dy > dragThreshold) {
+        dragging = true;
+        card.style.transition = 'none';
+      } else {
+        return;
+      }
     }
+    if (dy <= 0) {
+      dragging = false;
+      card.style.transition = 'transform 0.2s ease';
+      card.style.transform = 'translateY(0)';
+      return;
+    }
+    card.style.transform = `translateY(${Math.min(dy, 140)}px)`;
+    e.preventDefault();
   };
 
   const onEnd = (e) => {
@@ -314,6 +350,8 @@ function setupMobileDetailDrag(card) {
       card.style.transition = 'transform 0.2s ease';
       card.style.transform = 'translateY(0)';
       startY = 0;
+      canDismiss = false;
+      scrollTarget = null;
       return;
     }
     const dy = (e.changedTouches?.[0]?.clientY || startY) - startY;
@@ -325,6 +363,8 @@ function setupMobileDetailDrag(card) {
     }
     startY = 0;
     dragging = false;
+    canDismiss = false;
+    scrollTarget = null;
   };
 
   card.addEventListener('touchstart', onStart, { passive: true });
@@ -1081,6 +1121,10 @@ function renderOrderAssets(order) {
   renderDesignGroup(lists.extras, groups.extras, assets.extras);
 }
 
+/**
+ * Populate and reveal the detail overlay for a selected order.
+ * @param {Object} o - Order data backing the detail view.
+ */
 function openDetail(o) {
   detailOrder = o;
   renderOrderAssets(o);
@@ -1190,8 +1234,6 @@ function openDetail(o) {
     }
   };
 
-  document.getElementById('detail-files-btn').onclick = () => openFilesModal(o);
-
   // show overlay
   const overlay = document.getElementById('detail-overlay');
   const detailCard = document.getElementById('detail-card');
@@ -1288,119 +1330,6 @@ function closeDetail() {
     window.removeEventListener('resize', notesResizeHandler);
     notesResizeHandler = null;
   }
-}
-
-function renderFileList(order) {
-  const container = document.getElementById('file-list');
-  const files = order.attachments || [];
-  container.innerHTML = files.map(f => {
-    let thumb = '';
-    if (/png|jpe?g/i.test(f.mime)) {
-      thumb = `<img src="data:${f.mime};base64,${f.data}" />`;
-    } else {
-      thumb = '<div class="svg-placeholder"></div>';
-    }
-    const sel = selectedFiles.has(f.name) ? ' file-selected' : '';
-    return `<div class="file-item${sel}" data-name="${f.name}">${thumb}<div>${f.name}</div></div>`;
-  }).join('');
-  container.querySelectorAll('.file-item').forEach(el => {
-    el.onclick = () => {
-      const name = el.dataset.name;
-      if (fileRemoveMode) {
-        if (selectedFiles.has(name)) {
-          selectedFiles.delete(name);
-          el.classList.remove('file-selected');
-        } else {
-          selectedFiles.add(name);
-          el.classList.add('file-selected');
-        }
-        return;
-      }
-      const f = files.find(x => x.name === name);
-      if (!f) return;
-      const a = document.createElement('a');
-      a.href = `data:${f.mime};base64,${f.data}`;
-      a.download = f.name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    };
-  });
-}
-
-function openFilesModal(order) {
-  cancelFileRemoval();
-  renderFileList(order);
-  const overlay = document.getElementById('files-overlay');
-  overlay.classList.remove('hidden');
-
-  const drop = document.getElementById('file-drop');
-  drop.classList.remove('over');
-  const onDragOver = e => { e.preventDefault(); drop.classList.add('over'); };
-  const onDragLeave = () => drop.classList.remove('over');
-  const onDrop = async e => {
-    e.preventDefault();
-    drop.classList.remove('over');
-    for (const file of e.dataTransfer.files) {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64 = reader.result.split(',')[1];
-        const obj = { name: file.name, mime: file.type || 'application/octet-stream', data: base64 };
-        await window.api.addFile(order.name, obj);
-        if (!Array.isArray(order.attachments)) order.attachments = [];
-        order.attachments.push(obj);
-        renderFileList(order);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-  drop.addEventListener('dragover', onDragOver);
-  drop.addEventListener('dragleave', onDragLeave);
-  drop.addEventListener('drop', onDrop);
-
-  document.getElementById('files-remove-btn').onclick = () => startFileRemoval(order);
-  document.getElementById('files-cancel-btn').onclick = cancelFileRemoval;
-  document.getElementById('files-delete-btn').onclick = () => confirmFileRemoval(order);
-
-  overlay.onclick = e => { if (e.target.id === 'files-overlay') { closeFilesModal(onDragOver,onDragLeave,onDrop); } };
-}
-
-function closeFilesModal(ov, lv, dp) {
-  cancelFileRemoval();
-  const overlay = document.getElementById('files-overlay');
-  overlay.classList.add('hidden');
-  const drop = document.getElementById('file-drop');
-  drop.removeEventListener('dragover', ov);
-  drop.removeEventListener('dragleave', lv);
-  drop.removeEventListener('drop', dp);
-  overlay.onclick = null;
-}
-
-function startFileRemoval(order) {
-  fileRemoveMode = true;
-  selectedFiles.clear();
-  document.getElementById('files-remove-btn').classList.add('hidden');
-  document.getElementById('files-delete-btn').classList.remove('hidden');
-  document.getElementById('files-cancel-btn').classList.remove('hidden');
-  renderFileList(order);
-}
-
-function cancelFileRemoval() {
-  fileRemoveMode = false;
-  selectedFiles.clear();
-  document.getElementById('files-remove-btn').classList.remove('hidden');
-  document.getElementById('files-delete-btn').classList.add('hidden');
-  document.getElementById('files-cancel-btn').classList.add('hidden');
-  if (detailOrder) renderFileList(detailOrder);
-}
-
-async function confirmFileRemoval(order) {
-  const names = Array.from(selectedFiles);
-  if (!names.length) { cancelFileRemoval(); return; }
-  await window.api.removeFiles(order.name, names);
-  order.attachments = order.attachments.filter(f => !selectedFiles.has(f.name));
-  cancelFileRemoval();
-  renderFileList(order);
 }
 
 function openNotesModal(order) {
