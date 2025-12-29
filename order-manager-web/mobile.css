@@ -1986,12 +1986,14 @@
     border: none;
     box-shadow: none;
     padding: 0;
+    overflow: visible;
   }
 
   .design-panel-body {
     display: grid;
     gap: 10px;
     padding: 0;
+    overflow: visible;
   }
 
   .design-group {
@@ -1999,6 +2001,8 @@
     border-radius: 12px;
     padding: 10px;
     box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+    min-height: auto;
+    overflow: visible;
   }
 
   .design-group-title {
@@ -2008,6 +2012,9 @@
 
   .design-tiles {
     gap: 8px;
+    flex-wrap: wrap;
+    overflow: visible;
+    padding-bottom: 0;
   }
 
   body.mobile-selection-mode #pipeline-selection-shell {

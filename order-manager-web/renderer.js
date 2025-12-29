@@ -261,6 +261,26 @@ function updateMobileViewportFlag(matches) {
     const overlay = document.getElementById('detail-overlay');
     if (overlay) overlay.classList.remove('mobile-bottomsheet');
   }
+  syncDetailDesignPanelPlacement();
+}
+
+/**
+ * Keep the design files panel aligned with the active layout.
+ * On mobile it lives inside #detail-main-stack to scroll with content.
+ * On desktop it stays beside the stack inside #detail-main-column.
+ */
+function syncDetailDesignPanelPlacement() {
+  const panel = document.getElementById('detail-design-panel');
+  const stack = document.getElementById('detail-main-stack');
+  const column = document.getElementById('detail-main-column');
+  if (!panel || !stack || !column) return;
+  if (isMobileViewport) {
+    if (panel.parentElement !== stack) {
+      stack.appendChild(panel);
+    }
+  } else if (panel.parentElement !== column) {
+    column.appendChild(panel);
+  }
 }
 
 /**
@@ -1128,6 +1148,7 @@ function renderOrderAssets(order) {
 function openDetail(o) {
   detailOrder = o;
   renderOrderAssets(o);
+  syncDetailDesignPanelPlacement();
   // fill header
   document.getElementById('detail-timestamp').textContent = new Date(o.receivedAt).toLocaleString();
 
