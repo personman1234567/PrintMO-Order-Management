@@ -262,6 +262,9 @@ function updateMobileViewportFlag(matches) {
     if (overlay) overlay.classList.remove('mobile-bottomsheet');
   }
   syncDetailDesignPanelPlacement();
+  if (detailOrder) {
+    updateDetailProgressUI(detailOrder);
+  }
 }
 
 /**
@@ -1155,6 +1158,79 @@ function splitOrderName(rawName) {
 }
 
 /**
+ * Align the detail progress controls with the active viewport.
+ * Adds mobile-only labels inside the progress bar and removes them on desktop.
+ * @returns {{countEl: HTMLElement|null, percentEl: HTMLElement|null, container: HTMLElement|null}}
+ */
+function syncDetailProgressLayout() {
+  const progressPlus = document.getElementById('progress-plus1');
+  const progressCustom = document.getElementById('progress-custom');
+  if (progressPlus) progressPlus.textContent = isMobileViewport ? 'Increment' : '+1';
+  if (progressCustom) progressCustom.textContent = 'Custom Amount';
+
+  const container = document.getElementById('progress-bar-container');
+  if (!container) {
+    return { countEl: null, percentEl: null, container: null };
+  }
+
+  let countEl = document.getElementById('progress-count');
+  let percentEl = document.getElementById('progress-percent');
+
+  if (isMobileViewport) {
+    if (!countEl) {
+      countEl = document.createElement('span');
+      countEl.id = 'progress-count';
+      container.appendChild(countEl);
+    }
+    if (!percentEl) {
+      percentEl = document.createElement('span');
+      percentEl.id = 'progress-percent';
+      container.appendChild(percentEl);
+    }
+  } else {
+    if (countEl) countEl.remove();
+    if (percentEl) percentEl.remove();
+    countEl = null;
+    percentEl = null;
+    container.style.removeProperty('--progress-pct');
+  }
+
+  return { countEl, percentEl, container };
+}
+
+/**
+ * Render the detail progress section, including mobile in-bar labels.
+ * Desktop retains the original inline count text.
+ * @param {Object} order - Order data backing the detail view.
+ */
+function updateDetailProgressUI(order) {
+  if (!order) return;
+  const totalApparel = (order.items || []).reduce((sum, it) => sum + (isPrintItem(it) ? 0 : it.qty), 0);
+  order.totalApparel = totalApparel;
+  if (typeof order.progress !== 'number') order.progress = 0;
+
+  const progressText = document.getElementById('progress-text');
+  const progressBar = document.getElementById('progress-bar');
+  if (!progressText || !progressBar) return;
+
+  const pct = totalApparel ? Math.min(100, (order.progress / totalApparel) * 100) : 0;
+  progressBar.style.width = pct + '%';
+
+  const { countEl, percentEl, container } = syncDetailProgressLayout();
+  if (isMobileViewport) {
+    progressText.textContent = 'Order Progress';
+    if (countEl) countEl.textContent = `${order.progress}/${totalApparel} Pieces Completed`;
+    if (percentEl) percentEl.textContent = `${Math.round(pct)}%`;
+    if (container) {
+      container.style.setProperty('--progress-pct', `${pct}%`);
+      container.classList.toggle('progress-percent-outside', pct < 50);
+    }
+  } else {
+    progressText.textContent = `${order.progress} / ${totalApparel} pieces printed`;
+  }
+}
+
+/**
  * Update the detail panel content using the latest order data.
  * @param {Object} o - Order data backing the detail view.
  * @param {{preserveEditing?: boolean}} [opts] - Preserve inline editing state when true.
@@ -1181,25 +1257,22 @@ function applyDetailData(o, opts = {}) {
   document.getElementById('detail-view-notes-btn').onclick = () => openViewNotesModal(o);
 
   // progress
-  const totalApparel = (o.items || []).reduce((sum, it) => sum + (isPrintItem(it) ? 0 : it.qty), 0);
-  o.totalApparel = totalApparel;
-  if (typeof o.progress !== 'number') o.progress = 0;
-  const progressText = document.getElementById('progress-text');
-  const progressBar = document.getElementById('progress-bar');
-  const updateProgressUI = () => {
-    progressText.textContent = `${o.progress} / ${totalApparel} pieces printed`;
-    const pct = totalApparel ? Math.min(100, (o.progress / totalApparel) * 100) : 0;
-    progressBar.style.width = pct + '%';
-  };
-  updateProgressUI();
-  document.getElementById('progress-plus1').onclick = async () => {
-    if (o.progress < totalApparel) {
-      o.progress += 1;
-      await window.api.updateProgress(o.name, o.progress);
-      updateProgressUI();
-    }
-  };
-  document.getElementById('progress-custom').onclick = () => openProgressModal(o, updateProgressUI);
+  updateDetailProgressUI(o);
+  const progressPlus = document.getElementById('progress-plus1');
+  const progressCustom = document.getElementById('progress-custom');
+  if (progressPlus) {
+    progressPlus.onclick = async () => {
+      const total = o.totalApparel || 0;
+      if (o.progress < total) {
+        o.progress += 1;
+        await window.api.updateProgress(o.name, o.progress);
+        updateDetailProgressUI(o);
+      }
+    };
+  }
+  if (progressCustom) {
+    progressCustom.onclick = () => openProgressModal(o, () => updateDetailProgressUI(o));
+  }
 
   // line items
   const tbody = document.querySelector('#detail-items tbody');
