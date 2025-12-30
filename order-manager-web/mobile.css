@@ -1951,7 +1951,6 @@
     display: flex;
     justify-content: flex-end;
     padding: 8px 10px;
-    background: linear-gradient(180deg, transparent 0%, #f8fafc 90%);
     position: sticky;
     bottom: 0;
   }

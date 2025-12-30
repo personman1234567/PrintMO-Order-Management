@@ -27,7 +27,7 @@ const APPAREL_ICON_GREEN = typeof window.getAssetPath === 'function'
 const PRINT_ICON_GREEN   = typeof window.getAssetPath === 'function'
   ? window.getAssetPath('PrintCountGreen.svg')
   : 'Assets/PrintCountGreen.svg';
-// utility to detect “print” items by SKU or title
+// utility to detect "print" items by SKU or title
 function isPrintItem(li) {
   return PRINT_TITLES.has(li.title);
 }
@@ -514,14 +514,14 @@ function shortenNameIfWrapped(el) {
   }
 }
 
-// build a card from the record’s `items` array
+// build a card from the record's `items` array
 function makeCard(o, style = 'default') {
   const card = document.createElement('div');
   card.className   = 'card';
   card.draggable   = true;
   card.dataset.orderId = o.name;
 
-  // split “#1234 – John Smith”
+  // split "#1234 – Johnâ”¬Ã¡Smith"
   const [orderNum, custNameRaw] = o.name.split(' – ');
   const custName = custNameRaw || '';
 
@@ -1142,10 +1142,25 @@ function renderOrderAssets(order) {
 }
 
 /**
- * Populate and reveal the detail overlay for a selected order.
- * @param {Object} o - Order data backing the detail view.
+ * Split the order name into order number and customer name.
+ * Accepts en dash, em dash, or hyphen separators with flexible spacing.
+ * @param {string} rawName - Full order name string.
+ * @returns {[string, string]} Tuple of [orderNum, custName].
  */
-function openDetail(o) {
+function splitOrderName(rawName) {
+  if (!rawName) return ['', ''];
+  const match = rawName.match(/^(.*?)\s*[\u2013\u2014-]\s*(.*)$/);
+  if (match) return [match[1], match[2]];
+  return [rawName, ''];
+}
+
+/**
+ * Update the detail panel content using the latest order data.
+ * @param {Object} o - Order data backing the detail view.
+ * @param {{preserveEditing?: boolean}} [opts] - Preserve inline editing state when true.
+ */
+function applyDetailData(o, opts = {}) {
+  const { preserveEditing = false } = opts;
   detailOrder = o;
   renderOrderAssets(o);
   syncDetailDesignPanelPlacement();
@@ -1153,14 +1168,14 @@ function openDetail(o) {
   document.getElementById('detail-timestamp').textContent = new Date(o.receivedAt).toLocaleString();
 
   // customer & notes
-  const [orderNum, custName = ''] = (o.name || '').split(' – ');
+  const [orderNum, custName] = splitOrderName(o.name);
   document.getElementById('detail-order-id').textContent   = `Order ${orderNum}`;
   document.getElementById('detail-cust-name').textContent = custName;
-  document.getElementById('detail-notes').textContent = o.notes || 'No special instructions';
-  const notesInput = document.getElementById('detail-notes-input');
-  if (notesInput) notesInput.value = o.notes || '';
-  setMobileNotesEditing(false);
-  setMobileItemsExpanded(false);
+  if (!preserveEditing || !mobileNotesEditing) {
+    document.getElementById('detail-notes').textContent = o.notes || 'No special instructions';
+    const notesInput = document.getElementById('detail-notes-input');
+    if (notesInput) notesInput.value = o.notes || '';
+  }
   document.getElementById('detail-edit-name-btn').onclick = () => openNameModal(o);
   document.getElementById('detail-edit-notes-btn').onclick = () => openNotesModal(o);
   document.getElementById('detail-view-notes-btn').onclick = () => openViewNotesModal(o);
@@ -1195,7 +1210,7 @@ function openDetail(o) {
       <tr>
         <td style="padding:4px 8px;">${i.qty}</td>
         <td style="padding:4px 8px;">${i.title}</td>
-        <td style="padding:4px 8px;">${i.variantTitle || '–'}</td>  <!-- new -->
+        <td style="padding:4px 8px;">${i.variantTitle || '-'}</td>  <!-- new -->
         <td style="padding:4px 8px; text-align:right;">$${lineTotal}</td>
       </tr>`;
   }).join('');
@@ -1254,6 +1269,16 @@ function openDetail(o) {
       bundleOrders.forEach(ord => container.appendChild(makeCard(ord, 'pipeline')));
     }
   };
+}
+
+/**
+ * Populate and reveal the detail overlay for a selected order.
+ * @param {Object} o - Order data backing the detail view.
+ */
+function openDetail(o) {
+  setMobileNotesEditing(false);
+  setMobileItemsExpanded(false);
+  applyDetailData(o);
 
   // show overlay
   const overlay = document.getElementById('detail-overlay');
@@ -1286,6 +1311,10 @@ function openDetail(o) {
 
   document.querySelector('.pipeline').classList.add('no-delete');
 
+  if (notesResizeHandler) {
+    window.removeEventListener('resize', notesResizeHandler);
+    notesResizeHandler = null;
+  }
   const notesWrapper = document.getElementById('detail-notes-wrapper');
   const detailCardEl = document.getElementById('detail-card');
   const updateNotesLimit = () => {
@@ -1295,7 +1324,6 @@ function openDetail(o) {
   window.addEventListener('resize', updateNotesLimit);
   notesResizeHandler = updateNotesLimit;
 }
-
 /**
  * Close the order detail overlay. On mobile this animates the bottom sheet
  * downward and reuses the same handler invoked by the header close button,
@@ -1351,6 +1379,20 @@ function closeDetail() {
     window.removeEventListener('resize', notesResizeHandler);
     notesResizeHandler = null;
   }
+}
+
+/**
+ * Refresh the open detail view with the newest order data.
+ * Keeps inline editing state intact while syncing remote changes.
+ */
+function refreshDetailIfOpen() {
+  if (!detailOrder || !document.body.classList.contains('detail-open')) return;
+  const latest = allOrders.find(o => o.name === detailOrder.name);
+  if (!latest) {
+    closeDetail();
+    return;
+  }
+  applyDetailData(latest, { preserveEditing: true });
 }
 
 function openNotesModal(order) {
@@ -1547,9 +1589,10 @@ async function renderBoard() {
   printSingles.forEach(o => printEl.appendChild(makeCard(o, 'printProgress')));
 
   refreshMobileSelectionUI();
+  refreshDetailIfOpen();
 }
 
-// recalc summary from “toOrder” items
+// recalc summary from "toOrder" items
 function updateSummary() {
   const picks = allOrders.filter(x => x.status === 'toOrder');
   const summary = { Apparel: 0, Prints: 0 };
@@ -1653,8 +1696,8 @@ function promptBundleName() {
 function makeDropZone(el, status) {
   el.addEventListener('dragover', e => {
     e.preventDefault();
-    // highlight only the drag‐area if desired:
-    e.dataTransfer.dropEffect = 'move';  // show move cursor instead of “no‐drop”
+    // highlight only the dragÎ“Ã‡Ã‰area if desired:
+    e.dataTransfer.dropEffect = 'move';  // show move cursor instead of "noÎ“Ã‡Ã‰drop"
     if (el.classList.contains('drag-area')) {
       el.classList.add('over');
     }
@@ -1670,7 +1713,7 @@ function makeDropZone(el, status) {
 
     // 1) Grab the ID that was set on dragstart
     const id = e.dataTransfer.getData('text/plain');
-    console.log(`→ drop: id="${id}" status="${status}"`);
+    console.log(`Î“Ã¥Ã† drop: id="${id}" status="${status}"`);
 
     if (!id) {
       console.warn('Drop ignored: no order ID present');
@@ -1692,9 +1735,9 @@ function makeDropZone(el, status) {
 }
 
 function setupDropZones() {
-  // Order Pipeline → you can drop back as ‘received’
+  // Order Pipeline Î“Ã¥Ã† you can drop back as Î“Ã‡Ã¿received'
   makeDropZone(document.getElementById('col-received'), 'received');
-  // Drag area itself ⇒ toOrder
+  // Drag area itself Î“Ã§Ã† toOrder
   const dragArea = document.getElementById('col-toOrder');
   makeDropZone(dragArea, 'toOrder');
   // Blanks Ordered
@@ -1720,7 +1763,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (evt?.type === 'queue_changed') scheduleRender();
     });
   } else {
-    console.warn('⚠️ window.api.subscribeQueueChanges is not available (check web-shim.js)');
+    console.warn('Î“ÃœÃ¡âˆ©â••Ã… window.api.subscribeQueueChanges is not available (check web-shim.js)');
   }
 
   initMobileTabs();
@@ -1732,15 +1775,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Submit button
   const submitBtn = document.getElementById('order-submit');
   if (!submitBtn) {
-    console.warn('⚠️ #order-submit button not found');
+    console.warn('Î“ÃœÃ¡âˆ©â••Ã… #order-submit button not found');
   } else {
     submitBtn.addEventListener('click', async () => {
       const toOrder = allOrders.filter(x => x.status === 'toOrder').map(x => x.name);
       if (!toOrder.length) {
-        return alert('Drag some cards into “Drag cards here” first.');
+        return alert('Drag some cards into "Drag cards here" first.');
       }
 
-      submitBtn.textContent = 'Submitting…';
+      submitBtn.textContent = 'SubmittingÎ“Ã‡Âª';
       submitBtn.disabled = true;
 
       try {
@@ -1752,14 +1795,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         await renderBoard();
-        submitBtn.textContent = '✅ Submitted';
+        submitBtn.textContent = 'Î“Â£Ã  Submitted';
 
         setTimeout(() => {
           submitBtn.textContent = 'Submit To S&S';
         }, 3000);
 
       } catch (err) {
-        submitBtn.textContent = `❌ ${err?.message || err}`;
+        submitBtn.textContent = `Î“Â¥Ã® ${err?.message || err}`;
       } finally {
         submitBtn.disabled = false;
       }
@@ -1768,7 +1811,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const clearBtn = document.getElementById('clear-picked');
   if (!clearBtn) {
-    console.warn('⚠️ #clear-picked button not found');
+    console.warn('Î“ÃœÃ¡âˆ©â••Ã… #clear-picked button not found');
   } else {
     clearBtn.addEventListener('click', async () => {
       const toOrder = allOrders
