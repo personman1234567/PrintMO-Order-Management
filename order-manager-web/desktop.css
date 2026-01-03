@@ -9,6 +9,10 @@
       font-family: sans-serif;
       overflow: hidden;
     }
+    body {
+      display: flex;
+      flex-direction: column;
+    }
     .hidden { display: none !important; }
     /* Mobile-only UI stays hidden on desktop; see mobile.css for overrides. */
     #mobile-tab-bar,
@@ -29,6 +33,416 @@
       background: #f6f5f6;
       min-height: 0;           /* allow children to manage their own scroll */
       align-items: stretch;
+    }
+
+    .app-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: #ffffff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+      z-index: 5;
+    }
+
+    .app-brand {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #1a1a1a;
+    }
+
+    .app-nav {
+      display: flex;
+      gap: 8px;
+    }
+
+    .app-nav-tab {
+      border: 1px solid #d5d5d5;
+      background: #f8f8f8;
+      border-radius: 999px;
+      padding: 6px 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .app-nav-tab.active {
+      background: #1a73e8;
+      border-color: #1a73e8;
+      color: #fff;
+    }
+
+    .app-content {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .app-view {
+      flex: 1;
+      min-height: 0;
+    }
+
+    body[data-active-view="storage"] #orders-view {
+      display: none;
+    }
+
+    body[data-active-view="orders"] #storage-view {
+      display: none;
+    }
+
+    .storage-browser {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding: 16px 20px;
+      overflow: hidden;
+      background: #f6f5f6;
+    }
+
+    .storage-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .storage-title h1 {
+      font-size: 1.5rem;
+      margin-bottom: 4px;
+    }
+
+    .storage-title p {
+      color: #4c4c4c;
+      font-size: 0.95rem;
+    }
+
+    .storage-tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .storage-tab {
+      border: 1px solid #d0d5dd;
+      padding: 6px 12px;
+      border-radius: 10px;
+      background: #ffffff;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .storage-tab.active {
+      background: #1a73e8;
+      color: #fff;
+      border-color: #1a73e8;
+    }
+
+    .storage-controls {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+
+    .storage-control {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .storage-control label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #4d4d4d;
+    }
+
+    .storage-control input[type="date"],
+    .storage-control input[type="text"] {
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid #d0d5dd;
+      font-size: 0.95rem;
+      background: #fff;
+      min-width: 240px;
+    }
+
+    .storage-filter input {
+      min-width: 320px;
+    }
+
+    .storage-recent-dates {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .storage-recent-date {
+      border-radius: 999px;
+      padding: 4px 10px;
+      border: 1px solid #d0d5dd;
+      background: #fff;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+
+    .storage-recent-date.active {
+      background: #1a73e8;
+      color: #fff;
+      border-color: #1a73e8;
+    }
+
+    .storage-status {
+      min-height: 22px;
+    }
+
+    .storage-message {
+      background: #fff;
+      border-radius: 10px;
+      padding: 10px 12px;
+      border: 1px dashed #d0d5dd;
+      color: #444;
+    }
+
+    .storage-message.error {
+      border-color: #f5c2c7;
+      color: #b42318;
+      background: #fff5f6;
+    }
+
+    .storage-results {
+      flex: 1;
+      overflow: auto;
+      padding-bottom: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .storage-group {
+      background: #fff;
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+
+    .storage-group-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .storage-group-title {
+      font-weight: 700;
+      font-size: 1.05rem;
+    }
+
+    .storage-group-subtitle {
+      font-size: 0.85rem;
+      color: #6b7280;
+    }
+
+    .storage-thumbnail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 12px;
+    }
+
+    .storage-thumb {
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #f9fafb;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      text-align: left;
+      padding: 0;
+    }
+
+    .storage-thumb img {
+      width: 100%;
+      height: 120px;
+      object-fit: cover;
+      background: #eceff4;
+    }
+
+    .storage-thumb span {
+      padding: 6px 8px;
+      font-size: 0.75rem;
+      color: #374151;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .storage-prompt-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .storage-prompt-card {
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: #f9fafb;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .storage-prompt-card img {
+      width: 100%;
+      height: 160px;
+      object-fit: cover;
+      border-radius: 10px;
+      background: #eceff4;
+    }
+
+    .storage-prompt-card h4 {
+      font-size: 0.95rem;
+    }
+
+    .storage-prompt-card p {
+      font-size: 0.8rem;
+      color: #4b5563;
+    }
+
+    .storage-footer {
+      display: flex;
+      justify-content: center;
+      padding: 8px 0 24px;
+    }
+
+    .storage-load-more {
+      border-radius: 999px;
+      border: 1px solid #d0d5dd;
+      background: #fff;
+      padding: 8px 16px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .storage-load-more[disabled] {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .storage-skeleton-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 12px;
+    }
+
+    .storage-skeleton {
+      height: 160px;
+      border-radius: 12px;
+      background: linear-gradient(90deg, #f0f0f0 0%, #f7f7f7 50%, #f0f0f0 100%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+    }
+
+    .storage-detail-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      display: grid;
+      place-items: center;
+      z-index: 1600;
+      opacity: 1;
+      transition: opacity 0.2s ease;
+    }
+
+    .storage-detail-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .storage-detail-card {
+      background: #fff;
+      border-radius: 18px;
+      width: min(960px, 92vw);
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .storage-detail-close {
+      position: absolute;
+      top: 12px;
+      right: 16px;
+      border: none;
+      background: transparent;
+      font-size: 1.8rem;
+      cursor: pointer;
+    }
+
+    .storage-detail-header {
+      padding: 16px 20px 8px;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .storage-detail-header h2 {
+      font-size: 1.2rem;
+    }
+
+    .storage-detail-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .storage-detail-actions button {
+      border-radius: 999px;
+      border: 1px solid #d0d5dd;
+      background: #fff;
+      padding: 6px 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .storage-detail-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+      gap: 16px;
+      padding: 16px 20px 20px;
+      overflow: auto;
+    }
+
+    .storage-detail-media img {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid #e5e7eb;
+      background: #eceff4;
+    }
+
+    .storage-detail-meta dl {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 8px 12px;
+      font-size: 0.9rem;
+    }
+
+    .storage-detail-meta dt {
+      font-weight: 600;
+      color: #4b5563;
+    }
+
+    .storage-detail-meta dd {
+      color: #1f2937;
+      overflow-wrap: anywhere;
     }
 
     /* Panel Base */

@@ -63,7 +63,7 @@ const PRINT_TITLES = new Set([
  * Keep visual changes in the appropriate stylesheet; renderer.js stays behavior-only.
  */
 const MOBILE_TAB_BREAKPOINT = 900;
-const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint'];
+const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint', 'storage'];
 let activeMobileTab = MOBILE_TABS[0];
 let isMobileViewport = false;
 let mobileMediaQuery = null;
@@ -232,6 +232,7 @@ function setActiveMobileTab(tab, opts = {}) {
   activeMobileTab = nextTab;
   if (document.body) {
     document.body.dataset.activeTab = nextTab;
+    document.body.dataset.activeView = nextTab === 'storage' ? 'storage' : 'orders';
   }
   document.querySelectorAll('.mobile-tab').forEach(btn => {
     const isActive = btn.dataset.tab === nextTab;
@@ -242,6 +243,8 @@ function setActiveMobileTab(tab, opts = {}) {
     window.scrollTo({ top: 0, behavior: 'auto' });
   }
 }
+
+window.setActiveMobileTab = setActiveMobileTab;
 
 /**
  * Sync a cached mobile flag with the breakpoint so other behaviors (such as

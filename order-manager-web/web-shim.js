@@ -42,6 +42,16 @@ async function apiFetch(path, opts = {}) {
   return ct.includes("application/json") ? res.json() : null;
 }
 
+function buildQuery(params = {}) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    search.set(key, String(value));
+  });
+  const query = search.toString();
+  return query ? `?${query}` : '';
+}
+
 window.api = window.api || {};
 window.api.transport = "http";
 
@@ -145,6 +155,23 @@ window.api.processBatch = async (orderIds) => {
     method: "POST",
     body: JSON.stringify({ names }),
   });
+};
+
+window.api.listStorageObjects = async ({ prefix, cursor, limit, delimiter } = {}) => {
+  const query = buildQuery({ prefix, cursor, limit, delimiter });
+  return apiFetch(`/order-manager/storage/list${query}`, { method: "GET" });
+};
+
+window.api.headStorageObject = async (key) => {
+  if (!key) throw new Error("Storage key is required");
+  const query = buildQuery({ key });
+  return apiFetch(`/order-manager/storage/head${query}`, { method: "GET" });
+};
+
+window.api.getStorageObjectUrl = (key) => {
+  if (!key) return "";
+  const query = buildQuery({ key });
+  return `${API_BASE}/order-manager/storage/object${query}`;
 };
 
 function filenameFromDisposition(disposition = "", fallback = "order-asset") {
