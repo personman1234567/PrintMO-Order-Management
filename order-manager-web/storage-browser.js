@@ -8,6 +8,7 @@
   const PROMPT_TARGET_COUNT = 60;
   const META_CONCURRENCY = 4;
   const IMAGE_CONCURRENCY = 6;
+  const PROMPT_IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif']);
 
   const state = {
     activeTab: 'previews',
@@ -121,6 +122,40 @@
     return normalized;
   }
 
+  /**
+   * Extract a lowercase file extension from a storage key.
+   * @param {string} key
+   * @returns {string}
+   */
+  function getFileExtension(key) {
+    if (!key) return '';
+    const lastDot = key.lastIndexOf('.');
+    if (lastDot === -1 || lastDot === key.length - 1) return '';
+    return key.slice(lastDot + 1).toLowerCase();
+  }
+
+  /**
+   * Determine if a storage key references an image asset we can render.
+   * @param {string} key
+   * @returns {boolean}
+   */
+  function isPromptImageKey(key) {
+    return PROMPT_IMAGE_EXTENSIONS.has(getFileExtension(key));
+  }
+
+  /**
+   * Extract the identity segment from a prompt storage key.
+   * @param {string} key
+   * @returns {string|null}
+   */
+  function extractPromptIdentityFromKey(key) {
+    if (!key) return null;
+    const parts = key.split('/');
+    const promptsIndex = parts.indexOf('prompts');
+    if (promptsIndex === -1 || promptsIndex + 1 >= parts.length) return null;
+    return parts[promptsIndex + 1] || null;
+  }
+
   function pickMeta(meta, keys) {
     if (!meta) return null;
     for (const key of keys) {
@@ -130,11 +165,44 @@
     return null;
   }
 
+  /**
+   * Render a timestamp as a friendly date string with an "at" separator.
+   * @param {string|number|Date} raw
+   * @returns {string}
+   */
   function formatTimestamp(raw) {
     if (!raw) return '';
     const date = new Date(raw);
     if (Number.isNaN(date.getTime())) return String(raw);
-    return date.toLocaleString();
+    const formatted = date.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    return formatted.replace(', ', ' at ');
+  }
+
+  /**
+   * Provide a stable key for matching prompt image+JSON pairs.
+   * @param {string} key
+   * @returns {string}
+   */
+  function getPromptBaseKey(key) {
+    if (!key) return '';
+    const lastDot = key.lastIndexOf('.');
+    return lastDot === -1 ? key : key.slice(0, lastDot);
+  }
+
+  /**
+   * Check if metadata contains real values beyond the injected key reference.
+   * @param {Object} meta
+   * @returns {boolean}
+   */
+  function hasMeaningfulMetadata(meta) {
+    if (!meta || typeof meta !== 'object') return false;
+    return Object.keys(meta).some(key => key !== 'key');
   }
 
   function getPreviewIdentity(meta) {
@@ -171,8 +239,9 @@
     const identityKey = pickMeta(normalized, ['identitykey']);
     const guestId = pickMeta(normalized, ['guestid']);
 
-    const displayName = customerName || customerEmail || customerId || guestId || identityKey || 'Unknown';
-    const identity = identityKey || customerId || customerEmail || guestId || displayName;
+    const fallbackIdentity = extractPromptIdentityFromKey(meta?.key || '') || null;
+    const displayName = customerName || customerEmail || customerId || guestId || identityKey || fallbackIdentity || 'Unknown';
+    const identity = identityKey || customerId || customerEmail || guestId || fallbackIdentity || displayName;
     return { identity, displayName };
   }
 
@@ -249,6 +318,7 @@
     const meta = obj?.customMetadata || obj?.metadata || obj?.custom_metadata || null;
     const metadata = meta ? normalizeMetadata(meta) : null;
     if (metadata) {
+      metadata.key = key;
       state.metadataCache.set(key, metadata);
     }
     return {
@@ -272,12 +342,35 @@
         const data = await window.api.headStorageObject(item.key);
         const meta = data?.customMetadata || data?.metadata || data?.custom_metadata || {};
         const normalized = normalizeMetadata(meta);
+        normalized.key = item.key;
         state.metadataCache.set(item.key, normalized);
         item.metadata = normalized;
       } catch (err) {
         console.warn('Failed to load metadata', item.key, err);
       }
     })));
+  }
+
+  /**
+   * Apply JSON metadata onto matching prompt images when the image lacks it.
+   * @param {Array<{key: string, metadata?: Object}>} items
+   */
+  function mergePromptMetadata(items) {
+    const jsonMetaByBase = new Map();
+    items.forEach(item => {
+      if (getFileExtension(item.key) !== 'json') return;
+      if (!hasMeaningfulMetadata(item.metadata)) return;
+      jsonMetaByBase.set(getPromptBaseKey(item.key), item.metadata);
+    });
+
+    items.forEach(item => {
+      if (!isPromptImageKey(item.key)) return;
+      if (hasMeaningfulMetadata(item.metadata)) return;
+      const baseKey = getPromptBaseKey(item.key);
+      if (jsonMetaByBase.has(baseKey)) {
+        item.metadata = jsonMetaByBase.get(baseKey);
+      }
+    });
   }
 
   function setupImageObserver() {
@@ -453,6 +546,7 @@
         tabState.identityCursor = list.cursor;
         tabState.hasMore = list.hasMore;
         await hydrateMetadata(items);
+        mergePromptMetadata(tabState.items);
         return;
       }
 
@@ -471,6 +565,7 @@
                 .filter(item => item.key && item.key.includes(`/${state.date}/`));
               tabState.items = tabState.items.concat(items);
               await hydrateMetadata(items);
+              mergePromptMetadata(tabState.items);
               return;
             }
             tabState.identityCursor = list.cursor;
@@ -492,6 +587,7 @@
           tabState.identityItemCursors.delete(identityPrefix);
         }
         await hydrateMetadata(items);
+        mergePromptMetadata(tabState.items);
       }
 
       tabState.hasMore = Boolean(tabState.identityPrefixes.length || tabState.identityCursor || tabState.identityItemCursors.size);
@@ -523,14 +619,17 @@
     }
 
     const filteredItems = filterItems(tabState.items);
-    if (!filteredItems.length && !tabState.loading && !tabState.error) {
+    const visibleItems = state.activeTab === 'prompts'
+      ? filteredItems.filter(item => isPromptImageKey(item.key))
+      : filteredItems;
+    if (!visibleItems.length && !tabState.loading && !tabState.error) {
       elements.empty.classList.remove('hidden');
     }
 
     if (state.activeTab === 'previews') {
-      renderPreviewGroups(filteredItems);
+      renderPreviewGroups(visibleItems);
     } else {
-      renderPromptGroups(filteredItems);
+      renderPromptGroups(visibleItems);
     }
   }
 
@@ -621,7 +720,7 @@
     const byIdentity = new Map();
     items.forEach(item => {
       const meta = item.metadata || {};
-      const identity = getPromptIdentity(meta);
+      const identity = getPromptIdentity({ ...meta, key: item.key });
       if (!byIdentity.has(identity.identity)) {
         byIdentity.set(identity.identity, { identity, items: [] });
       }
@@ -695,6 +794,15 @@
     const promptShort = pickMeta(meta, ['promptshort']) || 'Prompt';
     const style = pickMeta(meta, ['style']);
     const audience = pickMeta(meta, ['audience']);
+    const createdAt = pickMeta(meta, ['createdat']) || item.lastModified;
+    const createdLabel = formatTimestamp(createdAt);
+
+    if (createdLabel) {
+      const time = document.createElement('time');
+      time.className = 'storage-prompt-date';
+      time.textContent = createdLabel;
+      button.appendChild(time);
+    }
 
     const title = document.createElement('h4');
     title.textContent = promptShort;
@@ -714,7 +822,7 @@
     const tab = state.activeTab;
     const title = tab === 'previews'
       ? getPreviewIdentity(meta).displayName
-      : getPromptIdentity(meta).displayName;
+      : getPromptIdentity({ ...meta, key: item.key }).displayName;
 
     elements.detailTitle.textContent = title;
     elements.detailSubtitle.textContent = item.filename;
@@ -741,15 +849,29 @@
     elements.copyUrl.onclick = () => copyText(src);
   }
 
+  /**
+   * Build a customer label for prompt detail view.
+   * @param {Object} meta
+   * @returns {string}
+   */
+  function getPromptDetailCustomer(meta) {
+    const normalized = normalizeMetadata(meta);
+    return pickMeta(normalized, ['customername'])
+      || pickMeta(normalized, ['customeremail'])
+      || pickMeta(normalized, ['identitykey'])
+      || 'Unknown';
+  }
+
   function buildDetailFields(item, meta, tab) {
     const normalized = normalizeMetadata(meta);
     const createdAt = pickMeta(normalized, ['createdat']) || item.lastModified;
-    const fields = [
-      ['Object Key', item.key],
-      ['Created', formatTimestamp(createdAt)],
-    ];
+    const fields = [];
 
     if (tab === 'previews') {
+      fields.push(
+        ['Object Key', item.key],
+        ['Created', formatTimestamp(createdAt)],
+      );
       fields.push(
         ['Design Ref', pickMeta(normalized, ['designref'])],
         ['Product Handle', pickMeta(normalized, ['producthandle'])],
@@ -760,9 +882,11 @@
       );
     } else {
       fields.push(
-        ['Prompt', pickMeta(normalized, ['promptshort'])],
+        ['Customer', getPromptDetailCustomer(normalized)],
         ['Style', pickMeta(normalized, ['style'])],
-        ['Audience', pickMeta(normalized, ['audience'])],
+        ['Prompt', pickMeta(normalized, ['promptshort'])],
+        ['Created', formatTimestamp(createdAt)],
+        ['Object Key', item.key],
       );
     }
 
