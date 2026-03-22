@@ -4,6 +4,7 @@
   const RECENT_DAYS = 7;
   const STORAGE_LIST_PAGE_LIMIT = 1000;
   const META_CONCURRENCY = 4;
+  const PROMPT_LIST_CONCURRENCY = 24;
   const PROMPT_IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif']);
 
   const state = {
@@ -14,6 +15,9 @@
     needsInitialLoad: true,
     listCache: new Map(),
     metadataCache: new Map(),
+    metadataRequests: new Map(),
+    detailItemKey: null,
+    detailTab: null,
     previews: {
       items: [],
       cursor: null,
@@ -36,6 +40,7 @@
   const elements = {};
 
   const metadataLimiter = createLimiter(META_CONCURRENCY);
+  const promptListLimiter = createLimiter(PROMPT_LIST_CONCURRENCY);
   let imageObserver = null;
   let renderTimer = null;
 
@@ -331,43 +336,169 @@
     return { objects, prefixes };
   }
 
+  async function fetchListPagesIncrementally({ tab, date, prefix, cursor = null, limit = STORAGE_LIST_PAGE_LIMIT, delimiter, onPage }) {
+    const objects = [];
+    const prefixes = [];
+    const seenCursors = new Set();
+    let nextCursor = cursor;
+
+    while (true) {
+      const page = await fetchList({ tab, date, prefix, cursor: nextCursor, limit, delimiter });
+      objects.push(...page.objects);
+      prefixes.push(...page.prefixes);
+
+      if (onPage) {
+        await onPage(page);
+      }
+
+      if (!page.hasMore) break;
+      if (!page.cursor || seenCursors.has(page.cursor)) {
+        console.warn('Stopping paginated storage fetch without a usable next cursor', { tab, prefix, cursor: page.cursor });
+        break;
+      }
+
+      seenCursors.add(page.cursor);
+      nextCursor = page.cursor;
+    }
+
+    return { objects, prefixes };
+  }
+
   function buildItem(obj) {
     const key = obj?.key || obj?.name || obj?.objectKey || obj?.Key || '';
     const filename = key.split('/').pop() || key;
     const meta = obj?.customMetadata || obj?.metadata || obj?.custom_metadata || null;
-    const metadata = meta ? normalizeMetadata(meta) : null;
-    if (metadata) {
-      metadata.key = key;
-      state.metadataCache.set(key, metadata);
-    }
+    const metadata = meta ? cacheMetadata(key, meta) : state.metadataCache.get(key) || null;
     return {
       key,
       filename,
       metadata,
-      lastModified: obj?.uploaded || obj?.lastModified || obj?.mtime || obj?.modified || null,
+      metadataLoaded: Boolean(metadata),
+      lastModified: obj?.uploadedAt || obj?.uploaded || obj?.lastModified || obj?.mtime || obj?.modified || null,
     };
   }
 
-  async function hydrateMetadata(items) {
-    const missing = items.filter(item => item.key && !item.metadata);
-    if (!missing.length) return;
+  function buildItemsFromObjects(objects, { seenKeys, filter } = {}) {
+    const items = [];
+    objects.forEach(obj => {
+      const item = buildItem(obj);
+      if (!item.key) return;
+      if (typeof filter === 'function' && !filter(item)) return;
+      if (seenKeys && seenKeys.has(item.key)) return;
+      if (seenKeys) seenKeys.add(item.key);
+      items.push(item);
+    });
+    return items;
+  }
 
-    await Promise.all(missing.map(item => metadataLimiter(async () => {
-      if (state.metadataCache.has(item.key)) {
-        item.metadata = state.metadataCache.get(item.key);
-        return;
+  function cacheMetadata(key, meta = {}) {
+    if (!key) return null;
+    const normalized = normalizeMetadata(meta);
+    normalized.key = key;
+    const existing = state.metadataCache.get(key);
+    if (existing) {
+      if (hasMeaningfulMetadata(existing) && !hasMeaningfulMetadata(normalized)) {
+        return existing;
       }
+      Object.assign(existing, normalized);
+      existing.key = key;
+      return existing;
+    }
+    state.metadataCache.set(key, normalized);
+    return normalized;
+  }
+
+  function applyOwnMetadata(item, metadata) {
+    if (!item || !metadata) return false;
+    const preserveDisplayMetadata = hasMeaningfulMetadata(item.metadata) && !hasMeaningfulMetadata(metadata);
+    const changed = !preserveDisplayMetadata && item.metadata !== metadata;
+    if (!preserveDisplayMetadata) {
+      item.metadata = metadata;
+    }
+    item.metadataLoaded = true;
+    return changed;
+  }
+
+  async function fetchMetadataForKey(key) {
+    if (!key) return null;
+    if (state.metadataCache.has(key)) {
+      return state.metadataCache.get(key);
+    }
+    if (state.metadataRequests.has(key)) {
+      return state.metadataRequests.get(key);
+    }
+
+    const request = metadataLimiter(async () => {
       try {
-        const data = await window.api.headStorageObject(item.key);
+        const data = await window.api.headStorageObject(key);
         const meta = data?.customMetadata || data?.metadata || data?.custom_metadata || {};
-        const normalized = normalizeMetadata(meta);
-        normalized.key = item.key;
-        state.metadataCache.set(item.key, normalized);
-        item.metadata = normalized;
+        return cacheMetadata(key, meta);
       } catch (err) {
-        console.warn('Failed to load metadata', item.key, err);
+        console.warn('Failed to load metadata', key, err);
+        return null;
+      } finally {
+        state.metadataRequests.delete(key);
       }
-    })));
+    });
+
+    state.metadataRequests.set(key, request);
+    return request;
+  }
+
+  async function ensureItemMetadata(item) {
+    if (!item?.key) return item?.metadata || null;
+    if (item.metadataLoaded) {
+      return item.metadata || state.metadataCache.get(item.key) || null;
+    }
+
+    const cached = state.metadataCache.get(item.key);
+    if (cached) {
+      applyOwnMetadata(item, cached);
+      return cached;
+    }
+
+    const metadata = await fetchMetadataForKey(item.key);
+    if (metadata) {
+      applyOwnMetadata(item, metadata);
+    }
+    return item.metadata || metadata || null;
+  }
+
+  function hydrateMetadataInBackground(items, onUpdate) {
+    const pending = items.filter(item => item?.key && !item.metadataLoaded).map(async item => {
+      const previousMetadata = item.metadata;
+      const metadata = await ensureItemMetadata(item);
+      const changed = previousMetadata !== item.metadata;
+      onUpdate?.(item, metadata, changed);
+    });
+    return Promise.all(pending);
+  }
+
+  function findPromptMetadataSidecar(item) {
+    if (!item?.key || !isPromptImageKey(item.key)) return null;
+    const baseKey = getPromptBaseKey(item.key);
+    return state.prompts.items.find(candidate =>
+      candidate !== item
+      && getFileExtension(candidate.key) === 'json'
+      && getPromptBaseKey(candidate.key) === baseKey,
+    ) || null;
+  }
+
+  async function ensureDetailMetadata(item, tab) {
+    if (!item?.key) return item?.metadata || null;
+    if (tab !== 'prompts' || !isPromptImageKey(item.key)) {
+      return ensureItemMetadata(item);
+    }
+
+    const pending = [ensureItemMetadata(item)];
+    const sidecar = findPromptMetadataSidecar(item);
+    if (sidecar && !hasMeaningfulMetadata(item.metadata)) {
+      pending.push(ensureItemMetadata(sidecar));
+    }
+
+    await Promise.all(pending);
+    mergePromptMetadata(state.prompts.items);
+    return item.metadata || null;
   }
 
   /**
@@ -375,6 +506,7 @@
    * @param {Array<{key: string, metadata?: Object}>} items
    */
   function mergePromptMetadata(items) {
+    let changed = false;
     const jsonMetaByBase = new Map();
     items.forEach(item => {
       if (getFileExtension(item.key) !== 'json') return;
@@ -387,9 +519,26 @@
       if (hasMeaningfulMetadata(item.metadata)) return;
       const baseKey = getPromptBaseKey(item.key);
       if (jsonMetaByBase.has(baseKey)) {
-        item.metadata = jsonMetaByBase.get(baseKey);
+        const nextMetadata = jsonMetaByBase.get(baseKey);
+        if (item.metadata !== nextMetadata) {
+          item.metadata = nextMetadata;
+          changed = true;
+        }
       }
     });
+
+    return changed;
+  }
+
+  function appendPromptItems(tabState, items) {
+    if (!items.length) return;
+    tabState.items = tabState.items.concat(items);
+    mergePromptMetadata(tabState.items);
+    hydrateMetadataInBackground(items, (_item, _metadata, changed) => {
+      const merged = mergePromptMetadata(tabState.items);
+      if (changed || merged) scheduleRender();
+    });
+    scheduleRender();
   }
 
   function setupImageObserver() {
@@ -495,7 +644,9 @@
       tabState.items = reset ? items : tabState.items.concat(items);
       tabState.cursor = null;
       tabState.hasMore = false;
-      await hydrateMetadata(items);
+      hydrateMetadataInBackground(items, (_item, _metadata, changed) => {
+        if (changed) scheduleRender();
+      });
     } catch (err) {
       console.error('Failed to load previews', err);
       setError('previews', err?.message || 'Failed to load previews');
@@ -522,44 +673,58 @@
         tabState.hasMore = false;
       }
 
-      const identities = await fetchAllListPages({
+      const targetDate = state.date;
+      const seenKeys = new Set(tabState.items.map(item => item.key));
+      const identityTasks = [];
+      let sawRootObjects = false;
+      let sawPrefixes = false;
+
+      const appendObjects = (objects, filter) => {
+        const items = buildItemsFromObjects(objects, { seenKeys, filter });
+        appendPromptItems(tabState, items);
+      };
+
+      await fetchListPagesIncrementally({
         tab: 'prompts',
-        date: state.date,
+        date: targetDate,
         prefix: 'prompts/',
         cursor: reset ? null : tabState.identityCursor,
         limit: STORAGE_LIST_PAGE_LIMIT,
         delimiter: '/',
+        onPage: (page) => {
+          if (page.objects.length) {
+            sawRootObjects = true;
+            appendObjects(page.objects, item => item.key.includes(`/${targetDate}/`));
+          }
+
+          if (page.prefixes.length) {
+            sawPrefixes = true;
+            page.prefixes.forEach(identityPrefix => {
+              identityTasks.push(promptListLimiter(async () => {
+                try {
+                  const list = await fetchAllListPages({
+                    tab: 'prompts',
+                    date: targetDate,
+                    prefix: `${identityPrefix}${targetDate}/`,
+                    limit: STORAGE_LIST_PAGE_LIMIT,
+                  });
+                  appendObjects(list.objects);
+                } catch (err) {
+                  console.warn('Failed to load prompt identity prefix', identityPrefix, err);
+                }
+              }));
+            });
+          }
+        },
       });
 
-      const allItems = [];
-      const rootItems = identities.objects
-        .map(buildItem)
-        .filter(item => item.key && item.key.includes(`/${state.date}/`));
+      await Promise.all(identityTasks);
 
-      if (!identities.prefixes.length && identities.objects.length) {
-        tabState.fallbackMode = true;
-        allItems.push(...rootItems);
-      } else {
-        tabState.fallbackMode = false;
-        allItems.push(...rootItems);
-        for (const identityPrefix of identities.prefixes) {
-          const list = await fetchAllListPages({
-            tab: 'prompts',
-            date: state.date,
-            prefix: `${identityPrefix}${state.date}/`,
-            limit: STORAGE_LIST_PAGE_LIMIT,
-          });
-          allItems.push(...list.objects.map(buildItem).filter(item => item.key));
-        }
-      }
-
-      tabState.items = reset ? allItems : tabState.items.concat(allItems);
+      tabState.fallbackMode = !sawPrefixes && sawRootObjects;
       tabState.identityCursor = null;
       tabState.identityPrefixes = [];
       tabState.identityItemCursors = new Map();
       tabState.hasMore = false;
-      await hydrateMetadata(allItems);
-      mergePromptMetadata(tabState.items);
     } catch (err) {
       console.error('Failed to load prompts', err);
       setError('prompts', err?.message || 'Failed to load prompts');
@@ -787,7 +952,6 @@
     if (style) details.push(`Style: ${style}`);
     const detailsEl = document.createElement('p');
     detailsEl.textContent = details.length ? details.join(' \u2022 ') : '\u00A0';
-    button.appendChild(detailsEl);
 
     button.appendChild(img);
     button.appendChild(titleEl);
@@ -796,9 +960,7 @@
     return button;
   }
 
-  function openDetail(item) {
-    const meta = item.metadata || {};
-    const tab = state.activeTab;
+  function renderDetailFields(item, meta, tab) {
     const title = tab === 'previews'
       ? getPreviewIdentity(meta).displayName
       : getPromptIdentity({ ...meta, key: item.key }).displayName;
@@ -817,6 +979,14 @@
       elements.detailFields.appendChild(dt);
       elements.detailFields.appendChild(dd);
     });
+  }
+
+  async function openDetail(item) {
+    const tab = state.activeTab;
+    const meta = item.metadata || {};
+    state.detailItemKey = item.key;
+    state.detailTab = tab;
+    renderDetailFields(item, meta, tab);
 
     const src = window.api.getStorageObjectUrl(item.key);
     elements.detailImage.removeAttribute('src');
@@ -828,6 +998,12 @@
     elements.detailOverlay.classList.remove('hidden');
     elements.copyKey.onclick = () => copyText(item.key);
     elements.copyUrl.onclick = () => copyText(src);
+
+    const hydratedMeta = await ensureDetailMetadata(item, tab);
+    if (state.detailItemKey !== item.key || state.detailTab !== tab || elements.detailOverlay.classList.contains('hidden')) {
+      return;
+    }
+    renderDetailFields(item, hydratedMeta || item.metadata || {}, tab);
   }
 
   /**
@@ -895,6 +1071,8 @@
   }
 
   function closeDetail() {
+    state.detailItemKey = null;
+    state.detailTab = null;
     elements.detailOverlay.classList.add('hidden');
     elements.detailImage.removeAttribute('src');
   }
