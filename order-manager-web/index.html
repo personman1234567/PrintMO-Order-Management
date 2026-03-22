@@ -273,9 +273,21 @@
 
     <div class="storage-controls">
       <div class="storage-control">
-        <label for="storage-date-input">Date</label>
-        <input id="storage-date-input" type="date" />
-        <div id="storage-recent-dates" class="storage-recent-dates" aria-label="Recent dates"></div>
+        <label>View</label>
+        <div class="storage-view-modes" role="group" aria-label="Storage view mode">
+          <button class="storage-view-mode active" type="button" data-storage-view-mode="date" aria-pressed="true">Date Range</button>
+          <button class="storage-view-mode" type="button" data-storage-view-mode="all" aria-pressed="false">All Customers</button>
+        </div>
+        <p id="storage-view-mode-hint" class="storage-control-hint">Designer Studio previews are organized by date, so this tab stays in date-range mode.</p>
+      </div>
+      <div id="storage-date-controls" class="storage-control">
+        <label for="storage-start-date-input">Date Range</label>
+        <div class="storage-date-inputs">
+          <input id="storage-start-date-input" type="date" />
+          <span class="storage-date-separator" aria-hidden="true">to</span>
+          <input id="storage-end-date-input" type="date" />
+        </div>
+        <div id="storage-range-presets" class="storage-range-presets" aria-label="Date range presets"></div>
       </div>
       <div class="storage-control storage-filter">
         <label for="storage-filter-input">Filter</label>

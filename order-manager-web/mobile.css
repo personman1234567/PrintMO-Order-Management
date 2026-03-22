@@ -145,24 +145,63 @@
       width: 100%;
     }
 
-    .storage-recent-dates {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
+    .storage-control.is-disabled {
+      opacity: 0.65;
     }
 
-    .storage-recent-date {
+    .storage-control-hint {
+      font-size: 0.76rem;
+      line-height: 1.4;
+      color: #667085;
+    }
+
+    .storage-view-modes {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      padding: 4px;
+      border: 1px solid #d0d5dd;
+      border-radius: 12px;
+      background: #fff;
+    }
+
+    .storage-view-mode,
+    .storage-range-preset {
       border-radius: 999px;
-      padding: 4px 10px;
       border: 1px solid #d0d5dd;
       background: #fff;
-      font-size: 0.75rem;
+      padding: 8px 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #344054;
     }
 
-    .storage-recent-date.active {
+    .storage-view-mode.active,
+    .storage-range-preset.active {
       background: #1a73e8;
       color: #fff;
       border-color: #1a73e8;
+    }
+
+    .storage-view-mode[disabled],
+    .storage-range-preset[disabled] {
+      opacity: 0.55;
+    }
+
+    .storage-date-inputs {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
+    }
+
+    .storage-date-separator {
+      display: none;
+    }
+
+    .storage-range-presets {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
     }
 
     .storage-status {
@@ -254,6 +293,40 @@
       font-size: 0.65rem;
       color: #4b5563;
       pointer-events: none;
+    }
+
+    .storage-group-placeholder {
+      border: 1px dashed #d0d5dd;
+      border-radius: 14px;
+      padding: 16px;
+      background: linear-gradient(180deg, #f8fafc 0%, #eef3f8 100%);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      color: #475467;
+    }
+
+    .storage-group-placeholder strong {
+      color: #1f2937;
+    }
+
+    .storage-group-placeholder button {
+      width: fit-content;
+      border-radius: 999px;
+      border: 1px solid #d0d5dd;
+      background: #fff;
+      padding: 6px 12px;
+      font-weight: 600;
+    }
+
+    .storage-group-placeholder.is-loading {
+      background: linear-gradient(90deg, #eef2f7 0%, #f8fafc 50%, #eef2f7 100%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+    }
+
+    .storage-render-sentinel {
+      height: 1px;
     }
 
     .storage-footer {

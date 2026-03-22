@@ -168,29 +168,77 @@
       min-width: 240px;
     }
 
-    .storage-filter input {
-      min-width: 320px;
+    .storage-control.is-disabled {
+      opacity: 0.65;
     }
 
-    .storage-recent-dates {
+    .storage-control-hint {
+      font-size: 0.78rem;
+      color: #667085;
+      max-width: 360px;
+      line-height: 1.4;
+    }
+
+    .storage-view-modes {
+      display: inline-flex;
+      gap: 6px;
+      padding: 4px;
+      border-radius: 12px;
+      border: 1px solid #d0d5dd;
+      background: #ffffff;
+      width: fit-content;
+    }
+
+    .storage-view-mode,
+    .storage-range-preset {
+      border: 1px solid #d0d5dd;
+      border-radius: 999px;
+      background: #fff;
+      padding: 7px 12px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      color: #344054;
+    }
+
+    .storage-view-mode.active,
+    .storage-range-preset.active {
+      background: #1a73e8;
+      color: #fff;
+      border-color: #1a73e8;
+    }
+
+    .storage-view-mode[disabled],
+    .storage-range-preset[disabled] {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .storage-date-inputs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .storage-date-inputs input[type="date"] {
+      min-width: 170px;
+    }
+
+    .storage-date-separator {
+      font-size: 0.85rem;
+      color: #667085;
+      font-weight: 600;
+    }
+
+    .storage-range-presets {
       display: flex;
       gap: 6px;
       flex-wrap: wrap;
     }
 
-    .storage-recent-date {
-      border-radius: 999px;
-      padding: 4px 10px;
-      border: 1px solid #d0d5dd;
-      background: #fff;
-      font-size: 0.8rem;
-      cursor: pointer;
-    }
-
-    .storage-recent-date.active {
-      background: #1a73e8;
-      color: #fff;
-      border-color: #1a73e8;
+    .storage-filter input {
+      min-width: 320px;
     }
 
     .storage-status {
@@ -335,6 +383,42 @@
       font-size: 0.7rem;
       color: #4b5563;
       pointer-events: none;
+    }
+
+    .storage-group-placeholder {
+      border: 1px dashed #d0d5dd;
+      border-radius: 14px;
+      padding: 18px;
+      background: linear-gradient(180deg, #f8fafc 0%, #eef3f8 100%);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      color: #475467;
+    }
+
+    .storage-group-placeholder strong {
+      font-size: 0.95rem;
+      color: #1f2937;
+    }
+
+    .storage-group-placeholder button {
+      width: fit-content;
+      border-radius: 999px;
+      border: 1px solid #d0d5dd;
+      background: #fff;
+      padding: 6px 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .storage-group-placeholder.is-loading {
+      background: linear-gradient(90deg, #eef2f7 0%, #f8fafc 50%, #eef2f7 100%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+    }
+
+    .storage-render-sentinel {
+      height: 1px;
     }
 
     .storage-footer {
