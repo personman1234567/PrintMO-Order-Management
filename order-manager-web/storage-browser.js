@@ -2,12 +2,8 @@
 (() => {
   const STORAGE_TABS = ['previews', 'prompts'];
   const RECENT_DAYS = 7;
-  const PREVIEW_PAGE_LIMIT = 150;
-  const PROMPT_IDENTITY_LIMIT = 40;
-  const PROMPT_OBJECT_LIMIT = 80;
-  const PROMPT_TARGET_COUNT = 60;
+  const STORAGE_LIST_PAGE_LIMIT = 1000;
   const META_CONCURRENCY = 4;
-  const IMAGE_CONCURRENCY = 6;
   const PROMPT_IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif']);
 
   const state = {
@@ -40,7 +36,6 @@
   const elements = {};
 
   const metadataLimiter = createLimiter(META_CONCURRENCY);
-  const imageLimiter = createLimiter(IMAGE_CONCURRENCY);
   let imageObserver = null;
   let renderTimer = null;
 
@@ -312,6 +307,30 @@
     return normalized;
   }
 
+  async function fetchAllListPages({ tab, date, prefix, cursor = null, limit = STORAGE_LIST_PAGE_LIMIT, delimiter }) {
+    const objects = [];
+    const prefixes = [];
+    const seenCursors = new Set();
+    let nextCursor = cursor;
+
+    while (true) {
+      const page = await fetchList({ tab, date, prefix, cursor: nextCursor, limit, delimiter });
+      objects.push(...page.objects);
+      prefixes.push(...page.prefixes);
+
+      if (!page.hasMore) break;
+      if (!page.cursor || seenCursors.has(page.cursor)) {
+        console.warn('Stopping paginated storage fetch without a usable next cursor', { tab, prefix, cursor: page.cursor });
+        break;
+      }
+
+      seenCursors.add(page.cursor);
+      nextCursor = page.cursor;
+    }
+
+    return { objects, prefixes };
+  }
+
   function buildItem(obj) {
     const key = obj?.key || obj?.name || obj?.objectKey || obj?.Key || '';
     const filename = key.split('/').pop() || key;
@@ -379,8 +398,10 @@
       imageObserver = {
         observe: (img) => {
           const src = img.dataset.src;
-          if (!src) return;
-          imageLimiter(() => loadImage(img, src));
+          if (src) {
+            img.src = src;
+            img.classList.add('loaded');
+          }
         },
       };
       return;
@@ -390,24 +411,14 @@
         if (!entry.isIntersecting) return;
         const img = entry.target;
         const src = img.dataset.src;
-        if (!src) return;
+        if (src && !img.src) {
+          img.src = src;
+          // Clean up fade-in once loaded by browser
+          img.onload = () => img.classList.add('loaded');
+        }
         imageObserver.unobserve(img);
-        imageLimiter(() => loadImage(img, src));
       });
-    }, { rootMargin: '200px' });
-  }
-
-  function loadImage(img, src) {
-    return new Promise((resolve, reject) => {
-      const loader = new Image();
-      loader.onload = () => {
-        img.src = src;
-        img.classList.add('loaded');
-        resolve();
-      };
-      loader.onerror = () => reject(new Error('Image failed'));
-      loader.src = src;
-    });
+    }, { rootMargin: '400px' });
   }
 
   function setLoading(tab, isLoading) {
@@ -462,6 +473,7 @@
   async function loadPreviews({ reset }) {
     const tabState = state.previews;
     if (tabState.loading) return;
+    if (!reset && !tabState.hasMore) return;
     setLoading('previews', true);
     scheduleRender();
 
@@ -469,19 +481,20 @@
       if (reset) {
         tabState.items = [];
         tabState.cursor = null;
+        tabState.hasMore = false;
       }
       const prefix = `previews/${state.date}/`;
-      const data = await fetchList({
+      const data = await fetchAllListPages({
         tab: 'previews',
         date: state.date,
         prefix,
         cursor: reset ? null : tabState.cursor,
-        limit: PREVIEW_PAGE_LIMIT,
+        limit: STORAGE_LIST_PAGE_LIMIT,
       });
       const items = data.objects.map(buildItem).filter(item => item.key);
       tabState.items = reset ? items : tabState.items.concat(items);
-      tabState.cursor = data.cursor;
-      tabState.hasMore = data.hasMore;
+      tabState.cursor = null;
+      tabState.hasMore = false;
       await hydrateMetadata(items);
     } catch (err) {
       console.error('Failed to load previews', err);
@@ -492,33 +505,10 @@
     }
   }
 
-  async function loadPromptIdentityPrefixes(cursor) {
-    const data = await fetchList({
-      tab: 'prompts',
-      date: state.date,
-      prefix: 'prompts/',
-      cursor,
-      limit: PROMPT_IDENTITY_LIMIT,
-      delimiter: '/',
-    });
-    return data;
-  }
-
-  async function loadPromptIdentityItems(identityPrefix, cursor) {
-    const prefix = `${identityPrefix}${state.date}/`;
-    const data = await fetchList({
-      tab: 'prompts',
-      date: state.date,
-      prefix,
-      cursor,
-      limit: PROMPT_OBJECT_LIMIT,
-    });
-    return data;
-  }
-
   async function loadPrompts({ reset }) {
     const tabState = state.prompts;
     if (tabState.loading) return;
+    if (!reset && !tabState.hasMore) return;
     setLoading('prompts', true);
     scheduleRender();
 
@@ -529,68 +519,47 @@
         tabState.identityPrefixes = [];
         tabState.identityItemCursors = new Map();
         tabState.fallbackMode = false;
+        tabState.hasMore = false;
       }
 
-      if (tabState.fallbackMode) {
-        const list = await fetchList({
-          tab: 'prompts',
-          date: state.date,
-          prefix: 'prompts/',
-          cursor: reset ? null : tabState.identityCursor,
-          limit: PROMPT_OBJECT_LIMIT,
-        });
-        const items = list.objects
-          .map(buildItem)
-          .filter(item => item.key && item.key.includes(`/${state.date}/`));
-        tabState.items = reset ? items : tabState.items.concat(items);
-        tabState.identityCursor = list.cursor;
-        tabState.hasMore = list.hasMore;
-        await hydrateMetadata(items);
-        mergePromptMetadata(tabState.items);
-        return;
-      }
+      const identities = await fetchAllListPages({
+        tab: 'prompts',
+        date: state.date,
+        prefix: 'prompts/',
+        cursor: reset ? null : tabState.identityCursor,
+        limit: STORAGE_LIST_PAGE_LIMIT,
+        delimiter: '/',
+      });
 
-      let safety = 0;
-      while (tabState.items.length < PROMPT_TARGET_COUNT && safety < 20) {
-        safety += 1;
-        if (!tabState.identityPrefixes.length) {
-          if (tabState.identityCursor === null || tabState.hasMore !== false) {
-            const list = await loadPromptIdentityPrefixes(tabState.identityCursor);
-            if (!list.prefixes.length && list.objects.length) {
-              tabState.fallbackMode = true;
-              tabState.identityCursor = list.cursor;
-              tabState.hasMore = list.hasMore;
-              const items = list.objects
-                .map(buildItem)
-                .filter(item => item.key && item.key.includes(`/${state.date}/`));
-              tabState.items = tabState.items.concat(items);
-              await hydrateMetadata(items);
-              mergePromptMetadata(tabState.items);
-              return;
-            }
-            tabState.identityCursor = list.cursor;
-            tabState.hasMore = list.hasMore;
-            tabState.identityPrefixes = list.prefixes.slice();
-          }
+      const allItems = [];
+      const rootItems = identities.objects
+        .map(buildItem)
+        .filter(item => item.key && item.key.includes(`/${state.date}/`));
+
+      if (!identities.prefixes.length && identities.objects.length) {
+        tabState.fallbackMode = true;
+        allItems.push(...rootItems);
+      } else {
+        tabState.fallbackMode = false;
+        allItems.push(...rootItems);
+        for (const identityPrefix of identities.prefixes) {
+          const list = await fetchAllListPages({
+            tab: 'prompts',
+            date: state.date,
+            prefix: `${identityPrefix}${state.date}/`,
+            limit: STORAGE_LIST_PAGE_LIMIT,
+          });
+          allItems.push(...list.objects.map(buildItem).filter(item => item.key));
         }
-
-        const identityPrefix = tabState.identityPrefixes.shift();
-        if (!identityPrefix) break;
-
-        const identityCursor = tabState.identityItemCursors.get(identityPrefix) || null;
-        const list = await loadPromptIdentityItems(identityPrefix, identityCursor);
-        const items = list.objects.map(buildItem).filter(item => item.key);
-        tabState.items = tabState.items.concat(items);
-        if (list.hasMore) {
-          tabState.identityItemCursors.set(identityPrefix, list.cursor);
-        } else {
-          tabState.identityItemCursors.delete(identityPrefix);
-        }
-        await hydrateMetadata(items);
-        mergePromptMetadata(tabState.items);
       }
 
-      tabState.hasMore = Boolean(tabState.identityPrefixes.length || tabState.identityCursor || tabState.identityItemCursors.size);
+      tabState.items = reset ? allItems : tabState.items.concat(allItems);
+      tabState.identityCursor = null;
+      tabState.identityPrefixes = [];
+      tabState.identityItemCursors = new Map();
+      tabState.hasMore = false;
+      await hydrateMetadata(allItems);
+      mergePromptMetadata(tabState.items);
     } catch (err) {
       console.error('Failed to load prompts', err);
       setError('prompts', err?.message || 'Failed to load prompts');
@@ -602,6 +571,8 @@
 
   function renderStorageResults() {
     const tabState = state[state.activeTab];
+    // Recursion guarantees all items load at once, so 'Load More' 
+    // is effectively hidden as hasMore will be exhausted if recursive loop completes successfully.
     elements.loadMoreBtn.disabled = tabState.loading || !tabState.hasMore;
     elements.loadMoreBtn.classList.toggle('hidden', !tabState.hasMore);
 
@@ -758,6 +729,7 @@
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'storage-thumb';
+    button.title = item.filename;
     const img = document.createElement('img');
     img.alt = item.filename;
     img.loading = 'lazy';
@@ -769,6 +741,7 @@
 
     const label = document.createElement('span');
     label.textContent = item.filename;
+    label.title = item.filename;
 
     button.appendChild(img);
     button.appendChild(label);
@@ -780,6 +753,7 @@
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'storage-prompt-card';
+    button.title = item.filename;
 
     const img = document.createElement('img');
     img.alt = item.filename;
@@ -798,21 +772,26 @@
     const createdLabel = formatTimestamp(createdAt);
 
     if (createdLabel) {
-      const time = document.createElement('time');
-      time.className = 'storage-prompt-date';
-      time.textContent = createdLabel;
-      button.appendChild(time);
+      const dateBadge = document.createElement('div');
+      dateBadge.className = 'storage-prompt-date';
+      dateBadge.textContent = createdLabel;
+      button.appendChild(dateBadge);
     }
 
-    const title = document.createElement('h4');
-    title.textContent = promptShort;
+    const titleEl = document.createElement('h4');
+    titleEl.textContent = promptShort;
+    titleEl.title = promptShort; // Provide native tooltip
 
-    const detail = document.createElement('p');
-    detail.textContent = [style, audience].filter(Boolean).join(' • ');
+    const details = [];
+    if (audience) details.push(`For: ${audience}`);
+    if (style) details.push(`Style: ${style}`);
+    const detailsEl = document.createElement('p');
+    detailsEl.textContent = details.length ? details.join(' \u2022 ') : '\u00A0';
+    button.appendChild(detailsEl);
 
     button.appendChild(img);
-    button.appendChild(title);
-    button.appendChild(detail);
+    button.appendChild(titleEl);
+    button.appendChild(detailsEl);
     button.addEventListener('click', () => openDetail(item));
     return button;
   }
@@ -841,8 +820,10 @@
 
     const src = window.api.getStorageObjectUrl(item.key);
     elements.detailImage.removeAttribute('src');
-    elements.detailImage.dataset.src = src;
-    imageLimiter(() => loadImage(elements.detailImage, src));
+    // Load the detail image immediately (modal is visible, no lazy loading needed)
+    elements.detailImage.src = src;
+    elements.detailImage.classList.remove('loaded');
+    elements.detailImage.onload = () => elements.detailImage.classList.add('loaded');
 
     elements.detailOverlay.classList.remove('hidden');
     elements.copyKey.onclick = () => copyText(item.key);
@@ -987,3 +968,4 @@
 
   document.addEventListener('DOMContentLoaded', initStorageBrowser);
 })();
+
