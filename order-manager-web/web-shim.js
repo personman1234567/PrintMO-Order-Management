@@ -196,30 +196,11 @@ function triggerBlobDownload(blob, filename) {
 window.api.downloadAsset = async (url, filename) => {
   if (!url) throw new Error("Asset URL is required");
 
-  const res = await apiFetch("/order-manager/assets/download", {
-    method: "POST",
-    body: JSON.stringify({ url, filename }),
-    rawResponse: true,
-  });
-
-  const ct = res.headers.get("content-type") || "";
-  if (ct.includes("application/json")) {
-    const data = await res.json();
-    const dlUrl = data?.downloadUrl || data?.url;
-    const name = data?.filename || data?.name || filename || "order-asset";
-    if (dlUrl) {
-      const follow = await fetch(dlUrl);
-      if (!follow.ok) {
-        const msg = `${follow.status} ${follow.statusText}`;
-        throw new Error(`Download failed - ${msg}`);
-      }
-      const blob = await follow.blob();
-      triggerBlobDownload(blob, name);
-    } else if (data?.data && data?.mime) {
-      const bytes = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
-      triggerBlobDownload(new Blob([bytes], { type: data.mime }), name);
-    }
-    return data;
+  // Fetch the asset directly — URLs are already publicly accessible
+  // (they're the same ones rendered as <img> previews in the detail panel).
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`Download failed: ${res.status} ${res.statusText}`);
   }
 
   const blob = await res.blob();
