@@ -2034,24 +2034,19 @@
     -webkit-overflow-scrolling: touch;
   }
 
-  .detail-section {
+  /**
+   * Mobile detail layout contract.
+   * renderer.js sets body[data-detail-layout="mobile"] only after it has moved
+   * the detail sections into the mobile DOM order:
+   * mockups -> customer/notes/production -> items -> design files.
+   */
+  body[data-detail-layout="mobile"] .detail-section {
     flex: 0 0 auto;
     width: 100%;
     min-width: 0;
   }
 
-  #detail-main-column {
-    flex: 0 0 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    width: 100%;
-    min-width: 0;
-    min-height: auto;
-    overflow: visible;
-  }
-
-  #detail-main-stack {
+  body[data-detail-layout="mobile"] #detail-main-column {
     flex: 0 0 auto;
     display: flex;
     flex-direction: column;
@@ -2062,7 +2057,18 @@
     overflow: visible;
   }
 
-  #detail-order-column {
+  body[data-detail-layout="mobile"] #detail-main-stack {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: 100%;
+    min-width: 0;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  body[data-detail-layout="mobile"] #detail-order-column {
     display: none;
   }
 
@@ -2081,7 +2087,7 @@
     font-size: 0.95rem;
   }
 
-  #detail-mockups-strip {
+  body[data-detail-layout="mobile"] #detail-mockups-strip {
     display: flex;
     flex-direction: column;
     flex: 0 0 auto;
@@ -2096,11 +2102,11 @@
     box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
   }
 
-  #detail-mockups-strip h4 {
+  body[data-detail-layout="mobile"] #detail-mockups-strip h4 {
     display: none;
   }
 
-  #detail-mockups-track {
+  body[data-detail-layout="mobile"] #detail-mockups-track {
     display: flex;
     gap: 12px;
     width: 100%;
@@ -2111,7 +2117,7 @@
     justify-content: center;
   }
 
-  .mockup-thumb {
+  body[data-detail-layout="mobile"] .mockup-thumb {
     width: min(42vw, 160px);
     height: 96px;
     min-width: 110px;
@@ -2120,16 +2126,16 @@
     flex: 0 0 auto;
   }
 
-  #detail-mockups-track img {
+  body[data-detail-layout="mobile"] #detail-mockups-track img {
     max-width: 100%;
     border-radius: 12px;
   }
 
-  #detail-customer-card {
+  body[data-detail-layout="mobile"] #detail-customer-card {
     padding: 0;
   }
 
-  #detail-name-row {
+  body[data-detail-layout="mobile"] #detail-name-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -2139,28 +2145,28 @@
     box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
   }
 
-  #detail-name-row h3 {
+  body[data-detail-layout="mobile"] #detail-name-row h3 {
     font-size: 1rem;
     margin: 0;
     color: #0f172a;
   }
 
-  #detail-name-row .detail-section-label {
+  body[data-detail-layout="mobile"] #detail-name-row .detail-section-label {
     display: none;
   }
 
-  #detail-name-row::before {
+  body[data-detail-layout="mobile"] #detail-name-row::before {
     content: "Customer:";
     font-weight: 600;
     color: #475569;
     margin-right: 8px;
   }
 
-  #detail-edit-name-btn {
+  body[data-detail-layout="mobile"] #detail-edit-name-btn {
     font-size: 0.9rem;
   }
 
-  .detail-notes-actions {
+  body[data-detail-layout="mobile"] .detail-notes-actions {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -2192,7 +2198,7 @@
     z-index: 2;
   }
 
-  #detail-notes-wrapper {
+  body[data-detail-layout="mobile"] #detail-notes-wrapper {
     position: relative;
     background: #fff;
     margin: 0;
@@ -2202,13 +2208,13 @@
     min-height: 90px;
   }
 
-  #detail-notes {
+  body[data-detail-layout="mobile"] #detail-notes {
     margin: 0;
     color: #1f2937;
     white-space: pre-wrap;
   }
 
-  #detail-notes-input {
+  body[data-detail-layout="mobile"] #detail-notes-input {
     width: 100%;
     min-height: 80px;
     border-radius: 10px;
@@ -2230,14 +2236,14 @@
     float: right;
   }
 
-  #detail-production-card,
-  #detail-items-section {
+  body[data-detail-layout="mobile"] #detail-production-card,
+  body[data-detail-layout="mobile"] #detail-items-section {
     display: flex;
     flex-direction: column;
     gap: 14px;
   }
 
-  #detail-items-section {
+  body[data-detail-layout="mobile"] #detail-items-section {
     flex: 0 0 auto;
     background: #fff;
     padding: 14px;
@@ -2246,8 +2252,8 @@
     overflow: hidden;
   }
 
-  #detail-production-card h4,
-  #detail-items-section h4 {
+  body[data-detail-layout="mobile"] #detail-production-card h4,
+  body[data-detail-layout="mobile"] #detail-items-section h4 {
     margin: 0;
     color: #334155;
     font-size: 0.95rem;
@@ -2385,7 +2391,7 @@
     margin-left: 0;
   }
 
-  #detail-items-wrapper {
+  body[data-detail-layout="mobile"] #detail-items-wrapper {
     flex: 0 0 auto;
     background: #fff;
     border-radius: 12px;
@@ -2397,12 +2403,12 @@
     -webkit-overflow-scrolling: touch;
   }
 
-  #detail-items-wrapper.mobile-expanded {
+  body[data-detail-layout="mobile"] #detail-items-wrapper.mobile-expanded {
     max-height: none;
     overflow: visible;
   }
 
-  #detail-items {
+  body[data-detail-layout="mobile"] #detail-items {
     width: 100%;
     display: table;
   }
@@ -2425,22 +2431,22 @@
     font-weight: 700;
   }
 
-  #detail-summary {
+  body[data-detail-layout="mobile"] #detail-summary {
     background: #fff;
     border-radius: 12px;
     box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
     margin: 0;
   }
 
-  #detail-summary td {
+  body[data-detail-layout="mobile"] #detail-summary td {
     padding: 10px 12px;
   }
 
-  #detail-summary tr:last-child td {
+  body[data-detail-layout="mobile"] #detail-summary tr:last-child td {
     font-size: 1.05rem;
   }
 
-  #detail-design-panel {
+  body[data-detail-layout="mobile"] #detail-design-panel {
     flex: 0 0 auto;
     width: 100%;
     min-width: 0;
@@ -2452,14 +2458,14 @@
     overflow: visible;
   }
 
-  .design-panel-body {
+  body[data-detail-layout="mobile"] .design-panel-body {
     display: grid;
     gap: 10px;
     padding: 0;
     overflow: hidden;
   }
 
-  .design-group {
+  body[data-detail-layout="mobile"] .design-group {
     background: #fff;
     border-radius: 12px;
     padding: 10px;
@@ -2468,7 +2474,7 @@
     overflow: visible;
   }
 
-  .design-group-title {
+  body[data-detail-layout="mobile"] .design-group-title {
     width: 100%;
     border: 0;
     background: none;
@@ -2482,12 +2488,12 @@
     align-items: center;
   }
 
-  .design-group.is-collapsed .design-tiles {
+  body[data-detail-layout="mobile"] .design-group.is-collapsed .design-tiles {
     display: none;
   }
 
-  .design-files-count,
-  .design-group-count {
+  body[data-detail-layout="mobile"] .design-files-count,
+  body[data-detail-layout="mobile"] .design-group-count {
     border-radius: 999px;
     background: #e8f1ff;
     color: #0f55b4;
@@ -2496,14 +2502,14 @@
     font-weight: 700;
   }
 
-  .design-tiles {
+  body[data-detail-layout="mobile"] .design-tiles {
     gap: 8px;
     flex-wrap: wrap;
     overflow: hidden;
     padding-bottom: 0;
   }
 
-  .design-file-row {
+  body[data-detail-layout="mobile"] .design-file-row {
     display: grid;
     grid-template-columns: 64px minmax(0, 1fr);
     gap: 10px;
@@ -2514,24 +2520,24 @@
     border-top: 1px solid #e2e8f0;
   }
 
-  .design-file-row .design-thumb {
+  body[data-detail-layout="mobile"] .design-file-row .design-thumb {
     width: 64px;
     height: 64px;
     min-height: 0;
     max-height: none;
   }
 
-  .design-file-row:first-child {
+  body[data-detail-layout="mobile"] .design-file-row:first-child {
     border-top: 0;
   }
 
-  .design-file-info {
+  body[data-detail-layout="mobile"] .design-file-info {
     min-width: 0;
     display: grid;
     gap: 5px;
   }
 
-  .design-label {
+  body[data-detail-layout="mobile"] .design-label {
     border: 0;
     background: none;
     padding: 0;
@@ -2544,7 +2550,7 @@
     text-overflow: ellipsis;
   }
 
-  .design-print-type {
+  body[data-detail-layout="mobile"] .design-print-type {
     width: fit-content;
     border-radius: 6px;
     background: #e8f1ff;
@@ -2553,13 +2559,13 @@
     font-size: 0.75rem;
   }
 
-  .design-file-meta {
+  body[data-detail-layout="mobile"] .design-file-meta {
     color: #667085;
     font-size: 0.8rem;
   }
 
-  .design-actions,
-  .detail-asset-status {
+  body[data-detail-layout="mobile"] .design-actions,
+  body[data-detail-layout="mobile"] .detail-asset-status {
     grid-column: 2;
   }
 

@@ -64,6 +64,21 @@ const PRINT_TITLES = new Set([
  */
 const MOBILE_TAB_BREAKPOINT = 900;
 const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint', 'storage'];
+const DETAIL_LAYOUT = Object.freeze({
+  DESKTOP: 'desktop',
+  MOBILE: 'mobile'
+});
+const DETAIL_LAYOUT_CONTRACT = Object.freeze({
+  [DETAIL_LAYOUT.MOBILE]: {
+    root: 'detail-main-column',
+    children: ['detail-mockups-strip', 'detail-main-stack', 'detail-items-section', 'detail-design-panel']
+  },
+  [DETAIL_LAYOUT.DESKTOP]: {
+    root: 'detail-main-column',
+    children: ['detail-main-stack', 'detail-order-column', 'detail-design-panel'],
+    orderColumnChildren: ['detail-mockups-strip', 'detail-items-section']
+  }
+});
 let activeMobileTab = MOBILE_TABS[0];
 let isMobileViewport = false;
 let mobileMediaQuery = null;
@@ -256,6 +271,8 @@ function updateMobileViewportFlag(matches) {
   if (document.body) {
     document.body.classList.toggle('mobile-mode', matches);
   }
+  const nextDetailLayout = matches ? DETAIL_LAYOUT.MOBILE : DETAIL_LAYOUT.DESKTOP;
+  setDetailLayoutMode(nextDetailLayout);
   if (matches) {
     setActiveMobileTab(activeMobileTab, { scrollTop: false });
     const overlay = document.getElementById('detail-overlay');
@@ -286,9 +303,60 @@ function updateMobileViewportFlag(matches) {
       detailCard.style.transform = '';
     }
   }
-  syncDetailLayoutPlacement();
+  syncDetailLayoutPlacement(nextDetailLayout);
   if (detailOrder) {
     updateDetailProgressUI(detailOrder);
+  }
+}
+
+/**
+ * Resolve every node that participates in the detail layout contract.
+ * @returns {Record<string, HTMLElement|null>}
+ */
+function getDetailLayoutNodes() {
+  return {
+    column: document.getElementById('detail-main-column'),
+    stack: document.getElementById('detail-main-stack'),
+    orderColumn: document.getElementById('detail-order-column'),
+    mockups: document.getElementById('detail-mockups-strip'),
+    items: document.getElementById('detail-items-section'),
+    panel: document.getElementById('detail-design-panel'),
+    card: document.getElementById('detail-card')
+  };
+}
+
+/**
+ * Mark the active detail layout as a CSS/behavior contract.
+ * @param {'desktop'|'mobile'} layout
+ */
+function setDetailLayoutMode(layout) {
+  if (document.body) {
+    document.body.dataset.detailLayout = layout;
+  }
+  const card = document.getElementById('detail-card');
+  if (card) {
+    card.dataset.detailLayout = layout;
+  }
+}
+
+/**
+ * Verify that a parent contains direct children in the required order.
+ * @param {HTMLElement} parent
+ * @param {string[]} childIds
+ * @param {string} label
+ */
+function assertDetailChildOrder(parent, childIds, label) {
+  const actual = childIds.map(id => document.getElementById(id));
+  if (actual.some(node => !node)) {
+    console.warn(`Detail layout contract missing node for ${label}`);
+    return;
+  }
+  const mismatch = actual.some((node, idx) => node.parentElement !== parent || parent.children[idx] !== node);
+  if (mismatch) {
+    console.warn(`Detail layout contract violated for ${label}`, {
+      expected: childIds,
+      actual: Array.from(parent.children).map(child => child.id).filter(Boolean)
+    });
   }
 }
 
@@ -296,17 +364,19 @@ function updateMobileViewportFlag(matches) {
  * Keep the detail sections in a real DOM order for the active viewport.
  * Desktop retains the three-column structure; mobile stacks independent
  * sections so they cannot overlap through cross-column CSS ordering.
+ * @param {'desktop'|'mobile'} [layout]
  */
-function syncDetailLayoutPlacement() {
-  const column = document.getElementById('detail-main-column');
-  const stack = document.getElementById('detail-main-stack');
-  const orderColumn = document.getElementById('detail-order-column');
-  const mockups = document.getElementById('detail-mockups-strip');
-  const items = document.getElementById('detail-items-section');
-  const panel = document.getElementById('detail-design-panel');
-  if (!column || !stack || !orderColumn || !mockups || !items || !panel) return;
+function syncDetailLayoutPlacement(layout = isMobileViewport ? DETAIL_LAYOUT.MOBILE : DETAIL_LAYOUT.DESKTOP) {
+  const nodes = getDetailLayoutNodes();
+  const { column, stack, orderColumn, mockups, items, panel } = nodes;
+  if (!column || !stack || !orderColumn || !mockups || !items || !panel) {
+    console.warn('Detail layout contract could not be applied: missing required node');
+    return;
+  }
 
-  if (isMobileViewport) {
+  setDetailLayoutMode(layout);
+
+  if (layout === DETAIL_LAYOUT.MOBILE) {
     if (mockups.parentElement !== column || mockups.nextElementSibling !== stack) {
       column.insertBefore(mockups, stack);
     }
@@ -316,6 +386,7 @@ function syncDetailLayoutPlacement() {
     if (panel.parentElement !== column || panel.previousElementSibling !== items) {
       items.after(panel);
     }
+    assertDetailChildOrder(column, DETAIL_LAYOUT_CONTRACT[layout].children, 'mobile detail stack');
     return;
   }
 
@@ -331,6 +402,8 @@ function syncDetailLayoutPlacement() {
   if (panel.parentElement !== column || panel.previousElementSibling !== orderColumn) {
     orderColumn.after(panel);
   }
+  assertDetailChildOrder(column, DETAIL_LAYOUT_CONTRACT[layout].children, 'desktop detail grid');
+  assertDetailChildOrder(orderColumn, DETAIL_LAYOUT_CONTRACT[layout].orderColumnChildren, 'desktop order column');
 }
 
 /**
