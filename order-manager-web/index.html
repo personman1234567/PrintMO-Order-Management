@@ -96,17 +96,17 @@
         <time id="detail-timestamp"></time>
       </div>
       <div id="detail-content">
-        <div id="detail-mockups-strip">
-          <div id="detail-mockups-track"></div>
-          <p id="detail-mockups-placeholder" class="detail-assets-empty">No mockup previews available</p>
-        </div>
         <div id="detail-main-column">
-          <div id="detail-main-stack">
-            <div id="detail-name-row">
-              <h3 id="detail-cust-name"></h3>
-              <button id="detail-edit-name-btn" class="fullscreen-btn">Edit</button>
-            </div>
-            <div id="detail-notes-wrapper">
+          <div id="detail-main-stack" class="detail-side-column">
+            <section id="detail-customer-card" class="detail-section">
+              <div id="detail-name-row">
+                <span class="detail-section-label">Customer</span>
+                <h3 id="detail-cust-name"></h3>
+                <button id="detail-edit-name-btn" class="fullscreen-btn">Edit</button>
+              </div>
+            </section>
+            <section id="detail-notes-wrapper" class="detail-section">
+              <h4>Notes</h4>
               <div class="detail-notes-actions">
                 <button id="detail-view-notes-btn" class="fullscreen-btn">See Notes</button>
                 <button id="detail-edit-notes-btn" class="fullscreen-btn">Edit Notes</button>
@@ -115,68 +115,91 @@
               <p id="detail-notes"><em>No special instructions</em></p>
               <textarea id="detail-notes-input" class="hidden"></textarea>
               <button id="mobile-notes-save" class="mobile-notes-save hidden" type="button">Save</button>
-            </div>
-            <div id="ready-controls">
-              <label><input type="checkbox" id="chk-blanks"> Blanks Ready</label>
-              <label><input type="checkbox" id="chk-prints"> Prints Ready</label>
-              <label><input type="checkbox" id="chk-blanks-ordered"> Blanks Ordered</label>
-              <label><input type="checkbox" id="chk-prints-ordered"> Prints Ordered</label>
-              <button id="ready-apply" class="hidden">Apply</button>
-            </div>
-            <div id="progress-section">
-              <div id="progress-text"></div>
-              <div id="progress-row">
-                <div id="progress-bar-container">
-                  <div id="progress-bar"></div>
+            </section>
+            <section id="detail-production-card" class="detail-section">
+              <h4>Production Status</h4>
+              <div id="ready-controls">
+                <label><input type="checkbox" id="chk-blanks"> Blanks Ready</label>
+                <label><input type="checkbox" id="chk-prints"> Prints Ready</label>
+                <label><input type="checkbox" id="chk-blanks-ordered"> Blanks Ordered</label>
+                <label><input type="checkbox" id="chk-prints-ordered"> Prints Ordered</label>
+                <button id="ready-apply" class="hidden">Apply</button>
+              </div>
+              <div id="progress-section">
+                <div id="progress-text"></div>
+                <div id="progress-row">
+                  <div id="progress-bar-container">
+                    <div id="progress-bar"></div>
+                  </div>
+                  <button id="progress-plus1" class="fullscreen-btn">+1</button>
+                  <button id="progress-custom" class="fullscreen-btn">Custom Amount</button>
                 </div>
-                <button id="progress-plus1" class="fullscreen-btn">+1</button>
-                <button id="progress-custom" class="fullscreen-btn">Custom Amount</button>
               </div>
-            </div>
-            <div id="detail-items-wrapper">
-              <table id="detail-items">
-                <thead>
+            </section>
+          </div>
+          <div id="detail-order-column">
+            <section id="detail-mockups-strip" class="detail-section">
+              <h4>Mockup Preview</h4>
+              <div id="detail-mockups-track"></div>
+              <p id="detail-mockups-placeholder" class="detail-assets-empty">No mockup previews available</p>
+            </section>
+            <section id="detail-items-section" class="detail-section">
+              <h4>Items in Order</h4>
+              <div id="detail-items-wrapper">
+                <table id="detail-items">
+                  <thead>
+                    <tr>
+                      <th>Qty</th>
+                      <th>Description</th>
+                      <th>Variant</th>
+                      <th>Price</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+                <div class="mobile-items-footer">
+                  <button id="mobile-items-expand" type="button">Expand</button>
+                </div>
+              </div>
+              <table id="detail-summary">
+                <tbody>
                   <tr>
-                    <th>Qty</th>
-                    <th>Description</th>
-                    <th>Variant</th>
-                    <th>Price</th>
+                    <td colspan="2">Discount</td>
+                    <td id="detail-discount"></td>
                   </tr>
-                </thead>
-                <tbody></tbody>
+                  <tr>
+                    <td colspan="2"><strong>Total</strong></td>
+                    <td id="detail-total"></td>
+                  </tr>
+                </tbody>
               </table>
-              <div class="mobile-items-footer">
-                <button id="mobile-items-expand" type="button">Expand</button>
-              </div>
-            </div>
-            <table id="detail-summary">
-              <tbody>
-                <tr>
-                  <td colspan="2">Discount</td>
-                  <td id="detail-discount"></td>
-                </tr>
-                <tr>
-                  <td colspan="2"><strong>Total</strong></td>
-                  <td id="detail-total"></td>
-                </tr>
-              </tbody>
-            </table>
+            </section>
           </div>
           <div id="detail-design-panel">
             <div class="design-panel-header">
               <h4>Design Files</h4>
+              <span id="design-files-count" class="design-files-count">0 files</span>
             </div>
             <div class="design-panel-body">
               <div class="design-group" id="design-group-front">
-                <div class="design-group-title">Front Prints</div>
+                <button class="design-group-title" type="button" aria-expanded="true">
+                  <span>Front Prints</span>
+                  <span class="design-group-count">0</span>
+                </button>
                 <div class="design-tiles" id="design-front-list"></div>
               </div>
               <div class="design-group" id="design-group-back">
-                <div class="design-group-title">Back Prints</div>
+                <button class="design-group-title" type="button" aria-expanded="true">
+                  <span>Back Prints</span>
+                  <span class="design-group-count">0</span>
+                </button>
                 <div class="design-tiles" id="design-back-list"></div>
               </div>
               <div class="design-group" id="design-group-extras">
-                <div class="design-group-title">Extras</div>
+                <button class="design-group-title" type="button" aria-expanded="true">
+                  <span>Extras</span>
+                  <span class="design-group-count">0</span>
+                </button>
                 <div class="design-tiles" id="design-extras-list"></div>
               </div>
               <p id="detail-designs-placeholder" class="detail-assets-empty">No design files found</p>

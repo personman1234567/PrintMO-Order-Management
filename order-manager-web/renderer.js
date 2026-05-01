@@ -271,20 +271,15 @@ function updateMobileViewportFlag(matches) {
 }
 
 /**
- * Keep the design files panel aligned with the active layout.
- * On mobile it lives inside #detail-main-stack to scroll with content.
- * On desktop it stays beside the stack inside #detail-main-column.
+ * Keep the design files panel inside the detail grid. CSS controls whether
+ * it appears as a right rail, a lower compact-desktop region, or a mobile
+ * stacked section.
  */
 function syncDetailDesignPanelPlacement() {
   const panel = document.getElementById('detail-design-panel');
-  const stack = document.getElementById('detail-main-stack');
   const column = document.getElementById('detail-main-column');
-  if (!panel || !stack || !column) return;
-  if (isMobileViewport) {
-    if (panel.parentElement !== stack) {
-      stack.appendChild(panel);
-    }
-  } else if (panel.parentElement !== column) {
+  if (!panel || !column) return;
+  if (panel.parentElement !== column) {
     column.appendChild(panel);
   }
 }
@@ -848,6 +843,31 @@ function designLabelFromAsset(assetEntry, idx) {
   return assetLabelFromUrl(url, idx);
 }
 
+function getAssetPixelDimensions(assetEntry) {
+  const meta = assetEntry && typeof assetEntry === 'object'
+    ? (typeof assetEntry.metadata === 'object' && assetEntry.metadata) || (typeof assetEntry.meta === 'object' && assetEntry.meta) || null
+    : null;
+  const sources = [assetEntry, meta].filter(Boolean);
+  for (const source of sources) {
+    const width = source.width || source.w || source.pixelWidth || source.widthPx;
+    const height = source.height || source.h || source.pixelHeight || source.heightPx;
+    if (Number.isFinite(Number(width)) && Number.isFinite(Number(height))) {
+      return `${Number(width)} x ${Number(height)}`;
+    }
+    const dims = source.dimensions || source.pixelDimensions || source.dimensionsPx;
+    if (typeof dims === 'string' && dims.trim()) return dims.trim();
+  }
+  return '';
+}
+
+function getAssetFileMetaText(assetEntry) {
+  const url = getAssetUrlValue(assetEntry);
+  const filename = detailAssetFilename(url, 0).split('?')[0];
+  const ext = (filename.match(/\.([a-z0-9]+)$/i)?.[1] || (assetEntry.isSvg ? 'svg' : '')).toUpperCase();
+  const dimensions = getAssetPixelDimensions(assetEntry);
+  return [ext, dimensions].filter(Boolean).join(' · ');
+}
+
 function splitOrderAssets(order) {
   const seen = new Set();
   const buckets = { mockups: [], front: [], back: [], extras: [] };
@@ -990,6 +1010,7 @@ function renderOrderAssets(order) {
   const mockupTrack = document.getElementById('detail-mockups-track');
   const mockupPlaceholder = document.getElementById('detail-mockups-placeholder');
   const designPlaceholder = document.getElementById('detail-designs-placeholder');
+  const designFilesCount = document.getElementById('design-files-count');
   const lists = {
     front: document.getElementById('design-front-list'),
     back: document.getElementById('design-back-list'),
@@ -1008,7 +1029,11 @@ function renderOrderAssets(order) {
   cleanupDetailAssetPreviews();
   mockupTrack.innerHTML = '';
   Object.values(lists).forEach(list => { list.innerHTML = ''; });
-  Object.values(groups).forEach(g => g.classList.remove('hidden'));
+  Object.values(groups).forEach(g => {
+    g.classList.remove('hidden', 'is-collapsed');
+    const toggle = g.querySelector('.design-group-title');
+    if (toggle) toggle.setAttribute('aria-expanded', 'true');
+  });
 
   const assets = splitOrderAssets(order);
 
@@ -1070,30 +1095,60 @@ function renderOrderAssets(order) {
 
   const totalDesigns = assets.front.length + assets.back.length + assets.extras.length;
   designPlaceholder.classList.toggle('hidden', totalDesigns > 0);
+  if (designFilesCount) {
+    designFilesCount.textContent = `${totalDesigns} ${totalDesigns === 1 ? 'file' : 'files'}`;
+  }
 
-  const renderDesignGroup = (listEl, wrapEl, items) => {
+  const renderDesignGroup = (listEl, wrapEl, items, printTypeLabel) => {
     wrapEl.classList.toggle('hidden', !items.length);
+    const toggle = wrapEl.querySelector('.design-group-title');
+    const count = wrapEl.querySelector('.design-group-count');
+    if (count) count.textContent = String(items.length);
+    if (toggle) {
+      toggle.onclick = () => {
+        const collapsed = wrapEl.classList.toggle('is-collapsed');
+        toggle.setAttribute('aria-expanded', String(!collapsed));
+      };
+    }
     if (!items.length) return;
     items.forEach((item, idx) => {
       const { url, isSvg } = item;
       if (token !== detailAssetRenderToken) return;
       const tile = document.createElement('div');
-      tile.className = 'design-tile';
+      tile.className = 'design-file-row';
 
       const thumb = document.createElement('div');
       thumb.className = 'design-thumb';
       const img = document.createElement('img');
-      const labelText = designLabelFromAsset(item, idx);
+      const labelText = detailAssetFilename(url, idx);
       img.alt = labelText;
       img.loading = 'lazy';
       thumb.appendChild(img);
       thumb.addEventListener('click', () => openAssetViewer(img.src || url));
       tile.appendChild(thumb);
 
-      const label = document.createElement('div');
+      const info = document.createElement('div');
+      info.className = 'design-file-info';
+
+      const label = document.createElement('button');
+      label.type = 'button';
       label.className = 'design-label';
       label.textContent = labelText;
-      tile.appendChild(label);
+      label.title = labelText;
+      label.addEventListener('click', () => openAssetViewer(img.src || url));
+      info.appendChild(label);
+
+      const badge = document.createElement('span');
+      badge.className = 'design-print-type';
+      badge.textContent = printTypeLabel;
+      info.appendChild(badge);
+
+      const meta = document.createElement('div');
+      meta.className = 'design-file-meta';
+      meta.textContent = getAssetFileMetaText(item);
+      info.appendChild(meta);
+
+      tile.appendChild(info);
 
       const actions = document.createElement('div');
       actions.className = 'design-actions';
@@ -1142,9 +1197,9 @@ function renderOrderAssets(order) {
     });
   };
 
-  renderDesignGroup(lists.front, groups.front, assets.front);
-  renderDesignGroup(lists.back, groups.back, assets.back);
-  renderDesignGroup(lists.extras, groups.extras, assets.extras);
+  renderDesignGroup(lists.front, groups.front, assets.front, 'Front Print');
+  renderDesignGroup(lists.back, groups.back, assets.back, 'Back Print');
+  renderDesignGroup(lists.extras, groups.extras, assets.extras, 'Extra');
 }
 
 /**
@@ -1441,13 +1496,21 @@ function closeDetail() {
   if (mockupPlaceholder) mockupPlaceholder.classList.remove('hidden');
   const designPlaceholder = document.getElementById('detail-designs-placeholder');
   if (designPlaceholder) designPlaceholder.classList.remove('hidden');
+  const designFilesCount = document.getElementById('design-files-count');
+  if (designFilesCount) designFilesCount.textContent = '0 files';
   ['design-front-list', 'design-back-list', 'design-extras-list'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = '';
   });
   ['design-group-front', 'design-group-back', 'design-group-extras'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.classList.remove('hidden');
+    if (el) {
+      el.classList.remove('hidden', 'is-collapsed');
+      const toggle = el.querySelector('.design-group-title');
+      const count = el.querySelector('.design-group-count');
+      if (toggle) toggle.setAttribute('aria-expanded', 'true');
+      if (count) count.textContent = '0';
+    }
   });
   closeAssetViewer();
   document.querySelector('.pipeline').classList.remove('no-delete');
