@@ -258,29 +258,78 @@ function updateMobileViewportFlag(matches) {
   }
   if (matches) {
     setActiveMobileTab(activeMobileTab, { scrollTop: false });
+    const overlay = document.getElementById('detail-overlay');
+    const detailCard = document.getElementById('detail-card');
+    if (document.body?.classList.contains('detail-open') && overlay) {
+      overlay.classList.add('mobile-bottomsheet');
+      document.body.classList.add('mobile-detail-open');
+      if (detailCard) {
+        detailCard.style.transition = '';
+        detailCard.style.transform = 'translateY(0)';
+      }
+      if (!mobileDetailDragCleanup && detailCard) {
+        mobileDetailDragCleanup = setupMobileDetailDrag(detailCard);
+      }
+    }
   } else {
     setMobileSelectionMode(false);
+    if (mobileDetailDragCleanup) {
+      mobileDetailDragCleanup();
+      mobileDetailDragCleanup = null;
+    }
     document.body.classList.remove('mobile-detail-open');
     const overlay = document.getElementById('detail-overlay');
     if (overlay) overlay.classList.remove('mobile-bottomsheet');
+    const detailCard = document.getElementById('detail-card');
+    if (detailCard) {
+      detailCard.style.transition = '';
+      detailCard.style.transform = '';
+    }
   }
-  syncDetailDesignPanelPlacement();
+  syncDetailLayoutPlacement();
   if (detailOrder) {
     updateDetailProgressUI(detailOrder);
   }
 }
 
 /**
- * Keep the design files panel inside the detail grid. CSS controls whether
- * it appears as a right rail, a lower compact-desktop region, or a mobile
- * stacked section.
+ * Keep the detail sections in a real DOM order for the active viewport.
+ * Desktop retains the three-column structure; mobile stacks independent
+ * sections so they cannot overlap through cross-column CSS ordering.
  */
-function syncDetailDesignPanelPlacement() {
-  const panel = document.getElementById('detail-design-panel');
+function syncDetailLayoutPlacement() {
   const column = document.getElementById('detail-main-column');
-  if (!panel || !column) return;
-  if (panel.parentElement !== column) {
-    column.appendChild(panel);
+  const stack = document.getElementById('detail-main-stack');
+  const orderColumn = document.getElementById('detail-order-column');
+  const mockups = document.getElementById('detail-mockups-strip');
+  const items = document.getElementById('detail-items-section');
+  const panel = document.getElementById('detail-design-panel');
+  if (!column || !stack || !orderColumn || !mockups || !items || !panel) return;
+
+  if (isMobileViewport) {
+    if (mockups.parentElement !== column || mockups.nextElementSibling !== stack) {
+      column.insertBefore(mockups, stack);
+    }
+    if (items.parentElement !== column || items.previousElementSibling !== stack) {
+      stack.after(items);
+    }
+    if (panel.parentElement !== column || panel.previousElementSibling !== items) {
+      items.after(panel);
+    }
+    return;
+  }
+
+  if (orderColumn.parentElement !== column || orderColumn.previousElementSibling !== stack) {
+    stack.after(orderColumn);
+  }
+  if (mockups.parentElement !== orderColumn) {
+    orderColumn.insertBefore(mockups, orderColumn.firstChild);
+  }
+  if (items.parentElement !== orderColumn || items.previousElementSibling !== mockups) {
+    mockups.after(items);
+  }
+  if (panel.parentElement !== column || panel.previousElementSibling !== orderColumn) {
+    orderColumn.after(panel);
   }
 }
 
@@ -1297,7 +1346,7 @@ function applyDetailData(o, opts = {}) {
   const { preserveEditing = false } = opts;
   detailOrder = o;
   renderOrderAssets(o);
-  syncDetailDesignPanelPlacement();
+  syncDetailLayoutPlacement();
   // fill header
   document.getElementById('detail-timestamp').textContent = new Date(o.receivedAt).toLocaleString();
 
@@ -1449,6 +1498,11 @@ function openDetail(o) {
   const notesWrapper = document.getElementById('detail-notes-wrapper');
   const detailCardEl = document.getElementById('detail-card');
   const updateNotesLimit = () => {
+    if (!notesWrapper || !detailCardEl) return;
+    if (isMobileViewport) {
+      notesWrapper.style.removeProperty('max-height');
+      return;
+    }
     notesWrapper.style.maxHeight = Math.round(detailCardEl.clientHeight * 0.15) + 'px';
   };
   setTimeout(updateNotesLimit, 0);

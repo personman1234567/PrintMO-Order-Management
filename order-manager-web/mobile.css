@@ -2034,25 +2034,36 @@
     -webkit-overflow-scrolling: touch;
   }
 
+  .detail-section {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+  }
+
   #detail-main-column {
+    flex: 0 0 auto;
     display: flex;
     flex-direction: column;
     gap: 14px;
-    min-height: 0;
+    width: 100%;
+    min-width: 0;
+    min-height: auto;
     overflow: visible;
   }
+
   #detail-main-stack {
+    flex: 0 0 auto;
     display: flex;
     flex-direction: column;
     gap: 14px;
-    min-height: 0;
+    width: 100%;
+    min-width: 0;
+    min-height: auto;
+    overflow: visible;
   }
 
   #detail-order-column {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    min-height: 0;
+    display: none;
   }
 
   #detail-header {
@@ -2072,21 +2083,50 @@
 
   #detail-mockups-strip {
     display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    max-height: none;
+    padding: 12px;
+    background: #fff;
     justify-content: center;
     align-items: center;
     border-radius: 14px;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  }
+
+  #detail-mockups-strip h4 {
+    display: none;
   }
 
   #detail-mockups-track {
     display: flex;
     gap: 12px;
     width: 100%;
+    height: auto;
+    min-height: 96px;
+    align-items: center;
+    overflow-x: auto;
     justify-content: center;
+  }
+
+  .mockup-thumb {
+    width: min(42vw, 160px);
+    height: 96px;
+    min-width: 110px;
+    max-width: 180px;
+    max-height: none;
+    flex: 0 0 auto;
   }
 
   #detail-mockups-track img {
     max-width: 100%;
     border-radius: 12px;
+  }
+
+  #detail-customer-card {
+    padding: 0;
   }
 
   #detail-name-row {
@@ -2105,6 +2145,10 @@
     color: #0f172a;
   }
 
+  #detail-name-row .detail-section-label {
+    display: none;
+  }
+
   #detail-name-row::before {
     content: "Customer:";
     font-weight: 600;
@@ -2121,6 +2165,7 @@
     align-items: center;
     gap: 8px;
     justify-content: flex-end;
+    margin: 0;
     margin-left: auto;
   }
 
@@ -2150,6 +2195,7 @@
   #detail-notes-wrapper {
     position: relative;
     background: #fff;
+    margin: 0;
     padding: 14px 14px 18px;
     border-radius: 12px;
     box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
@@ -2182,6 +2228,30 @@
     font-weight: 700;
     width: 120px;
     float: right;
+  }
+
+  #detail-production-card,
+  #detail-items-section {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  #detail-items-section {
+    flex: 0 0 auto;
+    background: #fff;
+    padding: 14px;
+    border-radius: 14px;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+    overflow: hidden;
+  }
+
+  #detail-production-card h4,
+  #detail-items-section h4 {
+    margin: 0;
+    color: #334155;
+    font-size: 0.95rem;
+    line-height: 1.2;
   }
 
   #ready-controls {
@@ -2316,17 +2386,20 @@
   }
 
   #detail-items-wrapper {
+    flex: 0 0 auto;
     background: #fff;
     border-radius: 12px;
-    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
-    overflow: visible;
-    max-height: none;
+    margin: 0;
+    overflow: auto;
+    max-height: 360px;
     position: relative;
     display: block;
+    -webkit-overflow-scrolling: touch;
   }
 
   #detail-items-wrapper.mobile-expanded {
     max-height: none;
+    overflow: visible;
   }
 
   #detail-items {
@@ -2356,7 +2429,7 @@
     background: #fff;
     border-radius: 12px;
     box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
-    margin-top: -4px;
+    margin: 0;
   }
 
   #detail-summary td {
@@ -2368,6 +2441,10 @@
   }
 
   #detail-design-panel {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
     background: #f7f9fc;
     border: none;
     box-shadow: none;
@@ -2379,7 +2456,7 @@
     display: grid;
     gap: 10px;
     padding: 0;
-    overflow: visible;
+    overflow: hidden;
   }
 
   .design-group {
@@ -2422,7 +2499,7 @@
   .design-tiles {
     gap: 8px;
     flex-wrap: wrap;
-    overflow: visible;
+    overflow: hidden;
     padding-bottom: 0;
   }
 
@@ -2431,9 +2508,17 @@
     grid-template-columns: 64px minmax(0, 1fr);
     gap: 10px;
     align-items: center;
+    min-width: 0;
     width: 100%;
     padding: 8px 0;
     border-top: 1px solid #e2e8f0;
+  }
+
+  .design-file-row .design-thumb {
+    width: 64px;
+    height: 64px;
+    min-height: 0;
+    max-height: none;
   }
 
   .design-file-row:first-child {
