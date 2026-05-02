@@ -16,6 +16,9 @@ let detailAssetRenderToken = 0;
 const detailAssetBlobUrls = new Set();
 const manualMockupsByOrderNumber = new Map();
 const MANUAL_MOCKUP_FILE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const MANUAL_MOCKUP_CONVERTIBLE_FILE_TYPES = new Set(['image/heic', 'image/heif']);
+const MANUAL_MOCKUP_WEBP_QUALITY = 0.86;
+const MANUAL_MOCKUP_MAX_DIMENSION = 2200;
 
 const APPAREL_ICON = typeof window.getAssetPath === 'function'
   ? window.getAssetPath('ApparelCount.svg')
@@ -439,6 +442,11 @@ function setupMobileDetailDrag(card) {
   let scrollTarget = null;
   const dragThreshold = 12;
 
+  const isInteractiveTarget = (target) => {
+    const el = target instanceof HTMLElement ? target : null;
+    return Boolean(el?.closest('button, input, label, select, textarea, a, [role="button"], .manual-mockup-delete, #manual-mockup-upload-btn'));
+  };
+
   /**
    * Resolve the scroll container for the gesture start target inside the sheet.
    * Falls back to #detail-content if no scrollable ancestor is found.
@@ -462,6 +470,13 @@ function setupMobileDetailDrag(card) {
 
   const onStart = (e) => {
     if (!isMobileViewport || e.touches.length !== 1) return;
+    if (isInteractiveTarget(e.target)) {
+      startY = 0;
+      canDismiss = false;
+      scrollTarget = null;
+      dragging = false;
+      return;
+    }
     startY = e.touches[0].clientY;
     scrollTarget = resolveScrollContainer(e.target);
     canDismiss = (scrollTarget?.scrollTop || 0) <= 0;
@@ -1134,8 +1149,96 @@ async function handleAssetDownload(url, filename, btn) {
 
 function isAllowedManualMockupFile(file) {
   if (!file) return false;
-  if (MANUAL_MOCKUP_FILE_TYPES.has(String(file.type || '').toLowerCase())) return true;
-  return /\.(png|jpe?g|webp)$/i.test(file.name || '');
+  const type = String(file.type || '').toLowerCase();
+  if (MANUAL_MOCKUP_FILE_TYPES.has(type) || MANUAL_MOCKUP_CONVERTIBLE_FILE_TYPES.has(type)) return true;
+  return /\.(png|jpe?g|webp|hei[cf])$/i.test(file.name || '');
+}
+
+function webpFilenameFor(file) {
+  const base = String(file?.name || 'mockup').replace(/\.[^.]+$/, '') || 'mockup';
+  return `${base}.webp`;
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise(resolve => {
+    canvas.toBlob(blob => {
+      resolve(blob || null);
+    }, type, quality);
+  });
+}
+
+async function encodeCanvasAsWebp(canvas) {
+  const blob = await canvasToBlob(canvas, 'image/webp', MANUAL_MOCKUP_WEBP_QUALITY);
+  if (blob?.type === 'image/webp') return blob;
+
+  const dataUrl = canvas.toDataURL('image/webp', MANUAL_MOCKUP_WEBP_QUALITY);
+  if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image/webp')) {
+    const resp = await fetch(dataUrl);
+    const dataBlob = await resp.blob();
+    if (dataBlob?.type === 'image/webp') return dataBlob;
+  }
+
+  throw new Error('This mobile browser could not encode WebP images.');
+}
+
+async function loadImageForManualMockup(file) {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      return {
+        width: bitmap.width,
+        height: bitmap.height,
+        draw: (ctx, width, height) => ctx.drawImage(bitmap, 0, 0, width, height),
+        close: () => bitmap.close?.(),
+      };
+    } catch (err) {
+      // Fall back to HTMLImageElement below for browsers with partial support.
+    }
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = objectUrl;
+    await img.decode();
+    return {
+      width: img.naturalWidth || img.width,
+      height: img.naturalHeight || img.height,
+      draw: (ctx, width, height) => ctx.drawImage(img, 0, 0, width, height),
+      close: () => URL.revokeObjectURL(objectUrl),
+    };
+  } catch (err) {
+    URL.revokeObjectURL(objectUrl);
+    throw err;
+  }
+}
+
+async function convertManualMockupToWebp(file) {
+  const source = await loadImageForManualMockup(file);
+  try {
+    if (!source.width || !source.height) {
+      throw new Error('Could not read image dimensions');
+    }
+    const scale = Math.min(1, MANUAL_MOCKUP_MAX_DIMENSION / Math.max(source.width, source.height));
+    const width = Math.max(1, Math.round(source.width * scale));
+    const height = Math.max(1, Math.round(source.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Could not prepare image conversion');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    source.draw(ctx, width, height);
+    const blob = await encodeCanvasAsWebp(canvas);
+    return new File([blob], webpFilenameFor(file), {
+      type: 'image/webp',
+      lastModified: Date.now(),
+    });
+  } finally {
+    source.close();
+  }
 }
 
 async function uploadManualMockupFiles(fileList) {
@@ -1164,13 +1267,15 @@ async function uploadManualMockupFiles(fileList) {
   const uploadBtn = document.getElementById('manual-mockup-upload-btn');
   const originalText = uploadBtn ? uploadBtn.textContent : '';
   if (uploadBtn) {
-    uploadBtn.disabled = true;
+    uploadBtn.setAttribute('aria-disabled', 'true');
+    if ('disabled' in uploadBtn) uploadBtn.disabled = true;
     uploadBtn.textContent = 'Uploading...';
   }
 
   try {
     for (const file of accepted) {
-      await window.api.uploadManualMockup(orderNumber, file);
+      const uploadFile = await convertManualMockupToWebp(file);
+      await window.api.uploadManualMockup(orderNumber, uploadFile);
     }
     await refreshManualMockupsForOrder(detailOrder);
     await renderBoard();
@@ -1179,7 +1284,8 @@ async function uploadManualMockupFiles(fileList) {
     alert(`Upload failed: ${err?.message || err}`);
   } finally {
     if (uploadBtn) {
-      uploadBtn.disabled = false;
+      uploadBtn.setAttribute('aria-disabled', 'false');
+      if ('disabled' in uploadBtn) uploadBtn.disabled = false;
       uploadBtn.textContent = originalText || 'Upload mockup';
     }
     const input = document.getElementById('manual-mockup-file-input');
@@ -1195,7 +1301,10 @@ async function deleteManualMockup(order, asset) {
   }
   const orderNumber = orderNumberFromOrder(order);
   if (!orderNumber) return;
-  if (!confirm(`Remove "${asset.filename || 'this mockup'}" from order ${orderNumber}?`)) return;
+  const confirmed = isMobileViewport
+    ? await confirmManualMockupDelete(orderNumber, asset.filename || 'this mockup')
+    : confirm(`Remove "${asset.filename || 'this mockup'}" from order ${orderNumber}?`);
+  if (!confirmed) return;
 
   try {
     await window.api.deleteManualMockup(orderNumber, asset.id);
@@ -1207,14 +1316,84 @@ async function deleteManualMockup(order, asset) {
   }
 }
 
+function confirmManualMockupDelete(orderNumber, filename) {
+  return new Promise(resolve => {
+    let overlay = document.getElementById('manual-mockup-confirm-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'manual-mockup-confirm-overlay';
+      overlay.className = 'manual-mockup-confirm-overlay hidden';
+      overlay.innerHTML = `
+        <div class="manual-mockup-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="manual-mockup-confirm-title">
+          <h3 id="manual-mockup-confirm-title">Remove mockup?</h3>
+          <p id="manual-mockup-confirm-text"></p>
+          <div class="manual-mockup-confirm-actions">
+            <button type="button" class="manual-mockup-confirm-cancel">Cancel</button>
+            <button type="button" class="manual-mockup-confirm-remove">Remove</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+    }
+
+    const text = overlay.querySelector('#manual-mockup-confirm-text');
+    const cancelBtn = overlay.querySelector('.manual-mockup-confirm-cancel');
+    const removeBtn = overlay.querySelector('.manual-mockup-confirm-remove');
+    if (text) text.textContent = `Remove "${filename}" from order ${orderNumber}?`;
+
+    const cleanup = result => {
+      overlay.classList.add('hidden');
+      cancelBtn?.removeEventListener('click', onCancel);
+      removeBtn?.removeEventListener('click', onRemove);
+      overlay.removeEventListener('click', onOverlayClick);
+      resolve(result);
+    };
+    const onCancel = e => {
+      e.preventDefault();
+      cleanup(false);
+    };
+    const onRemove = e => {
+      e.preventDefault();
+      cleanup(true);
+    };
+    const onOverlayClick = e => {
+      if (e.target === overlay) cleanup(false);
+    };
+
+    cancelBtn?.addEventListener('click', onCancel);
+    removeBtn?.addEventListener('click', onRemove);
+    overlay.addEventListener('click', onOverlayClick);
+    overlay.classList.remove('hidden');
+    requestAnimationFrame(() => removeBtn?.focus());
+  });
+}
+
 function setupManualMockupControls() {
   const strip = document.getElementById('detail-mockups-strip');
+  const track = document.getElementById('detail-mockups-track');
   const uploadBtn = document.getElementById('manual-mockup-upload-btn');
   const input = document.getElementById('manual-mockup-file-input');
   if (!strip || !uploadBtn || !input) return;
 
-  uploadBtn.addEventListener('click', () => input.click());
+  uploadBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (uploadBtn.tagName !== 'LABEL') input.click();
+  });
+  uploadBtn.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
   input.addEventListener('change', () => uploadManualMockupFiles(input.files));
+
+  const handleManualDeleteEvent = e => {
+    const btn = e.target instanceof HTMLElement ? e.target.closest('.manual-mockup-delete') : null;
+    if (!btn || !detailOrder) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+    const assetId = btn.dataset.assetId;
+    const asset = getManualMockupsForOrder(detailOrder).find(item => item.id === assetId);
+    if (asset) deleteManualMockup(detailOrder, asset);
+  };
+  track?.addEventListener('click', handleManualDeleteEvent, true);
+  track?.addEventListener('touchend', handleManualDeleteEvent, { capture: true, passive: false });
 
   strip.addEventListener('paste', e => {
     const files = Array.from(e.clipboardData?.files || []);
@@ -1305,11 +1484,31 @@ function renderOrderAssets(order) {
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.className = 'manual-mockup-delete';
+        removeBtn.dataset.assetId = asset.id || '';
         removeBtn.textContent = 'Remove';
-        removeBtn.addEventListener('click', e => {
+        const stopDeleteGesture = e => {
           e.stopPropagation();
-          deleteManualMockup(order, asset);
-        });
+          if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+        };
+        let lastDeleteStart = 0;
+        let deleteInFlight = false;
+        const requestDelete = e => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+          const now = Date.now();
+          if (deleteInFlight || now - lastDeleteStart < 700) return;
+          lastDeleteStart = now;
+          deleteInFlight = true;
+          Promise.resolve(deleteManualMockup(order, asset)).finally(() => {
+            setTimeout(() => { deleteInFlight = false; }, 400);
+          });
+        };
+        removeBtn.addEventListener('pointerdown', stopDeleteGesture);
+        removeBtn.addEventListener('touchstart', stopDeleteGesture, { passive: true });
+        removeBtn.addEventListener('pointerup', requestDelete);
+        removeBtn.addEventListener('touchend', requestDelete, { passive: false });
+        removeBtn.addEventListener('click', requestDelete);
         thumb.appendChild(removeBtn);
       }
 
