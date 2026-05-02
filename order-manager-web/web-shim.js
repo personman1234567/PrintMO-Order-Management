@@ -3,12 +3,14 @@ const API_BASE = "https://order-manager-proxy.printmobusiness.workers.dev";
 
 async function apiFetch(path, opts = {}) {
   const { rawResponse, expect, ...rest } = opts;
+  const headers = new Headers(rest.headers || {});
+  const isFormData = typeof FormData !== "undefined" && rest.body instanceof FormData;
+  if (!isFormData && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   const res = await fetch(`${API_BASE}${path}`, {
     ...rest,
-    headers: {
-      "Content-Type": "application/json",
-      ...(rest.headers || {}),
-    },
+    headers,
   });
 
   const parseErrorBody = async () => {
@@ -172,6 +174,40 @@ window.api.getStorageObjectUrl = (key) => {
   if (!key) return "";
   const query = buildQuery({ key });
   return `${API_BASE}/order-manager/storage/object${query}`;
+};
+
+window.api.listManualMockups = async (orderNumber) => {
+  if (!orderNumber) throw new Error("Order number is required");
+  const query = buildQuery({ orderNumber });
+  return apiFetch(`/order-manager/orders/manual-mockups${query}`, { method: "GET" });
+};
+
+window.api.uploadManualMockup = async (orderNumber, file) => {
+  if (!orderNumber) throw new Error("Order number is required");
+  if (!file) throw new Error("Mockup file is required");
+  const form = new FormData();
+  form.set("file", file, file.name || "mockup");
+  const query = buildQuery({ orderNumber });
+  return apiFetch(`/order-manager/orders/manual-mockups${query}`, {
+    method: "POST",
+    body: form,
+  });
+};
+
+window.api.deleteManualMockup = async (orderNumber, assetId) => {
+  if (!orderNumber) throw new Error("Order number is required");
+  if (!assetId) throw new Error("Mockup asset ID is required");
+  const query = buildQuery({ orderNumber, assetId });
+  return apiFetch(`/order-manager/orders/manual-mockups${query}`, { method: "DELETE" });
+};
+
+window.api.bulkListManualMockups = async (orderNumbers) => {
+  const unique = Array.from(new Set((Array.isArray(orderNumbers) ? orderNumbers : []).filter(Boolean)));
+  if (!unique.length) return { orders: {} };
+  return apiFetch("/order-manager/orders/manual-mockups/bulk", {
+    method: "POST",
+    body: JSON.stringify({ orderNumbers: unique }),
+  });
 };
 
 function filenameFromDisposition(disposition = "", fallback = "order-asset") {

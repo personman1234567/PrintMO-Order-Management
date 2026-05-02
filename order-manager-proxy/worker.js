@@ -64,6 +64,24 @@ export default {
             );
         }
 
+        if (url.pathname === "/order-manager/orders/manual-mockups") {
+            return handleManualMockups(
+                request,
+                env,
+                allowOrigin || origin || "*",
+                reqAllowHeaders
+            );
+        }
+
+        if (url.pathname === "/order-manager/orders/manual-mockups/bulk") {
+            return handleManualMockupsBulk(
+                request,
+                env,
+                allowOrigin || origin || "*",
+                reqAllowHeaders
+            );
+        }
+
         // -----------------------------
         // PROXY EVERYTHING ELSE UPSTREAM
         // -----------------------------
@@ -167,6 +185,128 @@ function guessContentTypeFromKey(key) {
     return "application/octet-stream";
 }
 
+const MANUAL_ASSETS_PREFIX = "manual-order-assets/";
+const MANUAL_MOCKUP_CONTENT_TYPES = new Set([
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+]);
+
+function isAllowedStorageKey(key) {
+    return (
+        key.startsWith("previews/") ||
+        key.startsWith("prompts/") ||
+        key.startsWith(MANUAL_ASSETS_PREFIX)
+    );
+}
+
+function normalizeManualOrderNumber(value) {
+    const raw = String(value || "").trim().replace(/^#+/, "");
+    if (!raw || !/^[A-Za-z0-9_-]+$/.test(raw)) return "";
+    return raw;
+}
+
+function manualManifestKey(orderNumber) {
+    return `${MANUAL_ASSETS_PREFIX}orders/${orderNumber}/manifest.json`;
+}
+
+function manualMockupKey(orderNumber, assetId, ext) {
+    return `${MANUAL_ASSETS_PREFIX}orders/${orderNumber}/mockups/${assetId}.${ext}`;
+}
+
+function extensionForManualMockup(file, contentType) {
+    const name = String(file?.name || "").toLowerCase();
+    if (contentType === "image/png" || name.endsWith(".png")) return "png";
+    if (contentType === "image/webp" || name.endsWith(".webp")) return "webp";
+    if (contentType === "image/jpeg" || /\.jpe?g$/i.test(name)) return "jpg";
+    return "";
+}
+
+function contentTypeForManualMockup(file) {
+    const declared = String(file?.type || "").toLowerCase();
+    if (MANUAL_MOCKUP_CONTENT_TYPES.has(declared)) return declared;
+    const guessed = guessContentTypeFromKey(file?.name || "");
+    return MANUAL_MOCKUP_CONTENT_TYPES.has(guessed) ? guessed : "";
+}
+
+function publicObjectUrl(request, key) {
+    return `${new URL(request.url).origin}/order-manager/storage/object?key=${encodeURIComponent(key)}`;
+}
+
+function hydrateManualManifest(manifest, request) {
+    const assets = Array.isArray(manifest?.assets) ? manifest.assets : [];
+    return {
+        orderNumber: String(manifest?.orderNumber || ""),
+        assets: assets
+            .filter(asset => asset && typeof asset.key === "string" && asset.id)
+            .map(asset => {
+                const url = publicObjectUrl(request, asset.key);
+                return {
+                    ...asset,
+                    url,
+                    objectUrl: url,
+                    thumbUrl: url,
+                };
+            }),
+    };
+}
+
+async function readManualManifest(env, orderNumber) {
+    const key = manualManifestKey(orderNumber);
+    const obj = await env.PREVIEWS.get(key);
+    if (!obj) {
+        return { orderNumber, assets: [] };
+    }
+    try {
+        const manifest = JSON.parse(await obj.text());
+        return {
+            orderNumber,
+            assets: Array.isArray(manifest.assets) ? manifest.assets : [],
+        };
+    } catch (err) {
+        return { orderNumber, assets: [] };
+    }
+}
+
+async function writeManualManifest(env, orderNumber, manifest) {
+    const key = manualManifestKey(orderNumber);
+    const body = JSON.stringify({
+        orderNumber,
+        assets: Array.isArray(manifest.assets) ? manifest.assets : [],
+    }, null, 2);
+    await env.PREVIEWS.put(key, body, {
+        httpMetadata: { contentType: "application/json" },
+        customMetadata: {
+            role: "manual-mockup-manifest",
+            orderNumber,
+        },
+    });
+}
+
+function makeManualAssetId() {
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const random = crypto.randomUUID
+        ? crypto.randomUUID().replace(/-/g, "").slice(0, 10)
+        : Math.random().toString(36).slice(2, 12);
+    return `${date}-${random}`;
+}
+
+function getManualOrderNumberFromUrl(url) {
+    return normalizeManualOrderNumber(
+        url.searchParams.get("orderNumber") ||
+        url.searchParams.get("orderKey")
+    );
+}
+
+function isFileLike(value) {
+    return Boolean(
+        value &&
+        typeof value === "object" &&
+        typeof value.arrayBuffer === "function" &&
+        typeof value.name === "string"
+    );
+}
+
 // -----------------------------
 // /order-manager/storage/list
 // Query:
@@ -264,8 +404,7 @@ async function handleStorageHead(request, env, allowOrigin, reqAllowHeaders) {
     const key = (url.searchParams.get("key") || "").trim();
     if (!key) return jsonResponse({ error: "Missing key" }, allowOrigin, reqAllowHeaders, 400);
 
-    // Optional safety gate: limit to the two folders you expect
-    if (!key.startsWith("previews/") && !key.startsWith("prompts/")) {
+    if (!isAllowedStorageKey(key)) {
         return jsonResponse({ error: "Invalid key" }, allowOrigin, reqAllowHeaders, 400);
     }
 
@@ -317,8 +456,7 @@ async function handleStorageObject(request, env, allowOrigin, reqAllowHeaders) {
     const key = (url.searchParams.get("key") || "").trim();
     if (!key) return new Response("Missing key", { status: 400 });
 
-    // Optional safety gate: limit to the two folders you expect
-    if (!key.startsWith("previews/") && !key.startsWith("prompts/")) {
+    if (!isAllowedStorageKey(key)) {
         return new Response("Invalid key", { status: 400 });
     }
 
@@ -365,4 +503,165 @@ async function handleStorageObject(request, env, allowOrigin, reqAllowHeaders) {
     }
 
     return new Response(obj.body, { status: 200, headers });
+}
+
+// -----------------------------
+// /order-manager/orders/manual-mockups
+// Query:
+//  - orderNumber (required, orderKey alias accepted)
+// Behavior:
+//  - GET returns manifest metadata
+//  - POST uploads one PNG/JPG/WebP file and updates manifest
+//  - DELETE removes one manual asset by assetId and updates manifest
+// -----------------------------
+async function handleManualMockups(request, env, allowOrigin, reqAllowHeaders) {
+    if (!env.PREVIEWS) {
+        return new Response("Missing R2 binding: PREVIEWS", { status: 500 });
+    }
+
+    const url = new URL(request.url);
+    const orderNumber = getManualOrderNumberFromUrl(url);
+    if (!orderNumber) {
+        return jsonResponse({ error: "Missing or invalid orderNumber" }, allowOrigin, reqAllowHeaders, 400);
+    }
+
+    if (request.method === "GET") {
+        const manifest = await readManualManifest(env, orderNumber);
+        return jsonResponse(hydrateManualManifest(manifest, request), allowOrigin, reqAllowHeaders, 200);
+    }
+
+    if (request.method === "POST") {
+        const form = await request.formData();
+        let file = form.get("file");
+        if (!isFileLike(file)) {
+            file = Array.from(form.values()).find(isFileLike);
+        }
+        if (!isFileLike(file)) {
+            return jsonResponse({ error: "Missing file" }, allowOrigin, reqAllowHeaders, 400);
+        }
+
+        const contentType = contentTypeForManualMockup(file);
+        const ext = extensionForManualMockup(file, contentType);
+        if (!contentType || !ext) {
+            return jsonResponse({ error: "Only PNG, JPG, and WebP mockups are allowed" }, allowOrigin, reqAllowHeaders, 415);
+        }
+
+        const assetId = makeManualAssetId();
+        const key = manualMockupKey(orderNumber, assetId, ext);
+        const uploadedAt = new Date().toISOString();
+        const filename = String(file.name || `mockup.${ext}`);
+
+        await env.PREVIEWS.put(key, await file.arrayBuffer(), {
+            httpMetadata: { contentType },
+            customMetadata: {
+                role: "manual-mockup",
+                orderNumber,
+                assetId,
+                filename,
+                uploadedAt,
+            },
+        });
+
+        const manifest = await readManualManifest(env, orderNumber);
+        const asset = {
+            id: assetId,
+            key,
+            role: "mockup",
+            type: "mockup",
+            filename,
+            contentType,
+            uploadedAt,
+        };
+        manifest.assets = [
+            ...(Array.isArray(manifest.assets) ? manifest.assets : []),
+            asset,
+        ];
+        await writeManualManifest(env, orderNumber, manifest);
+
+        return jsonResponse(
+            {
+                orderNumber,
+                asset: hydrateManualManifest({ orderNumber, assets: [asset] }, request).assets[0],
+                manifest: hydrateManualManifest(manifest, request),
+            },
+            allowOrigin,
+            reqAllowHeaders,
+            201
+        );
+    }
+
+    if (request.method === "DELETE") {
+        const assetId = String(url.searchParams.get("assetId") || "").trim();
+        if (!assetId) {
+            return jsonResponse({ error: "Missing assetId" }, allowOrigin, reqAllowHeaders, 400);
+        }
+
+        const manifest = await readManualManifest(env, orderNumber);
+        const assets = Array.isArray(manifest.assets) ? manifest.assets : [];
+        const asset = assets.find(item => item && item.id === assetId);
+        if (!asset) {
+            return jsonResponse({ error: "Not Found", assetId }, allowOrigin, reqAllowHeaders, 404);
+        }
+
+        if (typeof asset.key === "string" && asset.key.startsWith(`${MANUAL_ASSETS_PREFIX}orders/${orderNumber}/mockups/`)) {
+            await env.PREVIEWS.delete(asset.key);
+        }
+
+        manifest.assets = assets.filter(item => item && item.id !== assetId);
+        await writeManualManifest(env, orderNumber, manifest);
+
+        return jsonResponse(
+            {
+                ok: true,
+                orderNumber,
+                assetId,
+                manifest: hydrateManualManifest(manifest, request),
+            },
+            allowOrigin,
+            reqAllowHeaders,
+            200
+        );
+    }
+
+    return new Response("Method Not Allowed", { status: 405 });
+}
+
+// -----------------------------
+// /order-manager/orders/manual-mockups/bulk
+// Body:
+//  - { orderNumbers: [] }
+// Returns hydrated manifests keyed by order number.
+// -----------------------------
+async function handleManualMockupsBulk(request, env, allowOrigin, reqAllowHeaders) {
+    if (!env.PREVIEWS) {
+        return new Response("Missing R2 binding: PREVIEWS", { status: 500 });
+    }
+
+    if (request.method !== "POST") {
+        return new Response("Method Not Allowed", { status: 405 });
+    }
+
+    let body = {};
+    try {
+        body = await request.json();
+    } catch (err) {
+        return jsonResponse({ error: "Invalid JSON body" }, allowOrigin, reqAllowHeaders, 400);
+    }
+
+    const rawOrderNumbers = Array.isArray(body.orderNumbers)
+        ? body.orderNumbers
+        : Array.isArray(body.orderKeys)
+            ? body.orderKeys
+            : [];
+    const orderNumbers = Array.from(new Set(
+        rawOrderNumbers.map(normalizeManualOrderNumber).filter(Boolean)
+    )).slice(0, 250);
+
+    const orders = {};
+    await Promise.all(orderNumbers.map(async orderNumber => {
+        const manifest = await readManualManifest(env, orderNumber);
+        orders[orderNumber] = hydrateManualManifest(manifest, request);
+    }));
+
+    return jsonResponse({ orders }, allowOrigin, reqAllowHeaders, 200);
 }

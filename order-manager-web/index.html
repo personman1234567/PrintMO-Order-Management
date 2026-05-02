@@ -138,8 +138,12 @@
             </section>
           </div>
           <div id="detail-order-column">
-            <section id="detail-mockups-strip" class="detail-section">
-              <h4>Mockup Preview</h4>
+            <section id="detail-mockups-strip" class="detail-section" tabindex="0">
+              <div class="detail-section-header">
+                <h4>Mockup Preview</h4>
+                <button id="manual-mockup-upload-btn" class="fullscreen-btn" type="button">Upload mockup</button>
+                <input id="manual-mockup-file-input" class="hidden" type="file" accept="image/png,image/jpeg,image/webp" multiple>
+              </div>
               <div id="detail-mockups-track"></div>
               <p id="detail-mockups-placeholder" class="detail-assets-empty">No mockup previews available</p>
             </section>
