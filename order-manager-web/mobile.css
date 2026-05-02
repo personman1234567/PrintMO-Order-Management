@@ -85,13 +85,14 @@
       width: 100%;
       min-width: 0;
       max-width: 100vw;
-      padding: 12px 12px calc(84px + env(safe-area-inset-bottom));
+      padding: 12px 12px var(--mobile-dock-scroll-inset);
       background:
         linear-gradient(180deg, #f8fafc 0%, #f3f5f8 44%, #eef2f7 100%);
       color: #182334;
       overflow-y: auto;
       overflow-x: hidden;
       -webkit-overflow-scrolling: touch;
+      scroll-padding-bottom: var(--mobile-dock-scroll-inset);
     }
 
     .storage-browser *,
@@ -1940,6 +1941,7 @@
     --mobile-tab-bar-height: calc(62px + env(safe-area-inset-bottom));
     --mobile-card-gap: 4%;
     --mobile-selection-bar-gap: 12px;
+    --mobile-dock-scroll-inset: calc(var(--mobile-tab-bar-height) + 18px);
   }
 
   html, body {
@@ -1952,17 +1954,17 @@
 
   body {
     background: #f6f5f6;
-    padding-bottom: calc(var(--mobile-tab-bar-height) + 8px + var(--mobile-selection-bar-gap));
+    padding-bottom: 0;
   }
 
   .container {
     display: flex;
     flex-direction: column;
     gap: 12px;
-    height: calc(100vh - 0px);
-    min-height: 100vh;
-    padding: 12px 12px calc(12px + var(--mobile-tab-bar-height));
-    overflow: hidden;
+    height: 100%;
+    min-height: 0;
+    padding: 12px;
+    overflow: visible;
   }
 
   .panel {
@@ -1987,6 +1989,14 @@
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
     min-height: 0;
+    padding-bottom: var(--mobile-dock-scroll-inset);
+    scroll-padding-bottom: var(--mobile-dock-scroll-inset);
+  }
+
+  .pipeline .cards,
+  .fulfillment .sub-section .cards {
+    padding-bottom: var(--mobile-dock-scroll-inset);
+    scroll-padding-bottom: var(--mobile-dock-scroll-inset);
   }
 
   .cards .card,
@@ -2071,7 +2081,11 @@
     gap: 12px;
     flex: 1;
     min-height: 0;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-bottom: var(--mobile-dock-scroll-inset);
+    scroll-padding-bottom: var(--mobile-dock-scroll-inset);
+    -webkit-overflow-scrolling: touch;
   }
 
   .drag-area {
@@ -2084,14 +2098,19 @@
   .picked-cards {
     margin: 0;
     padding: 12px 0;
-    max-height: 100%;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
+    flex: 0 0 auto;
+    min-height: clamp(180px, 34vh, 360px);
+    min-height: clamp(180px, 34dvh, 360px);
+    max-height: none;
+    overflow: visible;
   }
 
   .summary {
     width: 100%;
     margin: 0;
+    position: static;
+    z-index: auto;
+    flex: 0 0 auto;
   }
 
   .panel.fulfillment {
@@ -2109,16 +2128,16 @@
 
   .mobile-tab-bar {
     position: fixed;
-    left: max(8px, env(safe-area-inset-left));
-    right: max(8px, env(safe-area-inset-right));
-    bottom: 0;
+    left: max(18px, calc(env(safe-area-inset-left) + 18px));
+    right: max(18px, calc(env(safe-area-inset-right) + 18px));
+    bottom: calc(8px + env(safe-area-inset-bottom));
     box-sizing: border-box;
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 6px;
-    padding: 7px 9px calc(7px + env(safe-area-inset-bottom));
+    padding: 7px 9px;
     background: rgba(255, 255, 255, 0.92);
     border: 1px solid rgba(210, 218, 230, 0.9);
-    border-radius: 18px 18px calc(18px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-bottom));
+    border-radius: 999px;
     box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
