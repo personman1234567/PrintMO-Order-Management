@@ -659,10 +659,20 @@ function shortenNameIfWrapped(el) {
   }
 }
 
+function formatCardCurrency(value) {
+  const amount = Number(value) || 0;
+  return amount.toLocaleString(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 // build a card from the record's `items` array
 function makeCard(o, style = 'default') {
   const card = document.createElement('div');
-  card.className   = 'card';
+  card.className   = 'card dashboard-card';
   card.draggable   = true;
   card.dataset.orderId = o.name;
 
@@ -678,10 +688,11 @@ function makeCard(o, style = 'default') {
   });
   const firstMockupUrl = getFirstMockupUrl(o);
   const hasMockup = !!firstMockupUrl;
+  const subtotal = formatCardCurrency(o.subtotal);
 
   if (style === 'pipeline') {
     // PIPELINE style
-    card.classList.add('pipeline-card');
+    card.classList.add('pipeline-card', 'pipeline-main-card');
     card.innerHTML = `
       <div class="card-header">
         <span class="order-number">${orderNum}</span>
@@ -701,7 +712,7 @@ function makeCard(o, style = 'default') {
       </div>
       <div class="card-footer">
         <span class="footer-label">Subtotal</span>
-        <span class="footer-value">$${(o.subtotal||0).toFixed(2)}</span>
+        <span class="footer-value">${subtotal}</span>
       </div>
     `;
     requestAnimationFrame(() => {
@@ -716,24 +727,52 @@ function makeCard(o, style = 'default') {
       hdr.classList.add(cls);
       if (ftr) ftr.classList.add(cls);
     }
-  } else if (style === 'printProgress') {
-    // Ready to Print style with progress percentage
-    const totalApparel = (o.items || []).reduce((sum, it) => sum + (isPrintItem(it) ? 0 : it.qty), 0);
-    const prog = typeof o.progress === 'number' ? o.progress : 0;
-    const pct = totalApparel ? Math.round((prog / totalApparel) * 100) : 0;
-    card.classList.add('pipeline-card', 'print-card');
+  } else if (style === 'compact') {
+    card.classList.add('pipeline-card', 'production-card', 'compact-card');
     card.innerHTML = `
       <div class="card-header">
         <span class="order-number">${orderNum}</span>
         <span class="time-ago-pill">${timeAgo(o.receivedAt)}</span>
       </div>
-      <div class="card-body">
+      <div class="card-body compact-body">
+        <div class="cust-name">${custName}</div>
+        <div class="counts">
+          <span class="apparel-count"><img class="count-icon" src="${o.blanksOrdered ? APPAREL_ICON_GREEN : APPAREL_ICON}" alt="" /> ${apparel}</span>
+          <span class="prints-count"><img class="count-icon" src="${o.printsOrdered ? PRINT_ICON_GREEN : PRINT_ICON}" alt="" /> ${prints}</span>
+        </div>
+      </div>
+      <div class="card-footer">
+        <span class="footer-label">Subtotal</span>
+        <span class="footer-value">${subtotal}</span>
+      </div>
+    `;
+    const hdr = card.querySelector('.card-header');
+    const ftr = card.querySelector('.card-footer');
+    let cls = '';
+    if (o.blanksStatus && o.printsStatus) cls = 'status-green';
+    else if (o.blanksStatus || o.printsStatus) cls = 'status-yellow';
+    if (cls) {
+      hdr.classList.add(cls);
+      if (ftr) ftr.classList.add(cls);
+    }
+  } else if (style === 'printProgress') {
+    // Ready to Print style with progress percentage
+    const totalApparel = (o.items || []).reduce((sum, it) => sum + (isPrintItem(it) ? 0 : it.qty), 0);
+    const prog = typeof o.progress === 'number' ? o.progress : 0;
+    const pct = totalApparel ? Math.round((prog / totalApparel) * 100) : 0;
+    card.classList.add('pipeline-card', 'production-card', 'compact-card', 'print-card');
+    card.innerHTML = `
+      <div class="card-header">
+        <span class="order-number">${orderNum}</span>
+        <span class="time-ago-pill">${timeAgo(o.receivedAt)}</span>
+      </div>
+      <div class="card-body compact-body">
         <div class="progress-view">
           <div class="cust-name">${custName}</div>
-          <div class="progress-pct">${pct}%</div>
-        </div>
-        <div class="normal-view">
-          <div class="cust-name">${custName}</div>
+          <div class="progress-row">
+            <span class="progress-pct">${pct}%</span>
+            <span class="progress-count">${prog}/${totalApparel}</span>
+          </div>
           <div class="counts">
             <span class="apparel-count"><img class="count-icon" src="${o.blanksOrdered ? APPAREL_ICON_GREEN : APPAREL_ICON}" alt="" /> ${apparel}</span>
             <span class="prints-count"><img class="count-icon" src="${o.printsOrdered ? PRINT_ICON_GREEN : PRINT_ICON}" alt="" /> ${prints}</span>
@@ -742,7 +781,7 @@ function makeCard(o, style = 'default') {
       </div>
       <div class="card-footer">
         <span class="footer-label">Subtotal</span>
-        <span class="footer-value">$${(o.subtotal||0).toFixed(2)}</span>
+        <span class="footer-value">${subtotal}</span>
       </div>
     `;
     requestAnimationFrame(() => {
@@ -759,7 +798,7 @@ function makeCard(o, style = 'default') {
     }
   } else if (style === 'picked') {
     // picked card style for middle section
-    card.classList.add('pipeline-card');
+    card.classList.add('pipeline-card', 'picked-card');
     card.innerHTML = `
       <div class="card-header"><span class="cust-name">${custName}</span></div>
       <div class="card-body picked-body">
@@ -836,7 +875,14 @@ function makeCard(o, style = 'default') {
 
 function makeBundleCard(name, orders, style = 'pipeline') {
   const card = document.createElement('div');
-  card.className = 'card bundle-card pipeline-card';
+  card.className = 'card dashboard-card bundle-card pipeline-card';
+  if (style === 'compact' || style === 'printProgress') {
+    card.classList.add('production-card', 'compact-card');
+  } else if (style === 'picked') {
+    card.classList.add('picked-card');
+  } else {
+    card.classList.add('pipeline-main-card');
+  }
   card.dataset.bundleName = name;
   card.draggable = true;
 
@@ -848,6 +894,20 @@ function makeBundleCard(name, orders, style = 'pipeline') {
   });
 
   let bodyHtml = `<div class="counts"><strong>${orders.length} Orders</strong></div>`;
+  if (style === 'compact' || style === 'printProgress') {
+    let apparel = 0, prints = 0;
+    orders.forEach(o => (o.items || []).forEach(it => {
+      if (isPrintItem(it)) prints += it.qty;
+      else apparel += it.qty;
+    }));
+    bodyHtml = `
+      <div class="bundle-count"><strong>${orders.length}</strong> Orders</div>
+      <div class="counts">
+        <span class="apparel-count"><img class="count-icon" src="${APPAREL_ICON}" alt="" /> ${apparel}</span>
+        <span class="prints-count"><img class="count-icon" src="${PRINT_ICON}" alt="" /> ${prints}</span>
+      </div>
+    `;
+  }
   if (style === 'picked') {
     let apparel = 0;
     orders.forEach(o => (o.items || []).forEach(it => {
@@ -2494,8 +2554,8 @@ async function renderBoard(options = {}) {
     }
   });
   sortBundlesByOldest(Object.entries(blankGroups))
-    .forEach(([n, arr]) => blanksEl.appendChild(makeBundleCard(n, arr)));
-  blankSingles.forEach(o => blanksEl.appendChild(makeCard(o, 'pipeline')));
+    .forEach(([n, arr]) => blanksEl.appendChild(makeBundleCard(n, arr, 'compact')));
+  blankSingles.forEach(o => blanksEl.appendChild(makeCard(o, 'compact')));
 
   // Ready To Print
   const printEl = document.getElementById('col-print');
@@ -2511,7 +2571,7 @@ async function renderBoard(options = {}) {
     }
   });
   sortBundlesByOldest(Object.entries(printGroups))
-    .forEach(([n, arr]) => printEl.appendChild(makeBundleCard(n, arr)));
+    .forEach(([n, arr]) => printEl.appendChild(makeBundleCard(n, arr, 'printProgress')));
   printSingles.forEach(o => printEl.appendChild(makeCard(o, 'printProgress')));
 
   refreshMobileSelectionUI();

@@ -2276,3 +2276,358 @@
       flex: 0 0 calc((100% - 4%) / 5);
       max-width: calc((100% - 4%) / 5);
     }
+
+    /* Dashboard card polish overrides */
+    .pipeline,
+    .fulfillment .sub-section {
+      container-type: inline-size;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 52px;
+      letter-spacing: 0;
+    }
+
+    .pipeline .panel-header {
+      padding-right: 18px;
+    }
+
+    #pipeline-count {
+      position: static;
+      margin-left: auto;
+      font-variant-numeric: tabular-nums;
+      order: 2;
+    }
+
+    .pipeline .panel-header > button {
+      order: 1;
+      margin-left: 0;
+    }
+
+    .pipeline .cards {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      padding: 14px;
+    }
+
+    @container (min-width: 900px) {
+      .pipeline .cards {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+
+    .pipeline .cards .pipeline-main-card {
+      min-height: 188px;
+      aspect-ratio: auto;
+    }
+
+    .pipeline .cards .pipeline-main-card:has(.card-body.has-mockup) {
+      min-height: 232px;
+    }
+
+    .dashboard-card,
+    .pipeline-card {
+      border-radius: 10px;
+      padding: 0;
+      min-width: 0;
+      box-shadow: 0 2px 7px rgba(15, 23, 42, 0.12);
+    }
+
+    .pipeline-card .card-header,
+    .pipeline-card .card-footer {
+      min-width: 0;
+      gap: 8px;
+    }
+
+    .pipeline-card .order-number,
+    .pipeline-card .time-ago-pill,
+    .pipeline-card .footer-value {
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .pipeline-card .time-ago-pill {
+      margin-right: 16px;
+    }
+
+    .pipeline-card .delete-btn {
+      top: 6px;
+      right: 6px;
+      width: 18px;
+      height: 18px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      font-size: 0.86rem;
+      background: rgba(0, 0, 0, 0.16);
+    }
+
+    .pipeline-card .cust-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      line-height: 1.22;
+    }
+
+    .pipeline-main-card .card-body.no-mockup {
+      gap: 16px;
+      justify-content: space-between;
+      align-items: stretch;
+    }
+
+    .pipeline-main-card .card-body.no-mockup .cust-name {
+      font-size: clamp(1rem, 1.4cqw, 1.16rem);
+    }
+
+    .pipeline-main-card .mockup-slot {
+      width: 100%;
+      max-width: none;
+      height: clamp(72px, 10cqw, 112px);
+      flex: 0 0 clamp(72px, 10cqw, 112px);
+      min-height: 72px;
+      max-height: none;
+      aspect-ratio: auto;
+      background: #f7f9fc;
+    }
+
+    .pipeline-main-card .card-body.has-mockup {
+      align-items: stretch;
+      gap: 8px;
+    }
+
+    .pipeline-main-card .mockup-slot img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .pipeline-card .card-footer {
+      padding: 8px 12px;
+    }
+
+    .pipeline-card .footer-value {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: right;
+      min-width: 0;
+    }
+
+    .section-header {
+      gap: 8px;
+      padding: 10px 12px;
+      min-height: 48px;
+    }
+
+    .section-header h3 {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 0 !important;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .section-header .fullscreen-btn,
+    .section-header .bundle-btn,
+    .section-header .bundle-confirm,
+    .section-header .bundle-cancel {
+      flex: 0 0 auto;
+      margin-left: 0;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 0.8rem;
+      line-height: 1.1;
+    }
+
+    .fulfillment .panel-body {
+      gap: 12px;
+      padding: 12px;
+    }
+
+    .fulfillment .sub-section {
+      flex: 1 1 0;
+      min-height: 0;
+      border: 1px solid #edf0f4;
+      box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+    }
+
+    #blanks-section:has(#col-blanks:empty),
+    #print-section:has(#col-print:empty) {
+      flex: 0 0 auto;
+    }
+
+    .fulfillment .sub-section .cards {
+      display: grid;
+      grid-template-columns: 1fr;
+      grid-auto-rows: max-content;
+      gap: 10px;
+      padding: 12px;
+      justify-content: stretch;
+      align-content: flex-start;
+    }
+
+    @container (min-width: 360px) {
+      .fulfillment .sub-section .cards {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @container (min-width: 560px) {
+      .fulfillment .sub-section .cards {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+
+    .fulfillment .sub-section .cards:empty {
+      min-height: 76px;
+      place-items: center;
+      color: #667085;
+      font-weight: 600;
+      font-size: 0.86rem;
+      border: 1px dashed #d7dce3;
+      border-radius: 10px;
+      background: #fafbfc;
+    }
+
+    #col-blanks:empty::before {
+      content: "No blanks ordered";
+    }
+
+    #col-print:empty::before {
+      content: "No ready-to-print orders";
+    }
+
+    .fulfillment .sub-section .cards .production-card {
+      width: 100%;
+      max-width: none;
+      min-height: 136px;
+      aspect-ratio: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .production-card .card-header {
+      padding: 7px 10px;
+    }
+
+    .production-card .time-ago-pill {
+      max-width: 70px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .production-card .compact-body {
+      padding: 9px 10px;
+      align-items: stretch;
+      justify-content: center;
+      gap: 8px;
+      text-align: left;
+    }
+
+    .production-card .cust-name {
+      margin: 0;
+      font-size: 0.95rem;
+      text-align: left;
+    }
+
+    .production-card .counts {
+      justify-content: space-between;
+      gap: 8px;
+      margin: 0;
+      font-size: 0.84rem;
+    }
+
+    .production-card .counts span {
+      min-width: 0;
+    }
+
+    .production-card .counts .count-icon {
+      width: 16px;
+      height: 16px;
+    }
+
+    .production-card .progress-view {
+      position: static;
+      inset: auto;
+      padding: 0;
+      gap: 7px;
+      opacity: 1;
+    }
+
+    .production-card .normal-view {
+      display: none;
+    }
+
+    .production-card .progress-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .production-card .progress-pct {
+      margin: 0;
+      font-size: 1.2rem;
+      line-height: 1;
+      text-align: left;
+    }
+
+    .production-card .progress-count {
+      color: #667085;
+      font-size: 0.76rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .production-card .card-footer {
+      padding: 7px 10px;
+      font-size: 0.82rem;
+      gap: 6px;
+    }
+
+    .production-card .footer-label {
+      flex: 0 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .production-card .footer-value {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .bundle-card.production-card .card-body {
+      padding: 9px 10px;
+      gap: 8px;
+      align-items: stretch;
+      justify-content: center;
+      text-align: left;
+    }
+
+    .bundle-card.production-card .bundle-count {
+      font-size: 0.95rem;
+      line-height: 1.1;
+    }
+
+    .picked-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+      gap: 10px;
+      justify-content: stretch;
+    }
+
+    .picked-cards .pipeline-card,
+    .picked-cards .card {
+      flex: none;
+      max-width: none;
+      width: 100%;
+      transform: none;
+      aspect-ratio: auto;
+      min-height: 98px;
+    }
