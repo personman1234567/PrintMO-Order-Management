@@ -24,6 +24,11 @@ const MANUAL_MOCKUP_POLL_INTERVAL_MS = 10000;
 let manualMockupPollTimer = null;
 let manualMockupPollInFlight = false;
 let boardRefreshInFlight = null;
+const BLANKS_VIEW = Object.freeze({
+  CART: 'cart',
+  ORDERED: 'ordered',
+});
+let activeBlanksView = BLANKS_VIEW.CART;
 
 const APPAREL_ICON = typeof window.getAssetPath === 'function'
   ? window.getAssetPath('ApparelCount.svg')
@@ -669,6 +674,19 @@ function formatCardCurrency(value) {
   });
 }
 
+function isBlanksOrdered(order) {
+  return Boolean(Number(order?.blanksOrdered || 0));
+}
+
+function blanksOrderedValueForActiveView() {
+  return activeBlanksView === BLANKS_VIEW.ORDERED ? 1 : 0;
+}
+
+function blanksStatusBadgeHtml(order) {
+  const ordered = isBlanksOrdered(order);
+  return `<span class="card-status-badge ${ordered ? 'ordered' : 'in-cart'}">${ordered ? 'Ordered' : 'In S&S Cart'}</span>`;
+}
+
 // build a card from the record's `items` array
 function makeCard(o, style = 'default') {
   const card = document.createElement('div');
@@ -735,6 +753,7 @@ function makeCard(o, style = 'default') {
         <span class="time-ago-pill">${timeAgo(o.receivedAt)}</span>
       </div>
       <div class="card-body compact-body">
+        ${blanksStatusBadgeHtml(o)}
         <div class="cust-name">${custName}</div>
         <div class="counts">
           <span class="apparel-count"><img class="count-icon" src="${o.blanksOrdered ? APPAREL_ICON_GREEN : APPAREL_ICON}" alt="" /> ${apparel}</span>
@@ -901,6 +920,7 @@ function makeBundleCard(name, orders, style = 'pipeline') {
       else apparel += it.qty;
     }));
     bodyHtml = `
+      ${orders.length ? blanksStatusBadgeHtml(orders[0]) : ''}
       <div class="bundle-count"><strong>${orders.length}</strong> Orders</div>
       <div class="counts">
         <span class="apparel-count"><img class="count-icon" src="${APPAREL_ICON}" alt="" /> ${apparel}</span>
@@ -2315,6 +2335,91 @@ function refreshDetailIfOpen() {
   applyDetailData(latest, { preserveEditing: true });
 }
 
+function updateBlanksWorkflowControls(cartCount = null, orderedCount = null) {
+  const section = document.getElementById('blanks-section');
+  const cartBtn = document.getElementById('blanks-view-cart');
+  const orderedBtn = document.getElementById('blanks-view-ordered');
+  const cartCountEl = document.getElementById('blanks-cart-count');
+  const orderedCountEl = document.getElementById('blanks-ordered-count');
+  const markBtn = document.getElementById('blanks-mark-ordered-btn');
+
+  if (section) section.dataset.blanksView = activeBlanksView;
+  if (cartCountEl && cartCount !== null) cartCountEl.textContent = String(cartCount);
+  if (orderedCountEl && orderedCount !== null) orderedCountEl.textContent = String(orderedCount);
+
+  [
+    [cartBtn, BLANKS_VIEW.CART],
+    [orderedBtn, BLANKS_VIEW.ORDERED],
+  ].forEach(([btn, view]) => {
+    if (!btn) return;
+    const active = activeBlanksView === view;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+
+  if (markBtn) {
+    const show = activeBlanksView === BLANKS_VIEW.CART;
+    markBtn.hidden = !show;
+    const count = cartCount === null ? Number(document.getElementById('blanks-cart-count')?.textContent || 0) : cartCount;
+    markBtn.disabled = !show || count === 0;
+    markBtn.setAttribute('aria-disabled', markBtn.disabled ? 'true' : 'false');
+  }
+}
+
+function setActiveBlanksView(view, { render = true } = {}) {
+  const next = view === BLANKS_VIEW.ORDERED ? BLANKS_VIEW.ORDERED : BLANKS_VIEW.CART;
+  if (activeBlanksView === next) return;
+  activeBlanksView = next;
+  updateBlanksWorkflowControls();
+  if (render) renderBoard();
+}
+
+function setupBlanksWorkflowControls() {
+  document.querySelectorAll('[data-blanks-view]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      setActiveBlanksView(btn.dataset.blanksView);
+    });
+  });
+
+  const markBtn = document.getElementById('blanks-mark-ordered-btn');
+  if (markBtn) {
+    markBtn.addEventListener('click', markInCartBlanksOrdered);
+  }
+}
+
+async function updateBlanksOrderedForOrders(orderNames, isOrdered) {
+  const names = Array.from(new Set((orderNames || []).filter(Boolean)));
+  if (!names.length || !window.api || typeof window.api.updateReady !== 'function') return;
+  await Promise.all(names.map(name => window.api.updateReady({
+    name,
+    blanksOrdered: isOrdered ? 1 : 0,
+  })));
+}
+
+async function markInCartBlanksOrdered() {
+  const orders = allOrders.filter(o => o.status === 'blanks' && !isBlanksOrdered(o));
+  if (!orders.length) return;
+  const btn = document.getElementById('blanks-mark-ordered-btn');
+  const originalText = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Marking...';
+  }
+  try {
+    await updateBlanksOrderedForOrders(orders.map(o => o.name), true);
+    activeBlanksView = BLANKS_VIEW.ORDERED;
+    await renderBoard();
+  } catch (err) {
+    console.error('Failed to mark blanks ordered', err);
+    alert(`Could not mark blanks ordered: ${err?.message || err}`);
+  } finally {
+    if (btn) {
+      btn.textContent = originalText || 'Mark In Cart Ordered';
+      btn.disabled = false;
+    }
+  }
+}
+
 function setOrderManagerRefreshBusy(isBusy) {
   const btn = document.getElementById('order-manager-refresh-btn');
   if (!btn) return;
@@ -2540,10 +2645,14 @@ async function renderBoard(options = {}) {
   pickSingles.forEach(o => pickedEl.appendChild(makeCard(o, 'picked')));
   updateSummary();
 
-  // Blanks Ordered
+  // Blanks: In S&S Cart vs actually ordered
   const blanksEl = document.getElementById('col-blanks');
   blanksEl.innerHTML = '';
-  const blankOrders = allOrders.filter(x => x.status === 'blanks');
+  const allBlankOrders = allOrders.filter(x => x.status === 'blanks');
+  const blankCartOrders = allBlankOrders.filter(o => !isBlanksOrdered(o));
+  const blankOrderedOrders = allBlankOrders.filter(isBlanksOrdered);
+  const blankOrders = activeBlanksView === BLANKS_VIEW.ORDERED ? blankOrderedOrders : blankCartOrders;
+  updateBlanksWorkflowControls(blankCartOrders.length, blankOrderedOrders.length);
   const blankGroups = {}, blankSingles = [];
   blankOrders.forEach(o => {
     if (o.bundle) {
@@ -2680,6 +2789,7 @@ function promptBundleName() {
 }
 
 function makeDropZone(el, status) {
+  if (!el) return;
   el.addEventListener('dragover', e => {
     e.preventDefault();
     // highlight only the dragÎ“Ã‡Ã‰area if desired:
@@ -2709,9 +2819,18 @@ function makeDropZone(el, status) {
     try {
       if (id.startsWith('bundle:')) {
         const name = id.slice(7);
+        const bundleOrderNames = allOrders
+          .filter(order => order.bundle === name)
+          .map(order => order.name);
         await window.api.updateBundleStatus(name, status);
+        if (status === 'blanks') {
+          await updateBlanksOrderedForOrders(bundleOrderNames, blanksOrderedValueForActiveView());
+        }
       } else {
         await window.api.updateStatus(id, status);
+        if (status === 'blanks') {
+          await updateBlanksOrderedForOrders([id], blanksOrderedValueForActiveView());
+        }
       }
       await renderBoard();
     } catch (err) {
@@ -2726,7 +2845,7 @@ function setupDropZones() {
   // Drag area itself Î“Ã§Ã† toOrder
   const dragArea = document.getElementById('col-toOrder');
   makeDropZone(dragArea, 'toOrder');
-  // Blanks Ordered
+  // Blanks
   makeDropZone(document.getElementById('col-blanks'), 'blanks');
   // Ready To Print
   makeDropZone(document.getElementById('col-print'), 'print');
@@ -2758,6 +2877,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupManualMockupControls();
   setupOrderManagerRefreshControl();
   setupManualMockupPolling();
+  setupBlanksWorkflowControls();
 
   // wire up the four zones
 
@@ -2772,22 +2892,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         return alert('Drag some cards into "Drag cards here" first.');
       }
 
-      submitBtn.textContent = 'SubmittingÎ“Ã‡Âª';
+      submitBtn.textContent = 'Adding to S&S Cart...';
       submitBtn.disabled = true;
 
       try {
         await window.api.processBatch(toOrder);
 
-        // auto-move into Blanks Ordered
         for (const id of toOrder) {
           await window.api.updateStatus(id, 'blanks');
         }
+        await updateBlanksOrderedForOrders(toOrder, false);
 
+        activeBlanksView = BLANKS_VIEW.CART;
         await renderBoard();
-        submitBtn.textContent = 'Î“Â£Ã  Submitted';
+        submitBtn.textContent = 'Added to S&S Cart';
 
         setTimeout(() => {
-          submitBtn.textContent = 'Submit To S&S';
+          submitBtn.textContent = 'Add to S&S Cart';
         }, 3000);
 
       } catch (err) {

@@ -56,7 +56,7 @@
           <ul id="summary-list"></ul>
           <div id="cart-total">Total items: 0</div>
           <button id="clear-picked">Clear</button>
-          <button id="order-submit">Submit To S&S</button>
+          <button id="order-submit">Add to S&S Cart</button>
         </div>
       </div>
     </div>
@@ -67,11 +67,26 @@
       <div class="panel-body" style="display:flex; flex-direction:column;">
         <div class="sub-section" id="blanks-section">
           <div class="section-header">
-            <h3>Blanks Ordered</h3>
-            <button id="blanks-fullscreen-btn" class="fullscreen-btn">Fullscreen</button>
-            <button id="blanks-bundle-start" class="bundle-btn">Bundle</button>
-            <button id="blanks-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
-            <button id="blanks-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
+            <h3 class="blanks-header-title">Blanks</h3>
+            <div class="blanks-workflow-controls" aria-label="Blanks status view">
+              <div class="blanks-segmented" role="tablist" aria-label="Blanks status view">
+                <button id="blanks-view-cart" class="blanks-segment active" type="button" role="tab" aria-selected="true" data-blanks-view="cart">
+                  <span>In S&amp;S Cart</span>
+                  <span id="blanks-cart-count" class="blanks-segment-count">0</span>
+                </button>
+                <button id="blanks-view-ordered" class="blanks-segment" type="button" role="tab" aria-selected="false" data-blanks-view="ordered">
+                  <span>Ordered</span>
+                  <span id="blanks-ordered-count" class="blanks-segment-count">0</span>
+                </button>
+              </div>
+            </div>
+            <div class="section-actions">
+              <button id="blanks-mark-ordered-btn" class="fullscreen-btn blanks-mark-ordered" type="button">Mark In Cart Ordered</button>
+              <button id="blanks-fullscreen-btn" class="fullscreen-btn">Fullscreen</button>
+              <button id="blanks-bundle-start" class="bundle-btn">Bundle</button>
+              <button id="blanks-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
+              <button id="blanks-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
+            </div>
           </div>
           <div class="cards" id="col-blanks"></div>
         </div>
@@ -377,11 +392,11 @@
       </span>
       <span class="mobile-tab-label">Blanks Cart</span>
     </button>
-    <button class="mobile-tab" type="button" data-tab="blanksOrdered" aria-label="Blanks Ordered">
+    <button class="mobile-tab" type="button" data-tab="blanksOrdered" aria-label="Blanks">
       <span class="mobile-tab-icon" aria-hidden="true">
         <img src="./Assets/Blanks Ordered Icon.svg" alt="" />
       </span>
-      <span class="mobile-tab-label">Blanks Ordered</span>
+      <span class="mobile-tab-label">Blanks</span>
     </button>
     <button class="mobile-tab" type="button" data-tab="readyToPrint" aria-label="Ready To Print">
       <span class="mobile-tab-icon" aria-hidden="true">

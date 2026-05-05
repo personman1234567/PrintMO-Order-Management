@@ -2421,6 +2421,7 @@
       gap: 8px;
       padding: 10px 12px;
       min-height: 48px;
+      flex-wrap: wrap;
     }
 
     .section-header h3 {
@@ -2442,6 +2443,110 @@
       padding: 5px 10px;
       font-size: 0.8rem;
       line-height: 1.1;
+    }
+
+    #blanks-section .section-header {
+      align-items: center;
+    }
+
+    #blanks-section .blanks-header-title {
+      flex: 0 0 auto;
+    }
+
+    .blanks-workflow-controls {
+      flex: 1 1 260px;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+    }
+
+    .blanks-segmented {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      padding: 3px;
+      border: 1px solid #d0d7e2;
+      border-radius: 999px;
+      background: #f6f8fb;
+      min-width: 0;
+    }
+
+    .blanks-segment {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: none;
+      border-radius: 999px;
+      padding: 5px 10px;
+      background: transparent;
+      color: #334155;
+      font-size: 0.78rem;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .blanks-segment.active {
+      background: #1a73e8;
+      color: #fff;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.16);
+    }
+
+    .blanks-segment-count {
+      display: inline-grid;
+      place-items: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.1);
+      font-size: 0.72rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .blanks-segment.active .blanks-segment-count {
+      background: rgba(255, 255, 255, 0.22);
+    }
+
+    .section-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-left: auto;
+      flex-wrap: wrap;
+    }
+
+    .blanks-mark-ordered {
+      background: #1765c1;
+    }
+
+    .blanks-mark-ordered[hidden] {
+      display: none !important;
+    }
+
+    .card-status-badge {
+      align-self: flex-start;
+      display: inline-flex;
+      align-items: center;
+      max-width: 100%;
+      border-radius: 999px;
+      padding: 3px 7px;
+      font-size: 0.72rem;
+      font-weight: 800;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .card-status-badge.in-cart {
+      background: #fff3cd;
+      color: #7a4f00;
+    }
+
+    .card-status-badge.ordered {
+      background: #dff7e6;
+      color: #176235;
     }
 
     .fulfillment .panel-body {
@@ -2494,7 +2599,11 @@
       background: #fafbfc;
     }
 
-    #col-blanks:empty::before {
+    #blanks-section[data-blanks-view="cart"] #col-blanks:empty::before {
+      content: "No orders in S&S cart";
+    }
+
+    #blanks-section[data-blanks-view="ordered"] #col-blanks:empty::before {
       content: "No blanks ordered";
     }
 
