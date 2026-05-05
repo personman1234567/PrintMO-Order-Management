@@ -38,6 +38,7 @@
 
     .app-nav {
       display: flex;
+      align-items: center;
       gap: 8px;
       flex-wrap: wrap;
     }
@@ -55,6 +56,22 @@
       background: #1a73e8;
       color: #fff;
       border-color: #1a73e8;
+    }
+
+    .order-manager-refresh-btn {
+      border: 1px solid #b8c7d9;
+      border-radius: 999px;
+      background: #ffffff;
+      color: #172033;
+      padding: 6px 12px;
+      min-width: 76px;
+      font-size: 0.86rem;
+      font-weight: 700;
+      touch-action: manipulation;
+    }
+
+    .order-manager-refresh-btn:disabled {
+      opacity: 0.72;
     }
 
     .app-content {

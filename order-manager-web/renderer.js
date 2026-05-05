@@ -18,7 +18,12 @@ const manualMockupsByOrderNumber = new Map();
 const MANUAL_MOCKUP_FILE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const MANUAL_MOCKUP_CONVERTIBLE_FILE_TYPES = new Set(['image/heic', 'image/heif']);
 const MANUAL_MOCKUP_WEBP_QUALITY = 0.86;
+const MANUAL_MOCKUP_JPEG_QUALITY = 0.9;
 const MANUAL_MOCKUP_MAX_DIMENSION = 2200;
+const MANUAL_MOCKUP_POLL_INTERVAL_MS = 10000;
+let manualMockupPollTimer = null;
+let manualMockupPollInFlight = false;
+let boardRefreshInFlight = null;
 
 const APPAREL_ICON = typeof window.getAssetPath === 'function'
   ? window.getAssetPath('ApparelCount.svg')
@@ -1154,9 +1159,9 @@ function isAllowedManualMockupFile(file) {
   return /\.(png|jpe?g|webp|hei[cf])$/i.test(file.name || '');
 }
 
-function webpFilenameFor(file) {
+function imageFilenameFor(file, type) {
   const base = String(file?.name || 'mockup').replace(/\.[^.]+$/, '') || 'mockup';
-  return `${base}.webp`;
+  return `${base}.${extensionFromImageType(type)}`;
 }
 
 function extensionFromImageType(type) {
@@ -1217,12 +1222,18 @@ async function readImageFilesFromClipboard() {
 
   const items = await navigator.clipboard.read();
   const files = [];
+  const debugTypes = [];
   for (const item of items || []) {
-    const imageType = Array.from(item.types || []).find(type => String(type).toLowerCase().startsWith('image/'));
+    const types = Array.from(item.types || []);
+    debugTypes.push(types.join(', ') || '(no types)');
+    const imageType = types.find(type => String(type).toLowerCase().startsWith('image/'));
     if (!imageType || typeof item.getType !== 'function') continue;
     const blob = await item.getType(imageType);
     const file = fileFromClipboardBlob(blob, files.length);
     if (file) files.push(file);
+  }
+  if (!files.length && debugTypes.length) {
+    console.info('Clipboard did not expose an image item. Clipboard item types:', debugTypes);
   }
   return dedupeClipboardFiles(files);
 }
@@ -1256,18 +1267,49 @@ function canvasToBlob(canvas, type, quality) {
   });
 }
 
-async function encodeCanvasAsWebp(canvas) {
-  const blob = await canvasToBlob(canvas, 'image/webp', MANUAL_MOCKUP_WEBP_QUALITY);
-  if (blob?.type === 'image/webp') return blob;
-
-  const dataUrl = canvas.toDataURL('image/webp', MANUAL_MOCKUP_WEBP_QUALITY);
-  if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image/webp')) {
-    const resp = await fetch(dataUrl);
-    const dataBlob = await resp.blob();
-    if (dataBlob?.type === 'image/webp') return dataBlob;
+async function encodeCanvasAsImageType(canvas, type, quality) {
+  let targetCanvas = canvas;
+  if (type === 'image/jpeg') {
+    targetCanvas = document.createElement('canvas');
+    targetCanvas.width = canvas.width;
+    targetCanvas.height = canvas.height;
+    const targetCtx = targetCanvas.getContext('2d');
+    if (!targetCtx) return null;
+    targetCtx.fillStyle = '#ffffff';
+    targetCtx.fillRect(0, 0, targetCanvas.width, targetCanvas.height);
+    targetCtx.drawImage(canvas, 0, 0);
   }
 
-  throw new Error('This mobile browser could not encode WebP images.');
+  const blob = await canvasToBlob(targetCanvas, type, quality);
+  if (String(blob?.type || '').toLowerCase() === type) return blob;
+
+  const dataUrl = targetCanvas.toDataURL(type, quality);
+  if (typeof dataUrl === 'string' && dataUrl.startsWith(`data:${type}`)) {
+    const resp = await fetch(dataUrl);
+    const dataBlob = await resp.blob();
+    if (String(dataBlob?.type || '').toLowerCase() === type) return dataBlob;
+  }
+
+  return null;
+}
+
+async function encodeManualMockupCanvas(canvas) {
+  const targets = [
+    { type: 'image/webp', quality: MANUAL_MOCKUP_WEBP_QUALITY },
+    { type: 'image/jpeg', quality: MANUAL_MOCKUP_JPEG_QUALITY },
+    { type: 'image/png', quality: undefined },
+  ];
+
+  for (const target of targets) {
+    try {
+      const blob = await encodeCanvasAsImageType(canvas, target.type, target.quality);
+      if (blob) return { blob, type: target.type };
+    } catch (err) {
+      console.info(`Manual mockup ${target.type} encoding unavailable`, err);
+    }
+  }
+
+  throw new Error('This browser could not prepare the image for upload.');
 }
 
 async function loadImageForManualMockup(file) {
@@ -1303,7 +1345,7 @@ async function loadImageForManualMockup(file) {
   }
 }
 
-async function convertManualMockupToWebp(file) {
+async function convertManualMockupForUpload(file) {
   const source = await loadImageForManualMockup(file);
   try {
     if (!source.width || !source.height) {
@@ -1320,9 +1362,9 @@ async function convertManualMockupToWebp(file) {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     source.draw(ctx, width, height);
-    const blob = await encodeCanvasAsWebp(canvas);
-    return new File([blob], webpFilenameFor(file), {
-      type: 'image/webp',
+    const { blob, type } = await encodeManualMockupCanvas(canvas);
+    return new File([blob], imageFilenameFor(file, type), {
+      type,
       lastModified: Date.now(),
     });
   } finally {
@@ -1357,7 +1399,7 @@ async function uploadManualMockupFiles(fileList) {
 
   try {
     for (const file of accepted) {
-      const uploadFile = await convertManualMockupToWebp(file);
+      const uploadFile = await convertManualMockupForUpload(file);
       await window.api.uploadManualMockup(orderNumber, uploadFile);
     }
     await refreshManualMockupsForOrder(detailOrder);
@@ -1816,6 +1858,28 @@ function normalizeManualMockupAsset(asset) {
   };
 }
 
+function manualMockupAssetSignature(assets) {
+  return (assets || [])
+    .map(asset => [
+      asset?.id || '',
+      asset?.key || '',
+      asset?.uploadedAt || '',
+      asset?.contentType || '',
+      asset?.filename || '',
+    ].join(':'))
+    .join('|');
+}
+
+function setManualMockupsForOrder(orderNumber, rawAssets) {
+  const assets = (Array.isArray(rawAssets) ? rawAssets : [])
+    .map(normalizeManualMockupAsset)
+    .filter(Boolean);
+  const previous = manualMockupsByOrderNumber.get(orderNumber) || [];
+  const changed = manualMockupAssetSignature(previous) !== manualMockupAssetSignature(assets);
+  manualMockupsByOrderNumber.set(orderNumber, assets);
+  return changed;
+}
+
 function getManualMockupsForOrder(order) {
   const orderNumber = orderNumberFromOrder(order);
   if (!orderNumber) return [];
@@ -1826,6 +1890,7 @@ async function loadManualMockupsForOrders(orders) {
   if (!window.api) return;
   const orderNumbers = Array.from(new Set((orders || []).map(orderNumberFromOrder).filter(Boolean)));
   if (!orderNumbers.length) return;
+  let changed = false;
 
   if (typeof window.api.bulkListManualMockups === 'function') {
     try {
@@ -1836,9 +1901,9 @@ async function loadManualMockupsForOrders(orders) {
       }
       orderNumbers.forEach(orderNumber => {
         const assets = Array.isArray(byOrder[orderNumber]?.assets) ? byOrder[orderNumber].assets : [];
-        manualMockupsByOrderNumber.set(orderNumber, assets.map(normalizeManualMockupAsset).filter(Boolean));
+        changed = setManualMockupsForOrder(orderNumber, assets) || changed;
       });
-      return;
+      return changed;
     } catch (err) {
       console.warn('Unable to bulk load manual mockups', err);
     }
@@ -1849,12 +1914,13 @@ async function loadManualMockupsForOrders(orders) {
       await Promise.all(orderNumbers.map(async orderNumber => {
         const res = await window.api.listManualMockups(orderNumber);
         const assets = Array.isArray(res?.assets) ? res.assets : [];
-        manualMockupsByOrderNumber.set(orderNumber, assets.map(normalizeManualMockupAsset).filter(Boolean));
+        changed = setManualMockupsForOrder(orderNumber, assets) || changed;
       }));
     }
   } catch (err) {
     console.warn('Unable to load manual mockups', err);
   }
+  return changed;
 }
 
 async function refreshManualMockupsForOrder(order) {
@@ -1862,7 +1928,7 @@ async function refreshManualMockupsForOrder(order) {
   if (!orderNumber || !window.api || typeof window.api.listManualMockups !== 'function') return;
   const res = await window.api.listManualMockups(orderNumber);
   const assets = Array.isArray(res?.assets) ? res.assets : [];
-  manualMockupsByOrderNumber.set(orderNumber, assets.map(normalizeManualMockupAsset).filter(Boolean));
+  return setManualMockupsForOrder(orderNumber, assets);
 }
 
 /**
@@ -2189,6 +2255,69 @@ function refreshDetailIfOpen() {
   applyDetailData(latest, { preserveEditing: true });
 }
 
+function setOrderManagerRefreshBusy(isBusy) {
+  const btn = document.getElementById('order-manager-refresh-btn');
+  if (!btn) return;
+  if (isBusy) {
+    if (!btn.dataset.originalText) btn.dataset.originalText = btn.textContent || '';
+    btn.disabled = true;
+    btn.textContent = 'Refreshing...';
+  } else {
+    btn.disabled = false;
+    btn.textContent = btn.dataset.originalText || 'Refresh';
+    delete btn.dataset.originalText;
+  }
+}
+
+async function refreshOrderManagerNow() {
+  if (boardRefreshInFlight) return boardRefreshInFlight;
+  setOrderManagerRefreshBusy(true);
+  boardRefreshInFlight = renderBoard()
+    .catch(err => {
+      console.error('Failed to refresh order manager', err);
+      alert(`Refresh failed: ${err?.message || err}`);
+    })
+    .finally(() => {
+      boardRefreshInFlight = null;
+      setOrderManagerRefreshBusy(false);
+    });
+  return boardRefreshInFlight;
+}
+
+function setupOrderManagerRefreshControl() {
+  const btn = document.getElementById('order-manager-refresh-btn');
+  if (!btn) return;
+  btn.addEventListener('click', e => {
+    e.preventDefault();
+    refreshOrderManagerNow();
+  });
+}
+
+async function pollManualMockupChanges() {
+  if (manualMockupPollInFlight || !allOrders.length || document.hidden) return;
+  if (!window.api || typeof window.api.bulkListManualMockups !== 'function') return;
+
+  manualMockupPollInFlight = true;
+  try {
+    const changed = await loadManualMockupsForOrders(allOrders);
+    if (changed) {
+      await renderBoard({ skipManualMockupLoad: true });
+    }
+  } catch (err) {
+    console.warn('Unable to poll manual mockup updates', err);
+  } finally {
+    manualMockupPollInFlight = false;
+  }
+}
+
+function setupManualMockupPolling() {
+  if (manualMockupPollTimer) clearInterval(manualMockupPollTimer);
+  manualMockupPollTimer = setInterval(pollManualMockupChanges, MANUAL_MOCKUP_POLL_INTERVAL_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) pollManualMockupChanges();
+  });
+}
+
 function openNotesModal(order) {
   const overlay = document.getElementById('notes-overlay');
   const input = document.getElementById('notes-input');
@@ -2309,9 +2438,11 @@ document.getElementById('detail-overlay')
   });
 
 // fetch & render every zone
-async function renderBoard() {
+async function renderBoard(options = {}) {
   allOrders = await window.api.getQueue();
-  await loadManualMockupsForOrders(allOrders);
+  if (!options.skipManualMockupLoad) {
+    await loadManualMockupsForOrders(allOrders);
+  }
 
   // Pipeline
   const recs = allOrders.filter(x => x.status === 'received');
@@ -2565,6 +2696,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   initMobileSelectionControls();
   initMobileDetailUI();
   setupManualMockupControls();
+  setupOrderManagerRefreshControl();
+  setupManualMockupPolling();
 
   // wire up the four zones
 
