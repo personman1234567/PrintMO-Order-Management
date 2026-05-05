@@ -1159,6 +1159,95 @@ function webpFilenameFor(file) {
   return `${base}.webp`;
 }
 
+function extensionFromImageType(type) {
+  const normalized = String(type || '').toLowerCase();
+  if (normalized === 'image/jpeg' || normalized === 'image/jpg') return 'jpg';
+  if (normalized === 'image/webp') return 'webp';
+  if (normalized === 'image/heic') return 'heic';
+  if (normalized === 'image/heif') return 'heif';
+  return 'png';
+}
+
+function fileFromClipboardBlob(blob, index = 0) {
+  if (!blob) return null;
+  if (blob instanceof File && blob.name) return blob;
+
+  const type = blob.type || 'image/png';
+  const ext = extensionFromImageType(type);
+  return new File([blob], `pasted-mockup-${Date.now()}-${index + 1}.${ext}`, {
+    type,
+    lastModified: Date.now(),
+  });
+}
+
+function dedupeClipboardFiles(files) {
+  const seen = new Set();
+  return files.filter(file => {
+    if (!file) return false;
+    const key = [file.name || '', file.type || '', file.size || 0, file.lastModified || 0].join('|');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function getImageFilesFromClipboardData(clipboardData) {
+  const files = [];
+  Array.from(clipboardData?.files || []).forEach(file => {
+    const type = String(file?.type || '').toLowerCase();
+    if (type.startsWith('image/') || isAllowedManualMockupFile(file)) {
+      files.push(fileFromClipboardBlob(file, files.length));
+    }
+  });
+
+  Array.from(clipboardData?.items || []).forEach(item => {
+    const type = String(item?.type || '').toLowerCase();
+    if (item?.kind !== 'file' || !type.startsWith('image/')) return;
+    const file = item.getAsFile?.();
+    if (file) files.push(fileFromClipboardBlob(file, files.length));
+  });
+
+  return dedupeClipboardFiles(files);
+}
+
+async function readImageFilesFromClipboard() {
+  if (!navigator.clipboard || typeof navigator.clipboard.read !== 'function') {
+    throw new Error('Clipboard image paste is not supported in this browser. Use Upload mockup instead.');
+  }
+
+  const items = await navigator.clipboard.read();
+  const files = [];
+  for (const item of items || []) {
+    const imageType = Array.from(item.types || []).find(type => String(type).toLowerCase().startsWith('image/'));
+    if (!imageType || typeof item.getType !== 'function') continue;
+    const blob = await item.getType(imageType);
+    const file = fileFromClipboardBlob(blob, files.length);
+    if (file) files.push(file);
+  }
+  return dedupeClipboardFiles(files);
+}
+
+function setManualMockupControlsBusy(isBusy, busyText = 'Uploading...') {
+  const controls = [
+    document.getElementById('manual-mockup-upload-btn'),
+    document.getElementById('manual-mockup-paste-btn'),
+  ].filter(Boolean);
+
+  controls.forEach(control => {
+    if (isBusy) {
+      if (!control.dataset.originalText) control.dataset.originalText = control.textContent || '';
+      control.setAttribute('aria-disabled', 'true');
+      if ('disabled' in control) control.disabled = true;
+      control.textContent = busyText;
+    } else {
+      control.setAttribute('aria-disabled', 'false');
+      if ('disabled' in control) control.disabled = false;
+      control.textContent = control.dataset.originalText || (control.id === 'manual-mockup-paste-btn' ? 'Paste' : 'Upload mockup');
+      delete control.dataset.originalText;
+    }
+  });
+}
+
 function canvasToBlob(canvas, type, quality) {
   return new Promise(resolve => {
     canvas.toBlob(blob => {
@@ -1264,13 +1353,7 @@ async function uploadManualMockupFiles(fileList) {
     alert('Some files were skipped. Only PNG, JPG, and WebP mockups can be uploaded.');
   }
 
-  const uploadBtn = document.getElementById('manual-mockup-upload-btn');
-  const originalText = uploadBtn ? uploadBtn.textContent : '';
-  if (uploadBtn) {
-    uploadBtn.setAttribute('aria-disabled', 'true');
-    if ('disabled' in uploadBtn) uploadBtn.disabled = true;
-    uploadBtn.textContent = 'Uploading...';
-  }
+  setManualMockupControlsBusy(true, 'Uploading...');
 
   try {
     for (const file of accepted) {
@@ -1283,13 +1366,40 @@ async function uploadManualMockupFiles(fileList) {
     console.error('Failed to upload manual mockup', err);
     alert(`Upload failed: ${err?.message || err}`);
   } finally {
-    if (uploadBtn) {
-      uploadBtn.setAttribute('aria-disabled', 'false');
-      if ('disabled' in uploadBtn) uploadBtn.disabled = false;
-      uploadBtn.textContent = originalText || 'Upload mockup';
-    }
+    setManualMockupControlsBusy(false);
     const input = document.getElementById('manual-mockup-file-input');
     if (input) input.value = '';
+  }
+}
+
+async function pasteManualMockupFromClipboard() {
+  if (!detailOrder) {
+    alert('Open an order before pasting a mockup preview.');
+    return;
+  }
+
+  const pasteBtn = document.getElementById('manual-mockup-paste-btn');
+  const originalText = pasteBtn ? pasteBtn.textContent : '';
+  if (pasteBtn) {
+    pasteBtn.disabled = true;
+    pasteBtn.textContent = 'Pasting...';
+  }
+
+  try {
+    const files = await readImageFilesFromClipboard();
+    if (!files.length) {
+      alert('No image was found in the clipboard. Copy an image, then tap Paste again.');
+      return;
+    }
+    await uploadManualMockupFiles(files);
+  } catch (err) {
+    console.error('Failed to paste manual mockup', err);
+    alert(err?.message || 'Could not read an image from the clipboard. Use Upload mockup instead.');
+  } finally {
+    if (pasteBtn && !pasteBtn.dataset.originalText) {
+      pasteBtn.disabled = false;
+      pasteBtn.textContent = originalText || 'Paste';
+    }
   }
 }
 
@@ -1372,6 +1482,7 @@ function setupManualMockupControls() {
   const strip = document.getElementById('detail-mockups-strip');
   const track = document.getElementById('detail-mockups-track');
   const uploadBtn = document.getElementById('manual-mockup-upload-btn');
+  const pasteBtn = document.getElementById('manual-mockup-paste-btn');
   const input = document.getElementById('manual-mockup-file-input');
   if (!strip || !uploadBtn || !input) return;
 
@@ -1380,6 +1491,12 @@ function setupManualMockupControls() {
     if (uploadBtn.tagName !== 'LABEL') input.click();
   });
   uploadBtn.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
+  pasteBtn?.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    pasteManualMockupFromClipboard();
+  });
+  pasteBtn?.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
   input.addEventListener('change', () => uploadManualMockupFiles(input.files));
 
   const handleManualDeleteEvent = e => {
@@ -1396,7 +1513,7 @@ function setupManualMockupControls() {
   track?.addEventListener('touchend', handleManualDeleteEvent, { capture: true, passive: false });
 
   strip.addEventListener('paste', e => {
-    const files = Array.from(e.clipboardData?.files || []);
+    const files = getImageFilesFromClipboardData(e.clipboardData);
     if (!files.length) return;
     e.preventDefault();
     uploadManualMockupFiles(files);

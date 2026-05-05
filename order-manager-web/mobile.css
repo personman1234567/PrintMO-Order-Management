@@ -1359,7 +1359,14 @@
       gap: 10px;
       width: 100%;
     }
-    #manual-mockup-upload-btn {
+    .manual-mockup-actions {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #manual-mockup-upload-btn,
+    #manual-mockup-paste-btn {
       flex: 0 0 auto;
       display: inline-flex;
       align-items: center;
