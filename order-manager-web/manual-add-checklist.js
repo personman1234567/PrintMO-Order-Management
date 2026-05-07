@@ -31,6 +31,8 @@
   let currentOrders = [];
   let updateFrame = 0;
   let uiReady = false;
+  let lastPointerToggleKey = '';
+  let lastPointerToggleAt = 0;
 
   function loadCheckedItems() {
     try {
@@ -191,8 +193,7 @@
     saveCheckedItems();
   }
 
-  function setRowChecked(row, input, checked) {
-    if (input) input.checked = checked;
+  function setRowChecked(row, checked) {
     row?.classList.toggle('is-checked', checked);
     row?.setAttribute('aria-checked', checked ? 'true' : 'false');
   }
@@ -291,6 +292,13 @@
     overlay.querySelector('#manual-add-copy')?.addEventListener('click', copyRemainingList);
     overlay.querySelector('#manual-add-mark-all')?.addEventListener('click', markAllDone);
     overlay.querySelector('#manual-add-clear')?.addEventListener('click', resetChecks);
+    if ('PointerEvent' in window) {
+      overlay.addEventListener('pointerup', handlePointerListToggle, true);
+    } else {
+      overlay.addEventListener('mouseup', handlePointerListToggle, true);
+      overlay.addEventListener('touchend', handlePointerListToggle, { capture: true, passive: true });
+    }
+    overlay.addEventListener('click', handleClickListToggle, true);
     document.addEventListener('keyup', event => {
       if (event.key === 'Escape' && isOverlayOpen()) closeOverlay();
     });
@@ -384,30 +392,16 @@
   }
 
   function renderChecklistItem(item) {
-    const label = document.createElement('label');
-    label.className = 'manual-add-item';
-    label.setAttribute('role', 'checkbox');
-    label.tabIndex = 0;
-    label.dataset.itemKey = item.key;
+    const row = document.createElement('button');
+    row.className = 'manual-add-item';
+    row.type = 'button';
+    row.setAttribute('role', 'checkbox');
+    row.dataset.itemKey = item.key;
+    row.setAttribute('aria-label', `${item.qty} ${item.title} ${item.variantTitle || 'No variant'}`);
 
-    const input = document.createElement('input');
-    input.type = 'checkbox';
-    input.tabIndex = -1;
-    input.setAttribute('aria-hidden', 'true');
-
-    const toggle = event => {
-      event.preventDefault();
-      const next = !Boolean(checkedItems[item.key]);
-      setItemChecked(item.key, next);
-      setRowChecked(label, input, next);
-      updateButton();
-      syncChecklistChrome();
-    };
-
-    label.addEventListener('click', toggle);
-    label.addEventListener('keydown', event => {
-      if (event.key === ' ' || event.key === 'Enter') toggle(event);
-    });
+    const check = document.createElement('span');
+    check.className = 'manual-add-item-check';
+    check.setAttribute('aria-hidden', 'true');
 
     const copy = document.createElement('span');
     copy.className = 'manual-add-item-copy';
@@ -423,9 +417,56 @@
     qty.textContent = `Qty ${item.qty}`;
 
     copy.append(title, variant);
-    label.append(input, copy, qty);
-    setRowChecked(label, input, Boolean(checkedItems[item.key]));
-    return label;
+    row.append(check, copy, qty);
+    setRowChecked(row, Boolean(checkedItems[item.key]));
+    return row;
+  }
+
+  function toggleChecklistRow(row, key) {
+    const next = !Boolean(checkedItems[key]);
+    setItemChecked(key, next);
+    setRowChecked(row, next);
+    updateButton();
+    syncChecklistChrome();
+  }
+
+  function handlePointerListToggle(event) {
+    if (event.button !== undefined && event.button !== 0) return;
+    const row = findManualAddRow(event);
+    if (!row) return;
+
+    const key = row.dataset.itemKey;
+    if (!key) return;
+    lastPointerToggleKey = key;
+    lastPointerToggleAt = Date.now();
+    toggleChecklistRow(row, key);
+  }
+
+  function handleClickListToggle(event) {
+    const row = findManualAddRow(event);
+    if (!row) return;
+
+    const key = row.dataset.itemKey;
+    if (!key) return;
+    const wasJustHandledByPointer = lastPointerToggleKey === key && Date.now() - lastPointerToggleAt < 650;
+    if (wasJustHandledByPointer) return;
+    toggleChecklistRow(row, key);
+  }
+
+  function findManualAddRow(event) {
+    if (typeof event.composedPath === 'function') {
+      const pathRow = event.composedPath().find(node => (
+        node instanceof Element && node.classList.contains('manual-add-item')
+      ));
+      if (pathRow) return pathRow;
+    }
+
+    let node = event.target;
+    while (node) {
+      if (node instanceof Element && node.classList.contains('manual-add-item')) return node;
+      node = node.parentNode;
+    }
+    return null;
   }
 
   async function copyRemainingList() {
