@@ -1,9 +1,10 @@
 (() => {
   const desktopQuery = window.matchMedia('(min-width: 901px)');
   const cardSelector = '.card[data-order-id], .bundle-card[data-bundle-name]';
-  const dropZoneSelector = '#col-received, #col-toOrder, #picked-cards, #col-blanks, #col-print';
+  const dropZoneSelector = '#col-received, #col-toOrder, #col-blanks, #col-print';
   const boardSelector = '#col-received, #picked-cards, #col-blanks, #col-print';
   const recentDropKeys = new Set();
+  const metadataRefreshMs = 12000;
   let layoutBeforeDrop = new Map();
   let activeDragCard = null;
   let dragGhost = null;
@@ -18,6 +19,15 @@
   let ghostFrame = 0;
   let lastTilt = 0;
   let transparentDragNode = null;
+  let hoverPlaceholder = null;
+  let placeholderZone = null;
+  let placeholderAnchor = null;
+  let pendingDropZone = null;
+  let dropZoneFrame = 0;
+  let layoutAnimationFrame = 0;
+  let orderMetaByKey = new Map();
+  let orderMetaPromise = null;
+  let orderMetaLastRefresh = 0;
 
   const isDesktop = () => desktopQuery.matches;
 
@@ -28,9 +38,82 @@
     return '';
   }
 
+  function closestFrom(target, selector) {
+    return target instanceof Element ? target.closest(selector) : null;
+  }
+
   function allBoardCards() {
     return Array.from(document.querySelectorAll(cardSelector))
       .filter(card => !card.classList.contains('desktop-drag-ghost'));
+  }
+
+  function childCards(container) {
+    if (!container) return [];
+    return Array.from(container.children)
+      .filter(child => child.matches?.(cardSelector) && !child.classList.contains('desktop-drag-ghost'));
+  }
+
+  function parseSortTime(value) {
+    const time = Date.parse(value || '');
+    return Number.isFinite(time) ? time : Number.POSITIVE_INFINITY;
+  }
+
+  function refreshOrderMetadata({ force = false } = {}) {
+    const now = Date.now();
+    if (!force && orderMetaByKey.size && now - orderMetaLastRefresh < metadataRefreshMs) {
+      return orderMetaPromise || Promise.resolve(orderMetaByKey);
+    }
+    if (orderMetaPromise) return orderMetaPromise;
+    if (!window.api || typeof window.api.getQueue !== 'function') {
+      return Promise.resolve(orderMetaByKey);
+    }
+
+    orderMetaPromise = window.api.getQueue()
+      .then(orders => {
+        const next = new Map();
+        const bundleTimes = new Map();
+        (orders || []).forEach(order => {
+          if (!order?.name) return;
+          const sortTime = parseSortTime(order.receivedAt);
+          next.set(`order:${order.name}`, {
+            group: 1,
+            sortTime,
+            status: order.status || '',
+            bundle: order.bundle || ''
+          });
+
+          if (order.bundle) {
+            const bundleKey = String(order.bundle);
+            const current = bundleTimes.get(bundleKey) ?? Number.POSITIVE_INFINITY;
+            bundleTimes.set(bundleKey, Math.min(current, sortTime));
+          }
+        });
+
+        bundleTimes.forEach((sortTime, name) => {
+          next.set(`bundle:${name}`, {
+            group: 0,
+            sortTime,
+            status: '',
+            bundle: name
+          });
+        });
+
+        orderMetaByKey = next;
+        orderMetaLastRefresh = Date.now();
+        if (activeDragCard && lastDropZone) {
+          setDropZone(lastDropZone, { forcePlaceholder: true });
+        }
+        return orderMetaByKey;
+      })
+      .catch(error => {
+        console.warn('Unable to refresh drag sort metadata', error);
+        return orderMetaByKey;
+      })
+      .finally(() => {
+        orderMetaPromise = null;
+      });
+
+    return orderMetaPromise;
   }
 
   function captureLayout() {
@@ -73,6 +156,21 @@
     });
   }
 
+  function animateFromSnapshot(snapshot) {
+    if (!isDesktop() || !snapshot?.size) return;
+    if (layoutAnimationFrame) cancelAnimationFrame(layoutAnimationFrame);
+    layoutAnimationFrame = requestAnimationFrame(() => {
+      layoutAnimationFrame = requestAnimationFrame(() => {
+        layoutAnimationFrame = 0;
+        allBoardCards().forEach(card => {
+          const key = cardKey(card);
+          const before = snapshot.get(key);
+          if (before) animateLayoutShift(card, before, card.getBoundingClientRect());
+        });
+      });
+    });
+  }
+
   function animateNewDrop(card) {
     card.classList.add('drop-entering');
     requestAnimationFrame(() => {
@@ -112,11 +210,133 @@
     });
   }
 
-  function setDropZone(zone) {
-    if (zone === lastDropZone) return;
-    if (lastDropZone) lastDropZone.classList.remove('desktop-drop-over');
-    lastDropZone = zone;
-    if (lastDropZone) lastDropZone.classList.add('desktop-drop-over');
+  function setDropZone(zone, { forcePlaceholder = false } = {}) {
+    if (zone !== lastDropZone) {
+      if (lastDropZone) lastDropZone.classList.remove('desktop-drop-over');
+      lastDropZone = zone;
+      if (lastDropZone) lastDropZone.classList.add('desktop-drop-over');
+      setHoverPlaceholder(zone);
+      return;
+    }
+
+    if (forcePlaceholder) setHoverPlaceholder(zone);
+  }
+
+  function queueDropZone(zone) {
+    pendingDropZone = zone;
+    if (dropZoneFrame) return;
+    dropZoneFrame = requestAnimationFrame(() => {
+      dropZoneFrame = 0;
+      setDropZone(pendingDropZone);
+    });
+  }
+
+  function placeholderKindForZone(zone) {
+    if (!zone) return '';
+    if (zone.id === 'col-received') return 'pipeline';
+    if (zone.id === 'col-toOrder') return 'picked';
+    if (zone.id === 'col-blanks' || zone.id === 'col-print') return 'production';
+    return '';
+  }
+
+  function placeholderContainerForZone(zone) {
+    if (!zone) return null;
+    if (zone.id === 'col-toOrder') return document.getElementById('picked-cards');
+    return zone;
+  }
+
+  function createHoverPlaceholder(kind) {
+    const placeholder = document.createElement('div');
+    placeholder.className = `desktop-drop-placeholder ${kind ? `desktop-drop-placeholder-${kind}` : ''}`;
+    placeholder.setAttribute('aria-hidden', 'true');
+    return placeholder;
+  }
+
+  function updatePlaceholderKind(placeholder, kind) {
+    placeholder.className = `desktop-drop-placeholder ${kind ? `desktop-drop-placeholder-${kind}` : ''}`;
+  }
+
+  function sortMetaForCard(card, index = 0) {
+    const key = cardKey(card);
+    const meta = orderMetaByKey.get(key);
+    const isBundle = key.startsWith('bundle:');
+    const group = isBundle ? 0 : 1;
+    const sortTime = Number.isFinite(meta?.sortTime) ? meta.sortTime : index;
+    return { key, group, sortTime };
+  }
+
+  function sortMetaForActiveCard() {
+    if (!activeDragCard) return null;
+    const key = cardKey(activeDragCard);
+    if (!key) return null;
+    const meta = orderMetaByKey.get(key);
+    const isBundle = key.startsWith('bundle:');
+    return {
+      key,
+      group: isBundle ? 0 : 1,
+      sortTime: Number.isFinite(meta?.sortTime) ? meta.sortTime : Number.POSITIVE_INFINITY
+    };
+  }
+
+  function findPlaceholderAnchor(container) {
+    const activeMeta = sortMetaForActiveCard();
+    if (!activeMeta) return null;
+
+    const cards = childCards(container).filter(card => card !== activeDragCard);
+    for (let index = 0; index < cards.length; index += 1) {
+      const card = cards[index];
+      const candidate = sortMetaForCard(card, index);
+      if (!candidate.key || candidate.key === activeMeta.key) continue;
+      if (candidate.group > activeMeta.group) return card;
+      if (candidate.group === activeMeta.group && candidate.sortTime > activeMeta.sortTime) {
+        return card;
+      }
+    }
+
+    return null;
+  }
+
+  function removeHoverPlaceholder({ animate = true, deferRemove = false } = {}) {
+    if (!hoverPlaceholder) return;
+    const snapshot = animate ? captureLayout() : null;
+    const placeholder = hoverPlaceholder;
+    hoverPlaceholder = null;
+    placeholderZone = null;
+    placeholderAnchor = null;
+    placeholder.classList.add('desktop-drop-placeholder-leaving');
+    if (deferRemove) {
+      window.setTimeout(() => placeholder.remove(), 0);
+      return;
+    }
+    placeholder.remove();
+    if (animate) animateFromSnapshot(snapshot);
+  }
+
+  function setHoverPlaceholder(zone) {
+    const container = placeholderContainerForZone(zone);
+    const kind = placeholderKindForZone(zone);
+    if (!container || !kind || !activeDragCard || activeDragCard.parentElement === container) {
+      removeHoverPlaceholder();
+      return;
+    }
+
+    const anchor = findPlaceholderAnchor(container);
+    if (placeholderZone === container && placeholderAnchor === anchor && hoverPlaceholder?.isConnected) {
+      updatePlaceholderKind(hoverPlaceholder, kind);
+      return;
+    }
+
+    const snapshot = captureLayout();
+    if (!hoverPlaceholder) {
+      hoverPlaceholder = createHoverPlaceholder(kind);
+      requestAnimationFrame(() => hoverPlaceholder?.classList.add('desktop-drop-placeholder-active'));
+    } else {
+      updatePlaceholderKind(hoverPlaceholder, kind);
+    }
+    placeholderZone = container;
+    placeholderAnchor = anchor;
+    container.insertBefore(hoverPlaceholder, anchor);
+    animateFromSnapshot(snapshot);
   }
 
   function transparentDragImage(event) {
@@ -191,11 +411,17 @@
   }
 
   function resetDragState() {
+    if (dropZoneFrame) cancelAnimationFrame(dropZoneFrame);
+    if (layoutAnimationFrame) cancelAnimationFrame(layoutAnimationFrame);
+    dropZoneFrame = 0;
+    layoutAnimationFrame = 0;
+    pendingDropZone = null;
     if (activeDragCard) {
       activeDragCard.classList.remove('drag-polish-dragging');
       activeDragCard.style.removeProperty('--drag-tilt');
     }
     removeDragGhost();
+    removeHoverPlaceholder({ animate: false });
     activeDragCard = null;
     lastDragX = 0;
     lastDragY = 0;
@@ -214,12 +440,13 @@
 
   document.addEventListener('dragstart', event => {
     if (!isDesktop()) return;
-    const card = event.target.closest(cardSelector);
+    const card = closestFrom(event.target, cardSelector);
     if (!card) return;
     disableImageDragging(card);
     activeDragCard = card;
     lastDragX = event.clientX || 0;
     layoutBeforeDrop = captureLayout();
+    refreshOrderMetadata();
     document.body.classList.add('desktop-drag-active');
     card.classList.add('drag-polish-dragging');
     card.style.setProperty('--drag-tilt', '0deg');
@@ -253,13 +480,20 @@
       const lift = Math.max(-1.5, Math.min(1.5, dy * -0.05));
       scheduleGhostMove(tilt + lift);
     }
-    setDropZone(event.target.closest(dropZoneSelector));
+    queueDropZone(closestFrom(event.target, dropZoneSelector));
   }, true);
 
   document.addEventListener('drop', event => {
-    if (!isDesktop()) return;
-    layoutBeforeDrop = captureLayout();
-    markDroppedKeys(parseDragKeys(event));
+    if (!isDesktop() || !activeDragCard) return;
+    const zone = closestFrom(event.target, dropZoneSelector);
+    if (zone) {
+      layoutBeforeDrop = captureLayout();
+      markDroppedKeys(parseDragKeys(event));
+      removeHoverPlaceholder({ animate: false, deferRemove: true });
+    } else {
+      layoutBeforeDrop = new Map();
+      removeHoverPlaceholder({ animate: false });
+    }
     setDropZone(null);
     finishDragSoon();
   }, true);
@@ -270,7 +504,7 @@
   }, true);
 
   document.addEventListener('dragleave', event => {
-    if (!isDesktop() || event.relatedTarget) return;
+    if (!isDesktop() || !activeDragCard || event.relatedTarget) return;
     setDropZone(null);
   }, true);
 
@@ -284,14 +518,32 @@
     if (!event.matches) resetDragState();
   });
 
+  function isPolishNode(node) {
+    if (!(node instanceof Element)) return true;
+    return node.classList.contains('desktop-drop-placeholder')
+      || node.classList.contains('desktop-drag-ghost')
+      || node.classList.contains('desktop-transparent-drag-image');
+  }
+
+  function isPolishOnlyMutation(mutations) {
+    const nodes = mutations.flatMap(mutation => [
+      ...Array.from(mutation.addedNodes),
+      ...Array.from(mutation.removedNodes)
+    ]);
+    return nodes.length > 0 && nodes.every(isPolishNode);
+  }
+
   const observer = new MutationObserver(mutations => {
     if (!isDesktop()) return;
+    if (isPolishOnlyMutation(mutations)) return;
     if (mutations.some(mutation => mutation.target.closest?.(boardSelector) || mutation.target.matches?.(boardSelector))) {
       schedulePostRenderAnimation();
+      refreshOrderMetadata();
     }
   });
 
   document.addEventListener('DOMContentLoaded', () => {
     observer.observe(document.body, { childList: true, subtree: true });
+    refreshOrderMetadata({ force: true });
   });
 })();
