@@ -6,9 +6,18 @@
   const recentDropKeys = new Set();
   let layoutBeforeDrop = new Map();
   let activeDragCard = null;
+  let dragGhost = null;
   let lastDragX = 0;
+  let lastDragY = 0;
+  let currentDragX = 0;
+  let currentDragY = 0;
+  let ghostOffsetX = 0;
+  let ghostOffsetY = 0;
   let lastDropZone = null;
   let mutationFrame = 0;
+  let ghostFrame = 0;
+  let lastTilt = 0;
+  let transparentDragNode = null;
 
   const isDesktop = () => desktopQuery.matches;
 
@@ -20,7 +29,8 @@
   }
 
   function allBoardCards() {
-    return Array.from(document.querySelectorAll(cardSelector));
+    return Array.from(document.querySelectorAll(cardSelector))
+      .filter(card => !card.classList.contains('desktop-drag-ghost'));
   }
 
   function captureLayout() {
@@ -109,39 +119,140 @@
     if (lastDropZone) lastDropZone.classList.add('desktop-drop-over');
   }
 
+  function transparentDragImage(event) {
+    if (!event.dataTransfer) return;
+    if (!transparentDragNode) {
+      transparentDragNode = document.createElement('div');
+      transparentDragNode.className = 'desktop-transparent-drag-image';
+      document.body.appendChild(transparentDragNode);
+    }
+    event.dataTransfer.setDragImage(transparentDragNode, 0, 0);
+  }
+
+  function disableImageDragging(root) {
+    root.querySelectorAll('img').forEach(img => {
+      img.draggable = false;
+      img.setAttribute('draggable', 'false');
+    });
+  }
+
+  function createDragGhost(card, event) {
+    const rect = card.getBoundingClientRect();
+    const ghost = card.cloneNode(true);
+    ghost.removeAttribute('id');
+    ghost.removeAttribute('data-order-id');
+    ghost.removeAttribute('data-bundle-name');
+    ghost.draggable = false;
+    ghost.setAttribute('aria-hidden', 'true');
+    disableImageDragging(ghost);
+    ghost.classList.remove('dragging', 'drag-polish-dragging', 'layout-shifting', 'drop-entering', 'drop-entering-active');
+    ghost.classList.add('desktop-drag-ghost');
+    ghost.style.width = `${rect.width}px`;
+    ghost.style.height = `${rect.height}px`;
+    document.body.appendChild(ghost);
+
+    ghostOffsetX = (event.clientX || rect.left + rect.width / 2) - rect.left;
+    ghostOffsetY = (event.clientY || rect.top + rect.height / 2) - rect.top;
+    currentDragX = event.clientX || rect.left + ghostOffsetX;
+    currentDragY = event.clientY || rect.top + ghostOffsetY;
+    lastDragX = currentDragX;
+    lastDragY = currentDragY;
+    dragGhost = ghost;
+    updateDragGhost(0);
+  }
+
+  function updateDragGhost(tilt = 0) {
+    if (!dragGhost) return;
+    lastTilt = tilt;
+    const x = currentDragX - ghostOffsetX;
+    const y = currentDragY - ghostOffsetY;
+    dragGhost.style.transform = `translate3d(${x}px, ${y}px, 0) scale(1.045) rotate(${tilt.toFixed(2)}deg)`;
+  }
+
+  function scheduleGhostMove(tilt) {
+    if (ghostFrame) cancelAnimationFrame(ghostFrame);
+    ghostFrame = requestAnimationFrame(() => {
+      ghostFrame = 0;
+      updateDragGhost(tilt);
+    });
+  }
+
+  function removeDragGhost() {
+    if (ghostFrame) cancelAnimationFrame(ghostFrame);
+    ghostFrame = 0;
+    const ghosts = dragGhost
+      ? [dragGhost, ...document.querySelectorAll('.desktop-drag-ghost')]
+      : Array.from(document.querySelectorAll('.desktop-drag-ghost'));
+    dragGhost = null;
+    Array.from(new Set(ghosts)).forEach(ghost => {
+      ghost.classList.add('desktop-drag-ghost-release');
+      window.setTimeout(() => ghost.remove(), 140);
+    });
+  }
+
   function resetDragState() {
     if (activeDragCard) {
       activeDragCard.classList.remove('drag-polish-dragging');
       activeDragCard.style.removeProperty('--drag-tilt');
     }
+    removeDragGhost();
     activeDragCard = null;
     lastDragX = 0;
+    lastDragY = 0;
+    currentDragX = 0;
+    currentDragY = 0;
+    ghostOffsetX = 0;
+    ghostOffsetY = 0;
+    lastTilt = 0;
     setDropZone(null);
     document.body.classList.remove('desktop-drag-active');
+  }
+
+  function finishDragSoon() {
+    requestAnimationFrame(resetDragState);
   }
 
   document.addEventListener('dragstart', event => {
     if (!isDesktop()) return;
     const card = event.target.closest(cardSelector);
     if (!card) return;
+    disableImageDragging(card);
     activeDragCard = card;
     lastDragX = event.clientX || 0;
     layoutBeforeDrop = captureLayout();
     document.body.classList.add('desktop-drag-active');
     card.classList.add('drag-polish-dragging');
     card.style.setProperty('--drag-tilt', '0deg');
+    transparentDragImage(event);
+    createDragGhost(card, event);
   }, true);
 
   document.addEventListener('drag', event => {
     if (!isDesktop() || !activeDragCard || !event.clientX) return;
     const dx = event.clientX - lastDragX;
+    const dy = event.clientY - lastDragY;
     lastDragX = event.clientX;
+    lastDragY = event.clientY;
+    currentDragX = event.clientX;
+    currentDragY = event.clientY || currentDragY;
     const tilt = Math.max(-3, Math.min(3, dx * 0.18));
-    activeDragCard.style.setProperty('--drag-tilt', `${tilt.toFixed(2)}deg`);
+    const lift = Math.max(-1.5, Math.min(1.5, dy * -0.05));
+    scheduleGhostMove(tilt + lift);
   }, true);
 
   document.addEventListener('dragover', event => {
     if (!isDesktop() || !activeDragCard) return;
+    if (event.clientX) {
+      const dx = event.clientX - lastDragX;
+      const dy = event.clientY - lastDragY;
+      currentDragX = event.clientX;
+      currentDragY = event.clientY || currentDragY;
+      lastDragX = event.clientX;
+      lastDragY = event.clientY || lastDragY;
+      const tilt = Math.max(-3, Math.min(3, (dx * 0.22) + (lastTilt * 0.72)));
+      const lift = Math.max(-1.5, Math.min(1.5, dy * -0.05));
+      scheduleGhostMove(tilt + lift);
+    }
     setDropZone(event.target.closest(dropZoneSelector));
   }, true);
 
@@ -150,6 +261,7 @@
     layoutBeforeDrop = captureLayout();
     markDroppedKeys(parseDragKeys(event));
     setDropZone(null);
+    finishDragSoon();
   }, true);
 
   document.addEventListener('dragend', () => {
@@ -161,6 +273,16 @@
     if (!isDesktop() || event.relatedTarget) return;
     setDropZone(null);
   }, true);
+
+  document.addEventListener('keyup', event => {
+    if (event.key === 'Escape') resetDragState();
+  });
+
+  window.addEventListener('blur', resetDragState);
+
+  desktopQuery.addEventListener('change', event => {
+    if (!event.matches) resetDragState();
+  });
 
   const observer = new MutationObserver(mutations => {
     if (!isDesktop()) return;
