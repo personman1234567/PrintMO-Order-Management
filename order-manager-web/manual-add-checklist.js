@@ -185,6 +185,18 @@
     return currentItems.length - remainingItems().length;
   }
 
+  function setItemChecked(key, checked) {
+    if (checked) checkedItems[key] = true;
+    else delete checkedItems[key];
+    saveCheckedItems();
+  }
+
+  function setRowChecked(row, input, checked) {
+    if (input) input.checked = checked;
+    row?.classList.toggle('is-checked', checked);
+    row?.setAttribute('aria-checked', checked ? 'true' : 'false');
+  }
+
   function updateButton() {
     const button = document.getElementById('manual-add-checklist-btn');
     const count = document.getElementById('manual-add-checklist-count');
@@ -254,6 +266,9 @@
             <span class="manual-add-stat-label">Orders</span>
           </div>
         </section>
+        <div class="manual-add-progress" aria-hidden="true">
+          <div id="manual-add-progress-bar" class="manual-add-progress-bar"></div>
+        </div>
         <div class="manual-add-actions">
           <button id="manual-add-copy" class="manual-add-action" type="button">Copy Remaining</button>
           <button id="manual-add-mark-all" class="manual-add-action" type="button">Mark All Done</button>
@@ -308,23 +323,31 @@
     const empty = document.getElementById('manual-add-empty');
     if (!list || !empty) return;
 
-    const remaining = remainingItems().length;
-    document.getElementById('manual-add-remaining').textContent = String(remaining);
-    document.getElementById('manual-add-complete').textContent = String(completedCount());
-    document.getElementById('manual-add-orders').textContent = String(currentOrders.length);
-
     const hasItems = currentItems.length > 0;
     empty.hidden = hasItems;
     list.hidden = !hasItems;
     list.replaceChildren();
 
-    document.getElementById('manual-add-copy').disabled = remaining === 0;
-    document.getElementById('manual-add-mark-all').disabled = !hasItems || remaining === 0;
-    document.getElementById('manual-add-clear').disabled = completedCount() === 0;
-
     groupItemsByOrder(currentItems).forEach(group => {
       list.appendChild(renderOrderGroup(group));
     });
+    syncChecklistChrome();
+  }
+
+  function syncChecklistChrome() {
+    const remaining = remainingItems().length;
+    const complete = completedCount();
+    const hasItems = currentItems.length > 0;
+    const progress = hasItems ? Math.round((complete / currentItems.length) * 100) : 0;
+
+    document.getElementById('manual-add-remaining').textContent = String(remaining);
+    document.getElementById('manual-add-complete').textContent = String(complete);
+    document.getElementById('manual-add-orders').textContent = String(currentOrders.length);
+    document.getElementById('manual-add-progress-bar').style.width = `${progress}%`;
+
+    document.getElementById('manual-add-copy').disabled = remaining === 0;
+    document.getElementById('manual-add-mark-all').disabled = !hasItems || remaining === 0;
+    document.getElementById('manual-add-clear').disabled = complete === 0;
   }
 
   function renderOrderGroup(group) {
@@ -363,17 +386,27 @@
   function renderChecklistItem(item) {
     const label = document.createElement('label');
     label.className = 'manual-add-item';
-    label.classList.toggle('is-checked', Boolean(checkedItems[item.key]));
+    label.setAttribute('role', 'checkbox');
+    label.tabIndex = 0;
+    label.dataset.itemKey = item.key;
 
     const input = document.createElement('input');
     input.type = 'checkbox';
-    input.checked = Boolean(checkedItems[item.key]);
-    input.addEventListener('change', () => {
-      checkedItems[item.key] = input.checked;
-      if (!input.checked) delete checkedItems[item.key];
-      saveCheckedItems();
+    input.tabIndex = -1;
+    input.setAttribute('aria-hidden', 'true');
+
+    const toggle = event => {
+      event.preventDefault();
+      const next = !Boolean(checkedItems[item.key]);
+      setItemChecked(item.key, next);
+      setRowChecked(label, input, next);
       updateButton();
-      renderChecklist();
+      syncChecklistChrome();
+    };
+
+    label.addEventListener('click', toggle);
+    label.addEventListener('keydown', event => {
+      if (event.key === ' ' || event.key === 'Enter') toggle(event);
     });
 
     const copy = document.createElement('span');
@@ -391,6 +424,7 @@
 
     copy.append(title, variant);
     label.append(input, copy, qty);
+    setRowChecked(label, input, Boolean(checkedItems[item.key]));
     return label;
   }
 
