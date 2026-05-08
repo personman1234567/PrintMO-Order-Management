@@ -1,6 +1,6 @@
 ---
 title: Blanks Batch Receiving Workflow Plan
-status: planning
+status: task_1_complete
 date: 2026-05-08
 feature_area: order management, blanks ordering, supplies receiving, production readiness
 primary_terms: S&S batch, blanks batch, batch manifest, Blanks Cart, Mark In Cart Ordered, received garments, accounted garments, oldest order first
@@ -163,6 +163,120 @@ Build the simplest version that proves the workflow:
 - Show line-level accounted progress in order detail.
 - Allow simple manual adjustment.
 
+## Task Breakdown
+
+Task 1: Batch foundation. Completed 2026-05-08.
+
+- Add persistent blanks batch records.
+- Create a batch manifest from orders marked ordered from the Blanks Cart.
+- Store expected garment lines only; print line items are excluded.
+- Preserve the existing Blanks Cart and Blanks Ordered behavior.
+
+Task 2: Receiving and allocation. Not started.
+
+- Add UI to receive quantities against a batch manifest.
+- Allocate received garments to customer orders oldest-first.
+- Store accounted quantities per customer order line.
+
+Task 3: Order UI and polish. Not started.
+
+- Show `x / y accounted` at order and line-item level.
+- Add simple manual correction paths.
+- Reflect accounted status in production screens.
+
+## Task 1 Implementation Notes
+
+Task 1 added the storage and creation foundation only. It does not add a receiving UI yet.
+
+Implemented files:
+
+- `order-manager-proxy/worker.js`
+- `order-manager-web/web-shim.js`
+- `order-manager-web/blanks-batches.js`
+- `order-manager-web/index.html`
+
+Deployment note:
+
+- Deploy the Cloudflare Worker and the web app together for this task. The web script calls the new Worker endpoint.
+
+New API endpoint:
+
+```text
+POST /order-manager/blanks-batches
+GET /order-manager/blanks-batches
+GET /order-manager/blanks-batches?id={batchId}
+```
+
+Storage location:
+
+```text
+manual-order-assets/blanks-batches/index.json
+manual-order-assets/blanks-batches/{batchId}.json
+```
+
+Batch creation trigger:
+
+```text
+Mark In Cart Ordered
+```
+
+The web script captures the orders currently in the Blanks Cart, lets the existing mark-ordered behavior run, then saves a batch manifest after those orders are successfully marked `blanksOrdered`.
+
+Task 1 intentionally avoids changing the visible workflow. If batch save fails after orders are marked ordered, the app alerts that the S&S batch manifest was not saved.
+
+## Batch Record Shape
+
+Task 1 stores batch records with this conceptual shape:
+
+```text
+id
+label
+status: ordered
+source: mark-in-cart-ordered
+createdAt
+updatedAt
+orderNames
+orders[]
+manifest[]
+totals
+```
+
+Manifest line shape:
+
+```text
+itemKey
+title
+variantTitle
+sku
+expectedQty
+receivedQty: 0
+accountedQty: 0
+missingQty
+orderLines[]
+```
+
+Order line shape:
+
+```text
+orderName
+orderNumber
+customer
+lineId
+title
+variantTitle
+sku
+expectedQty
+accountedQty: 0
+```
+
+Important Task 1 behavior:
+
+- Identical garments are grouped by SKU when SKU exists.
+- If SKU is missing, grouping falls back to product title plus variant title.
+- Print line items are filtered out using the existing print-title list.
+- Received/accounted quantities start at zero.
+- Allocation is not performed in Task 1.
+
 ## Future Enhancements
 
 Do not build these first unless needed:
@@ -187,4 +301,3 @@ Blanks Cart -> Mark In Cart Ordered -> Create Batch -> Receive Garments -> Accou
 ```
 
 The app should handle grouping and accounting. Staff should only need to answer: what garments arrived, and how many?
-

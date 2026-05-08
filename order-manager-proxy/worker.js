@@ -100,6 +100,15 @@ export default {
             );
         }
 
+        if (url.pathname === "/order-manager/blanks-batches") {
+            return handleBlanksBatches(
+                request,
+                env,
+                allowOrigin || origin || "*",
+                reqAllowHeaders
+            );
+        }
+
         // -----------------------------
         // PROXY EVERYTHING ELSE UPSTREAM
         // -----------------------------
@@ -204,10 +213,38 @@ function guessContentTypeFromKey(key) {
 }
 
 const MANUAL_ASSETS_PREFIX = "manual-order-assets/";
+const BLANKS_BATCHES_PREFIX = `${MANUAL_ASSETS_PREFIX}blanks-batches/`;
+const BLANKS_BATCH_INDEX_KEY = `${BLANKS_BATCHES_PREFIX}index.json`;
 const MANUAL_MOCKUP_CONTENT_TYPES = new Set([
     "image/png",
     "image/jpeg",
     "image/webp",
+]);
+
+const PRINT_TITLES = new Set([
+    "T-shirt Breast Print",
+    "T-shirt Chest Print",
+    "T-shirt Full Print",
+    "T-shirt Full Back Print",
+    "T-shirt Half Back Print",
+    "T-shirt Back Tag Print",
+    "T-shirt Neck Tag Print",
+    "T-shirt Sleeve Print",
+    "Full Sleeve Print",
+    "Half Sleeve Print",
+    "Hood Print",
+    "Sweatpants Small Logo Print",
+    "Sweatpants Half Leg Print",
+    "Sweatpants Full Leg Print",
+    "Hat Front Print",
+    "Hat Side Print",
+    "Hat Back Print",
+    "Drawstring Bag Full Print",
+    "Drawstring Bag Small Print",
+    "Tote Bag Small Print",
+    "Tote Bag Half Print",
+    "Tote Bag Full Print",
+    "DTF Print",
 ]);
 
 function isAllowedStorageKey(key) {
@@ -234,6 +271,270 @@ function manualMockupKey(orderNumber, assetId, ext) {
 
 function manualChecklistKey(orderNumber) {
     return `${MANUAL_ASSETS_PREFIX}orders/${orderNumber}/manual-checklist.json`;
+}
+
+function blanksBatchKey(batchId) {
+    return `${BLANKS_BATCHES_PREFIX}${batchId}.json`;
+}
+
+function normalizeBlanksBatchId(value) {
+    const raw = String(value || "").trim();
+    if (!raw || raw.length > 80 || !/^[A-Za-z0-9_-]+$/.test(raw)) return "";
+    return raw;
+}
+
+function makeBlanksBatchId() {
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const random = crypto.randomUUID
+        ? crypto.randomUUID().replace(/-/g, "").slice(0, 10)
+        : Math.random().toString(36).slice(2, 12);
+    return `ssb-${date}-${random}`;
+}
+
+function safeText(value, max = 240) {
+    return String(value || "").trim().slice(0, max);
+}
+
+function normalizeBatchKeyPart(value) {
+    return String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, " ");
+}
+
+function batchOrderParts(orderName) {
+    const parts = String(orderName || "").split(" – ");
+    return {
+        number: safeText(parts[0] || orderName, 80),
+        customer: safeText(parts.slice(1).join(" – "), 160),
+    };
+}
+
+function batchItemStableId(item, index) {
+    const stableId =
+        item?.lineItemId ||
+        item?.shopifyLineItemId ||
+        item?.admin_graphql_api_id ||
+        item?.id;
+    if (stableId) return `line:${String(stableId).slice(0, 160)}`;
+
+    return [
+        "manual",
+        index,
+        normalizeBatchKeyPart(item?.title),
+        normalizeBatchKeyPart(item?.variantTitle),
+        Number(item?.qty) || 0,
+    ].join("|");
+}
+
+function batchManifestItemKey(item) {
+    const sku = safeText(item?.sku, 120);
+    if (sku) return `sku:${sku.toLowerCase()}`;
+
+    return [
+        "variant",
+        normalizeBatchKeyPart(item?.title),
+        normalizeBatchKeyPart(item?.variantTitle),
+    ].join("|");
+}
+
+function isBatchPrintItem(item) {
+    return PRINT_TITLES.has(item?.title);
+}
+
+function makeBlanksBatchLabel(now) {
+    const day = now.toISOString().slice(0, 10);
+    return `S&S Batch ${day}`;
+}
+
+function buildBlanksBatch(body) {
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const rawOrders = Array.isArray(body?.orders) ? body.orders.slice(0, 300) : [];
+    const id = normalizeBlanksBatchId(body?.id) || makeBlanksBatchId();
+    const label = safeText(body?.label, 120) || makeBlanksBatchLabel(now);
+    const source = safeText(body?.source, 80) || "mark-in-cart-ordered";
+
+    const orders = [];
+    const manifestByKey = new Map();
+
+    rawOrders.forEach(rawOrder => {
+        const name = safeText(rawOrder?.name, 240);
+        if (!name) return;
+
+        const parts = batchOrderParts(name);
+        const orderNumber = safeText(rawOrder?.orderNumber, 80) || parts.number;
+        const customer = safeText(rawOrder?.customer, 160) || parts.customer;
+        const receivedAt = safeText(rawOrder?.receivedAt, 80);
+        let garmentCount = 0;
+
+        const items = Array.isArray(rawOrder?.items) ? rawOrder.items : [];
+        items.forEach((item, index) => {
+            if (!item || isBatchPrintItem(item)) return;
+
+            const qty = Math.max(0, Number(item.qty) || 0);
+            if (!qty) return;
+
+            const title = safeText(item.title, 240) || "Untitled garment";
+            const variantTitle = safeText(item.variantTitle, 240);
+            const sku = safeText(item.sku, 120);
+            const itemKey = batchManifestItemKey(item);
+            const lineId = batchItemStableId(item, index);
+            garmentCount += qty;
+
+            if (!manifestByKey.has(itemKey)) {
+                manifestByKey.set(itemKey, {
+                    itemKey,
+                    title,
+                    variantTitle,
+                    sku,
+                    expectedQty: 0,
+                    receivedQty: 0,
+                    accountedQty: 0,
+                    orderLines: [],
+                });
+            }
+
+            const manifestLine = manifestByKey.get(itemKey);
+            manifestLine.expectedQty += qty;
+            manifestLine.orderLines.push({
+                orderName: name,
+                orderNumber,
+                customer,
+                lineId,
+                title,
+                variantTitle,
+                sku,
+                expectedQty: qty,
+                accountedQty: 0,
+            });
+        });
+
+        orders.push({
+            name,
+            orderNumber,
+            customer,
+            receivedAt,
+            garmentCount,
+        });
+    });
+
+    const manifest = Array.from(manifestByKey.values())
+        .map(line => ({
+            ...line,
+            missingQty: Math.max(0, line.expectedQty - line.receivedQty),
+        }))
+        .sort((left, right) => {
+            const leftLabel = `${left.title} ${left.variantTitle} ${left.sku}`;
+            const rightLabel = `${right.title} ${right.variantTitle} ${right.sku}`;
+            return leftLabel.localeCompare(rightLabel);
+        });
+
+    const expectedGarments = manifest.reduce((sum, line) => sum + line.expectedQty, 0);
+
+    return {
+        version: 1,
+        id,
+        label,
+        status: "ordered",
+        source,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        orderNames: orders.map(order => order.name),
+        orders,
+        manifest,
+        totals: {
+            orderCount: orders.length,
+            manifestLineCount: manifest.length,
+            expectedGarments,
+            receivedGarments: 0,
+            accountedGarments: 0,
+            missingGarments: expectedGarments,
+        },
+    };
+}
+
+function blanksBatchIndexEntry(batch) {
+    return {
+        id: batch.id,
+        key: blanksBatchKey(batch.id),
+        label: batch.label,
+        status: batch.status,
+        source: batch.source,
+        createdAt: batch.createdAt,
+        updatedAt: batch.updatedAt,
+        orderNames: Array.isArray(batch.orderNames) ? batch.orderNames : [],
+        orderCount: batch.totals?.orderCount || 0,
+        manifestLineCount: batch.totals?.manifestLineCount || 0,
+        expectedGarments: batch.totals?.expectedGarments || 0,
+        receivedGarments: batch.totals?.receivedGarments || 0,
+        missingGarments: batch.totals?.missingGarments || 0,
+    };
+}
+
+async function readBlanksBatchIndex(env) {
+    const obj = await env.PREVIEWS.get(BLANKS_BATCH_INDEX_KEY);
+    if (!obj) return { version: 1, updatedAt: "", batches: [] };
+
+    try {
+        const state = JSON.parse(await obj.text());
+        return {
+            version: 1,
+            updatedAt: safeText(state?.updatedAt, 80),
+            batches: Array.isArray(state?.batches) ? state.batches : [],
+        };
+    } catch (err) {
+        return { version: 1, updatedAt: "", batches: [] };
+    }
+}
+
+async function writeBlanksBatchIndex(env, index) {
+    const updatedAt = new Date().toISOString();
+    const body = JSON.stringify({
+        version: 1,
+        updatedAt,
+        batches: Array.isArray(index?.batches) ? index.batches : [],
+    }, null, 2);
+
+    await env.PREVIEWS.put(BLANKS_BATCH_INDEX_KEY, body, {
+        httpMetadata: { contentType: "application/json" },
+        customMetadata: {
+            role: "blanks-batch-index",
+            updatedAt,
+        },
+    });
+
+    return JSON.parse(body);
+}
+
+async function writeBlanksBatch(env, batch) {
+    const key = blanksBatchKey(batch.id);
+    const body = JSON.stringify(batch, null, 2);
+    await env.PREVIEWS.put(key, body, {
+        httpMetadata: { contentType: "application/json" },
+        customMetadata: {
+            role: "blanks-batch",
+            batchId: batch.id,
+            status: batch.status,
+            createdAt: batch.createdAt,
+            expectedGarments: String(batch.totals?.expectedGarments || 0),
+            orderCount: String(batch.totals?.orderCount || 0),
+        },
+    });
+    return { key, batch };
+}
+
+async function upsertBlanksBatchIndexEntry(env, batch) {
+    const index = await readBlanksBatchIndex(env);
+    const entry = blanksBatchIndexEntry(batch);
+    const existingIndex = index.batches.findIndex(item => item?.id === entry.id);
+    if (existingIndex >= 0) {
+        index.batches[existingIndex] = entry;
+    } else {
+        index.batches.unshift(entry);
+    }
+    index.batches.sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+    return writeBlanksBatchIndex(env, index);
 }
 
 function extensionForManualMockup(file, contentType) {
@@ -413,6 +714,78 @@ function isFileLike(value) {
         typeof value.arrayBuffer === "function" &&
         typeof value.name === "string"
     );
+}
+
+// -----------------------------
+// /order-manager/blanks-batches
+// GET:
+//  - without id: returns batch index
+//  - with id: returns one batch manifest
+// POST:
+//  - { orders: [], source?: string, label?: string }
+//  - creates an ordered blanks batch manifest from garment line items
+// -----------------------------
+async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
+    if (!env.PREVIEWS) {
+        return new Response("Missing R2 binding: PREVIEWS", { status: 500 });
+    }
+
+    const url = new URL(request.url);
+
+    if (request.method === "GET") {
+        const batchId = normalizeBlanksBatchId(url.searchParams.get("id"));
+        if (batchId) {
+            const key = blanksBatchKey(batchId);
+            const obj = await env.PREVIEWS.get(key);
+            if (!obj) {
+                return jsonResponse({ error: "Not Found", id: batchId }, allowOrigin, reqAllowHeaders, 404);
+            }
+
+            try {
+                return jsonResponse({ batch: JSON.parse(await obj.text()) }, allowOrigin, reqAllowHeaders, 200);
+            } catch (err) {
+                return jsonResponse({ error: "Invalid stored batch", id: batchId }, allowOrigin, reqAllowHeaders, 500);
+            }
+        }
+
+        const index = await readBlanksBatchIndex(env);
+        return jsonResponse(index, allowOrigin, reqAllowHeaders, 200);
+    }
+
+    if (request.method === "POST") {
+        let body = {};
+        try {
+            body = await request.json();
+        } catch (err) {
+            return jsonResponse({ error: "Invalid JSON body" }, allowOrigin, reqAllowHeaders, 400);
+        }
+
+        const batch = buildBlanksBatch(body);
+        if (!batch.orders.length) {
+            return jsonResponse({ error: "At least one order is required" }, allowOrigin, reqAllowHeaders, 400);
+        }
+        if (!batch.manifest.length || !batch.totals.expectedGarments) {
+            return jsonResponse({ error: "Batch has no garment line items" }, allowOrigin, reqAllowHeaders, 400);
+        }
+
+        const { key } = await writeBlanksBatch(env, batch);
+        const index = await upsertBlanksBatchIndexEntry(env, batch);
+
+        return jsonResponse(
+            {
+                ok: true,
+                key,
+                batch,
+                indexEntry: blanksBatchIndexEntry(batch),
+                indexUpdatedAt: index.updatedAt,
+            },
+            allowOrigin,
+            reqAllowHeaders,
+            201
+        );
+    }
+
+    return new Response("Method Not Allowed", { status: 405 });
 }
 
 // -----------------------------

@@ -159,6 +159,23 @@ window.api.processBatch = async (orderIds) => {
   });
 };
 
+window.api.createBlanksBatch = async (payload = {}) => {
+  return apiFetch("/order-manager/blanks-batches", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+};
+
+window.api.listBlanksBatches = async () => {
+  return apiFetch("/order-manager/blanks-batches", { method: "GET" });
+};
+
+window.api.getBlanksBatch = async (id) => {
+  if (!id) throw new Error("Batch ID is required");
+  const query = buildQuery({ id });
+  return apiFetch(`/order-manager/blanks-batches${query}`, { method: "GET" });
+};
+
 window.api.listStorageObjects = async ({ prefix, cursor, limit, delimiter } = {}) => {
   const query = buildQuery({ prefix, cursor, limit, delimiter });
   return apiFetch(`/order-manager/storage/list${query}`, { method: "GET" });
