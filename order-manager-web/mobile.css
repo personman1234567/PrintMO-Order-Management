@@ -4156,3 +4156,235 @@ body.manual-add-open {
 body:not(.mobile-selection-mode) #pipeline-selection-shell {
   display: none;
 }
+
+/* Mobile order flow: mobile uses Pipeline selection, not drag/drop, so the cart
+   screen gives its vertical space to selected cards and the submit controls. */
+body.mobile-mode .panel.create #col-toOrder {
+  display: none !important;
+}
+
+body.mobile-mode .panel.create .create-body {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 10px;
+  overflow: hidden;
+  padding: 10px 10px var(--mobile-dock-scroll-inset);
+}
+
+body.mobile-mode .picked-cards {
+  min-height: 0;
+  height: 100%;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 156px), 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 12px;
+}
+
+body.mobile-mode .picked-cards:empty {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+body.mobile-mode .picked-cards:empty::before {
+  content: "Use Pipeline Select to add orders";
+  max-width: 18rem;
+  padding: 0 18px;
+  color: #64748b;
+  font-size: 0.92rem;
+  line-height: 1.35;
+  text-align: center;
+  white-space: normal;
+}
+
+body.mobile-mode .summary {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  padding: 9px;
+  gap: 8px;
+  border-radius: 12px;
+  box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.08);
+}
+
+body.mobile-mode #cart-total {
+  grid-column: auto;
+  justify-self: stretch;
+  text-align: left !important;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.mobile-mode #clear-picked,
+body.mobile-mode #order-submit {
+  min-height: 40px;
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+/* Mobile cards need to tolerate narrow phones and larger landscape/tablet
+   widths without hiding the order identity or counts. */
+body.mobile-mode .pipeline,
+body.mobile-mode .panel.create {
+  container-type: inline-size;
+}
+
+body.mobile-mode .pipeline .cards {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 156px), 1fr));
+  gap: 10px;
+}
+
+body.mobile-mode .cards .card,
+body.mobile-mode .cards .pipeline-card {
+  flex: none;
+  max-width: none;
+  width: 100%;
+  cursor: pointer;
+}
+
+body.mobile-mode .pipeline-card {
+  min-width: 0;
+  min-height: clamp(168px, 38vw, 214px);
+  touch-action: manipulation;
+}
+
+body.mobile-mode .pipeline-main-card:has(.card-body.has-mockup),
+body.mobile-mode .pipeline .cards .pipeline-main-card {
+  min-height: clamp(176px, 40vw, 214px);
+}
+
+body.mobile-mode .pipeline-card .card-header {
+  min-height: 34px;
+  padding: 7px 30px 7px 9px;
+  gap: 6px;
+}
+
+body.mobile-mode .pipeline-card .order-number {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.mobile-mode .pipeline-card .time-ago-pill {
+  flex: 0 0 auto;
+  margin-right: 0;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+}
+
+body.mobile-mode .pipeline-card .delete-btn {
+  top: 4px;
+  right: 4px;
+  width: 26px;
+  height: 26px;
+  font-size: 1rem;
+}
+
+body.mobile-mode .pipeline-card .cust-name {
+  display: -webkit-box;
+  overflow: hidden;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.18;
+}
+
+body.mobile-mode .pipeline-card .counts {
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+body.mobile-mode .pipeline-card .counts span {
+  min-width: 0;
+}
+
+body.mobile-mode .pipeline-card .counts .count-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+body.mobile-mode .pipeline-card .card-footer {
+  min-height: 34px;
+  padding: 7px 9px;
+  gap: 6px;
+  font-size: 0.78rem;
+}
+
+body.mobile-mode .pipeline-card .footer-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.mobile-mode .pipeline-card .footer-value {
+  flex: 1 1 auto;
+}
+
+body.mobile-mode .pipeline-main-card .mockup-slot {
+  height: clamp(58px, 18vw, 88px);
+  flex-basis: clamp(58px, 18vw, 88px);
+}
+
+body.mobile-mode .picked-cards .pipeline-card,
+body.mobile-mode .picked-cards .card {
+  min-height: 122px;
+}
+
+body.mobile-mode .picked-card .card-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-right: 30px;
+}
+
+body.mobile-mode .picked-card .picked-subtotal {
+  min-width: 0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+body.mobile-mode .picked-card .picked-body {
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 9px;
+  text-align: left;
+}
+
+body.mobile-mode .picked-card .picked-body .cust-name {
+  margin: 0;
+  font-size: 0.94rem;
+}
+
+body.mobile-mode .picked-card .counts {
+  justify-content: flex-start;
+  font-size: 0.86rem;
+}
+
+@container (min-width: 520px) {
+  body.mobile-mode .pipeline .cards,
+  body.mobile-mode .picked-cards {
+    grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  }
+}
+
+@media (max-width: 380px) {
+  body.mobile-mode .summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body.mobile-mode #cart-total {
+    grid-column: 1 / -1;
+    text-align: center !important;
+  }
+}
