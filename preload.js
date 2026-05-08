@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('api', {
   getQueue:      () => ipcRenderer.invoke('get-queue'),
   updateStatus: (orderId, status) => ipcRenderer.invoke('update-status', orderId, status),
+  updateStatuses: (orderIds, status) => ipcRenderer.invoke('update-statuses', orderIds, status),
   processBatch:  indices => ipcRenderer.invoke('process-batch', indices),
   updateReady: (orderId, blanks, prints, blanksOrdered, printsOrdered) =>
     ipcRenderer.invoke('update-ready', orderId, blanks, prints, blanksOrdered, printsOrdered),

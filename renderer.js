@@ -145,6 +145,153 @@ function sortBundlesByOldest(entries) {
   });
 }
 
+const BOARD_STATUSES = ['received', 'toOrder', 'blanks', 'print'];
+const STATUS_COLUMN_CONFIG = {
+  received: {
+    containerId: 'col-received',
+    cardStyle: 'pipeline',
+    bundleStyle: 'pipeline',
+    countId: 'pipeline-count'
+  },
+  toOrder: {
+    containerId: 'picked-cards',
+    cardStyle: 'picked',
+    bundleStyle: 'picked'
+  },
+  blanks: {
+    containerId: 'col-blanks',
+    cardStyle: 'pipeline',
+    bundleStyle: 'pipeline'
+  },
+  print: {
+    containerId: 'col-print',
+    cardStyle: 'printProgress',
+    bundleStyle: 'pipeline'
+  }
+};
+
+/**
+ * Collapse status input into known board columns so callers can pass one status,
+ * a Set from a mutation, or nothing for a full board paint.
+ * @param {Iterable<string>|string|null|undefined} statuses - Statuses to render.
+ * @returns {string[]} Stable list of status columns to refresh.
+ */
+function normalizeBoardStatuses(statuses) {
+  if (!statuses) return BOARD_STATUSES.slice();
+  const list = typeof statuses === 'string' ? [statuses] : Array.from(statuses);
+  return Array.from(new Set(list)).filter(status => STATUS_COLUMN_CONFIG[status]);
+}
+
+/**
+ * Render one status column from the cached allOrders array.
+ * @param {string} status - Queue status represented by the target column.
+ */
+function renderStatusColumn(status) {
+  const config = STATUS_COLUMN_CONFIG[status];
+  if (!config) return;
+
+  const container = document.getElementById(config.containerId);
+  if (!container) return;
+
+  const orders = allOrders.filter(order => (order.status || 'received') === status);
+  const groups = {};
+  const singles = [];
+  orders.forEach(order => {
+    if (order.bundle) {
+      if (!groups[order.bundle]) groups[order.bundle] = [];
+      groups[order.bundle].push(order);
+    } else {
+      singles.push(order);
+    }
+  });
+
+  const fragment = document.createDocumentFragment();
+  sortBundlesByOldest(Object.entries(groups))
+    .forEach(([name, bundleOrders]) => {
+      fragment.appendChild(makeBundleCard(name, bundleOrders, config.bundleStyle));
+    });
+  singles.forEach(order => {
+    fragment.appendChild(makeCard(order, config.cardStyle));
+  });
+  container.replaceChildren(fragment);
+
+  if (config.countId) {
+    document.getElementById(config.countId).textContent = orders.length;
+  }
+  if (status === 'toOrder') {
+    updateSummary();
+  }
+}
+
+/**
+ * Refresh only the visible bundle modal body when its underlying orders change.
+ * The board columns own their own DOM, so the modal needs a small parallel patch.
+ */
+function refreshOpenBundleModal() {
+  const overlay = document.getElementById('bundle-overlay');
+  if (!overlay || overlay.classList.contains('hidden')) return;
+
+  const bundleName = document.getElementById('bundle-title')?.textContent || '';
+  const container = document.getElementById('bundle-cards');
+  if (!bundleName || !container) return;
+
+  const bundleOrders = allOrders.filter(order => order.bundle === bundleName);
+  const fragment = document.createDocumentFragment();
+  bundleOrders.forEach(order => fragment.appendChild(makeCard(order, 'pipeline')));
+  container.replaceChildren(fragment);
+}
+
+/**
+ * Patch cached orders and return the board statuses that need to be repainted.
+ * @param {string[]} orderNames - Names as they existed before the patch.
+ * @param {Record<string, any>|((order: Record<string, any>) => Record<string, any>|void)} patcher
+ * @returns {Set<string>} Statuses touched before or after the patch.
+ */
+function patchLocalOrders(orderNames, patcher) {
+  const names = new Set((orderNames || []).filter(Boolean));
+  const touchedStatuses = new Set();
+  if (!names.size) return touchedStatuses;
+
+  allOrders.forEach(order => {
+    if (!names.has(order.name)) return;
+    touchedStatuses.add(order.status || 'received');
+    const patch = typeof patcher === 'function' ? patcher(order) : patcher;
+    if (patch && typeof patch === 'object') {
+      Object.assign(order, patch);
+    }
+    touchedStatuses.add(order.status || 'received');
+  });
+
+  return touchedStatuses;
+}
+
+/**
+ * Remove orders from local state and return only the columns that lost cards.
+ * @param {string[]} orderNames - Queue order names to remove.
+ * @returns {Set<string>} Statuses requiring a repaint.
+ */
+function removeLocalOrders(orderNames) {
+  const names = new Set((orderNames || []).filter(Boolean));
+  const touchedStatuses = new Set();
+  if (!names.size) return touchedStatuses;
+
+  allOrders = allOrders.filter(order => {
+    if (!names.has(order.name)) return true;
+    touchedStatuses.add(order.status || 'received');
+    return false;
+  });
+
+  return touchedStatuses;
+}
+
+/**
+ * Repaint only mutated columns from already-cached order data.
+ * @param {Iterable<string>|string} statuses - Board statuses impacted by a mutation.
+ */
+async function renderBoardFromLocalState(statuses) {
+  await renderBoard({ useLocalOrders: true, statuses });
+}
+
 // shrink the font size of `el` until its text fits on one line
 function shrinkTextToFit(el, min = 8) {
   if (!el) return;
@@ -308,7 +455,9 @@ function makeCard(o, style = 'default') {
     e.stopPropagation();
     if (confirm(`Delete ${o.name}?`)) {
       await window.api.deleteOrder(o.name);
-      await renderBoard();
+      const touchedStatuses = removeLocalOrders([o.name]);
+      if (detailOrder?.name === o.name) closeDetail();
+      await renderBoardFromLocalState(touchedStatuses);
     }
   });
   card.appendChild(del);
@@ -391,8 +540,9 @@ function openBundleModal(name, orders) {
     if (!confirm(`Destroy bundle "${name}"?`)) return;
     const ids = orders.map(o => o.name);
     await window.api.setBundle(ids, '');
+    const touchedStatuses = patchLocalOrders(ids, { bundle: '' });
     closeBundleModal();
-    await renderBoard();
+    await renderBoardFromLocalState(touchedStatuses);
   };
   const onOverlayClick = e => {
     if (e.target.id === 'bundle-overlay') closeBundleModal();
@@ -818,6 +968,7 @@ function openDetail(o) {
     if (o.progress < totalApparel) {
       o.progress += 1;
       await window.api.updateProgress(o.name, o.progress);
+      await renderBoardFromLocalState([o.status || 'received']);
       updateProgressUI();
     }
   };
@@ -876,20 +1027,14 @@ function openDetail(o) {
     const blanksOrd = chkBlanksOrd.checked ? 1 : 0;
     const printsOrd = chkPrintsOrd.checked ? 1 : 0;
     await window.api.updateReady(o.name, blanks, prints, blanksOrd, printsOrd);
-    o.blanksStatus = blanks;
-    o.printsStatus = prints;
-    o.blanksOrdered = blanksOrd;
-    o.printsOrdered = printsOrd;
-    await renderBoard();
+    const touchedStatuses = patchLocalOrders([o.name], {
+      blanksStatus: blanks,
+      printsStatus: prints,
+      blanksOrdered: blanksOrd,
+      printsOrdered: printsOrd
+    });
+    await renderBoardFromLocalState(touchedStatuses);
     applyBtn.classList.add('hidden');
-    const bundleOverlay = document.getElementById('bundle-overlay');
-    if (!bundleOverlay.classList.contains('hidden')) {
-      const bundleName = document.getElementById('bundle-title').textContent;
-      const bundleOrders = allOrders.filter(x => x.bundle === bundleName);
-      const container = document.getElementById('bundle-cards');
-      container.innerHTML = '';
-      bundleOrders.forEach(ord => container.appendChild(makeCard(ord, 'pipeline')));
-    }
   };
 
   document.getElementById('detail-files-btn').onclick = () => openFilesModal(o);
@@ -1101,11 +1246,13 @@ function openNameModal(order) {
 
   confirmBtn.onclick = async () => {
     const val = input.value.trim();
-    await window.api.updateName(order.name, val);
-    order.name = `${orderNum} – ${val}`;
+    const oldName = order.name;
+    const newName = `${orderNum} – ${val}`;
+    await window.api.updateName(oldName, val);
+    const touchedStatuses = patchLocalOrders([oldName], { name: newName });
     document.getElementById('detail-cust-name').textContent = val;
     cleanup();
-    await renderBoard();
+    await renderBoardFromLocalState(touchedStatuses);
   };
 
   cancelBtn.onclick = () => cleanup();
@@ -1152,6 +1299,7 @@ function openProgressModal(order, updateFn) {
     if (val > order.totalApparel) val = order.totalApparel;
     order.progress = val;
     await window.api.updateProgress(order.name, order.progress);
+    await renderBoardFromLocalState([order.status || 'received']);
     updateFn();
     cleanup();
   };
@@ -1173,78 +1321,20 @@ document.getElementById('detail-overlay')
   });
 
 // fetch & render every zone
-async function renderBoard() {
-  allOrders = await window.api.getQueue();
+/**
+ * Render the order board from Redis or from the cached order array.
+ * Full refreshes still fetch the queue, while mutation paths pass
+ * useLocalOrders/statuses so only impacted columns are rebuilt.
+ * @param {{useLocalOrders?: boolean, statuses?: Iterable<string>|string}} [options]
+ */
+async function renderBoard(options = {}) {
+  const { useLocalOrders = false, statuses = null } = options;
+  if (!useLocalOrders) {
+    allOrders = await window.api.getQueue();
+  }
 
-  // Pipeline
-  const recs = allOrders.filter(x => x.status === 'received');
-  const recEl = document.getElementById('col-received');
-  recEl.innerHTML = '';
-  const recGroups = {}, recSingles = [];
-  recs.forEach(o => {
-    if (o.bundle) {
-      if (!recGroups[o.bundle]) recGroups[o.bundle] = [];
-      recGroups[o.bundle].push(o);
-    } else {
-      recSingles.push(o);
-    }
-  });
-  sortBundlesByOldest(Object.entries(recGroups))
-    .forEach(([n, arr]) => recEl.appendChild(makeBundleCard(n, arr)));
-  recSingles.forEach(o => recEl.appendChild(makeCard(o, 'pipeline')));
-  document.getElementById('pipeline-count').textContent = recs.length;
-
-  // ToOrder picks
-  const picks = allOrders.filter(o => o.status === 'toOrder');
-  const pickedEl = document.getElementById('picked-cards');
-  pickedEl.innerHTML = '';
-  const pickGroups = {}, pickSingles = [];
-  picks.forEach(o => {
-    if (o.bundle) {
-      if (!pickGroups[o.bundle]) pickGroups[o.bundle] = [];
-      pickGroups[o.bundle].push(o);
-    } else {
-      pickSingles.push(o);
-    }
-  });
-  sortBundlesByOldest(Object.entries(pickGroups))
-    .forEach(([n, arr]) => pickedEl.appendChild(makeBundleCard(n, arr, 'picked')));
-  pickSingles.forEach(o => pickedEl.appendChild(makeCard(o, 'picked')));
-  updateSummary();
-
-  // Blanks Ordered
-  const blanksEl = document.getElementById('col-blanks');
-  blanksEl.innerHTML = '';
-  const blankOrders = allOrders.filter(x => x.status === 'blanks');
-  const blankGroups = {}, blankSingles = [];
-  blankOrders.forEach(o => {
-    if (o.bundle) {
-      if (!blankGroups[o.bundle]) blankGroups[o.bundle] = [];
-      blankGroups[o.bundle].push(o);
-    } else {
-      blankSingles.push(o);
-    }
-  });
-  sortBundlesByOldest(Object.entries(blankGroups))
-    .forEach(([n, arr]) => blanksEl.appendChild(makeBundleCard(n, arr)));
-  blankSingles.forEach(o => blanksEl.appendChild(makeCard(o, 'pipeline')));
-
-  // Ready To Print
-  const printEl = document.getElementById('col-print');
-  printEl.innerHTML = '';
-  const printOrders = allOrders.filter(x => x.status === 'print');
-  const printGroups = {}, printSingles = [];
-  printOrders.forEach(o => {
-    if (o.bundle) {
-      if (!printGroups[o.bundle]) printGroups[o.bundle] = [];
-      printGroups[o.bundle].push(o);
-    } else {
-      printSingles.push(o);
-    }
-  });
-  sortBundlesByOldest(Object.entries(printGroups))
-    .forEach(([n, arr]) => printEl.appendChild(makeBundleCard(n, arr)));
-  printSingles.forEach(o => printEl.appendChild(makeCard(o, 'printProgress')));
+  normalizeBoardStatuses(statuses).forEach(renderStatusColumn);
+  refreshOpenBundleModal();
 }
 
 // recalc summary from “toOrder” items
@@ -1304,8 +1394,9 @@ async function confirmBundle(name) {
   if (!bundleMode) return;
   const ids = Array.from(bundleMode.selected);
   await window.api.setBundle(ids, name);
+  const touchedStatuses = patchLocalOrders(ids, { bundle: name });
   cancelBundle();
-  await renderBoard();
+  await renderBoardFromLocalState(touchedStatuses);
 }
 
 function promptBundleName() {
@@ -1378,11 +1469,17 @@ function makeDropZone(el, status) {
     try {
       if (id.startsWith('bundle:')) {
         const name = id.slice(7);
+        const orderNames = allOrders
+          .filter(order => order.bundle === name)
+          .map(order => order.name);
         await window.api.updateBundleStatus(name, status);
+        const touchedStatuses = patchLocalOrders(orderNames, { status });
+        await renderBoardFromLocalState(touchedStatuses);
       } else {
         await window.api.updateStatus(id, status);
+        const touchedStatuses = patchLocalOrders([id], { status });
+        await renderBoardFromLocalState(touchedStatuses);
       }
-      await renderBoard();
     } catch (err) {
       console.error('Error updating status on drop:', err);
     }
@@ -1443,11 +1540,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         await window.api.processBatch(toOrder);
 
         // auto-move into Blanks Ordered
-        for (const id of toOrder) {
-          await window.api.updateStatus(id, 'blanks');
+        if (typeof window.api.updateStatuses === 'function') {
+          await window.api.updateStatuses(toOrder, 'blanks');
+        } else {
+          await Promise.all(toOrder.map(id => window.api.updateStatus(id, 'blanks')));
         }
 
-        await renderBoard();
+        const touchedStatuses = patchLocalOrders(toOrder, { status: 'blanks' });
+        await renderBoardFromLocalState(touchedStatuses);
         submitBtn.textContent = '✅ Submitted';
 
         setTimeout(() => {
@@ -1475,10 +1575,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       clearBtn.disabled = true;
       try {
-        for (const id of toOrder) {
-          await window.api.updateStatus(id, 'received');
+        if (typeof window.api.updateStatuses === 'function') {
+          await window.api.updateStatuses(toOrder, 'received');
+        } else {
+          await Promise.all(toOrder.map(id => window.api.updateStatus(id, 'received')));
         }
-        await renderBoard();
+        const touchedStatuses = patchLocalOrders(toOrder, { status: 'received' });
+        await renderBoardFromLocalState(touchedStatuses);
       } finally {
         clearBtn.disabled = false;
       }
