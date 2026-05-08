@@ -472,6 +472,170 @@ function blanksBatchIndexEntry(batch) {
     };
 }
 
+function batchOrderSortValue(batch, orderName) {
+    const order = (Array.isArray(batch?.orders) ? batch.orders : [])
+        .find(item => item?.name === orderName);
+    const time = Date.parse(order?.receivedAt || "");
+    return Number.isFinite(time) ? time : Number.MAX_SAFE_INTEGER;
+}
+
+function applyOldestFirstAllocation(batch) {
+    const orderTotals = new Map();
+    (Array.isArray(batch.orders) ? batch.orders : []).forEach(order => {
+        orderTotals.set(order.name, {
+            expectedGarments: Number(order.garmentCount) || 0,
+            accountedGarments: 0,
+            missingGarments: Number(order.garmentCount) || 0,
+            fullyAccounted: false,
+        });
+    });
+
+    let expectedGarments = 0;
+    let receivedGarments = 0;
+    let accountedGarments = 0;
+    let missingGarments = 0;
+
+    batch.manifest = (Array.isArray(batch.manifest) ? batch.manifest : []).map(line => {
+        const expectedQty = Math.max(0, Number(line.expectedQty) || 0);
+        const receivedQty = Math.max(0, Number(line.receivedQty) || 0);
+        let remaining = receivedQty;
+        let lineAccounted = 0;
+
+        const orderLines = (Array.isArray(line.orderLines) ? line.orderLines : [])
+            .map(orderLine => ({
+                ...orderLine,
+                expectedQty: Math.max(0, Number(orderLine.expectedQty) || 0),
+                accountedQty: 0,
+            }))
+            .sort((left, right) => {
+                const leftTime = batchOrderSortValue(batch, left.orderName);
+                const rightTime = batchOrderSortValue(batch, right.orderName);
+                if (leftTime !== rightTime) return leftTime - rightTime;
+                return String(left.orderName || "").localeCompare(String(right.orderName || ""));
+            });
+
+        orderLines.forEach(orderLine => {
+            if (remaining <= 0) return;
+            const accountedQty = Math.min(orderLine.expectedQty, remaining);
+            orderLine.accountedQty = accountedQty;
+            remaining -= accountedQty;
+            lineAccounted += accountedQty;
+
+            if (!orderTotals.has(orderLine.orderName)) {
+                orderTotals.set(orderLine.orderName, {
+                    expectedGarments: 0,
+                    accountedGarments: 0,
+                    missingGarments: 0,
+                    fullyAccounted: false,
+                });
+            }
+            const totals = orderTotals.get(orderLine.orderName);
+            totals.accountedGarments += accountedQty;
+        });
+
+        const missingQty = Math.max(0, expectedQty - lineAccounted);
+
+        expectedGarments += expectedQty;
+        receivedGarments += receivedQty;
+        accountedGarments += lineAccounted;
+        missingGarments += missingQty;
+
+        return {
+            ...line,
+            expectedQty,
+            receivedQty,
+            accountedQty: lineAccounted,
+            missingQty,
+            extraQty: Math.max(0, receivedQty - expectedQty),
+            orderLines,
+        };
+    });
+
+    batch.orders = (Array.isArray(batch.orders) ? batch.orders : []).map(order => {
+        const totals = orderTotals.get(order.name) || {
+            expectedGarments: Number(order.garmentCount) || 0,
+            accountedGarments: 0,
+            missingGarments: Number(order.garmentCount) || 0,
+            fullyAccounted: false,
+        };
+        const expected = totals.expectedGarments;
+        const accounted = Math.min(expected, totals.accountedGarments);
+        const missing = Math.max(0, expected - accounted);
+        return {
+            ...order,
+            accountedGarments: accounted,
+            missingGarments: missing,
+            fullyAccounted: expected > 0 && missing === 0,
+        };
+    });
+
+    batch.totals = {
+        ...(batch.totals || {}),
+        orderCount: batch.orders.length,
+        manifestLineCount: batch.manifest.length,
+        expectedGarments,
+        receivedGarments,
+        accountedGarments,
+        missingGarments,
+        fullyAccountedOrders: batch.orders.filter(order => order.fullyAccounted).length,
+    };
+    batch.status = missingGarments === 0 && expectedGarments > 0 ? "received" : "ordered";
+    batch.updatedAt = new Date().toISOString();
+    return batch;
+}
+
+async function readBlanksBatch(env, batchId) {
+    const id = normalizeBlanksBatchId(batchId);
+    if (!id) return null;
+    const obj = await env.PREVIEWS.get(blanksBatchKey(id));
+    if (!obj) return null;
+    const batch = JSON.parse(await obj.text());
+    return batch && typeof batch === "object" ? batch : null;
+}
+
+function receiveQtyUpdatesFromBody(body) {
+    if (Array.isArray(body?.updates)) {
+        return body.updates
+            .map(update => ({
+                itemKey: safeText(update?.itemKey, 1000),
+                receivedQty: Math.max(0, Number(update?.receivedQty) || 0),
+            }))
+            .filter(update => update.itemKey);
+    }
+
+    if (body?.received && typeof body.received === "object" && !Array.isArray(body.received)) {
+        return Object.entries(body.received)
+            .map(([itemKey, receivedQty]) => ({
+                itemKey: safeText(itemKey, 1000),
+                receivedQty: Math.max(0, Number(receivedQty) || 0),
+            }))
+            .filter(update => update.itemKey);
+    }
+
+    return [];
+}
+
+function applyReceivingUpdates(batch, body) {
+    const updates = receiveQtyUpdatesFromBody(body);
+    if (!updates.length) return { ok: false, error: "No receiving updates provided" };
+
+    const byKey = new Map(updates.map(update => [update.itemKey, update.receivedQty]));
+    let matched = 0;
+
+    batch.manifest = (Array.isArray(batch.manifest) ? batch.manifest : []).map(line => {
+        if (!byKey.has(line.itemKey)) return line;
+        matched += 1;
+        return {
+            ...line,
+            receivedQty: byKey.get(line.itemKey),
+        };
+    });
+
+    if (!matched) return { ok: false, error: "No matching manifest lines found" };
+
+    return { ok: true, batch: applyOldestFirstAllocation(batch) };
+}
+
 async function readBlanksBatchIndex(env) {
     const obj = await env.PREVIEWS.get(BLANKS_BATCH_INDEX_KEY);
     if (!obj) return { version: 1, updatedAt: "", batches: [] };
@@ -735,17 +899,17 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
     if (request.method === "GET") {
         const batchId = normalizeBlanksBatchId(url.searchParams.get("id"));
         if (batchId) {
-            const key = blanksBatchKey(batchId);
-            const obj = await env.PREVIEWS.get(key);
-            if (!obj) {
-                return jsonResponse({ error: "Not Found", id: batchId }, allowOrigin, reqAllowHeaders, 404);
-            }
-
+            let batch = null;
             try {
-                return jsonResponse({ batch: JSON.parse(await obj.text()) }, allowOrigin, reqAllowHeaders, 200);
+                batch = await readBlanksBatch(env, batchId);
             } catch (err) {
                 return jsonResponse({ error: "Invalid stored batch", id: batchId }, allowOrigin, reqAllowHeaders, 500);
             }
+            if (!batch) {
+                return jsonResponse({ error: "Not Found", id: batchId }, allowOrigin, reqAllowHeaders, 404);
+            }
+
+            return jsonResponse({ batch }, allowOrigin, reqAllowHeaders, 200);
         }
 
         const index = await readBlanksBatchIndex(env);
@@ -782,6 +946,51 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
             allowOrigin,
             reqAllowHeaders,
             201
+        );
+    }
+
+    if (request.method === "PATCH") {
+        let body = {};
+        try {
+            body = await request.json();
+        } catch (err) {
+            return jsonResponse({ error: "Invalid JSON body" }, allowOrigin, reqAllowHeaders, 400);
+        }
+
+        const batchId = normalizeBlanksBatchId(body?.id || url.searchParams.get("id"));
+        if (!batchId) {
+            return jsonResponse({ error: "Missing or invalid batch id" }, allowOrigin, reqAllowHeaders, 400);
+        }
+
+        let batch = null;
+        try {
+            batch = await readBlanksBatch(env, batchId);
+        } catch (err) {
+            return jsonResponse({ error: "Invalid stored batch", id: batchId }, allowOrigin, reqAllowHeaders, 500);
+        }
+        if (!batch) {
+            return jsonResponse({ error: "Not Found", id: batchId }, allowOrigin, reqAllowHeaders, 404);
+        }
+
+        const result = applyReceivingUpdates(batch, body);
+        if (!result.ok) {
+            return jsonResponse({ error: result.error }, allowOrigin, reqAllowHeaders, 400);
+        }
+
+        const { key } = await writeBlanksBatch(env, result.batch);
+        const index = await upsertBlanksBatchIndexEntry(env, result.batch);
+
+        return jsonResponse(
+            {
+                ok: true,
+                key,
+                batch: result.batch,
+                indexEntry: blanksBatchIndexEntry(result.batch),
+                indexUpdatedAt: index.updatedAt,
+            },
+            allowOrigin,
+            reqAllowHeaders,
+            200
         );
     }
 

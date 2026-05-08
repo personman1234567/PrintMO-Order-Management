@@ -1,6 +1,6 @@
 ---
 title: Blanks Batch Receiving Workflow Plan
-status: task_1_complete
+status: task_2_complete
 date: 2026-05-08
 feature_area: order management, blanks ordering, supplies receiving, production readiness
 primary_terms: S&S batch, blanks batch, batch manifest, Blanks Cart, Mark In Cart Ordered, received garments, accounted garments, oldest order first
@@ -172,7 +172,7 @@ Task 1: Batch foundation. Completed 2026-05-08.
 - Store expected garment lines only; print line items are excluded.
 - Preserve the existing Blanks Cart and Blanks Ordered behavior.
 
-Task 2: Receiving and allocation. Not started.
+Task 2: Receiving and allocation. Completed 2026-05-08.
 
 - Add UI to receive quantities against a batch manifest.
 - Allocate received garments to customer orders oldest-first.
@@ -276,6 +276,65 @@ Important Task 1 behavior:
 - Print line items are filtered out using the existing print-title list.
 - Received/accounted quantities start at zero.
 - Allocation is not performed in Task 1.
+
+## Task 2 Implementation Notes
+
+Task 2 added the receiving workflow and oldest-first allocation.
+
+Implemented files:
+
+- `order-manager-proxy/worker.js`
+- `order-manager-web/web-shim.js`
+- `order-manager-web/blanks-batches.js`
+- `order-manager-web/desktop.css`
+- `order-manager-web/mobile.css`
+- `scripts/prepare-cloudflare-pages-upload.sh`
+
+Updated API endpoint:
+
+```text
+PATCH /order-manager/blanks-batches
+```
+
+Patch body:
+
+```text
+{
+  id: batchId,
+  updates: [
+    { itemKey, receivedQty }
+  ]
+}
+```
+
+Task 2 UI:
+
+- Adds a `Receive Batches` button in the Blanks section.
+- Opens a batch list.
+- Opens an individual batch manifest.
+- Shows expected, received, and missing garment totals.
+- Lets staff adjust received counts with minus, input, plus, and `All`.
+- Saves received quantities to the Worker.
+
+Task 2 allocation behavior:
+
+- Allocation happens server-side in `order-manager-proxy/worker.js`.
+- Each manifest line resets accounted quantities before allocation.
+- Received quantity is assigned to customer order lines oldest-first.
+- Oldest order is determined from the order `receivedAt` timestamp stored in the batch.
+- Ties fall back to order name sorting.
+- Shortages are represented by lower `accountedQty` and positive `missingQty`.
+- Extra received garments are tracked as `extraQty` on the manifest line.
+
+Task 2 batch updates:
+
+- Manifest lines now store updated `receivedQty`, `accountedQty`, `missingQty`, and `extraQty`.
+- Each manifest `orderLines[]` entry stores its allocated `accountedQty`.
+- Each batch `orders[]` entry stores `accountedGarments`, `missingGarments`, and `fullyAccounted`.
+- Batch `totals` stores expected, received, accounted, missing, and fully accounted order counts.
+- Batch `status` becomes `received` when all expected garments are accounted for; otherwise it remains `ordered`.
+
+Task 2 intentionally does not yet change the individual order detail screen or Ready To Print cards. Those UI surfaces are Task 3.
 
 ## Future Enhancements
 

@@ -17,7 +17,7 @@ rsync -a \
   --exclude 'Assets/PrintMO_Orders.ico' \
   "$SRC_DIR"/ "$OUT_DIR"/
 
-for required in index.html renderer.js web-shim.js storage-browser.js desktop.css mobile.css; do
+for required in index.html renderer.js web-shim.js storage-browser.js blanks-batches.js desktop.css mobile.css; do
   if [[ ! -f "$OUT_DIR/$required" ]]; then
     echo "Missing required deploy file: $required" >&2
     exit 1

@@ -176,6 +176,15 @@ window.api.getBlanksBatch = async (id) => {
   return apiFetch(`/order-manager/blanks-batches${query}`, { method: "GET" });
 };
 
+window.api.updateBlanksBatchReceiving = async (id, updates = []) => {
+  if (!id) throw new Error("Batch ID is required");
+  const cleanUpdates = Array.isArray(updates) ? updates.filter(Boolean) : [];
+  return apiFetch("/order-manager/blanks-batches", {
+    method: "PATCH",
+    body: JSON.stringify({ id, updates: cleanUpdates }),
+  });
+};
+
 window.api.listStorageObjects = async ({ prefix, cursor, limit, delimiter } = {}) => {
   const query = buildQuery({ prefix, cursor, limit, delimiter });
   return apiFetch(`/order-manager/storage/list${query}`, { method: "GET" });

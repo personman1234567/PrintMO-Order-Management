@@ -2820,6 +2820,153 @@
       line-height: 1;
     }
 
+    .blanks-receive-batches-btn {
+      background: #4f46e5;
+    }
+
+    .blanks-receive-batches-btn:hover {
+      background: #4338ca;
+    }
+
+    .blanks-receive-save {
+      background: #1765c1;
+      color: #fff;
+      border-color: #1765c1;
+    }
+
+    .blanks-receive-save:disabled {
+      color: #475569;
+      background: #e2e8f0;
+      border-color: #cbd5e1;
+    }
+
+    .blanks-receive-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .blanks-receive-batch-card {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      padding: 14px 16px;
+      border: 1px solid #dbe3ee;
+      border-radius: 8px;
+      background: #fff;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+    }
+
+    .blanks-receive-batch-card:hover {
+      background: #fbfdff;
+      border-color: #cbd5e1;
+    }
+
+    .blanks-receive-batch-main,
+    .blanks-receive-batch-counts,
+    .blanks-receive-line-copy,
+    .blanks-receive-line-status {
+      display: grid;
+      min-width: 0;
+      gap: 4px;
+    }
+
+    .blanks-receive-batch-main strong,
+    .blanks-receive-line-copy strong {
+      overflow: hidden;
+      color: #0f172a;
+      font-size: 0.92rem;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .blanks-receive-batch-main span,
+    .blanks-receive-line-copy span,
+    .blanks-receive-line-status span {
+      overflow: hidden;
+      color: #64748b;
+      font-size: 0.76rem;
+      font-weight: 750;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .blanks-receive-batch-counts {
+      justify-items: end;
+      color: #334155;
+      font-size: 0.78rem;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .blanks-receive-batch-counts .is-missing,
+    .blanks-receive-line-status .is-missing {
+      color: #b45309;
+    }
+
+    .blanks-receive-batch-counts .is-complete,
+    .blanks-receive-line-status .is-complete {
+      color: #15803d;
+    }
+
+    .blanks-receive-line {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 16px;
+      padding: 14px 16px;
+      border: 1px solid #dbe3ee;
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+    }
+
+    .blanks-receive-line-status {
+      justify-items: end;
+      min-width: 128px;
+    }
+
+    .blanks-receive-stepper {
+      display: grid;
+      grid-template-columns: 34px 72px 34px 48px;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .blanks-receive-stepper button,
+    .blanks-receive-stepper input {
+      height: 34px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font: inherit;
+      font-weight: 900;
+    }
+
+    .blanks-receive-stepper button {
+      background: #f8fafc;
+      color: #1e293b;
+      cursor: pointer;
+    }
+
+    .blanks-receive-stepper button:hover {
+      background: #eef2f7;
+    }
+
+    .blanks-receive-stepper input {
+      width: 72px;
+      padding: 0 8px;
+      text-align: center;
+      color: #0f172a;
+      font-variant-numeric: tabular-nums;
+    }
+
     body.manual-add-open {
       overflow: hidden;
     }
