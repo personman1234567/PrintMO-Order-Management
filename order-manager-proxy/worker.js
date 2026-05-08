@@ -82,6 +82,24 @@ export default {
             );
         }
 
+        if (url.pathname === "/order-manager/orders/manual-checklist") {
+            return handleManualChecklist(
+                request,
+                env,
+                allowOrigin || origin || "*",
+                reqAllowHeaders
+            );
+        }
+
+        if (url.pathname === "/order-manager/orders/manual-checklist/bulk") {
+            return handleManualChecklistBulk(
+                request,
+                env,
+                allowOrigin || origin || "*",
+                reqAllowHeaders
+            );
+        }
+
         // -----------------------------
         // PROXY EVERYTHING ELSE UPSTREAM
         // -----------------------------
@@ -214,6 +232,10 @@ function manualMockupKey(orderNumber, assetId, ext) {
     return `${MANUAL_ASSETS_PREFIX}orders/${orderNumber}/mockups/${assetId}.${ext}`;
 }
 
+function manualChecklistKey(orderNumber) {
+    return `${MANUAL_ASSETS_PREFIX}orders/${orderNumber}/manual-checklist.json`;
+}
+
 function extensionForManualMockup(file, contentType) {
     const name = String(file?.name || "").toLowerCase();
     if (contentType === "image/png" || name.endsWith(".png")) return "png";
@@ -281,6 +303,92 @@ async function writeManualManifest(env, orderNumber, manifest) {
             orderNumber,
         },
     });
+}
+
+async function readManualChecklist(env, orderNumber) {
+    const key = manualChecklistKey(orderNumber);
+    const obj = await env.PREVIEWS.get(key);
+    if (!obj) {
+        return { orderNumber, version: 1, items: {}, updatedAt: "" };
+    }
+    try {
+        const state = JSON.parse(await obj.text());
+        return {
+            orderNumber,
+            version: 1,
+            items: state && typeof state.items === "object" && !Array.isArray(state.items)
+                ? state.items
+                : {},
+            updatedAt: typeof state?.updatedAt === "string" ? state.updatedAt : "",
+        };
+    } catch (err) {
+        return { orderNumber, version: 1, items: {}, updatedAt: "" };
+    }
+}
+
+async function writeManualChecklist(env, orderNumber, state) {
+    const key = manualChecklistKey(orderNumber);
+    const updatedAt = new Date().toISOString();
+    const body = JSON.stringify({
+        orderNumber,
+        version: 1,
+        updatedAt,
+        items: state && typeof state.items === "object" && !Array.isArray(state.items)
+            ? state.items
+            : {},
+    }, null, 2);
+    await env.PREVIEWS.put(key, body, {
+        httpMetadata: { contentType: "application/json" },
+        customMetadata: {
+            role: "manual-add-checklist",
+            orderNumber,
+            updatedAt,
+        },
+    });
+    return { orderNumber, version: 1, updatedAt, items: JSON.parse(body).items };
+}
+
+function normalizeManualChecklistItemId(value) {
+    const itemId = String(value || "").trim();
+    if (!itemId || itemId.length > 300) return "";
+    return itemId;
+}
+
+function checklistItemMetadata(value) {
+    const item = value && typeof value === "object" ? value : {};
+    return {
+        title: String(item.title || "").slice(0, 240),
+        variantTitle: String(item.variantTitle || "").slice(0, 240),
+        qty: Number.isFinite(Number(item.qty)) ? Number(item.qty) : 0,
+        orderName: String(item.orderName || "").slice(0, 240),
+        customer: String(item.customer || "").slice(0, 160),
+    };
+}
+
+async function applyManualChecklistUpdate(env, update) {
+    const orderNumber = normalizeManualOrderNumber(update?.orderNumber || update?.orderKey);
+    const itemId = normalizeManualChecklistItemId(update?.itemId || update?.key);
+    if (!orderNumber || !itemId) {
+        return { ok: false, error: "Missing or invalid orderNumber/itemId" };
+    }
+
+    const state = await readManualChecklist(env, orderNumber);
+    state.items = state.items && typeof state.items === "object" && !Array.isArray(state.items)
+        ? state.items
+        : {};
+
+    if (Boolean(update.checked)) {
+        state.items[itemId] = {
+            checked: true,
+            updatedAt: new Date().toISOString(),
+            item: checklistItemMetadata(update.item),
+        };
+    } else {
+        delete state.items[itemId];
+    }
+
+    const saved = await writeManualChecklist(env, orderNumber, state);
+    return { ok: true, orderNumber, itemId, state: saved };
 }
 
 function makeManualAssetId() {
@@ -661,6 +769,128 @@ async function handleManualMockupsBulk(request, env, allowOrigin, reqAllowHeader
     await Promise.all(orderNumbers.map(async orderNumber => {
         const manifest = await readManualManifest(env, orderNumber);
         orders[orderNumber] = hydrateManualManifest(manifest, request);
+    }));
+
+    return jsonResponse({ orders }, allowOrigin, reqAllowHeaders, 200);
+}
+
+// -----------------------------
+// /order-manager/orders/manual-checklist
+// Query:
+//  - orderNumber (required for GET)
+// Body for PATCH/POST:
+//  - { orderNumber, itemId, checked, item }
+// -----------------------------
+async function handleManualChecklist(request, env, allowOrigin, reqAllowHeaders) {
+    if (!env.PREVIEWS) {
+        return new Response("Missing R2 binding: PREVIEWS", { status: 500 });
+    }
+
+    const url = new URL(request.url);
+    const orderNumber = getManualOrderNumberFromUrl(url);
+
+    if (request.method === "GET") {
+        if (!orderNumber) {
+            return jsonResponse({ error: "Missing or invalid orderNumber" }, allowOrigin, reqAllowHeaders, 400);
+        }
+        const state = await readManualChecklist(env, orderNumber);
+        return jsonResponse(state, allowOrigin, reqAllowHeaders, 200);
+    }
+
+    if (request.method === "POST" || request.method === "PATCH") {
+        let body = {};
+        try {
+            body = await request.json();
+        } catch (err) {
+            return jsonResponse({ error: "Invalid JSON body" }, allowOrigin, reqAllowHeaders, 400);
+        }
+
+        const result = await applyManualChecklistUpdate(env, body);
+        if (!result.ok) {
+            return jsonResponse({ error: result.error }, allowOrigin, reqAllowHeaders, 400);
+        }
+
+        return jsonResponse(result, allowOrigin, reqAllowHeaders, 200);
+    }
+
+    return new Response("Method Not Allowed", { status: 405 });
+}
+
+// -----------------------------
+// /order-manager/orders/manual-checklist/bulk
+// Body:
+//  - { orderNumbers: [] } reads state for many orders
+//  - { updates: [{ orderNumber, itemId, checked, item }] } writes many checks
+// -----------------------------
+async function handleManualChecklistBulk(request, env, allowOrigin, reqAllowHeaders) {
+    if (!env.PREVIEWS) {
+        return new Response("Missing R2 binding: PREVIEWS", { status: 500 });
+    }
+
+    if (request.method !== "POST") {
+        return new Response("Method Not Allowed", { status: 405 });
+    }
+
+    let body = {};
+    try {
+        body = await request.json();
+    } catch (err) {
+        return jsonResponse({ error: "Invalid JSON body" }, allowOrigin, reqAllowHeaders, 400);
+    }
+
+    if (Array.isArray(body.updates)) {
+        const updates = body.updates.slice(0, 500);
+        const grouped = new Map();
+        const results = [];
+        for (const update of updates) {
+            const orderNumber = normalizeManualOrderNumber(update?.orderNumber || update?.orderKey);
+            const itemId = normalizeManualChecklistItemId(update?.itemId || update?.key);
+            if (!orderNumber || !itemId) {
+                results.push({ ok: false, error: "Missing or invalid orderNumber/itemId" });
+                continue;
+            }
+            if (!grouped.has(orderNumber)) grouped.set(orderNumber, []);
+            grouped.get(orderNumber).push({ ...update, orderNumber, itemId });
+        }
+
+        const orders = {};
+        for (const [orderNumber, orderUpdates] of grouped.entries()) {
+            const state = await readManualChecklist(env, orderNumber);
+            state.items = state.items && typeof state.items === "object" && !Array.isArray(state.items)
+                ? state.items
+                : {};
+
+            orderUpdates.forEach(update => {
+                if (Boolean(update.checked)) {
+                    state.items[update.itemId] = {
+                        checked: true,
+                        updatedAt: new Date().toISOString(),
+                        item: checklistItemMetadata(update.item),
+                    };
+                } else {
+                    delete state.items[update.itemId];
+                }
+                results.push({ ok: true, orderNumber, itemId: update.itemId });
+            });
+
+            orders[orderNumber] = await writeManualChecklist(env, orderNumber, state);
+        }
+
+        return jsonResponse({ ok: true, results, orders }, allowOrigin, reqAllowHeaders, 200);
+    }
+
+    const rawOrderNumbers = Array.isArray(body.orderNumbers)
+        ? body.orderNumbers
+        : Array.isArray(body.orderKeys)
+            ? body.orderKeys
+            : [];
+    const orderNumbers = Array.from(new Set(
+        rawOrderNumbers.map(normalizeManualOrderNumber).filter(Boolean)
+    )).slice(0, 250);
+
+    const orders = {};
+    await Promise.all(orderNumbers.map(async orderNumber => {
+        orders[orderNumber] = await readManualChecklist(env, orderNumber);
     }));
 
     return jsonResponse({ orders }, allowOrigin, reqAllowHeaders, 200);

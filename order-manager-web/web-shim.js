@@ -210,6 +210,39 @@ window.api.bulkListManualMockups = async (orderNumbers) => {
   });
 };
 
+window.api.listManualChecklist = async (orderNumber) => {
+  if (!orderNumber) throw new Error("Order number is required");
+  const query = buildQuery({ orderNumber });
+  return apiFetch(`/order-manager/orders/manual-checklist${query}`, { method: "GET" });
+};
+
+window.api.bulkListManualChecklist = async (orderNumbers) => {
+  const unique = Array.from(new Set((Array.isArray(orderNumbers) ? orderNumbers : []).filter(Boolean)));
+  if (!unique.length) return { orders: {} };
+  return apiFetch("/order-manager/orders/manual-checklist/bulk", {
+    method: "POST",
+    body: JSON.stringify({ orderNumbers: unique }),
+  });
+};
+
+window.api.updateManualChecklistItem = async (orderNumber, itemId, checked, item = {}) => {
+  if (!orderNumber) throw new Error("Order number is required");
+  if (!itemId) throw new Error("Checklist item ID is required");
+  return apiFetch("/order-manager/orders/manual-checklist", {
+    method: "PATCH",
+    body: JSON.stringify({ orderNumber, itemId, checked: Boolean(checked), item }),
+  });
+};
+
+window.api.updateManualChecklistItems = async (updates) => {
+  const clean = Array.isArray(updates) ? updates.filter(Boolean) : [];
+  if (!clean.length) return { ok: true, results: [] };
+  return apiFetch("/order-manager/orders/manual-checklist/bulk", {
+    method: "POST",
+    body: JSON.stringify({ updates: clean }),
+  });
+};
+
 function filenameFromDisposition(disposition = "", fallback = "order-asset") {
   const match = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i.exec(disposition);
   if (match && match[1]) {

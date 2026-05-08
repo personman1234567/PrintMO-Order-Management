@@ -33,6 +33,9 @@
   let uiReady = false;
   let lastPointerToggleKey = '';
   let lastPointerToggleAt = 0;
+  let remoteHydrateSignature = '';
+  let remoteHydratePromise = null;
+  const remoteHydratedOrders = new Set();
 
   function loadCheckedItems() {
     try {
@@ -91,7 +94,31 @@
     };
   }
 
-  function itemKey(order, item, index) {
+  function normalizeOrderNumber(value) {
+    return String(value || '').trim().replace(/^#+/, '').replace(/[^A-Za-z0-9_-]/g, '');
+  }
+
+  function normalizeKeyPart(value) {
+    return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  function itemStableId(item, index) {
+    const stableId = item?.lineItemId ||
+      item?.shopifyLineItemId ||
+      item?.admin_graphql_api_id ||
+      item?.id;
+    if (stableId) return `line:${String(stableId)}`;
+
+    return [
+      'manual',
+      index,
+      normalizeKeyPart(item?.title),
+      normalizeKeyPart(item?.variantTitle),
+      Number(item?.qty) || 0
+    ].join('|');
+  }
+
+  function legacyItemKey(order, item, index) {
     return [
       order.name || '',
       index,
@@ -99,6 +126,10 @@
       item.variantTitle || '',
       item.qty || ''
     ].join('|');
+  }
+
+  function itemStateKey(orderNumberKey, itemId) {
+    return `${orderNumberKey}|${itemId}`;
   }
 
   function compareOrdersByReceived(left, right) {
@@ -111,12 +142,17 @@
     const inCart = orders.filter(isInCartOrder).sort(compareOrdersByReceived);
     return inCart.flatMap(order => {
       const parts = orderParts(order.name);
+      const orderNumberKey = normalizeOrderNumber(parts.number) || normalizeOrderNumber(order.name);
       return (order.items || []).flatMap((item, index) => {
         if (isPrintLineItem(item) || hasSku(item)) return [];
         const qty = Number(item.qty) || 0;
         if (qty <= 0) return [];
+        const itemId = itemStableId(item, index);
         return [{
-          key: itemKey(order, item, index),
+          key: itemStateKey(orderNumberKey, itemId),
+          legacyKey: legacyItemKey(order, item, index),
+          orderNumberKey,
+          itemId,
           orderName: order.name || '',
           orderNumber: parts.number,
           customer: parts.customer,
@@ -162,40 +198,138 @@
     const orders = getAllOrders();
     currentOrders = orders.filter(isInCartOrder);
     currentItems = buildManualItems(orders);
-    pruneStoredChecks(currentItems);
     updateButton();
+    hydrateRemoteChecklistState(currentItems);
     if (isOverlayOpen()) renderChecklist();
   }
 
-  function pruneStoredChecks(items) {
-    const activeKeys = new Set(items.map(item => item.key));
-    let changed = false;
-    Object.keys(checkedItems).forEach(key => {
-      if (!activeKeys.has(key)) {
-        delete checkedItems[key];
-        changed = true;
-      }
-    });
-    if (changed) saveCheckedItems();
-  }
-
   function remainingItems() {
-    return currentItems.filter(item => !checkedItems[item.key]);
+    return currentItems.filter(item => !isItemChecked(item));
   }
 
   function completedCount() {
     return currentItems.length - remainingItems().length;
   }
 
-  function setItemChecked(key, checked) {
-    if (checked) checkedItems[key] = true;
-    else delete checkedItems[key];
+  function isItemChecked(item) {
+    return Boolean(checkedItems[item.key] || (item.legacyKey && checkedItems[item.legacyKey]));
+  }
+
+  function setItemChecked(item, checked) {
+    if (!item) return;
+    if (checked) checkedItems[item.key] = true;
+    else delete checkedItems[item.key];
+    if (item.legacyKey) delete checkedItems[item.legacyKey];
     saveCheckedItems();
   }
 
   function setRowChecked(row, checked) {
     row?.classList.toggle('is-checked', checked);
     row?.setAttribute('aria-checked', checked ? 'true' : 'false');
+  }
+
+  function checklistItemPayload(item, checked) {
+    return {
+      orderNumber: item.orderNumberKey,
+      itemId: item.itemId,
+      checked: Boolean(checked),
+      item: {
+        title: item.title,
+        variantTitle: item.variantTitle,
+        qty: item.qty,
+        orderName: item.orderName,
+        customer: item.customer
+      }
+    };
+  }
+
+  function orderPrefix(orderNumberKey) {
+    return `${orderNumberKey}|`;
+  }
+
+  function applyRemoteChecklistState(orderNumberKey, state) {
+    const prefix = orderPrefix(orderNumberKey);
+    Object.keys(checkedItems).forEach(key => {
+      if (key.startsWith(prefix)) delete checkedItems[key];
+    });
+    currentItems.forEach(item => {
+      if (item.orderNumberKey === orderNumberKey && item.legacyKey) {
+        delete checkedItems[item.legacyKey];
+      }
+    });
+
+    const items = state && typeof state.items === 'object' && !Array.isArray(state.items)
+      ? state.items
+      : {};
+    Object.entries(items).forEach(([itemId, record]) => {
+      if (record?.checked) checkedItems[itemStateKey(orderNumberKey, itemId)] = true;
+    });
+    remoteHydratedOrders.add(orderNumberKey);
+  }
+
+  async function hydrateRemoteChecklistState(items, options = {}) {
+    if (!window.api || typeof window.api.bulkListManualChecklist !== 'function') return;
+    const { force = false } = options;
+
+    const orderNumbers = Array.from(new Set(
+      (items || []).map(item => item.orderNumberKey).filter(Boolean)
+    )).sort();
+    if (!orderNumbers.length) return;
+
+    const signature = orderNumbers.join('|');
+    const needsHydration = orderNumbers.some(orderNumber => !remoteHydratedOrders.has(orderNumber));
+    if (!force && !needsHydration && remoteHydrateSignature === signature) return;
+    if (remoteHydratePromise) return remoteHydratePromise;
+
+    remoteHydrateSignature = signature;
+    remoteHydratePromise = window.api.bulkListManualChecklist(orderNumbers)
+      .then(data => {
+        const orders = data?.orders || {};
+        const migrationItems = [];
+        orderNumbers.forEach(orderNumber => {
+          const state = orders[orderNumber] || { items: {} };
+          const localChecked = currentItems.filter(item => (
+            item.orderNumberKey === orderNumber && isItemChecked(item)
+          ));
+          applyRemoteChecklistState(orderNumber, state);
+          if (!state.updatedAt && localChecked.length) {
+            localChecked.forEach(item => {
+              checkedItems[item.key] = true;
+              migrationItems.push(item);
+            });
+          }
+        });
+        saveCheckedItems();
+        if (migrationItems.length) persistChecklistItems(migrationItems, true);
+        updateButton();
+        if (isOverlayOpen()) renderChecklist();
+      })
+      .catch(error => {
+        remoteHydrateSignature = '';
+        console.warn('Unable to hydrate durable manual add checklist state', error);
+      })
+      .finally(() => {
+        remoteHydratePromise = null;
+      });
+
+    return remoteHydratePromise;
+  }
+
+  function persistChecklistItem(item, checked) {
+    if (!window.api || typeof window.api.updateManualChecklistItem !== 'function') return;
+    window.api.updateManualChecklistItem(item.orderNumberKey, item.itemId, checked, checklistItemPayload(item, checked).item)
+      .catch(error => {
+        console.warn('Unable to save durable manual add checklist item state', error);
+      });
+  }
+
+  function persistChecklistItems(items, checked) {
+    if (!window.api || typeof window.api.updateManualChecklistItems !== 'function') return;
+    const updates = items.map(item => checklistItemPayload(item, checked));
+    window.api.updateManualChecklistItems(updates)
+      .catch(error => {
+        console.warn('Unable to save durable manual add checklist bulk state', error);
+      });
   }
 
   function updateButton() {
@@ -312,6 +446,7 @@
 
   function openOverlay() {
     renderChecklist();
+    hydrateRemoteChecklistState(currentItems, { force: true });
     const overlay = document.getElementById('manual-add-overlay');
     overlay?.classList.remove('hidden');
     document.body.classList.add('manual-add-open');
@@ -418,16 +553,20 @@
 
     copy.append(title, variant);
     row.append(check, copy, qty);
-    setRowChecked(row, Boolean(checkedItems[item.key]));
+    setRowChecked(row, isItemChecked(item));
     return row;
   }
 
   function toggleChecklistRow(row, key) {
-    const next = !Boolean(checkedItems[key]);
-    setItemChecked(key, next);
+    const item = currentItems.find(candidate => candidate.key === key || candidate.legacyKey === key);
+    if (!item) return;
+
+    const next = !isItemChecked(item);
+    setItemChecked(item, next);
     setRowChecked(row, next);
     updateButton();
     syncChecklistChrome();
+    persistChecklistItem(item, next);
   }
 
   function handlePointerListToggle(event) {
@@ -498,19 +637,23 @@
   function markAllDone() {
     currentItems.forEach(item => {
       checkedItems[item.key] = true;
+      if (item.legacyKey) delete checkedItems[item.legacyKey];
     });
     saveCheckedItems();
     updateButton();
     renderChecklist();
+    persistChecklistItems(currentItems, true);
   }
 
   function resetChecks() {
     currentItems.forEach(item => {
       delete checkedItems[item.key];
+      if (item.legacyKey) delete checkedItems[item.legacyKey];
     });
     saveCheckedItems();
     updateButton();
     renderChecklist();
+    persistChecklistItems(currentItems, false);
   }
 
   function patchRenderBoard() {
