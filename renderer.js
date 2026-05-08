@@ -16,6 +16,7 @@ const selectedFiles = new Set();
 let notesResizeHandler = null;
 let detailAssetRenderToken = 0;
 const detailAssetBlobUrls = new Set();
+let activeCardDrag = null;
 
 const APPAREL_ICON = typeof window.getAssetPath === 'function'
   ? window.getAssetPath('ApparelCount.svg')
@@ -292,6 +293,106 @@ async function renderBoardFromLocalState(statuses) {
   await renderBoard({ useLocalOrders: true, statuses });
 }
 
+/**
+ * Capture enough pointer and layout data to animate an invalid desktop drop
+ * back to the original card slot after the browser's native drag image vanishes.
+ * @param {HTMLElement} card - Card or bundle card being dragged.
+ * @param {DragEvent} event - Native drag start event with pointer coordinates.
+ */
+function beginCardDrag(card, event) {
+  const rect = card.getBoundingClientRect();
+  const fallbackX = rect.left + rect.width / 2;
+  const fallbackY = rect.top + rect.height / 2;
+  const hasPointer = Number.isFinite(event.clientX)
+    && Number.isFinite(event.clientY)
+    && !(event.clientX === 0 && event.clientY === 0);
+  const pointerX = hasPointer ? event.clientX : fallbackX;
+  const pointerY = hasPointer ? event.clientY : fallbackY;
+
+  activeCardDrag = {
+    card,
+    startRect: rect,
+    offsetX: pointerX - rect.left,
+    offsetY: pointerY - rect.top,
+    currentX: pointerX,
+    currentY: pointerY,
+    validDrop: false
+  };
+}
+
+/**
+ * Track the latest cursor position while dragging so invalid drops can animate
+ * from the user's actual release point instead of from the original card slot.
+ * @param {DragEvent} event - Drag or dragover event carrying cursor coordinates.
+ */
+function updateActiveCardDragPosition(event) {
+  const hasPointer = Number.isFinite(event?.clientX)
+    && Number.isFinite(event?.clientY)
+    && !(event.clientX === 0 && event.clientY === 0);
+  if (!activeCardDrag || !hasPointer) return;
+  activeCardDrag.currentX = event.clientX;
+  activeCardDrag.currentY = event.clientY;
+}
+
+/**
+ * Mark the current drag as handled by a real drop zone so dragend cleanup skips
+ * the invalid-drop return animation.
+ */
+function markActiveDragDropAccepted() {
+  if (activeCardDrag) {
+    activeCardDrag.validDrop = true;
+  }
+}
+
+/**
+ * Draw a temporary copy at the release point and animate it to the card's
+ * starting rectangle. The real card is restored immediately for interaction.
+ */
+function animateInvalidDropReturn() {
+  if (!activeCardDrag?.card?.isConnected) return;
+
+  const { card, startRect, offsetX, offsetY, currentX, currentY } = activeCardDrag;
+  const ghost = card.cloneNode(true);
+  ghost.removeAttribute('id');
+  ghost.draggable = false;
+  ghost.setAttribute('aria-hidden', 'true');
+  ghost.classList.remove('dragging');
+  ghost.classList.add('drop-return-ghost');
+
+  const fromLeft = (currentX || startRect.left + offsetX) - offsetX;
+  const fromTop = (currentY || startRect.top + offsetY) - offsetY;
+  ghost.style.left = '0';
+  ghost.style.top = '0';
+  ghost.style.width = `${startRect.width}px`;
+  ghost.style.height = `${startRect.height}px`;
+  ghost.style.transform = `translate3d(${fromLeft}px, ${fromTop}px, 0) scale(1.03)`;
+  document.body.appendChild(ghost);
+
+  requestAnimationFrame(() => {
+    ghost.style.transform = `translate3d(${startRect.left}px, ${startRect.top}px, 0) scale(1)`;
+    ghost.style.opacity = '0';
+  });
+
+  window.setTimeout(() => ghost.remove(), 260);
+}
+
+/**
+ * Clear drag styling and optionally play the invalid-drop return animation.
+ * @param {HTMLElement|null} card - Card whose drag just ended.
+ */
+function finishCardDrag(card = null) {
+  if (!activeCardDrag && !card) return;
+  const draggedCard = card || activeCardDrag?.card;
+  if (draggedCard) draggedCard.classList.remove('dragging');
+  document.body.classList.remove('dragging-cursor');
+
+  if (activeCardDrag && !activeCardDrag.validDrop) {
+    animateInvalidDropReturn();
+  }
+
+  activeCardDrag = null;
+}
+
 // shrink the font size of `el` until its text fits on one line
 function shrinkTextToFit(el, min = 8) {
   if (!el) return;
@@ -466,13 +567,12 @@ function makeCard(o, style = 'default') {
   card.addEventListener('dragstart', e => {
     document.body.classList.add('dragging-cursor');
     card.classList.add('dragging');
+    beginCardDrag(card, e);
     e.dataTransfer.setData('text/plain', o.name);
   });
 
-  card.addEventListener('dragend', () => {
-    document.body.classList.remove('dragging-cursor');
-    card.classList.remove('dragging');
-  });
+  card.addEventListener('drag', updateActiveCardDragPosition);
+  card.addEventListener('dragend', () => finishCardDrag(card));
 
   if (card.classList.contains('pipeline-card')) {
     const delay = (Math.random() * 3).toFixed(2) + 's';
@@ -518,13 +618,12 @@ function makeBundleCard(name, orders, style = 'pipeline') {
   card.addEventListener('dragstart', e => {
     document.body.classList.add('dragging-cursor');
     card.classList.add('dragging');
+    beginCardDrag(card, e);
     e.dataTransfer.setData('text/plain', `bundle:${name}`);
   });
 
-  card.addEventListener('dragend', () => {
-    document.body.classList.remove('dragging-cursor');
-    card.classList.remove('dragging');
-  });
+  card.addEventListener('drag', updateActiveCardDragPosition);
+  card.addEventListener('dragend', () => finishCardDrag(card));
 
   return card;
 }
@@ -1320,6 +1419,10 @@ document.getElementById('detail-overlay')
     }
   });
 
+document.addEventListener('dragover', updateActiveCardDragPosition);
+document.addEventListener('dragend', () => finishCardDrag());
+window.addEventListener('blur', () => finishCardDrag());
+
 // fetch & render every zone
 /**
  * Render the order board from Redis or from the cached order array.
@@ -1456,6 +1559,7 @@ function makeDropZone(el, status) {
   el.addEventListener('drop', async e => {
     e.preventDefault();
     el.classList.remove('over');
+    markActiveDragDropAccepted();
 
     // 1) Grab the ID that was set on dragstart
     const id = e.dataTransfer.getData('text/plain');

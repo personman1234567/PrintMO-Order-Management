@@ -25,6 +25,7 @@
   let pendingDropZone = null;
   let dropZoneFrame = 0;
   let layoutAnimationFrame = 0;
+  let activeDropAccepted = false;
   let orderMetaByKey = new Map();
   let orderMetaPromise = null;
   let orderMetaLastRefresh = 0;
@@ -397,7 +398,7 @@
     });
   }
 
-  function removeDragGhost() {
+  function removeDragGhost({ returnToOrigin = false } = {}) {
     if (ghostFrame) cancelAnimationFrame(ghostFrame);
     ghostFrame = 0;
     const ghosts = dragGhost
@@ -405,8 +406,19 @@
       : Array.from(document.querySelectorAll('.desktop-drag-ghost'));
     dragGhost = null;
     Array.from(new Set(ghosts)).forEach(ghost => {
-      ghost.classList.add('desktop-drag-ghost-release');
-      window.setTimeout(() => ghost.remove(), 140);
+      if (returnToOrigin && activeDragCard?.isConnected) {
+        const rect = activeDragCard.getBoundingClientRect();
+        ghost.classList.add('desktop-drag-ghost-release');
+        ghost.style.transition = 'transform 230ms cubic-bezier(0.2, 0.8, 0.25, 1), opacity 230ms ease';
+        requestAnimationFrame(() => {
+          ghost.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0) scale(1)`;
+          ghost.style.opacity = '0';
+        });
+        window.setTimeout(() => ghost.remove(), 260);
+      } else {
+        ghost.classList.add('desktop-drag-ghost-release');
+        window.setTimeout(() => ghost.remove(), 140);
+      }
     });
   }
 
@@ -420,9 +432,10 @@
       activeDragCard.classList.remove('drag-polish-dragging');
       activeDragCard.style.removeProperty('--drag-tilt');
     }
-    removeDragGhost();
+    removeDragGhost({ returnToOrigin: !activeDropAccepted });
     removeHoverPlaceholder({ animate: false });
     activeDragCard = null;
+    activeDropAccepted = false;
     lastDragX = 0;
     lastDragY = 0;
     currentDragX = 0;
@@ -444,6 +457,7 @@
     if (!card) return;
     disableImageDragging(card);
     activeDragCard = card;
+    activeDropAccepted = false;
     lastDragX = event.clientX || 0;
     layoutBeforeDrop = captureLayout();
     refreshOrderMetadata();
@@ -487,6 +501,7 @@
     if (!isDesktop() || !activeDragCard) return;
     const zone = closestFrom(event.target, dropZoneSelector);
     if (zone) {
+      activeDropAccepted = true;
       layoutBeforeDrop = captureLayout();
       markDroppedKeys(parseDragKeys(event));
       removeHoverPlaceholder({ animate: false, deferRemove: true });

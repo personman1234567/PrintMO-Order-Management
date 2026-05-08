@@ -626,6 +626,19 @@
     .card.dragging {
       opacity: 0.5;
     }
+    .card.drop-return-ghost {
+      position: fixed;
+      z-index: 9999;
+      margin: 0;
+      pointer-events: none;
+      opacity: 0.92;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.22);
+      transform-origin: top left;
+      transition:
+        transform 220ms cubic-bezier(0.2, 0.8, 0.25, 1),
+        opacity 220ms ease;
+      will-change: transform, opacity;
+    }
     .card .order-number,
     .card .order-cust,
     .card .counts {
