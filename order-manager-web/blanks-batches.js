@@ -34,6 +34,10 @@
   let activeBatch = null;
   let draftReceived = new Map();
   let dirty = false;
+  const batchDetailsById = new Map();
+  const orderAccountingByName = new Map();
+  let accountingHydratePromise = null;
+  let detailAccountingOrderName = '';
 
   function currentOrders() {
     try {
@@ -133,9 +137,303 @@
 
     const result = await window.api.createBlanksBatch(payload);
     if (result?.batch?.id) {
+      batchDetailsById.set(result.batch.id, result.batch);
+      buildOrderAccounting();
+      annotateAccountingCards();
       console.info(`Created blanks batch ${result.batch.id}`, result.batch);
     }
     return result;
+  }
+
+  function visibleOrderNames() {
+    return new Set(currentOrders().map(order => order?.name).filter(Boolean));
+  }
+
+  function batchTouchesVisibleOrders(batch, orderNames = visibleOrderNames()) {
+    const names = Array.isArray(batch?.orderNames) ? batch.orderNames : [];
+    return names.some(name => orderNames.has(name));
+  }
+
+  async function hydrateAccountingForCurrentOrders(options = {}) {
+    const { force = false } = options;
+    if (!window.api || typeof window.api.listBlanksBatches !== 'function' || typeof window.api.getBlanksBatch !== 'function') return;
+    if (accountingHydratePromise && !force) return accountingHydratePromise;
+
+    accountingHydratePromise = (async () => {
+      await loadBatchIndex();
+      const orderNames = visibleOrderNames();
+      const relevant = batchIndex.filter(batch => batchTouchesVisibleOrders(batch, orderNames));
+
+      await Promise.all(relevant.map(async batch => {
+        const cached = batchDetailsById.get(batch.id);
+        if (!force && cached?.updatedAt && cached.updatedAt === batch.updatedAt) return;
+        const data = await window.api.getBlanksBatch(batch.id);
+        if (data?.batch?.id) batchDetailsById.set(data.batch.id, data.batch);
+      }));
+
+      buildOrderAccounting();
+      annotateAccountingCards();
+      renderDetailAccounting(detailAccountingOrderName || currentDetailOrderName());
+    })().catch(error => {
+      console.warn('Unable to hydrate blanks batch accounting', error);
+    }).finally(() => {
+      accountingHydratePromise = null;
+    });
+
+    return accountingHydratePromise;
+  }
+
+  function buildOrderAccounting() {
+    orderAccountingByName.clear();
+    batchDetailsById.forEach(batch => {
+      const batchLabel = batch.label || batch.id;
+      const orderSummary = new Map((batch.orders || []).map(order => [order.name, order]));
+
+      (batch.manifest || []).forEach(line => {
+        (line.orderLines || []).forEach(orderLine => {
+          const orderName = orderLine.orderName;
+          if (!orderName) return;
+          if (!orderAccountingByName.has(orderName)) {
+            const summary = orderSummary.get(orderName) || {};
+            orderAccountingByName.set(orderName, {
+              orderName,
+              expectedGarments: Number(summary.garmentCount) || 0,
+              accountedGarments: Number(summary.accountedGarments) || 0,
+              missingGarments: Number(summary.missingGarments) || 0,
+              fullyAccounted: Boolean(summary.fullyAccounted),
+              batches: new Map(),
+              lines: []
+            });
+          }
+
+          const accounting = orderAccountingByName.get(orderName);
+          accounting.batches.set(batch.id, batchLabel);
+          accounting.lines.push({
+            batchId: batch.id,
+            batchLabel,
+            itemKey: line.itemKey,
+            lineId: orderLine.lineId,
+            title: orderLine.title || line.title || 'Untitled garment',
+            variantTitle: orderLine.variantTitle || line.variantTitle || '',
+            sku: orderLine.sku || line.sku || '',
+            expectedQty: Number(orderLine.expectedQty) || 0,
+            accountedQty: Number(orderLine.accountedQty) || 0
+          });
+        });
+      });
+    });
+
+    orderAccountingByName.forEach(accounting => {
+      const expected = accounting.lines.reduce((sum, line) => sum + line.expectedQty, 0);
+      const accounted = accounting.lines.reduce((sum, line) => sum + line.accountedQty, 0);
+      accounting.expectedGarments = expected;
+      accounting.accountedGarments = Math.min(expected, accounted);
+      accounting.missingGarments = Math.max(0, expected - accounting.accountedGarments);
+      accounting.fullyAccounted = expected > 0 && accounting.missingGarments === 0;
+    });
+  }
+
+  function accountingForOrder(orderName) {
+    return orderAccountingByName.get(orderName) || null;
+  }
+
+  function currentDetailOrderName() {
+    try {
+      if (detailOrder?.name) return detailOrder.name;
+    } catch (error) {
+      return '';
+    }
+    return '';
+  }
+
+  function patchRenderBoardForAccounting() {
+    try {
+      if (typeof renderBoard !== 'function' || renderBoard.__blanksBatchAccountingPatched) return;
+      const originalRenderBoard = renderBoard;
+      renderBoard = async function patchedRenderBoard(...args) {
+        const result = await originalRenderBoard.apply(this, args);
+        hydrateAccountingForCurrentOrders().catch(error => {
+          console.warn('Unable to update blanks accounting after board render', error);
+        });
+        return result;
+      };
+      renderBoard.__blanksBatchAccountingPatched = true;
+    } catch (error) {
+      console.warn('Unable to patch board render for blanks accounting', error);
+    }
+  }
+
+  function patchOpenDetailForAccounting() {
+    try {
+      if (typeof openDetail !== 'function' || openDetail.__blanksBatchAccountingPatched) return;
+      const originalOpenDetail = openDetail;
+      openDetail = function patchedOpenDetail(order, ...args) {
+        detailAccountingOrderName = order?.name || '';
+        const result = originalOpenDetail.call(this, order, ...args);
+        renderDetailAccounting(detailAccountingOrderName);
+        hydrateAccountingForCurrentOrders().catch(error => {
+          console.warn('Unable to update blanks accounting for detail', error);
+        });
+        return result;
+      };
+      openDetail.__blanksBatchAccountingPatched = true;
+    } catch (error) {
+      console.warn('Unable to patch order detail for blanks accounting', error);
+    }
+  }
+
+  function annotateAccountingCards() {
+    document.querySelectorAll('#col-blanks .card[data-order-id], #col-print .card[data-order-id]').forEach(card => {
+      const orderName = card.dataset.orderId;
+      const accounting = accountingForOrder(orderName);
+      upsertAccountingChip(card, accounting);
+    });
+
+    document.querySelectorAll('#col-blanks .bundle-card[data-bundle-name], #col-print .bundle-card[data-bundle-name]').forEach(card => {
+      const accounting = accountingForBundle(card.dataset.bundleName);
+      upsertAccountingChip(card, accounting);
+    });
+  }
+
+  function accountingForBundle(bundleName) {
+    const orders = currentOrders().filter(order => order?.bundle === bundleName);
+    const entries = orders.map(order => accountingForOrder(order.name)).filter(Boolean);
+    if (!entries.length) return null;
+
+    const expectedGarments = entries.reduce((sum, entry) => sum + entry.expectedGarments, 0);
+    const accountedGarments = entries.reduce((sum, entry) => sum + entry.accountedGarments, 0);
+    const missingGarments = Math.max(0, expectedGarments - accountedGarments);
+    return {
+      expectedGarments,
+      accountedGarments,
+      missingGarments,
+      fullyAccounted: expectedGarments > 0 && missingGarments === 0
+    };
+  }
+
+  function upsertAccountingChip(card, accounting) {
+    const existing = card.querySelector('.blanks-accounting-chip');
+    if (!accounting || !accounting.expectedGarments) {
+      existing?.remove();
+      card.classList.remove('supplies-accounted', 'supplies-missing');
+      return;
+    }
+
+    const chip = existing || document.createElement('span');
+    chip.className = `blanks-accounting-chip ${accounting.fullyAccounted ? 'is-complete' : 'is-missing'}`;
+    chip.textContent = accounting.fullyAccounted
+      ? 'Garments accounted'
+      : `Supplies ${accounting.accountedGarments}/${accounting.expectedGarments}`;
+    chip.title = accounting.fullyAccounted
+      ? 'All garments are accounted for in the S&S batch'
+      : `${accounting.missingGarments} garment${accounting.missingGarments === 1 ? '' : 's'} still missing`;
+
+    const body = card.querySelector('.compact-body') || card.querySelector('.card-body') || card;
+    const anchor = body.querySelector('.card-status-badge');
+    if (!existing) {
+      if (anchor?.nextSibling) body.insertBefore(chip, anchor.nextSibling);
+      else if (anchor) body.appendChild(chip);
+      else body.insertBefore(chip, body.firstChild);
+    }
+    card.classList.toggle('supplies-accounted', accounting.fullyAccounted);
+    card.classList.toggle('supplies-missing', !accounting.fullyAccounted);
+  }
+
+  function ensureDetailAccountingPanel() {
+    let panel = document.getElementById('detail-blanks-accounting-section');
+    if (panel) {
+      placeDetailAccountingPanel(panel);
+      return panel;
+    }
+
+    panel = document.createElement('section');
+    panel.id = 'detail-blanks-accounting-section';
+    panel.className = 'detail-section detail-blanks-accounting-section hidden';
+    panel.innerHTML = `
+      <div class="detail-section-header blanks-accounting-detail-header">
+        <h4>Garment Accounting</h4>
+        <button id="detail-blanks-accounting-open-batch" class="fullscreen-btn" type="button">Receive Batch</button>
+      </div>
+      <div id="detail-blanks-accounting-summary" class="blanks-accounting-detail-summary"></div>
+      <div id="detail-blanks-accounting-lines" class="blanks-accounting-detail-lines"></div>
+    `;
+
+    placeDetailAccountingPanel(panel);
+
+    panel.querySelector('#detail-blanks-accounting-open-batch')?.addEventListener('click', () => {
+      openBatchForOrder(detailAccountingOrderName || currentDetailOrderName()).catch(error => {
+        console.error('Unable to open accounting batch', error);
+        alert(`Could not open batch: ${error?.message || error}`);
+      });
+    });
+
+    return panel;
+  }
+
+  function placeDetailAccountingPanel(panel) {
+    const itemsSection = document.getElementById('detail-items-section');
+    if (itemsSection?.parentNode) {
+      itemsSection.insertAdjacentElement('afterend', panel);
+    } else {
+      document.getElementById('detail-main-column')?.appendChild(panel);
+    }
+  }
+
+  function renderDetailAccounting(orderName) {
+    const panel = ensureDetailAccountingPanel();
+    if (!panel) return;
+    detailAccountingOrderName = orderName || detailAccountingOrderName || currentDetailOrderName();
+    const accounting = accountingForOrder(detailAccountingOrderName);
+    if (!detailAccountingOrderName || !accounting || !accounting.expectedGarments) {
+      panel.classList.add('hidden');
+      return;
+    }
+
+    panel.classList.remove('hidden');
+    const summary = panel.querySelector('#detail-blanks-accounting-summary');
+    const lines = panel.querySelector('#detail-blanks-accounting-lines');
+    const button = panel.querySelector('#detail-blanks-accounting-open-batch');
+    const missing = accounting.missingGarments;
+    const batchLabels = Array.from(accounting.batches.values()).join(', ');
+
+    summary.innerHTML = `
+      <div class="blanks-accounting-summary-main ${accounting.fullyAccounted ? 'is-complete' : 'is-missing'}">
+        <strong>${accounting.accountedGarments}/${accounting.expectedGarments} accounted</strong>
+        <span>${accounting.fullyAccounted ? 'All garments are accounted for.' : `${missing} missing from batch receiving.`}</span>
+      </div>
+      <span class="blanks-accounting-summary-batch">${escapeHtml(batchLabels)}</span>
+    `;
+
+    lines.replaceChildren();
+    accounting.lines.forEach(line => {
+      const row = document.createElement('div');
+      row.className = `blanks-accounting-detail-line ${line.accountedQty >= line.expectedQty ? 'is-complete' : 'is-missing'}`;
+      row.innerHTML = `
+        <span class="blanks-accounting-line-copy">
+          <strong>${escapeHtml(line.title)}</strong>
+          <span>${escapeHtml(line.variantTitle || 'No variant')}${line.sku ? ` · SKU ${escapeHtml(line.sku)}` : ''}</span>
+        </span>
+        <span class="blanks-accounting-line-count">${line.accountedQty}/${line.expectedQty}</span>
+      `;
+      lines.appendChild(row);
+    });
+
+    if (button) {
+      button.hidden = accounting.batches.size === 0;
+      button.textContent = accounting.batches.size > 1 ? 'Receive Batches' : 'Receive Batch';
+    }
+  }
+
+  async function openBatchForOrder(orderName) {
+    const accounting = accountingForOrder(orderName);
+    if (!accounting || !accounting.batches.size) return;
+    if (accounting.batches.size > 1) {
+      await openReceiveOverlay();
+      return;
+    }
+    const [batchId] = accounting.batches.keys();
+    await openReceiveOverlay();
+    await openBatchFromList(batchId);
   }
 
   function ensureReceiveButton() {
@@ -275,6 +573,12 @@
     if (!window.api || typeof window.api.getBlanksBatch !== 'function') return null;
     const data = await window.api.getBlanksBatch(id);
     activeBatch = data?.batch || null;
+    if (activeBatch?.id) {
+      batchDetailsById.set(activeBatch.id, activeBatch);
+      buildOrderAccounting();
+      annotateAccountingCards();
+      renderDetailAccounting(detailAccountingOrderName || currentDetailOrderName());
+    }
     draftReceived = new Map((activeBatch?.manifest || []).map(line => [
       line.itemKey,
       Number(line.receivedQty) || 0
@@ -509,12 +813,16 @@
     try {
       const result = await window.api.updateBlanksBatchReceiving(activeBatch.id, updates);
       activeBatch = result?.batch || activeBatch;
+      if (activeBatch?.id) batchDetailsById.set(activeBatch.id, activeBatch);
       draftReceived = new Map((activeBatch.manifest || []).map(line => [
         line.itemKey,
         Number(line.receivedQty) || 0
       ]));
       dirty = false;
       await loadBatchIndex();
+      buildOrderAccounting();
+      annotateAccountingCards();
+      renderDetailAccounting(detailAccountingOrderName || currentDetailOrderName());
       renderBatchDetail();
       if (save) save.textContent = 'Saved';
       window.setTimeout(() => {
@@ -600,12 +908,22 @@
   window.blanksBatchFoundation = {
     buildPayload: buildBlanksBatchPayload,
     saveBatchForOrders,
-    openReceiveOverlay
+    openReceiveOverlay,
+    hydrateAccounting: hydrateAccountingForCurrentOrders,
+    accountingForOrder
   };
+
+  patchRenderBoardForAccounting();
+  patchOpenDetailForAccounting();
 
   document.addEventListener('DOMContentLoaded', () => {
     ensureReceiveButton();
     ensureReceiveOverlay();
+    patchRenderBoardForAccounting();
+    patchOpenDetailForAccounting();
+    hydrateAccountingForCurrentOrders().catch(error => {
+      console.warn('Unable to hydrate blanks accounting on load', error);
+    });
   });
 
   if (!patchMarkInCartOrdered()) {

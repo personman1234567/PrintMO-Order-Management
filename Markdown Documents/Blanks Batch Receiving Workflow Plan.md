@@ -1,6 +1,6 @@
 ---
 title: Blanks Batch Receiving Workflow Plan
-status: task_2_complete
+status: task_3_complete
 date: 2026-05-08
 feature_area: order management, blanks ordering, supplies receiving, production readiness
 primary_terms: S&S batch, blanks batch, batch manifest, Blanks Cart, Mark In Cart Ordered, received garments, accounted garments, oldest order first
@@ -178,7 +178,7 @@ Task 2: Receiving and allocation. Completed 2026-05-08.
 - Allocate received garments to customer orders oldest-first.
 - Store accounted quantities per customer order line.
 
-Task 3: Order UI and polish. Not started.
+Task 3: Order UI and polish. Completed 2026-05-08.
 
 - Show `x / y accounted` at order and line-item level.
 - Add simple manual correction paths.
@@ -335,6 +335,50 @@ Task 2 batch updates:
 - Batch `status` becomes `received` when all expected garments are accounted for; otherwise it remains `ordered`.
 
 Task 2 intentionally does not yet change the individual order detail screen or Ready To Print cards. Those UI surfaces are Task 3.
+
+## Task 3 Implementation Notes
+
+Task 3 added production-facing accounting visibility.
+
+Implemented files:
+
+- `order-manager-web/blanks-batches.js`
+- `order-manager-web/desktop.css`
+- `order-manager-web/mobile.css`
+- `Markdown Documents/Blanks Batch Receiving Workflow Plan.md`
+
+Task 3 behavior:
+
+- Hydrates batch accounting for currently loaded orders.
+- Derives per-order garment accounting from saved batch manifests.
+- Adds accounting chips to Blanks Ordered and Ready To Print cards.
+- Aggregates accounting chips on bundled production cards.
+- Adds a `Garment Accounting` section to the order detail modal.
+- Shows order-level `accounted / expected` totals.
+- Shows line-level `accounted / expected` counts for each garment variant.
+- Adds `Receive Batch` / `Receive Batches` action from the detail panel.
+
+Card chip examples:
+
+```text
+Garments accounted
+Supplies 3/5
+```
+
+Detail line example:
+
+```text
+Gildan Softstyle / Black / Large: 1/2
+```
+
+Task 3 correction path:
+
+- Corrections still happen through batch receiving.
+- From order detail, staff can click `Receive Batch` to open the related batch manifest and adjust received quantities.
+- If an order is tied to multiple batches, the detail action opens the batch list instead of guessing which batch to edit.
+- Saving receiving re-runs oldest-first allocation and refreshes card/detail accounting.
+
+Task 3 intentionally does not duplicate accounted quantities into separate queue-order fields. The batch manifest remains the source of truth.
 
 ## Future Enhancements
 
