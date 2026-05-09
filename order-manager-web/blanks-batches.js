@@ -436,6 +436,284 @@
     await openBatchFromList(batchId);
   }
 
+  function statusLabel(status, blanksOrdered = null) {
+    if (status === 'received') return 'Pipeline';
+    if (status === 'toOrder') return 'Create Blanks Order';
+    if (status === 'print') return 'Ready To Print';
+    if (status === 'blanks') return Number(blanksOrdered) ? 'Blanks Ordered' : 'In S&S Cart';
+    return 'this stage';
+  }
+
+  function movePatchForDropTarget(status, options = {}) {
+    const patch = { status };
+    if (status === 'blanks') {
+      const forced = Object.prototype.hasOwnProperty.call(options, 'blanksOrdered')
+        ? options.blanksOrdered
+        : (typeof blanksOrderedValueForActiveView === 'function' ? blanksOrderedValueForActiveView() : 0);
+      patch.blanksOrdered = forced ? 1 : 0;
+    }
+    if (status === 'received' || status === 'toOrder') {
+      patch.blanksOrdered = 0;
+    }
+    return patch;
+  }
+
+  function orderNamesFromDragId(dragId) {
+    const id = String(dragId || '');
+    if (!id) return [];
+    if (id.startsWith('bundle:')) {
+      const bundleName = id.slice(7);
+      return currentOrders()
+        .filter(order => order?.bundle === bundleName)
+        .map(order => order.name)
+        .filter(Boolean);
+    }
+    return [id];
+  }
+
+  async function batchRefsForOrders(orderNames) {
+    await hydrateAccountingForCurrentOrders();
+    const refs = new Map();
+    orderNames.forEach(orderName => {
+      const accounting = accountingForOrder(orderName);
+      accounting?.batches?.forEach((label, id) => {
+        refs.set(id, { id, label: label || id });
+      });
+    });
+    return Array.from(refs.values());
+  }
+
+  function moveTouchesBatchMembership(status, patch, batchRefs) {
+    if (!batchRefs.length) return false;
+    if (status === 'received' || status === 'toOrder') return true;
+    if (status === 'blanks' && Number(patch.blanksOrdered) === 0) return true;
+    return false;
+  }
+
+  async function handleBatchAwareDrop(dragId, status, options = {}) {
+    const orderNames = orderNamesFromDragId(dragId);
+    if (!orderNames.length) {
+      console.warn('Drop ignored: no order ID present');
+      return;
+    }
+
+    if (options.activateBlanksView && typeof setActiveBlanksView === 'function') {
+      setActiveBlanksView(options.activateBlanksView, { render: false });
+    }
+
+    const patch = movePatchForDropTarget(status, options);
+    const batchRefs = await batchRefsForOrders(orderNames);
+    let batchChoice = 'keep';
+
+    if (moveTouchesBatchMembership(status, patch, batchRefs)) {
+      batchChoice = await resolveBatchCorrection({
+        orderNames,
+        batchRefs,
+        targetLabel: statusLabel(status, patch.blanksOrdered)
+      });
+      if (batchChoice === 'cancel') return;
+    }
+
+    const moved = await applyBatchAwareOrderMove(orderNames, status, patch);
+    if (!moved) return;
+
+    if (batchChoice === 'remove') {
+      await removeOrderNamesFromBatchRefs(orderNames, batchRefs);
+    }
+  }
+
+  async function applyBatchAwareOrderMove(orderNames, status, patch) {
+    if (typeof applyOptimisticOrderUpdate !== 'function') {
+      await persistOrderMove(orderNames, status, patch);
+      if (typeof renderBoard === 'function') await renderBoard();
+      return true;
+    }
+
+    return applyOptimisticOrderUpdate(
+      orderNames,
+      patch,
+      names => persistOrderMove(names, status, patch),
+      'Could not move order'
+    );
+  }
+
+  async function persistOrderMove(orderNames, status, patch) {
+    await Promise.all(orderNames.map(orderName => window.api.updateStatus(orderName, status)));
+    if (Object.prototype.hasOwnProperty.call(patch, 'blanksOrdered')) {
+      if (typeof updateBlanksOrderedForOrders === 'function') {
+        await updateBlanksOrderedForOrders(orderNames, Number(patch.blanksOrdered) === 1);
+      } else {
+        await Promise.all(orderNames.map(orderName => {
+          return window.api.updateReady({ name: orderName, blanksOrdered: Number(patch.blanksOrdered) === 1 ? 1 : 0 });
+        }));
+      }
+    }
+  }
+
+  async function removeOrderNamesFromBatchRefs(orderNames, batchRefs) {
+    if (!batchRefs.length || !window.api || typeof window.api.removeOrdersFromBlanksBatch !== 'function') return;
+    const results = await Promise.all(batchRefs.map(batchRef => {
+      return window.api.removeOrdersFromBlanksBatch(batchRef.id, orderNames);
+    }));
+
+    results.forEach(result => {
+      if (result?.batch?.id) {
+        batchDetailsById.set(result.batch.id, result.batch);
+        if (activeBatch?.id === result.batch.id) activeBatch = result.batch;
+      }
+    });
+
+    await loadBatchIndex();
+    buildOrderAccounting();
+    annotateAccountingCards();
+    renderDetailAccounting(detailAccountingOrderName || currentDetailOrderName());
+    if (isReceiveOverlayOpen()) {
+      if (activeBatch?.id) renderBatchDetail();
+      else renderBatchList();
+    }
+  }
+
+  function ensureBatchCorrectionResolver() {
+    let overlay = document.getElementById('batch-correction-overlay');
+    if (overlay) return overlay;
+
+    overlay = document.createElement('div');
+    overlay.id = 'batch-correction-overlay';
+    overlay.className = 'batch-correction-overlay hidden';
+    overlay.innerHTML = `
+      <div class="batch-correction-dialog" role="dialog" aria-modal="true" aria-labelledby="batch-correction-title">
+        <h2 id="batch-correction-title">Move Batch Order</h2>
+        <p id="batch-correction-copy"></p>
+        <div id="batch-correction-batches" class="batch-correction-batches"></div>
+        <div class="batch-correction-actions">
+          <button class="batch-correction-primary" type="button" data-batch-choice="remove">Remove From Batch &amp; Move</button>
+          <button type="button" data-batch-choice="keep">Move Only</button>
+          <button type="button" data-batch-choice="cancel">Cancel</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  function resolveBatchCorrection({ orderNames, batchRefs, targetLabel }) {
+    const overlay = ensureBatchCorrectionResolver();
+    const title = overlay.querySelector('#batch-correction-title');
+    const copy = overlay.querySelector('#batch-correction-copy');
+    const batches = overlay.querySelector('#batch-correction-batches');
+    const count = orderNames.length;
+    const batchText = batchRefs.map(batchRef => batchRef.label).join(', ');
+
+    if (title) title.textContent = `Move ${count === 1 ? 'Order' : `${count} Orders`} To ${targetLabel}`;
+    if (copy) {
+      copy.textContent = `${count === 1 ? 'This order is' : 'These orders are'} already part of ${batchText}. Choose what should happen to the saved S&S batch before the card moves.`;
+    }
+    if (batches) {
+      batches.textContent = batchText;
+    }
+
+    overlay.classList.remove('hidden');
+
+    return new Promise(resolve => {
+      const finish = choice => {
+        overlay.classList.add('hidden');
+        overlay.removeEventListener('click', onOverlayClick);
+        document.removeEventListener('keyup', onKey);
+        overlay.querySelectorAll('[data-batch-choice]').forEach(button => {
+          button.removeEventListener('click', onChoice);
+        });
+        resolve(choice);
+      };
+      const onChoice = event => finish(event.currentTarget.dataset.batchChoice || 'cancel');
+      const onOverlayClick = event => {
+        if (event.target === overlay) finish('cancel');
+      };
+      const onKey = event => {
+        if (event.key === 'Escape') finish('cancel');
+      };
+
+      overlay.querySelectorAll('[data-batch-choice]').forEach(button => {
+        button.addEventListener('click', onChoice);
+      });
+      overlay.addEventListener('click', onOverlayClick);
+      document.addEventListener('keyup', onKey);
+      requestAnimationFrame(() => {
+        overlay.querySelector('[data-batch-choice="remove"]')?.focus();
+      });
+    });
+  }
+
+  function patchDropZonesForBatchCorrections() {
+    try {
+      if (typeof makeDropZone !== 'function' || makeDropZone.__blanksBatchCorrectionsPatched) return true;
+
+      makeDropZone = function patchedBatchAwareDropZone(el, status) {
+        if (!el) return;
+        el.addEventListener('dragover', event => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+          if (el.classList.contains('drag-area')) el.classList.add('over');
+        });
+        el.addEventListener('dragleave', () => {
+          el.classList.remove('over');
+        });
+        el.addEventListener('drop', async event => {
+          event.preventDefault();
+          el.classList.remove('over');
+          document.body.classList.remove('dragging-cursor');
+          document.querySelectorAll('.dragging').forEach(card => card.classList.remove('dragging'));
+          const dragId = event.dataTransfer.getData('text/plain');
+          try {
+            await handleBatchAwareDrop(dragId, status);
+          } catch (error) {
+            console.error('Unable to move order', error);
+            alert(`Could not move order: ${error?.message || error}`);
+          }
+        });
+      };
+      makeDropZone.__blanksBatchCorrectionsPatched = true;
+      return true;
+    } catch (error) {
+      console.warn('Unable to patch drop zones for batch corrections', error);
+      return false;
+    }
+  }
+
+  function setupBlanksTabDropTargets() {
+    [
+      { id: 'blanks-view-cart', blanksOrdered: 0, view: 'cart' },
+      { id: 'blanks-view-ordered', blanksOrdered: 1, view: 'ordered' }
+    ].forEach(target => {
+      const button = document.getElementById(target.id);
+      if (!button || button.dataset.batchDropReady === '1') return;
+      button.dataset.batchDropReady = '1';
+      button.addEventListener('dragover', event => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        button.classList.add('drag-over');
+      });
+      button.addEventListener('dragleave', () => {
+        button.classList.remove('drag-over');
+      });
+      button.addEventListener('drop', async event => {
+        event.preventDefault();
+        button.classList.remove('drag-over');
+        document.body.classList.remove('dragging-cursor');
+        document.querySelectorAll('.dragging').forEach(card => card.classList.remove('dragging'));
+        const dragId = event.dataTransfer.getData('text/plain');
+        try {
+          await handleBatchAwareDrop(dragId, 'blanks', {
+            blanksOrdered: target.blanksOrdered,
+            activateBlanksView: target.view
+          });
+        } catch (error) {
+          console.error('Unable to move order to blanks view', error);
+          alert(`Could not move order: ${error?.message || error}`);
+        }
+      });
+    });
+  }
+
   function ensureReceiveButton() {
     const actions = document.querySelector('#blanks-section .section-actions');
     if (!actions || document.getElementById('blanks-receive-batches-btn')) return;
@@ -485,6 +763,7 @@
         <div class="manual-add-actions blanks-receive-actions">
           <button id="blanks-receive-back" class="manual-add-action manual-add-action-secondary hidden" type="button">Back</button>
           <button id="blanks-receive-refresh" class="manual-add-action" type="button">Refresh</button>
+          <button id="blanks-receive-add-cart" class="manual-add-action hidden" type="button">Add In-Cart Orders</button>
           <button id="blanks-receive-mark-all" class="manual-add-action hidden" type="button">Mark All Received</button>
           <button id="blanks-receive-save" class="manual-add-action blanks-receive-save hidden" type="button" disabled>Save Receiving</button>
         </div>
@@ -504,6 +783,7 @@
     overlay.querySelector('#blanks-receive-close')?.addEventListener('click', closeReceiveOverlay);
     overlay.querySelector('#blanks-receive-back')?.addEventListener('click', showBatchList);
     overlay.querySelector('#blanks-receive-refresh')?.addEventListener('click', refreshReceiveOverlay);
+    overlay.querySelector('#blanks-receive-add-cart')?.addEventListener('click', addCurrentCartOrdersToActiveBatch);
     overlay.querySelector('#blanks-receive-mark-all')?.addEventListener('click', markAllManifestReceived);
     overlay.querySelector('#blanks-receive-save')?.addEventListener('click', saveReceiving);
     overlay.addEventListener('click', handleReceiveClick);
@@ -601,9 +881,11 @@
     document.getElementById('blanks-receive-eyebrow').textContent = isDetail ? 'Batch Manifest' : 'S&S Batches';
     document.getElementById('blanks-receive-title').textContent = isDetail && activeBatch ? activeBatch.label : 'Receive Batches';
     document.getElementById('blanks-receive-back')?.classList.toggle('hidden', !isDetail);
+    document.getElementById('blanks-receive-add-cart')?.classList.toggle('hidden', !isDetail);
     document.getElementById('blanks-receive-mark-all')?.classList.toggle('hidden', !isDetail);
     document.getElementById('blanks-receive-save')?.classList.toggle('hidden', !isDetail);
     syncSaveState();
+    syncAddCartOrdersState();
   }
 
   function totalFromIndex(field) {
@@ -685,6 +967,75 @@
     });
     list.appendChild(fragment);
     syncDraftStats();
+    syncAddCartOrdersState();
+  }
+
+  function currentCartOrdersForActiveBatch() {
+    if (!activeBatch) return [];
+    const existing = new Set(Array.isArray(activeBatch.orderNames) ? activeBatch.orderNames : []);
+    return currentOrders().filter(order => {
+      return order?.status === 'blanks' && !isOrdered(order) && !existing.has(order.name);
+    });
+  }
+
+  function syncAddCartOrdersState() {
+    const button = document.getElementById('blanks-receive-add-cart');
+    if (!button || button.classList.contains('hidden')) return;
+    const count = currentCartOrdersForActiveBatch().length;
+    button.disabled = !activeBatch || dirty || count === 0;
+    button.textContent = count ? `Add In-Cart (${count})` : 'Add In-Cart Orders';
+    button.title = dirty
+      ? 'Save or discard receiving changes before adding orders to this batch'
+      : 'Add current In S&S Cart orders to this batch';
+  }
+
+  async function addCurrentCartOrdersToActiveBatch() {
+    if (!activeBatch || dirty) return;
+    if (!window.api || typeof window.api.addOrdersToBlanksBatch !== 'function') return;
+    const orders = currentCartOrdersForActiveBatch();
+    if (!orders.length) {
+      alert('No In S&S Cart orders are available to add to this batch.');
+      return;
+    }
+    const label = activeBatch.label || activeBatch.id;
+    const message = `Add ${orders.length} In S&S Cart order${orders.length === 1 ? '' : 's'} to ${label}? This will mark them Ordered and recalculate the batch.`;
+    if (!window.confirm(message)) return;
+
+    const button = document.getElementById('blanks-receive-add-cart');
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Adding...';
+    }
+
+    try {
+      const payload = buildBlanksBatchPayload(orders);
+      const result = await window.api.addOrdersToBlanksBatch(activeBatch.id, payload.orders);
+      activeBatch = result?.batch || activeBatch;
+      if (activeBatch?.id) batchDetailsById.set(activeBatch.id, activeBatch);
+
+      const orderNames = orders.map(order => order.name).filter(Boolean);
+      if (typeof applyOptimisticOrderUpdate === 'function') {
+        await applyOptimisticOrderUpdate(
+          orderNames,
+          { status: 'blanks', blanksOrdered: 1 },
+          names => updateBlanksOrderedForOrders(names, true),
+          'Batch was updated, but orders could not be marked ordered'
+        );
+      } else if (typeof updateBlanksOrderedForOrders === 'function') {
+        await updateBlanksOrderedForOrders(orderNames, true);
+        if (typeof renderBoard === 'function') await renderBoard();
+      }
+
+      await loadBatchIndex();
+      buildOrderAccounting();
+      annotateAccountingCards();
+      renderDetailAccounting(detailAccountingOrderName || currentDetailOrderName());
+      renderBatchDetail();
+    } catch (error) {
+      console.error('Unable to add in-cart orders to batch', error);
+      alert(`Could not add orders to batch: ${error?.message || error}`);
+      syncAddCartOrdersState();
+    }
   }
 
   function renderManifestLine(line) {
@@ -785,6 +1136,7 @@
   function syncSaveState() {
     const save = document.getElementById('blanks-receive-save');
     if (save) save.disabled = !dirty;
+    syncAddCartOrdersState();
   }
 
   function markAllManifestReceived() {
@@ -915,12 +1267,15 @@
 
   patchRenderBoardForAccounting();
   patchOpenDetailForAccounting();
+  patchDropZonesForBatchCorrections();
 
   document.addEventListener('DOMContentLoaded', () => {
     ensureReceiveButton();
     ensureReceiveOverlay();
+    setupBlanksTabDropTargets();
     patchRenderBoardForAccounting();
     patchOpenDetailForAccounting();
+    patchDropZonesForBatchCorrections();
     hydrateAccountingForCurrentOrders().catch(error => {
       console.warn('Unable to hydrate blanks accounting on load', error);
     });

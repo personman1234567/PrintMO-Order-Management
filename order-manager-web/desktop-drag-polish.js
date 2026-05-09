@@ -1,7 +1,7 @@
 (() => {
   const desktopQuery = window.matchMedia('(min-width: 901px)');
   const cardSelector = '.card[data-order-id], .bundle-card[data-bundle-name]';
-  const dropZoneSelector = '#col-received, #col-toOrder, #col-blanks, #col-print';
+  const dropZoneSelector = '#col-received, #col-toOrder, #col-blanks, #col-print, #blanks-view-cart, #blanks-view-ordered';
   const boardSelector = '#col-received, #picked-cards, #col-blanks, #col-print';
   const recentDropKeys = new Set();
   const metadataRefreshMs = 12000;

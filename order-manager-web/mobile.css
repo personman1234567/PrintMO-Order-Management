@@ -3490,6 +3490,12 @@
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.16);
 }
 
+.blanks-segment.drag-over {
+  color: #0f172a;
+  background: #dbeafe;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
+}
+
 .blanks-segment-count {
   display: inline-grid;
   place-items: center;
@@ -3847,6 +3853,77 @@
 .blanks-accounting-detail-line.is-missing .blanks-accounting-line-count {
   background: #fef3c7;
   color: #92400e;
+}
+
+.batch-correction-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2600;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.batch-correction-overlay.hidden {
+  display: none !important;
+}
+
+.batch-correction-dialog {
+  width: 100%;
+  max-width: 520px;
+  padding: 18px;
+  border-radius: 14px 14px 10px 10px;
+  background: #ffffff;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.28);
+}
+
+.batch-correction-dialog h2 {
+  margin: 0 0 8px;
+  color: #0f172a;
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.batch-correction-dialog p {
+  margin: 0;
+  color: #475569;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.batch-correction-batches {
+  margin: 14px 0;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  color: #0f172a;
+  background: #f8fafc;
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.batch-correction-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.batch-correction-actions button {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #0f172a;
+  background: #ffffff;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.batch-correction-actions .batch-correction-primary {
+  border-color: #2563eb;
+  color: #ffffff;
+  background: #2563eb;
 }
 
 body.manual-add-open {

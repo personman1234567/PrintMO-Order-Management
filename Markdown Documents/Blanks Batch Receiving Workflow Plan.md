@@ -1,6 +1,6 @@
 ---
 title: Blanks Batch Receiving Workflow Plan
-status: task_3_complete
+status: task_4_complete
 date: 2026-05-08
 feature_area: order management, blanks ordering, supplies receiving, production readiness
 primary_terms: S&S batch, blanks batch, batch manifest, Blanks Cart, Mark In Cart Ordered, received garments, accounted garments, oldest order first
@@ -183,6 +183,13 @@ Task 3: Order UI and polish. Completed 2026-05-08.
 - Show `x / y accounted` at order and line-item level.
 - Add simple manual correction paths.
 - Reflect accounted status in production screens.
+
+Task 4: Card-first correction flexibility. Completed 2026-05-08.
+
+- Keep board cards as the main movement control.
+- Add a batch-aware resolver when moving batch orders backward.
+- Let staff remove an order from its S&S batch and recalculate, or move only for edge cases.
+- Allow In S&S Cart orders to be manually added to an existing batch.
 
 ## Task 1 Implementation Notes
 
@@ -379,6 +386,45 @@ Task 3 correction path:
 - Saving receiving re-runs oldest-first allocation and refreshes card/detail accounting.
 
 Task 3 intentionally does not duplicate accounted quantities into separate queue-order fields. The batch manifest remains the source of truth.
+
+## Task 4 Implementation Notes
+
+Task 4 made the workflow less rigid without replacing the card-driven UI.
+
+Implemented files:
+
+- `order-manager-proxy/worker.js`
+- `order-manager-web/web-shim.js`
+- `order-manager-web/blanks-batches.js`
+- `order-manager-web/desktop-drag-polish.js`
+- `order-manager-web/desktop.css`
+- `order-manager-web/mobile.css`
+- `Markdown Documents/Blanks Batch Receiving Workflow Plan.md`
+
+Task 4 behavior:
+
+- Normal card drag/drop still moves orders between board stages.
+- If a dragged order already belongs to an S&S batch and is moved back to `Pipeline`, `Create Blanks Order`, or `In S&S Cart`, the UI shows a resolver.
+- Resolver options: `Remove From Batch & Move`, `Move Only`, or `Cancel`.
+- `Remove From Batch & Move` removes the order from every related batch, rebuilds manifest expected quantities, and re-runs oldest-first allocation.
+- `Move Only` changes the card stage but leaves the saved batch untouched for testing or unusual business cases.
+- The `In S&S Cart` and `Ordered` segmented tabs are drop targets, so an ordered card can be dragged directly back to In S&S Cart.
+- Batch receiving detail now has `Add In-Cart` to add current In S&S Cart orders to the open batch and mark them ordered.
+
+Updated API behavior:
+
+```text
+PATCH /order-manager/blanks-batches
+```
+
+New patch bodies:
+
+```text
+{ id, action: "remove-orders", orderNames: [...] }
+{ id, action: "add-orders", orders: [...] }
+```
+
+Task 4 keeps the batch manifest as the source of truth. Card movement can change workflow position, but batch membership changes only happen through explicit resolver or batch-detail actions.
 
 ## Future Enhancements
 

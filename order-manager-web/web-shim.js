@@ -185,6 +185,24 @@ window.api.updateBlanksBatchReceiving = async (id, updates = []) => {
   });
 };
 
+window.api.removeOrdersFromBlanksBatch = async (id, orderNames = []) => {
+  if (!id) throw new Error("Batch ID is required");
+  const names = Array.isArray(orderNames) ? orderNames.filter(Boolean) : [];
+  return apiFetch("/order-manager/blanks-batches", {
+    method: "PATCH",
+    body: JSON.stringify({ id, action: "remove-orders", orderNames: names }),
+  });
+};
+
+window.api.addOrdersToBlanksBatch = async (id, orders = []) => {
+  if (!id) throw new Error("Batch ID is required");
+  const cleanOrders = Array.isArray(orders) ? orders.filter(Boolean) : [];
+  return apiFetch("/order-manager/blanks-batches", {
+    method: "PATCH",
+    body: JSON.stringify({ id, action: "add-orders", orders: cleanOrders }),
+  });
+};
+
 window.api.listStorageObjects = async ({ prefix, cursor, limit, delimiter } = {}) => {
   const query = buildQuery({ prefix, cursor, limit, delimiter });
   return apiFetch(`/order-manager/storage/list${query}`, { method: "GET" });
