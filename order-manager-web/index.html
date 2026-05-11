@@ -181,7 +181,20 @@
                   <input id="manual-mockup-file-input" class="manual-mockup-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" multiple>
                 </div>
               </div>
-              <div id="detail-mockups-track"></div>
+              <div id="detail-mockups-browser" class="detail-mockups-browser">
+                <div id="detail-mockup-feature" class="detail-mockup-feature hidden">
+                  <button id="detail-mockup-main" class="detail-mockup-main" type="button" aria-label="Open selected mockup preview">
+                    <div id="detail-mockup-main-content" class="detail-mockup-main-content">
+                      <span>Select a mockup preview</span>
+                    </div>
+                  </button>
+                  <div class="detail-mockup-meta">
+                    <span id="detail-mockup-count">0 mockups</span>
+                    <span id="detail-mockup-hint">Click to enlarge</span>
+                  </div>
+                </div>
+                <div id="detail-mockups-track" aria-label="Mockup thumbnails"></div>
+              </div>
               <p id="detail-mockups-placeholder" class="detail-assets-empty">No mockup previews available</p>
             </section>
             <section id="detail-items-section" class="detail-section">
@@ -311,6 +324,7 @@
     <div class="viewer-content">
       <button id="asset-viewer-close">&times;</button>
       <img id="asset-viewer-img" alt="Asset preview" />
+      <div id="asset-viewer-caption" class="asset-viewer-caption"></div>
     </div>
   </div>
 
