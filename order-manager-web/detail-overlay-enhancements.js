@@ -6,6 +6,7 @@
     'chk-prints-ordered'
   ];
   let mockupObserver = null;
+  let itemTableObserver = null;
   let selectedMockupIndex = 0;
   let assetViewerCloseTimer = null;
 
@@ -105,6 +106,7 @@
   }
 
   function syncSelectedMockup(index = selectedMockupIndex) {
+    const strip = document.getElementById('detail-mockups-strip');
     const feature = document.getElementById('detail-mockup-feature');
     const mainButton = document.getElementById('detail-mockup-main');
     const content = document.getElementById('detail-mockup-main-content');
@@ -115,6 +117,8 @@
 
     if (!thumbs.length) {
       selectedMockupIndex = 0;
+      strip?.classList.add('no-mockups');
+      strip?.classList.remove('has-mockups');
       feature.classList.add('hidden');
       count.textContent = '0 mockups';
       setMainMockupMessage('No mockup previews available');
@@ -122,6 +126,8 @@
     }
 
     selectedMockupIndex = Math.max(0, Math.min(index, thumbs.length - 1));
+    strip?.classList.add('has-mockups');
+    strip?.classList.remove('no-mockups');
     feature.classList.remove('hidden');
     count.textContent = `${selectedMockupIndex + 1} of ${thumbs.length} mockup${thumbs.length === 1 ? '' : 's'}`;
     if (hint) hint.textContent = 'Click to enlarge';
@@ -212,6 +218,80 @@
     syncSelectedMockup();
   }
 
+  function cellText(cell) {
+    return cell?.textContent?.replace(/\s+/g, ' ').trim() || '';
+  }
+
+  function wrapCellText(cell, className) {
+    if (!cell) return;
+    cell.classList.add(className);
+    const text = cellText(cell);
+    if (text) cell.title = text;
+    if (cell.querySelector('.detail-cell-copy') || cell.querySelector('.inline-accounting-pill')) return;
+
+    cell.textContent = '';
+    const copy = document.createElement('span');
+    copy.className = 'detail-cell-copy';
+    copy.textContent = text;
+    cell.appendChild(copy);
+  }
+
+  function enhanceItemsTable(order) {
+    const table = document.getElementById('detail-items');
+    const wrapper = document.getElementById('detail-items-wrapper');
+    const count = document.getElementById('detail-items-count');
+    const body = table?.querySelector('tbody');
+    if (!table || !body) return;
+
+    const rows = Array.from(body.rows);
+    const quantity = order?.items
+      ? order.items.reduce((total, item) => total + (Number(item.qty) || 0), 0)
+      : rows.reduce((total, row) => total + (Number(cellText(row.cells[0])) || 0), 0);
+
+    if (count) {
+      const lineLabel = rows.length === 1 ? 'line' : 'lines';
+      const pieceLabel = quantity === 1 ? 'piece' : 'pieces';
+      count.textContent = `${rows.length} ${lineLabel} / ${quantity} ${pieceLabel}`;
+      count.title = 'Line items and total quantity in this order';
+    }
+
+    wrapper?.classList.toggle('has-many-items', rows.length > 12);
+    table.dataset.lineCount = String(rows.length);
+
+    rows.forEach((row, index) => {
+      const cells = row.cells;
+      row.classList.add('detail-item-row');
+      row.dataset.rowNumber = String(index + 1);
+      wrapCellText(cells[1], 'detail-item-description-cell');
+      wrapCellText(cells[2], 'detail-item-variant-cell');
+
+      const description = cellText(cells[1]);
+      const isPrint = typeof isPrintItem === 'function'
+        ? isPrintItem({ title: description })
+        : /print/i.test(description);
+      row.classList.toggle('is-print-item', isPrint);
+      row.classList.toggle('is-apparel-item', !isPrint);
+
+      if (cells[0]) cells[0].title = `Quantity ${cellText(cells[0]) || '0'}`;
+      if (cells[3]) cells[3].title = cellText(cells[3]);
+    });
+  }
+
+  function wireItemsTable(order) {
+    enhanceItemsTable(order);
+    const body = document.querySelector('#detail-items tbody');
+    if (!body || itemTableObserver) return;
+
+    itemTableObserver = new MutationObserver(() => {
+      const activeOrder = typeof detailOrder !== 'undefined' && detailOrder ? detailOrder : order;
+      enhanceItemsTable(activeOrder);
+    });
+    itemTableObserver.observe(body, {
+      childList: true,
+      subtree: true
+    });
+  }
+
   function wireAssetViewerCaptions() {
     if (document.body?.dataset.detailCaptionWired) return;
     document.body.dataset.detailCaptionWired = 'true';
@@ -273,7 +353,9 @@
       wireReadyInputs();
       wireAssetViewerCaptions();
       patchAssetViewerClose();
+      wireItemsTable(order);
       requestAnimationFrame(wireMockupBrowser);
+      requestAnimationFrame(() => enhanceItemsTable(order));
       return result;
     };
     enhancedOpenDetail.__detailSummaryPatched = true;
@@ -287,9 +369,11 @@
     wireAssetViewerCaptions();
     patchAssetViewerClose();
     wireMockupBrowser();
+    wireItemsTable();
   });
 
   patchDetailOpen();
   wireAssetViewerCaptions();
   patchAssetViewerClose();
+  wireItemsTable();
 })();
