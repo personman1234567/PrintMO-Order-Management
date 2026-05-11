@@ -109,8 +109,25 @@
     <div id="detail-card">
       <button id="detail-close">&times;</button>
       <div id="detail-header">
-        <h2 id="detail-order-id"></h2>
-        <time id="detail-timestamp"></time>
+        <div class="detail-title-block">
+          <h2 id="detail-order-id"></h2>
+          <div id="detail-header-customer" class="detail-header-customer"></div>
+        </div>
+        <div class="detail-header-summary" aria-label="Order summary">
+          <div class="detail-summary-metric">
+            <span class="detail-summary-label">Received</span>
+            <time id="detail-timestamp"></time>
+          </div>
+          <div class="detail-summary-metric">
+            <span class="detail-summary-label">Items</span>
+            <span id="detail-header-pieces">0 pieces</span>
+          </div>
+          <div class="detail-summary-metric">
+            <span class="detail-summary-label">Total</span>
+            <span id="detail-header-total">$0.00</span>
+          </div>
+          <div id="detail-header-ready-summary" class="detail-ready-summary">Not ready</div>
+        </div>
       </div>
       <div id="detail-content">
         <div id="detail-main-column">
@@ -175,7 +192,7 @@
                     <tr>
                       <th>Qty</th>
                       <th>Description</th>
-                      <th>Variant</th>
+                      <th>Variant / Accounting</th>
                       <th>Price</th>
                     </tr>
                   </thead>
@@ -417,6 +434,7 @@
   <script src="./storage-browser.js"></script>
   <script src="./renderer.js"></script>
   <script src="./blanks-batches.js"></script>
+  <script src="./detail-overlay-enhancements.js"></script>
   <script src="./desktop-drag-polish.js"></script>
   <script src="./manual-add-checklist.js"></script>
 </body>
