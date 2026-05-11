@@ -1996,6 +1996,55 @@
     #detail-items-section h4 {
       padding: 0 14px 12px;
     }
+    .detail-items-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 14px 8px;
+    }
+    .detail-items-header-row h4 {
+      padding: 0 !important;
+    }
+    .inline-accounting-summary {
+      padding: 6px 14px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      border-radius: 0;
+    }
+    .inline-accounting-summary.is-complete {
+      background: #f0fdf4;
+      color: #166534;
+      border-top: 1px solid #bbf7d0;
+    }
+    .inline-accounting-summary.is-missing {
+      background: #fffbeb;
+      color: #92400e;
+      border-top: 1px solid #fde68a;
+    }
+    .inline-accounting-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-left: 8px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+    .inline-accounting-pill.is-complete {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .inline-accounting-pill.is-missing {
+      background: #fef3c7;
+      color: #92400e;
+    }
     #detail-items-wrapper {
       flex: 1;
       min-height: 0;

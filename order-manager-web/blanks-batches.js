@@ -339,89 +339,118 @@
     card.classList.toggle('supplies-missing', !accounting.fullyAccounted);
   }
 
-  function ensureDetailAccountingPanel() {
-    let panel = document.getElementById('detail-blanks-accounting-section');
-    if (panel) {
-      placeDetailAccountingPanel(panel);
-      return panel;
-    }
-
-    panel = document.createElement('section');
-    panel.id = 'detail-blanks-accounting-section';
-    panel.className = 'detail-section detail-blanks-accounting-section hidden';
-    panel.innerHTML = `
-      <div class="detail-section-header blanks-accounting-detail-header">
-        <h4>Garment Accounting</h4>
-        <button id="detail-blanks-accounting-open-batch" class="fullscreen-btn" type="button">Receive Batch</button>
-      </div>
-      <div id="detail-blanks-accounting-summary" class="blanks-accounting-detail-summary"></div>
-      <div id="detail-blanks-accounting-lines" class="blanks-accounting-detail-lines"></div>
-    `;
-
-    placeDetailAccountingPanel(panel);
-
-    panel.querySelector('#detail-blanks-accounting-open-batch')?.addEventListener('click', () => {
-      openBatchForOrder(detailAccountingOrderName || currentDetailOrderName()).catch(error => {
-        console.error('Unable to open accounting batch', error);
-        alert(`Could not open batch: ${error?.message || error}`);
-      });
-    });
-
-    return panel;
-  }
-
-  function placeDetailAccountingPanel(panel) {
-    const itemsSection = document.getElementById('detail-items-section');
-    if (itemsSection?.parentNode) {
-      itemsSection.insertAdjacentElement('afterend', panel);
-    } else {
-      document.getElementById('detail-main-column')?.appendChild(panel);
-    }
-  }
-
   function renderDetailAccounting(orderName) {
-    const panel = ensureDetailAccountingPanel();
-    if (!panel) return;
+    // Clean up the old standalone panel if it still exists in the DOM.
+    const oldPanel = document.getElementById('detail-blanks-accounting-section');
+    if (oldPanel) oldPanel.remove();
+
     detailAccountingOrderName = orderName || detailAccountingOrderName || currentDetailOrderName();
     const accounting = accountingForOrder(detailAccountingOrderName);
-    if (!detailAccountingOrderName || !accounting || !accounting.expectedGarments) {
-      panel.classList.add('hidden');
-      return;
+    const itemsSection = document.getElementById('detail-items-section');
+    if (!itemsSection) return;
+
+    // --- Receive Batch button in the Items in Order header ---
+    let receiveBatchBtn = document.getElementById('detail-inline-receive-batch-btn');
+    if (!accounting || !accounting.expectedGarments || !accounting.batches.size) {
+      if (receiveBatchBtn) receiveBatchBtn.remove();
+    } else {
+      if (!receiveBatchBtn) {
+        receiveBatchBtn = document.createElement('button');
+        receiveBatchBtn.id = 'detail-inline-receive-batch-btn';
+        receiveBatchBtn.className = 'fullscreen-btn';
+        receiveBatchBtn.type = 'button';
+        receiveBatchBtn.addEventListener('click', () => {
+          openBatchForOrder(detailAccountingOrderName || currentDetailOrderName()).catch(error => {
+            console.error('Unable to open accounting batch', error);
+            alert(`Could not open batch: ${error?.message || error}`);
+          });
+        });
+      }
+      receiveBatchBtn.textContent = accounting.batches.size > 1 ? 'Receive Batches' : 'Receive Batch';
+      const h4 = itemsSection.querySelector('h4');
+      if (h4 && receiveBatchBtn.parentElement !== h4.parentElement) {
+        // Wrap header in a flex row if not already wrapped
+        let headerRow = itemsSection.querySelector('.detail-items-header-row');
+        if (!headerRow) {
+          headerRow = document.createElement('div');
+          headerRow.className = 'detail-items-header-row';
+          h4.parentNode.insertBefore(headerRow, h4);
+          headerRow.appendChild(h4);
+        }
+        headerRow.appendChild(receiveBatchBtn);
+      }
     }
 
-    panel.classList.remove('hidden');
-    const summary = panel.querySelector('#detail-blanks-accounting-summary');
-    const lines = panel.querySelector('#detail-blanks-accounting-lines');
-    const button = panel.querySelector('#detail-blanks-accounting-open-batch');
-    const missing = accounting.missingGarments;
-    const batchLabels = Array.from(accounting.batches.values()).join(', ');
+    // --- Compact accounting summary chip under header ---
+    let summaryChip = itemsSection.querySelector('.inline-accounting-summary');
+    if (!accounting || !accounting.expectedGarments) {
+      if (summaryChip) summaryChip.remove();
+    } else {
+      if (!summaryChip) {
+        summaryChip = document.createElement('div');
+        summaryChip.className = 'inline-accounting-summary';
+        const headerRow = itemsSection.querySelector('.detail-items-header-row') || itemsSection.querySelector('h4');
+        if (headerRow?.nextSibling) {
+          headerRow.parentNode.insertBefore(summaryChip, headerRow.nextSibling);
+        } else {
+          itemsSection.insertBefore(summaryChip, itemsSection.querySelector('#detail-items-wrapper'));
+        }
+      }
+      const statusClass = accounting.fullyAccounted ? 'is-complete' : 'is-missing';
+      summaryChip.className = `inline-accounting-summary ${statusClass}`;
+      summaryChip.textContent = accounting.fullyAccounted
+        ? `✓ ${accounting.accountedGarments}/${accounting.expectedGarments} garments accounted`
+        : `${accounting.accountedGarments}/${accounting.expectedGarments} accounted · ${accounting.missingGarments} missing`;
+    }
 
-    summary.innerHTML = `
-      <div class="blanks-accounting-summary-main ${accounting.fullyAccounted ? 'is-complete' : 'is-missing'}">
-        <strong>${accounting.accountedGarments}/${accounting.expectedGarments} accounted</strong>
-        <span>${accounting.fullyAccounted ? 'All garments are accounted for.' : `${missing} missing from batch receiving.`}</span>
-      </div>
-      <span class="blanks-accounting-summary-batch">${escapeHtml(batchLabels)}</span>
-    `;
+    // --- Inject accounting pills into each item row ---
+    const tbody = document.querySelector('#detail-items tbody');
+    if (!tbody) return;
 
-    lines.replaceChildren();
+    // Remove any previously injected pills
+    tbody.querySelectorAll('.inline-accounting-pill').forEach(el => el.remove());
+
+    if (!accounting || !accounting.expectedGarments) return;
+
+    // Build a lookup map from the accounting lines keyed by title + variant
+    const accountingByKey = new Map();
     accounting.lines.forEach(line => {
-      const row = document.createElement('div');
-      row.className = `blanks-accounting-detail-line ${line.accountedQty >= line.expectedQty ? 'is-complete' : 'is-missing'}`;
-      row.innerHTML = `
-        <span class="blanks-accounting-line-copy">
-          <strong>${escapeHtml(line.title)}</strong>
-          <span>${escapeHtml(line.variantTitle || 'No variant')}${line.sku ? ` · SKU ${escapeHtml(line.sku)}` : ''}</span>
-        </span>
-        <span class="blanks-accounting-line-count">${line.accountedQty}/${line.expectedQty}</span>
-      `;
-      lines.appendChild(row);
+      const key = `${(line.title || '').trim().toLowerCase()}||${(line.variantTitle || '').trim().toLowerCase()}`;
+      // Aggregate in case multiple batch lines map to same item
+      if (accountingByKey.has(key)) {
+        const existing = accountingByKey.get(key);
+        existing.accountedQty += line.accountedQty;
+        existing.expectedQty += line.expectedQty;
+      } else {
+        accountingByKey.set(key, {
+          accountedQty: line.accountedQty,
+          expectedQty: line.expectedQty
+        });
+      }
     });
 
-    if (button) {
-      button.hidden = accounting.batches.size === 0;
-      button.textContent = accounting.batches.size > 1 ? 'Receive Batches' : 'Receive Batch';
-    }
+    // Walk each table row and inject a pill if there's matching accounting data
+    Array.from(tbody.rows).forEach(row => {
+      const cells = row.cells;
+      if (cells.length < 3) return;
+      const title = (cells[1]?.textContent || '').trim().toLowerCase();
+      let variant = (cells[2]?.textContent || '').trim().toLowerCase();
+      // Normalize dash placeholders to empty (table may show – or - for missing variants)
+      if (variant === '–' || variant === '-' || variant === 'no variant') variant = '';
+      const key = `${title}||${variant}`;
+      const match = accountingByKey.get(key);
+      if (!match) return;
+
+      const pill = document.createElement('span');
+      pill.className = `inline-accounting-pill ${match.accountedQty >= match.expectedQty ? 'is-complete' : 'is-missing'}`;
+      pill.textContent = `${match.accountedQty}/${match.expectedQty}`;
+      pill.title = match.accountedQty >= match.expectedQty
+        ? 'All garments accounted for'
+        : `${match.expectedQty - match.accountedQty} still missing from batch`;
+
+      // Append the pill to the variant cell (3rd column)
+      cells[2].appendChild(pill);
+    });
   }
 
   async function openBatchForOrder(orderName) {
