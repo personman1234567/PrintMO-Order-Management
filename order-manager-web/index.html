@@ -151,16 +151,54 @@
               <button id="mobile-notes-save" class="mobile-notes-save hidden" type="button">Save</button>
             </section>
             <section id="detail-production-card" class="detail-section">
-              <h4>Production Status</h4>
-              <div id="ready-controls">
-                <label><input type="checkbox" id="chk-blanks"> Blanks Ready</label>
-                <label><input type="checkbox" id="chk-prints"> Prints Ready</label>
-                <label><input type="checkbox" id="chk-blanks-ordered"> Blanks Ordered</label>
-                <label><input type="checkbox" id="chk-prints-ordered"> Prints Ordered</label>
-                <button id="ready-apply" class="hidden">Apply</button>
+              <div class="production-section-header">
+                <h4>Production Status</h4>
+                <span id="production-status-pill" class="production-status-pill" aria-live="polite">Not ready</span>
               </div>
-              <div id="progress-section">
-                <div id="progress-text"></div>
+              <div id="ready-controls" class="production-timeline" aria-label="Production readiness milestones">
+                <label class="production-step" data-step="blanks-ordered">
+                  <input type="checkbox" id="chk-blanks-ordered">
+                  <span class="production-step-marker" aria-hidden="true"></span>
+                  <span class="production-step-copy">
+                    <span class="production-step-kicker">Step 1</span>
+                    <span class="production-step-title">Blanks Ordered</span>
+                    <span class="production-step-state">Waiting</span>
+                  </span>
+                </label>
+                <label class="production-step" data-step="blanks-ready">
+                  <input type="checkbox" id="chk-blanks">
+                  <span class="production-step-marker" aria-hidden="true"></span>
+                  <span class="production-step-copy">
+                    <span class="production-step-kicker">Step 2</span>
+                    <span class="production-step-title">Blanks Ready</span>
+                    <span class="production-step-state">Waiting</span>
+                  </span>
+                </label>
+                <label class="production-step" data-step="prints-ordered">
+                  <input type="checkbox" id="chk-prints-ordered">
+                  <span class="production-step-marker" aria-hidden="true"></span>
+                  <span class="production-step-copy">
+                    <span class="production-step-kicker">Step 3</span>
+                    <span class="production-step-title">Prints Ordered</span>
+                    <span class="production-step-state">Waiting</span>
+                  </span>
+                </label>
+                <label class="production-step" data-step="prints-ready">
+                  <input type="checkbox" id="chk-prints">
+                  <span class="production-step-marker" aria-hidden="true"></span>
+                  <span class="production-step-copy">
+                    <span class="production-step-kicker">Step 4</span>
+                    <span class="production-step-title">Prints Ready</span>
+                    <span class="production-step-state">Waiting</span>
+                  </span>
+                </label>
+                <button id="ready-apply" class="hidden production-apply" type="button">Apply status changes</button>
+              </div>
+              <div id="progress-section" class="production-progress-panel">
+                <div class="production-progress-header">
+                  <span class="production-progress-label">Printed pieces</span>
+                  <span id="progress-text"></span>
+                </div>
                 <div id="progress-row">
                   <div id="progress-bar-container">
                     <div id="progress-bar"></div>

@@ -5,9 +5,16 @@
     'chk-blanks-ordered',
     'chk-prints-ordered'
   ];
+  const productionStepOrder = [
+    { id: 'chk-blanks-ordered', label: 'Blanks Ordered' },
+    { id: 'chk-blanks', label: 'Blanks Ready' },
+    { id: 'chk-prints-ordered', label: 'Prints Ordered' },
+    { id: 'chk-prints', label: 'Prints Ready' }
+  ];
   let mockupObserver = null;
   let itemTableObserver = null;
   let designFilesObserver = null;
+  let readyApplyObserver = null;
   let designFilesEnhanceScheduled = false;
   let selectedMockupIndex = 0;
   let assetViewerCloseTimer = null;
@@ -40,10 +47,67 @@
 
   function syncReadySummary() {
     const summary = document.getElementById('detail-header-ready-summary');
-    if (!summary) return;
     const state = readyStateFromInputs();
-    summary.textContent = state.label;
-    summary.dataset.state = state.state;
+    if (summary) {
+      summary.textContent = state.label;
+      summary.dataset.state = state.state;
+    }
+    syncProductionTimeline(state);
+  }
+
+  function syncProductionTimeline(readyState = readyStateFromInputs()) {
+    if (!readyState || typeof readyState.label !== 'string') readyState = readyStateFromInputs();
+    const card = document.getElementById('detail-production-card');
+    const pill = document.getElementById('production-status-pill');
+    const apply = document.getElementById('ready-apply');
+    const stepStates = productionStepOrder.map(step => ({
+      ...step,
+      input: document.getElementById(step.id)
+    }));
+    const completed = stepStates.filter(step => step.input?.checked).length;
+    const firstWaiting = stepStates.findIndex(step => !step.input?.checked);
+
+    if (card) {
+      card.dataset.readyState = readyState.state;
+      card.classList.toggle('has-pending-ready', Boolean(apply && !apply.classList.contains('hidden')));
+    }
+    if (pill) {
+      pill.textContent = readyState.label;
+      pill.dataset.state = readyState.state;
+      pill.title = `${completed} of ${productionStepOrder.length} production milestones complete`;
+    }
+
+    stepStates.forEach((step, index) => {
+      const label = step.input?.closest('.production-step');
+      if (!label) return;
+      const stateLabel = label.querySelector('.production-step-state');
+      const isComplete = Boolean(step.input?.checked);
+      const isNext = !isComplete && index === firstWaiting;
+      const statusText = isComplete ? 'Done' : isNext ? 'Next' : 'Waiting';
+
+      label.classList.remove('is-complete', 'is-next', 'is-waiting');
+      label.classList.add(isComplete ? 'is-complete' : isNext ? 'is-next' : 'is-waiting');
+      label.dataset.state = isComplete ? 'done' : isNext ? 'next' : 'waiting';
+      label.title = `${step.label}: ${statusText}`;
+      step.input?.setAttribute('aria-label', `${step.label}, ${statusText}`);
+      if (stateLabel) stateLabel.textContent = statusText;
+    });
+  }
+
+  function wireReadyApplyObserver() {
+    const apply = document.getElementById('ready-apply');
+    if (!apply || readyApplyObserver) return;
+
+    readyApplyObserver = new MutationObserver(syncProductionTimeline);
+    readyApplyObserver.observe(apply, {
+      attributes: true,
+      attributeFilter: ['class']
+    });
+    apply.addEventListener('click', () => {
+      requestAnimationFrame(syncProductionTimeline);
+      setTimeout(syncProductionTimeline, 300);
+      setTimeout(syncProductionTimeline, 1000);
+    });
   }
 
   function syncDetailHeader(order) {
@@ -70,8 +134,13 @@
       const input = document.getElementById(id);
       if (!input || input.dataset.detailSummaryWired) return;
       input.dataset.detailSummaryWired = 'true';
-      input.addEventListener('change', syncReadySummary);
+      input.addEventListener('change', () => {
+        syncReadySummary();
+        requestAnimationFrame(syncProductionTimeline);
+      });
     });
+    wireReadyApplyObserver();
+    syncProductionTimeline();
   }
 
   function mockupThumbs() {
