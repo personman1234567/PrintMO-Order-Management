@@ -2611,10 +2611,15 @@
     box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
   }
 
+  body[data-detail-layout="mobile"] .customer-identity {
+    min-width: 0;
+  }
+
   body[data-detail-layout="mobile"] #detail-name-row h3 {
     font-size: 1rem;
     margin: 0;
     color: #0f172a;
+    overflow-wrap: anywhere;
   }
 
   body[data-detail-layout="mobile"] #detail-name-row .detail-section-label {
@@ -2630,6 +2635,46 @@
 
   body[data-detail-layout="mobile"] #detail-edit-name-btn {
     font-size: 0.9rem;
+  }
+
+  body[data-detail-layout="mobile"] .customer-context-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  body[data-detail-layout="mobile"] .customer-context-chip {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  }
+
+  body[data-detail-layout="mobile"] .customer-context-chip-wide {
+    grid-column: 1 / -1;
+  }
+
+  body[data-detail-layout="mobile"] .customer-context-chip span {
+    display: block;
+    margin-bottom: 4px;
+    color: #64748b;
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  body[data-detail-layout="mobile"] .customer-context-chip strong {
+    display: block;
+    min-width: 0;
+    color: #0f172a;
+    font-size: 0.86rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   body[data-detail-layout="mobile"] .detail-notes-actions {
@@ -2674,10 +2719,39 @@
     min-height: 90px;
   }
 
+  body[data-detail-layout="mobile"] .detail-notes-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding-right: 36px;
+  }
+
+  body[data-detail-layout="mobile"] .detail-notes-header h4 {
+    margin: 0 0 4px;
+    color: #334155;
+  }
+
+  body[data-detail-layout="mobile"] .detail-notes-summary {
+    display: block;
+    color: #64748b;
+    font-size: 0.76rem;
+    font-weight: 700;
+  }
+
+  body[data-detail-layout="mobile"] .detail-notes-preview {
+    margin-top: 12px;
+  }
+
   body[data-detail-layout="mobile"] #detail-notes {
     margin: 0;
     color: #1f2937;
     white-space: pre-wrap;
+  }
+
+  body[data-detail-layout="mobile"] #detail-notes.is-empty-note {
+    color: #64748b;
+    font-style: italic;
   }
 
   body[data-detail-layout="mobile"] #detail-notes-input {
@@ -2688,6 +2762,10 @@
     padding: 10px;
     font-size: 0.95rem;
     resize: vertical;
+  }
+
+  body[data-detail-layout="mobile"] .detail-notes-editor-footer {
+    display: none;
   }
 
   #mobile-notes-save {

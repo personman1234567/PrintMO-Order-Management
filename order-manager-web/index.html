@@ -133,21 +133,53 @@
         <div id="detail-main-column">
           <div id="detail-main-stack" class="detail-side-column">
             <section id="detail-customer-card" class="detail-section">
-              <div id="detail-name-row">
-                <span class="detail-section-label">Customer</span>
-                <h3 id="detail-cust-name"></h3>
-                <button id="detail-edit-name-btn" class="fullscreen-btn">Edit</button>
+              <div id="detail-name-row" class="customer-context-header">
+                <div class="customer-identity">
+                  <span class="detail-section-label">Customer</span>
+                  <h3 id="detail-cust-name"></h3>
+                </div>
+                <button id="detail-edit-name-btn" class="fullscreen-btn" type="button">Edit</button>
+              </div>
+              <div class="customer-context-meta" aria-label="Order context">
+                <div class="customer-context-chip">
+                  <span>Order</span>
+                  <strong id="detail-context-order">-</strong>
+                </div>
+                <div class="customer-context-chip">
+                  <span>Received</span>
+                  <strong id="detail-context-received">-</strong>
+                </div>
+                <div class="customer-context-chip customer-context-chip-wide">
+                  <span>Items</span>
+                  <strong id="detail-context-items">-</strong>
+                </div>
               </div>
             </section>
             <section id="detail-notes-wrapper" class="detail-section">
-              <h4>Notes</h4>
-              <div class="detail-notes-actions">
-                <button id="detail-view-notes-btn" class="fullscreen-btn">See Notes</button>
-                <button id="detail-edit-notes-btn" class="fullscreen-btn">Edit Notes</button>
+              <div class="detail-notes-header">
+                <div>
+                  <h4>Notes</h4>
+                  <span id="detail-notes-summary" class="detail-notes-summary">No notes</span>
+                </div>
+                <div class="detail-notes-actions">
+                  <button id="detail-view-notes-btn" class="fullscreen-btn" type="button">View</button>
+                  <button id="detail-edit-notes-btn" class="fullscreen-btn" type="button">Edit</button>
+                </div>
                 <button id="mobile-notes-edit" class="mobile-notes-btn" type="button" aria-label="Edit notes">&#9998;</button>
               </div>
-              <p id="detail-notes"><em>No special instructions</em></p>
-              <textarea id="detail-notes-input" class="hidden"></textarea>
+              <div class="detail-notes-preview">
+                <p id="detail-notes"><em>No special instructions</em></p>
+              </div>
+              <div class="detail-notes-editor">
+                <textarea id="detail-notes-input" class="hidden" placeholder="Add production instructions, customer preferences, or placement notes..."></textarea>
+                <div class="detail-notes-editor-footer">
+                  <span id="detail-notes-edit-status">No changes</span>
+                  <div class="detail-notes-editor-actions">
+                    <button id="detail-notes-cancel-btn" class="fullscreen-btn" type="button">Cancel</button>
+                    <button id="detail-notes-save-btn" class="fullscreen-btn" type="button">Save</button>
+                  </div>
+                </div>
+              </div>
               <button id="mobile-notes-save" class="mobile-notes-save hidden" type="button">Save</button>
             </section>
             <section id="detail-production-card" class="detail-section">

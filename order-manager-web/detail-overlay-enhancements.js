@@ -16,6 +16,9 @@
   let designFilesObserver = null;
   let readyApplyObserver = null;
   let designFilesEnhanceScheduled = false;
+  let currentDetailOrder = null;
+  let savedNotesText = '';
+  let notesSavedFlashTimer = null;
   let selectedMockupIndex = 0;
   let assetViewerCloseTimer = null;
 
@@ -36,6 +39,250 @@
       totals.all += qty;
       return totals;
     }, { all: 0, apparel: 0, prints: 0 });
+  }
+
+  function orderContextParts(name) {
+    const rawName = String(name || '').trim();
+    if (typeof splitOrderName === 'function') {
+      const [number = '', customer = ''] = splitOrderName(rawName);
+      return {
+        number: number || rawName || '-',
+        customer: customer || ''
+      };
+    }
+    const match = rawName.match(/^(.+?)\s+[–-]\s+(.+)$/);
+    return {
+      number: match ? match[1] : rawName || '-',
+      customer: match ? match[2] : ''
+    };
+  }
+
+  function formatContextDate(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return date.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  }
+
+  function cleanNoteValue(value) {
+    const text = String(value || '').replace(/\r\n/g, '\n').trim();
+    return text === 'No special instructions' ? '' : text;
+  }
+
+  function noteLineCount(text) {
+    if (!text) return 0;
+    return text.split('\n').filter(line => line.trim()).length || 1;
+  }
+
+  function syncCustomerContext(order) {
+    if (!order) return;
+    currentDetailOrder = order;
+    const parts = orderContextParts(order.name);
+    const counts = itemCounts(order);
+    const orderNumber = document.getElementById('detail-context-order');
+    const received = document.getElementById('detail-context-received');
+    const items = document.getElementById('detail-context-items');
+
+    if (orderNumber) {
+      orderNumber.textContent = parts.number;
+      orderNumber.title = String(order.name || parts.number);
+    }
+    if (received) {
+      received.textContent = formatContextDate(order.receivedAt);
+      received.title = order.receivedAt ? new Date(order.receivedAt).toLocaleString() : '';
+    }
+    if (items) {
+      items.textContent = `${counts.apparel} apparel / ${counts.prints} prints`;
+      items.title = `${counts.all} total line-item quantity`;
+    }
+  }
+
+  function autoGrowNotesInput() {
+    const input = document.getElementById('detail-notes-input');
+    if (!input || input.classList.contains('hidden')) return;
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(input.scrollHeight, 220)}px`;
+  }
+
+  function updateNotesPreview(text) {
+    const preview = document.getElementById('detail-notes');
+    if (!preview) return;
+    preview.textContent = text || 'No special instructions';
+    preview.classList.toggle('is-empty-note', !text);
+    preview.title = text || '';
+  }
+
+  function syncNotesSummary(text) {
+    const card = document.getElementById('detail-notes-wrapper');
+    const summary = document.getElementById('detail-notes-summary');
+    const hasNotes = Boolean(text);
+    const lines = noteLineCount(text);
+
+    if (card) {
+      card.classList.toggle('has-notes', hasNotes);
+      card.classList.toggle('is-empty-note-card', !hasNotes);
+    }
+    if (summary) {
+      summary.textContent = hasNotes
+        ? `${lines} ${lines === 1 ? 'line' : 'lines'} of instructions`
+        : 'No notes';
+    }
+  }
+
+  function syncNotesEditState() {
+    const card = document.getElementById('detail-notes-wrapper');
+    const input = document.getElementById('detail-notes-input');
+    const status = document.getElementById('detail-notes-edit-status');
+    const save = document.getElementById('detail-notes-save-btn');
+    if (!card || !input) return;
+
+    const currentText = cleanNoteValue(input.value);
+    const hasUnsaved = currentText !== savedNotesText;
+    card.classList.toggle('has-unsaved-notes', hasUnsaved);
+    if (save) save.disabled = !hasUnsaved;
+    if (status) {
+      if (hasUnsaved) status.textContent = 'Unsaved changes';
+      else if (currentText) status.textContent = `${noteLineCount(currentText)} ${noteLineCount(currentText) === 1 ? 'line' : 'lines'}`;
+      else status.textContent = 'No changes';
+    }
+    autoGrowNotesInput();
+  }
+
+  function setNotesEditing(editing) {
+    const card = document.getElementById('detail-notes-wrapper');
+    const preview = document.querySelector('.detail-notes-preview');
+    const input = document.getElementById('detail-notes-input');
+    const edit = document.getElementById('detail-edit-notes-btn');
+    if (!card || !preview || !input) return;
+
+    card.classList.toggle('is-editing-notes', editing);
+    preview.classList.toggle('hidden', editing);
+    input.classList.toggle('hidden', !editing);
+    if (edit) {
+      edit.textContent = editing ? 'Editing' : 'Edit';
+      edit.setAttribute('aria-pressed', editing ? 'true' : 'false');
+    }
+
+    if (editing) {
+      input.value = savedNotesText;
+      requestAnimationFrame(() => {
+        autoGrowNotesInput();
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      });
+    } else {
+      card.classList.remove('has-unsaved-notes', 'is-saving-notes');
+      input.classList.add('hidden');
+      preview.classList.remove('hidden');
+    }
+    syncNotesEditState();
+  }
+
+  function syncNotesContext(order) {
+    if (order) currentDetailOrder = order;
+    const activeOrder = order || currentDetailOrder || (typeof detailOrder !== 'undefined' ? detailOrder : null);
+    const text = cleanNoteValue(activeOrder?.notes);
+    const card = document.getElementById('detail-notes-wrapper');
+    const input = document.getElementById('detail-notes-input');
+
+    if (!card?.classList.contains('is-editing-notes')) {
+      savedNotesText = text;
+      updateNotesPreview(text);
+      if (input) input.value = text;
+    }
+    syncNotesSummary(text);
+    syncNotesEditState();
+  }
+
+  function updateStoredOrderNotes(order, notes) {
+    if (!order) return;
+    order.notes = notes;
+    if (typeof detailOrder !== 'undefined' && detailOrder) detailOrder.notes = notes;
+    if (typeof allOrders !== 'undefined' && Array.isArray(allOrders)) {
+      const stored = allOrders.find(item => item.name === order.name);
+      if (stored) stored.notes = notes;
+    }
+  }
+
+  async function saveInlineNotes() {
+    const card = document.getElementById('detail-notes-wrapper');
+    const input = document.getElementById('detail-notes-input');
+    const save = document.getElementById('detail-notes-save-btn');
+    const order = currentDetailOrder || (typeof detailOrder !== 'undefined' ? detailOrder : null);
+    if (!card || !input || !order) return;
+
+    const nextNotes = cleanNoteValue(input.value);
+    card.classList.add('is-saving-notes');
+    if (save) save.disabled = true;
+    try {
+      await window.api.updateNotes(order.name, nextNotes);
+      updateStoredOrderNotes(order, nextNotes);
+      savedNotesText = nextNotes;
+      updateNotesPreview(nextNotes);
+      syncNotesSummary(nextNotes);
+      setNotesEditing(false);
+      card.classList.add('is-saved-notes');
+      clearTimeout(notesSavedFlashTimer);
+      notesSavedFlashTimer = setTimeout(() => card.classList.remove('is-saved-notes'), 900);
+    } catch (error) {
+      alert(`Could not save notes: ${error?.message || error}`);
+      syncNotesEditState();
+    } finally {
+      card.classList.remove('is-saving-notes');
+    }
+  }
+
+  function wireCustomerNotesControls() {
+    const edit = document.getElementById('detail-edit-notes-btn');
+    const cancel = document.getElementById('detail-notes-cancel-btn');
+    const save = document.getElementById('detail-notes-save-btn');
+    const input = document.getElementById('detail-notes-input');
+
+    if (edit && !edit.dataset.detailInlineNotesWired) {
+      edit.dataset.detailInlineNotesWired = 'true';
+      edit.addEventListener('click', event => {
+        if (window.matchMedia('(max-width: 900px)').matches) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        syncNotesContext();
+        setNotesEditing(true);
+      }, true);
+    }
+    if (cancel && !cancel.dataset.detailInlineNotesWired) {
+      cancel.dataset.detailInlineNotesWired = 'true';
+      cancel.addEventListener('click', event => {
+        event.preventDefault();
+        setNotesEditing(false);
+        syncNotesContext();
+      });
+    }
+    if (save && !save.dataset.detailInlineNotesWired) {
+      save.dataset.detailInlineNotesWired = 'true';
+      save.addEventListener('click', event => {
+        event.preventDefault();
+        saveInlineNotes();
+      });
+    }
+    if (input && !input.dataset.detailInlineNotesWired) {
+      input.dataset.detailInlineNotesWired = 'true';
+      input.addEventListener('input', syncNotesEditState);
+      input.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setNotesEditing(false);
+          syncNotesContext();
+        }
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+          event.preventDefault();
+          saveInlineNotes();
+        }
+      });
+    }
   }
 
   function readyStateFromInputs() {
@@ -126,6 +373,8 @@
       pieces.title = `${counts.all} total line-item quantity`;
     }
     if (total) total.textContent = money(order.total);
+    syncCustomerContext(order);
+    syncNotesContext(order);
     syncReadySummary();
   }
 
@@ -593,6 +842,7 @@
     const enhancedOpenDetail = function enhancedOpenDetail(order, ...args) {
       const result = originalOpenDetail.call(this, order, ...args);
       syncDetailHeader(order);
+      wireCustomerNotesControls();
       wireReadyInputs();
       wireAssetViewerCaptions();
       patchAssetViewerClose();
@@ -612,6 +862,7 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     patchDetailOpen();
+    wireCustomerNotesControls();
     wireReadyInputs();
     wireAssetViewerCaptions();
     patchAssetViewerClose();
@@ -621,6 +872,7 @@
   });
 
   patchDetailOpen();
+  wireCustomerNotesControls();
   wireAssetViewerCaptions();
   patchAssetViewerClose();
   wireItemsTable();
