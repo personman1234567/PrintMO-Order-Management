@@ -7,6 +7,8 @@
   ];
   let mockupObserver = null;
   let itemTableObserver = null;
+  let designFilesObserver = null;
+  let designFilesEnhanceScheduled = false;
   let selectedMockupIndex = 0;
   let assetViewerCloseTimer = null;
 
@@ -103,6 +105,178 @@
       return designRow.querySelector('.design-label')?.textContent?.trim() || 'Design file preview';
     }
     return '';
+  }
+
+  function fileNameParts(name) {
+    const clean = String(name || '').trim();
+    const match = clean.match(/\.([a-z0-9]{2,6})(?:$|\?)/i);
+    return {
+      name: clean,
+      extension: match ? match[1].toUpperCase() : 'FILE'
+    };
+  }
+
+  function designRows() {
+    return Array.from(document.querySelectorAll('#detail-design-panel .design-file-row'));
+  }
+
+  function setDesignEmptyState() {
+    const placeholder = document.getElementById('detail-designs-placeholder');
+    if (!placeholder || placeholder.dataset.detailPolished) return;
+    placeholder.dataset.detailPolished = 'true';
+    placeholder.innerHTML = `
+      <span class="design-empty-icon" aria-hidden="true"></span>
+      <span class="design-empty-copy">
+        <strong>No design files found</strong>
+        <span>Files will appear here when synced or attached.</span>
+      </span>
+    `;
+  }
+
+  function ensurePreviewButton(row, labelButton, thumb, previewUrl, filename) {
+    const actions = row.querySelector('.design-actions');
+    if (!actions) return;
+    const existing = actions.querySelector('.detail-asset-preview');
+    if (existing) {
+      existing.setAttribute('aria-label', `Preview ${filename}`);
+      existing.onclick = event => {
+        event.preventDefault();
+        event.stopPropagation();
+        setAssetViewerCaption(filename);
+        if (typeof openAssetViewer === 'function') openAssetViewer(previewUrl);
+      };
+      return;
+    }
+
+    const previewButton = document.createElement('button');
+    previewButton.type = 'button';
+    previewButton.className = 'detail-asset-preview';
+    previewButton.textContent = 'Preview';
+    previewButton.setAttribute('aria-label', `Preview ${filename}`);
+    previewButton.onclick = event => {
+      event.preventDefault();
+      event.stopPropagation();
+      setAssetViewerCaption(filename);
+      if (typeof openAssetViewer === 'function') openAssetViewer(previewUrl);
+    };
+    actions.prepend(previewButton);
+
+    [labelButton, thumb].filter(Boolean).forEach(target => {
+      target.setAttribute('aria-label', `Preview ${filename}`);
+    });
+  }
+
+  function enhanceDesignFileRow(row) {
+    if (!row) return;
+    const firstPass = !row.dataset.detailDesignPolished;
+    row.dataset.detailDesignPolished = 'true';
+
+    const labelButton = row.querySelector('.design-label');
+    const thumb = row.querySelector('.design-thumb');
+    const image = thumb?.querySelector('img');
+    const meta = row.querySelector('.design-file-meta');
+    const type = row.querySelector('.design-print-type');
+    const download = row.querySelector('.detail-asset-download');
+    const status = row.querySelector('.detail-asset-status');
+    const filename = labelButton?.textContent?.trim() || image?.alt || 'Design file';
+    const parts = fileNameParts(filename);
+
+    row.title = filename;
+    row.dataset.fileExtension = parts.extension;
+    row.classList.toggle('has-preview', Boolean(image?.src));
+
+    if (labelButton && firstPass) {
+      labelButton.title = filename;
+      labelButton.addEventListener('click', () => setAssetViewerCaption(filename), true);
+    }
+    if (thumb && firstPass) {
+      thumb.setAttribute('title', `Preview ${filename}`);
+      thumb.addEventListener('click', () => setAssetViewerCaption(filename), true);
+    }
+    if (image) image.alt = `${filename} preview`;
+    if (meta) meta.title = meta.textContent.trim();
+    if (type) type.title = type.textContent.trim();
+    if (download) {
+      download.setAttribute('aria-label', `Download ${filename}`);
+      download.title = `Download ${filename}`;
+    }
+    if (status) status.setAttribute('role', 'status');
+
+    let extBadge = row.querySelector('.design-file-extension');
+    if (!extBadge) {
+      extBadge = document.createElement('span');
+      extBadge.className = 'design-file-extension';
+      row.querySelector('.design-file-info')?.appendChild(extBadge);
+    }
+    extBadge.textContent = parts.extension;
+    extBadge.title = `${parts.extension} file`;
+
+    const previewUrl = image?.src || image?.getAttribute('src') || '';
+    if (previewUrl) ensurePreviewButton(row, labelButton, thumb, previewUrl, filename);
+  }
+
+  function enhanceDesignGroups() {
+    const groups = [
+      ['design-group-front', 'Front Prints'],
+      ['design-group-back', 'Back Prints'],
+      ['design-group-extras', 'Extras']
+    ];
+
+    groups.forEach(([id, label]) => {
+      const group = document.getElementById(id);
+      if (!group) return;
+      const title = group.querySelector('.design-group-title');
+      const rows = Array.from(group.querySelectorAll('.design-file-row'));
+      const count = rows.length;
+      group.dataset.fileCount = String(count);
+      group.classList.toggle('has-files', count > 0);
+      group.classList.toggle('is-empty', count === 0);
+      if (title) {
+        title.setAttribute('aria-label', `${label}, ${count} ${count === 1 ? 'file' : 'files'}`);
+        title.title = `${label}: ${count} ${count === 1 ? 'file' : 'files'}`;
+      }
+    });
+  }
+
+  function enhanceDesignFilesPanel() {
+    setDesignEmptyState();
+    const panel = document.getElementById('detail-design-panel');
+    const rows = designRows();
+    const count = document.getElementById('design-files-count');
+    if (!panel) return;
+
+    panel.classList.toggle('has-design-files', rows.length > 0);
+    panel.classList.toggle('has-many-design-files', rows.length > 8);
+    document.getElementById('detail-main-column')?.classList.toggle('has-many-design-files', rows.length > 8);
+    if (count) {
+      count.title = `${rows.length} design ${rows.length === 1 ? 'file' : 'files'}`;
+    }
+
+    rows.forEach(enhanceDesignFileRow);
+    enhanceDesignGroups();
+  }
+
+  function scheduleDesignFilesEnhancement() {
+    if (designFilesEnhanceScheduled) return;
+    designFilesEnhanceScheduled = true;
+    requestAnimationFrame(() => {
+      designFilesEnhanceScheduled = false;
+      enhanceDesignFilesPanel();
+    });
+  }
+
+  function wireDesignFilesPanel() {
+    enhanceDesignFilesPanel();
+    const panel = document.getElementById('detail-design-panel');
+    if (!panel || designFilesObserver) return;
+
+    designFilesObserver = new MutationObserver(scheduleDesignFilesEnhancement);
+    designFilesObserver.observe(panel, {
+      childList: true,
+      subtree: true
+    });
+    setTimeout(scheduleDesignFilesEnhancement, 250);
+    setTimeout(scheduleDesignFilesEnhancement, 1000);
   }
 
   function syncSelectedMockup(index = selectedMockupIndex) {
@@ -354,8 +528,12 @@
       wireAssetViewerCaptions();
       patchAssetViewerClose();
       wireItemsTable(order);
+      wireDesignFilesPanel();
       requestAnimationFrame(wireMockupBrowser);
       requestAnimationFrame(() => enhanceItemsTable(order));
+      requestAnimationFrame(scheduleDesignFilesEnhancement);
+      setTimeout(scheduleDesignFilesEnhancement, 250);
+      setTimeout(scheduleDesignFilesEnhancement, 1000);
       return result;
     };
     enhancedOpenDetail.__detailSummaryPatched = true;
@@ -370,10 +548,12 @@
     patchAssetViewerClose();
     wireMockupBrowser();
     wireItemsTable();
+    wireDesignFilesPanel();
   });
 
   patchDetailOpen();
   wireAssetViewerCaptions();
   patchAssetViewerClose();
   wireItemsTable();
+  wireDesignFilesPanel();
 })();
