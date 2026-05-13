@@ -42,6 +42,34 @@
       <div id="pipeline-selection-shell" class="mobile-selection-shell" aria-hidden="true">
         <div class="selection-toolbar-placeholder" aria-hidden="true">Selection actions will appear here when selection mode is enabled.</div>
       </div>
+      <div id="dashboard-triage-toolbar" class="dashboard-triage-toolbar" aria-label="Dashboard triage controls">
+        <div class="dashboard-filter-group" role="group" aria-label="Filter pipeline orders">
+          <button class="dashboard-filter active" type="button" data-dashboard-filter="all" aria-pressed="true">
+            All <span data-dashboard-filter-count="all">0</span>
+          </button>
+          <button class="dashboard-filter" type="button" data-dashboard-filter="attention" aria-pressed="false">
+            Attention <span data-dashboard-filter-count="attention">0</span>
+          </button>
+          <button class="dashboard-filter" type="button" data-dashboard-filter="stale" aria-pressed="false">
+            Stale <span data-dashboard-filter-count="stale">0</span>
+          </button>
+          <button class="dashboard-filter" type="button" data-dashboard-filter="missing-mockup" aria-pressed="false">
+            No Mockup <span data-dashboard-filter-count="missing-mockup">0</span>
+          </button>
+          <button class="dashboard-filter" type="button" data-dashboard-filter="ready" aria-pressed="false">
+            Ready <span data-dashboard-filter-count="ready">0</span>
+          </button>
+        </div>
+        <label class="dashboard-sort-control">
+          <span>Sort</span>
+          <select id="dashboard-sort-select" aria-label="Sort pipeline orders">
+            <option value="attention">Needs attention</option>
+            <option value="oldest">Oldest first</option>
+            <option value="newest">Newest first</option>
+            <option value="value">Highest total</option>
+          </select>
+        </label>
+      </div>
       <div class="panel-body cards" id="col-received"></div>
     </div>
 
@@ -520,6 +548,7 @@
   <script src="./web-shim.js"></script>
   <script src="./storage-browser.js"></script>
   <script src="./renderer.js"></script>
+  <script src="./dashboard-triage-enhancements.js"></script>
   <script src="./blanks-batches.js"></script>
   <script src="./detail-overlay-enhancements.js"></script>
   <script src="./desktop-drag-polish.js"></script>

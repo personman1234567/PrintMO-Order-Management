@@ -5046,6 +5046,12 @@ body.mobile-mode .picked-card .counts {
   font-size: 0.86rem;
 }
 
+.dashboard-triage-toolbar,
+.dashboard-triage-empty,
+.dashboard-card-signals {
+  display: none !important;
+}
+
 @container (min-width: 520px) {
   body.mobile-mode .pipeline .cards,
   body.mobile-mode .picked-cards {
