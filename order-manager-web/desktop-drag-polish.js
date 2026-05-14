@@ -29,14 +29,33 @@
   let orderMetaByKey = new Map();
   let orderMetaPromise = null;
   let orderMetaLastRefresh = 0;
+  let pointerDrag = null;
+  let suppressNextClick = false;
 
   const isDesktop = () => desktopQuery.matches;
+  const isEmbeddedFrame = () => {
+    try {
+      return window.self !== window.top;
+    } catch {
+      return true;
+    }
+  };
 
   function cardKey(card) {
     if (!card) return '';
     if (card.dataset.orderId) return `order:${card.dataset.orderId}`;
     if (card.dataset.bundleName) return `bundle:${card.dataset.bundleName}`;
     return '';
+  }
+
+  function customPointerDragEnabled() {
+    return isDesktop() && isEmbeddedFrame() && 'PointerEvent' in window;
+  }
+
+  function isInteractiveDragTarget(target) {
+    return Boolean(target instanceof Element && target.closest(
+      'button, input, select, textarea, a, [role="button"], .delete-btn, .manual-mockup-delete'
+    ));
   }
 
   function closestFrom(target, selector) {
@@ -131,6 +150,16 @@
     if (!id) return [];
     if (id.startsWith('bundle:')) return [`bundle:${id.slice(7)}`];
     return [`order:${id}`];
+  }
+
+  function dragPayloadForCard(card) {
+    if (!card) return '';
+    if (card.dataset.bundleName) return `bundle:${card.dataset.bundleName}`;
+    return card.dataset.orderId || '';
+  }
+
+  function dropZoneFromPoint(x, y) {
+    return closestFrom(document.elementFromPoint(x, y), dropZoneSelector);
   }
 
   function markDroppedKeys(keys) {
@@ -357,6 +386,17 @@
     });
   }
 
+  function simplifyDragGhostForEmbeddedFrame(ghost) {
+    ghost.classList.add('desktop-drag-ghost-performance');
+    ghost.querySelectorAll('button, input, select, textarea, video, iframe, canvas').forEach(node => {
+      node.remove();
+    });
+    ghost.querySelectorAll('[aria-live], [role="tooltip"]').forEach(node => {
+      node.removeAttribute('aria-live');
+      node.removeAttribute('role');
+    });
+  }
+
   function createDragGhost(card, event) {
     const rect = card.getBoundingClientRect();
     const ghost = card.cloneNode(true);
@@ -368,6 +408,7 @@
     disableImageDragging(ghost);
     ghost.classList.remove('dragging', 'drag-polish-dragging', 'layout-shifting', 'drop-entering', 'drop-entering-active');
     ghost.classList.add('desktop-drag-ghost');
+    if (isEmbeddedFrame()) simplifyDragGhostForEmbeddedFrame(ghost);
     ghost.style.width = `${rect.width}px`;
     ghost.style.height = `${rect.height}px`;
     document.body.appendChild(ghost);
@@ -387,14 +428,19 @@
     lastTilt = tilt;
     const x = currentDragX - ghostOffsetX;
     const y = currentDragY - ghostOffsetY;
+    if (dragGhost.classList.contains('desktop-drag-ghost-performance')) {
+      dragGhost.style.transform = `translate3d(${x}px, ${y}px, 0) scale(1.025)`;
+      return;
+    }
     dragGhost.style.transform = `translate3d(${x}px, ${y}px, 0) scale(1.045) rotate(${tilt.toFixed(2)}deg)`;
   }
 
   function scheduleGhostMove(tilt) {
-    if (ghostFrame) cancelAnimationFrame(ghostFrame);
+    lastTilt = tilt;
+    if (ghostFrame) return;
     ghostFrame = requestAnimationFrame(() => {
       ghostFrame = 0;
-      updateDragGhost(tilt);
+      updateDragGhost(lastTilt);
     });
   }
 
@@ -443,18 +489,163 @@
     ghostOffsetX = 0;
     ghostOffsetY = 0;
     lastTilt = 0;
+    clearPointerDrag();
     setDropZone(null);
     document.body.classList.remove('desktop-drag-active');
+    document.body.classList.remove('desktop-drag-embedded');
+    document.body.classList.remove('desktop-pointer-drag-active');
   }
 
   function finishDragSoon() {
     requestAnimationFrame(resetDragState);
   }
 
+  function beginPointerDrag(event) {
+    if (!pointerDrag || pointerDrag.started) return;
+    const { card } = pointerDrag;
+    activeDragCard = card;
+    activeDropAccepted = false;
+    lastDragX = event.clientX || 0;
+    lastDragY = event.clientY || 0;
+    layoutBeforeDrop = captureLayout();
+    refreshOrderMetadata();
+    document.body.classList.add('desktop-drag-active', 'desktop-drag-embedded', 'desktop-pointer-drag-active');
+    card.classList.add('drag-polish-dragging');
+    card.style.setProperty('--drag-tilt', '0deg');
+    createDragGhost(card, event);
+    pointerDrag.started = true;
+    suppressNextClick = true;
+  }
+
+  function dispatchPointerDrop(zone, sourceCard, event) {
+    const payload = dragPayloadForCard(sourceCard);
+    if (!zone || !payload) return false;
+
+    try {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.effectAllowed = 'move';
+      dataTransfer.dropEffect = 'move';
+      dataTransfer.setData('text/plain', payload);
+      const dropEvent = new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        dataTransfer
+      });
+      zone.dispatchEvent(dropEvent);
+      return true;
+    } catch (error) {
+      console.warn('Pointer drag drop could not dispatch through the existing drop handler.', error);
+      return false;
+    }
+  }
+
+  function clearPointerDrag() {
+    if (!pointerDrag) return;
+    const { card, originalDraggable } = pointerDrag;
+    if (card?.isConnected) card.draggable = originalDraggable;
+    pointerDrag = null;
+  }
+
+  document.addEventListener('pointerdown', event => {
+    if (!customPointerDragEnabled() || event.button !== 0 || event.pointerType === 'touch') return;
+    if (isInteractiveDragTarget(event.target)) return;
+    const card = closestFrom(event.target, cardSelector);
+    if (!card) return;
+
+    pointerDrag = {
+      card,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      started: false,
+      originalDraggable: card.draggable
+    };
+    card.draggable = false;
+  }, true);
+
+  document.addEventListener('pointermove', event => {
+    if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+    const dx = event.clientX - pointerDrag.startX;
+    const dy = event.clientY - pointerDrag.startY;
+
+    if (!pointerDrag.started) {
+      if (Math.hypot(dx, dy) < 6) return;
+      beginPointerDrag(event);
+      try {
+        pointerDrag.card.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture is best-effort; document-level listeners still keep the drag alive.
+      }
+    }
+
+    if (!pointerDrag.started) return;
+    event.preventDefault();
+    event.stopPropagation();
+    currentDragX = event.clientX;
+    currentDragY = event.clientY;
+    lastDragX = event.clientX;
+    lastDragY = event.clientY;
+    scheduleGhostMove(0);
+    queueDropZone(dropZoneFromPoint(event.clientX, event.clientY));
+  }, true);
+
+  function finishPointerDrag(event, { cancelled = false } = {}) {
+    if (!pointerDrag) return;
+    const wasStarted = pointerDrag.started;
+    const sourceCard = pointerDrag.card;
+
+    if (!wasStarted) {
+      clearPointerDrag();
+      return;
+    }
+
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+
+    const zone = cancelled ? null : dropZoneFromPoint(event.clientX, event.clientY);
+    if (zone) {
+      activeDropAccepted = true;
+      layoutBeforeDrop = captureLayout();
+      markDroppedKeys([cardKey(sourceCard)]);
+      removeHoverPlaceholder({ animate: false, deferRemove: true });
+      if (!dispatchPointerDrop(zone, sourceCard, event)) finishDragSoon();
+    } else {
+      layoutBeforeDrop = new Map();
+      removeHoverPlaceholder({ animate: false });
+      finishDragSoon();
+    }
+
+    clearPointerDrag();
+  }
+
+  document.addEventListener('pointerup', event => {
+    if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+    finishPointerDrag(event);
+  }, true);
+
+  document.addEventListener('pointercancel', event => {
+    if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+    finishPointerDrag(event, { cancelled: true });
+  }, true);
+
+  document.addEventListener('click', event => {
+    if (!suppressNextClick) return;
+    suppressNextClick = false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }, true);
+
   document.addEventListener('dragstart', event => {
     if (!isDesktop()) return;
     const card = closestFrom(event.target, cardSelector);
     if (!card) return;
+    if (customPointerDragEnabled()) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
     disableImageDragging(card);
     activeDragCard = card;
     activeDropAccepted = false;
@@ -462,6 +653,7 @@
     layoutBeforeDrop = captureLayout();
     refreshOrderMetadata();
     document.body.classList.add('desktop-drag-active');
+    document.body.classList.toggle('desktop-drag-embedded', isEmbeddedFrame());
     card.classList.add('drag-polish-dragging');
     card.style.setProperty('--drag-tilt', '0deg');
     transparentDragImage(event);
