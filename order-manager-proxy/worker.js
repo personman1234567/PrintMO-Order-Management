@@ -190,21 +190,41 @@ export default {
         }
 
         if (url.pathname === "/order-manager/orders/manual-mockups") {
-            return handleManualMockups(
-                request,
-                env,
-                allowOrigin || origin || "*",
-                reqAllowHeaders
-            );
+            try {
+                return await handleManualMockups(
+                    request,
+                    env,
+                    allowOrigin || origin || "*",
+                    reqAllowHeaders
+                );
+            } catch (err) {
+                console.error("Manual mockup request failed:", err?.stack || err?.message || err);
+                return jsonResponse(
+                    { error: "Manual mockup storage request failed" },
+                    allowOrigin || origin || "*",
+                    reqAllowHeaders,
+                    500
+                );
+            }
         }
 
         if (url.pathname === "/order-manager/orders/manual-mockups/bulk") {
-            return handleManualMockupsBulk(
-                request,
-                env,
-                allowOrigin || origin || "*",
-                reqAllowHeaders
-            );
+            try {
+                return await handleManualMockupsBulk(
+                    request,
+                    env,
+                    allowOrigin || origin || "*",
+                    reqAllowHeaders
+                );
+            } catch (err) {
+                console.error("Manual mockup bulk request failed:", err?.stack || err?.message || err);
+                return jsonResponse(
+                    { error: "Manual mockup bulk storage request failed" },
+                    allowOrigin || origin || "*",
+                    reqAllowHeaders,
+                    500
+                );
+            }
         }
 
         if (url.pathname === "/order-manager/orders/manual-checklist") {
