@@ -25,7 +25,8 @@ This subsystem manages the lifecycle of future plans, unbuilt ideas, feature spe
 | Multi-Supplier Routing & Threshold-Optimized Batching | `[Draft / Idea]` | v1.4 Backlog | `workflows/multi-supplier-batching.md` | [multi-supplier-routing-and-batching-plan.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/multi-supplier-routing-and-batching-plan.md) |
 | Quality of Life & Print Shop Workflow Efficiency | `[Draft / Idea]` | v1.5 Backlog | `workflows/qol-shop-efficiency.md` | [qol-workflow-and-shop-efficiency-plan.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/qol-workflow-and-shop-efficiency-plan.md) |
 | Shopify Draft Orders & Invoicing Engine | `[Draft / Idea]` | v1.5 Backlog | `workflows/draft-orders-invoicing.md` | [shopify-draft-orders-invoicing-plan.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/shopify-draft-orders-invoicing-plan.md) |
-| Shopify Live API Sync & Admin Blocks Integration | `[Draft / Idea]` | v1.4 Backlog | `workflows/shopify-live-sync-admin-blocks.md` | [shopify-live-api-sync-admin-blocks-plan.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/shopify-live-api-sync-admin-blocks-plan.md) |
+| Shopify Live API Sync & Admin Blocks Integration | `[Spec Ready]` | v1.4 Backlog | `workflows/shopify-live-sync-admin-blocks.md` | [shopify-live-api-sync-admin-blocks-plan.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/shopify-live-api-sync-admin-blocks-plan.md) |
+| In-House Blank Inventory Tracking & Digital Whiteboard | `[Spec Ready]` | v1.5 Backlog | `features/in-house-inventory.md` | [in-house-inventory-blanks-tracking-plan.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/in-house-inventory-blanks-tracking-plan.md) |
 | Web UI Storage & Decoupling | `[Graduated]` | v1.3 | `workflows/web-shopify-porting.md` | Archived in `legacy/` |
 
 ---
