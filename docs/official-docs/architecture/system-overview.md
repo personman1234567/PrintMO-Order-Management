@@ -22,19 +22,14 @@ PrintMO Order Management is designed as a hybrid desktop and web operational pla
 
 ```mermaid
 flowchart TD
-    Shopify[Shopify Paid Orders] -->|Webhook / API| RedisQueue[(Redis / Upstash Queue)]
-    
-    subgraph Desktop Runtime
-        ElectronMain[Electron main.js] -->|Connects| RedisQueue
-        ElectronMain -->|IPC Bridge preload.js| RendererUI[Desktop Renderer UI renderer.js]
-        ElectronMain -->|REST Call| SSAPI[S&S Activewear REST API]
-    end
-    
-    subgraph Web Runtime
-        CFProxy[Cloudflare Worker Proxy worker.js] -->|Proxies / Storage| RedisQueue
-        CFProxy -->|Proxies| SSAPI
-        WebClient[Web UI order-manager-web/] -->|storage-browser.js| CFProxy
-    end
+    Shopify[Shopify Admin GraphQL and Webhooks] --> CFProxy[Cloudflare Worker BFF worker.js]
+    RendererUI[Desktop Renderer UI renderer.js] -->|IPC Bridge preload.js| ElectronMain[Electron main.js]
+    ElectronMain -->|OIDC bearer token| CFProxy
+    WebClient[Web UI order-manager-web/] -->|Shopify bearer token| CFProxy
+    CFProxy -->|Authenticated HTTPS| RenderAdapter[Render data adapter]
+    RenderAdapter --> RedisQueue[(Redis Cloud)]
+    RenderAdapter --> SSAPI[S&S Activewear REST API]
+    CFProxy --> R2[(Private Cloudflare R2)]
 ```
 
 ---
@@ -44,7 +39,7 @@ flowchart TD
 ### A. Electron Desktop Runtime
 - **Entry point**: `main.js` (Node.js runtime).
 - **Security model**: `contextIsolation: true`, `nodeIntegration: false`. Preload script `preload.js` exposes IPC methods via `window.api`.
-- **Primary Responsibility**: Direct connection to Redis (`shopifyOrdersQueue`), managing local app windows, executing S&S batch orders via `node-fetch`, saving attachments.
+- **Primary Responsibility**: Manages local app windows, token custody, and the IPC bridge. It calls the authenticated Worker API and has no direct Redis or S&S connection.
 
 ### B. Web / Shopify Admin Runtime (`order-manager-web/`)
 - **Entry point**: `index.html` within `order-manager-web/`.
@@ -54,13 +49,13 @@ flowchart TD
 ### C. Cloudflare Proxy (`order-manager-proxy/`)
 - **Entry point**: `worker.js`.
 - **Target**: Cloudflare Workers serverless environment.
-- **Primary Responsibility**: Proxies API calls for the web client, handles CORS, and encapsulates API credentials.
+- **Primary Responsibility**: Authenticates both clients, accesses Shopify, assembles stable DTOs, coordinates cache refreshes, verifies webhooks, and mediates R2. Redis/S&S operations are delegated to the authenticated Render adapter.
 
 ---
 
 ## 3. Key System Invariants
 
-1. **Order Persistence**: Order state is managed via Redis queue items. Order state transitions (`Payment Received` $\rightarrow$ `Blanks Ordered` $\rightarrow$ `Ready to Print`) are reflected directly in the queue records.
+1. **Order Persistence**: During Phase 2 shadow mode, `shopifyOrdersQueue` remains operationally authoritative while Shopify commerce facts and the v1 Redis hash/index projection are synchronized in parallel.
 2. **Viewport Parity**: Both desktop and web platforms MUST maintain complete functional parity (viewing orders, batching blanks, adding attachments).
 3. **Secret Isolation**: Frontend code in `renderer.js` or `order-manager-web/` must never contain hardcoded API keys or database URLs.
 
@@ -71,5 +66,5 @@ flowchart TD
 | Symptom / Trap | Root Cause | Diagnosis & Recovery |
 |---|---|---|
 | Web client fails to load orders | `web-shim.js` or `storage-browser.js` fallback failed to contact proxy | Check Cloudflare Worker proxy logs in `order-manager-proxy/worker.js` and verify CORS settings. |
-| Desktop app fails to start | Missing `.env` file or invalid `REDIS_URL` | Check `.env` path resolution in `main.js:7-21`. Ensure Redis client is accessible. |
-| API key exposure build warning | Secret embedded in renderer code | Move secret to `.env` (Electron) or Cloudflare secret bindings. |
+| Desktop app fails to load orders | OIDC or Worker connectivity failure | Check the Worker URL/public OIDC configuration and Worker logs; Electron must not contain `REDIS_URL`. |
+| API key exposure build warning | Secret embedded in renderer code | Move the secret to Cloudflare Worker or Render environment secrets according to ownership. |

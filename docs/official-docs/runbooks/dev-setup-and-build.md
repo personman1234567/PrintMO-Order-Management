@@ -19,13 +19,14 @@
 ## 1. Prerequisites & Environment Setup
 
 1. **Node.js**: Requires Node.js 18.x or later.
-2. **Redis**: Ensure a Redis instance is accessible locally (`redis://localhost:6379`) or via cloud provider (e.g. Upstash).
-3. **Environment Configuration**: Create a `.env` file in the project root:
+2. **Render data adapter**: The sibling `E:\PrintMO\shopify-ss-integration` service owns the Redis Cloud connection. Its server environment requires `REDIS_URL` and `ORDER_MANAGER_ADMIN_KEY`; do not copy either into this repository or Cloudflare Pages.
+3. **Cloudflare Worker configuration**: Configure `UPSTREAM_BASE`, `ORDER_MANAGER_ADMIN_KEY`, `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, and `SHOPIFY_SHOP_DOMAIN` as Worker variables/secrets. Provision the R2/DO bindings declared in `order-manager-proxy/wrangler.jsonc` before Phase 2 deployment.
+4. **Desktop public configuration**: Generate the public Worker/OIDC config with the existing build script. Electron packages must not contain Redis, Shopify Admin API, R2, or S&S secrets.
+
+For local development of the Render adapter only, use an ignored `.env` in that sibling repository:
    ```env
-   REDIS_URL=redis://localhost:6379
-   SS_API_KEY=your_ss_api_key_here
-   SS_ACCOUNT_NUMBER=your_ss_account_number
-   SHOPIFY_WEBHOOK_SECRET=your_shopify_secret
+   REDIS_URL=redis://your-private-redis-connection
+   ORDER_MANAGER_ADMIN_KEY=your-shared-worker-to-render-key
    ```
 
 ---
@@ -39,6 +40,8 @@ npm install
 # 2. Verify code syntax
 node --check main.js
 node --check order-manager-proxy/worker.js
+npm run verify:phase1
+npm run verify:phase2
 
 # 3. Launch Electron Desktop app in dev mode
 npm start
@@ -70,6 +73,6 @@ npm run prepare:cloudflare
 
 | Symptom / Trap | Root Cause | Diagnosis & Recovery |
 |---|---|---|
-| `electron-builder` fails packaging `.env` | Missing `.env` file in root folder | Ensure `.env` exists; `extraResources` in `package.json` requires `.env` during build. |
-| Redis connection ECONNREFUSED | Redis server is not running locally | Start local Redis service (`redis-server`) or update `REDIS_URL` in `.env`. |
+| Electron tries to load `.env` or connect to Redis | Stale pre-Phase-1 build/code | Rebuild from the current branch; Electron must call the Worker and must not package `.env`. |
+| Render reports Redis `ECONNREFUSED` | Its private `REDIS_URL` is missing or invalid | Correct the Render service environment; do not move `REDIS_URL` to the Worker or clients. |
 | Cloudflare script permission denied | Bash execution permission missing | Run `bash scripts/prepare-cloudflare-pages-upload.sh` directly. |

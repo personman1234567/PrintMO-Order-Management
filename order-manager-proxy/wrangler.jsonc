@@ -1,0 +1,30 @@
+{
+  "name": "order-manager-proxy",
+  "main": "worker.js",
+  "compatibility_date": "2026-07-22",
+  "keep_vars": true,
+  "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ORDER_SYNC_COORDINATOR",
+        "class_name": "OrderSyncCoordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["OrderSyncCoordinator"]
+    }
+  ],
+  "triggers": {
+    "crons": ["*/5 * * * *", "0 2 * * *"]
+  },
+  "r2_buckets": [
+    {
+      "binding": "R2_BUCKET",
+      "bucket_name": "printmo-artwork-private"
+    }
+  ]
+}

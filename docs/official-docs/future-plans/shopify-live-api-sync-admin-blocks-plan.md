@@ -11,16 +11,16 @@
 PrintMO will replace the static Redis list snapshot (`shopifyOrdersQueue`) with a live, decoupled order architecture:
 
 - **Shopify Admin GraphQL API** owns commerce facts: order identity, current line items, quantities, prices, customer details, financial state, cancellation state, and fulfillment state.
-- **Upstash Redis** owns PrintMO production facts: workflow stage, bundles, S&S batch/PO references, readiness flags, print progress, internal notes, asset manifests, production snapshots, acknowledgements, and archive state.
+- **The existing Redis Cloud database** owns PrintMO production facts: workflow stage, bundles, S&S batch/PO references, readiness flags, print progress, internal notes, asset manifests, production snapshots, acknowledgements, and archive state. It is reached only through the authenticated Render data adapter; Redis is never exposed to Cloudflare or clients over a public REST credential.
 - **Cloudflare R2** owns artwork bytes. Redis stores immutable R2 object keys and file metadata, never Base64 payloads or expiring URLs.
-- **One Cloudflare Worker backend-for-frontend (BFF)** is the only public API used by Electron, the embedded web app, and Shopify Admin extensions. Electron no longer connects directly to Redis or carries Redis, Shopify, R2, or S&S secrets.
+- **One Cloudflare Worker backend-for-frontend (BFF)** is the only public API used by Electron, the embedded web app, and Shopify Admin extensions. The Worker owns authentication, Shopify access, DTOs, R2, and coordination, and calls the existing Render service over authenticated HTTPS for Redis-backed operations. Electron no longer connects directly to Redis or carries Redis, Shopify, R2, or S&S secrets.
 - **One per-shop Durable Object coordinator** serializes Shopify cost reservations, coalesces cache refreshes, and hosts authenticated WebSocket fanout.
 
 ### Final technology choices
 
 | Concern | Selected direction | Explicitly rejected |
 |---|---|---|
-| Production metadata | Upstash Redis hashes, sorted sets, streams, and Lua scripts | Cloudflare Workers KV for transactional state |
+| Production metadata | Existing Redis Cloud hashes, sorted sets, streams, and Lua scripts behind the authenticated Render adapter | Cloudflare Workers KV for transactional state; a second Redis vendor/database |
 | Live client updates | Durable Object WebSockets with hibernation | Keeping both SSE and WebSockets indefinitely |
 | Artwork delivery | Private R2 with backend-issued short-lived presigned URLs | Public R2 objects or origin-only authorization |
 | Electron sign-in | OIDC Authorization Code + PKCE in the system browser | Embedded login webviews, client HMAC secrets, or mTLS as user authentication |
@@ -28,7 +28,7 @@ PrintMO will replace the static Redis list snapshot (`shopifyOrdersQueue`) with 
 | S&S duplicate protection | Persistent batch state machine + unique `poNumber` + GET reconciliation | Sending an undocumented `idempotency_key` field |
 | Audit trail | Redis Stream plus structured Workers logs exported with Logpush | Calling mutable KV an immutable audit ledger |
 
-The existing `UPSTREAM_BASE` service may remain only as a temporary legacy adapter during rollout. It is removed after cutover; final Shopify, Redis, R2, S&S, auth, and DTO ownership resides in the Worker BFF and its Durable Object.
+`UPSTREAM_BASE` is the private Redis/S&S adapter for this rollout and is not a browser-facing API. Keeping the existing Render service and Redis Cloud database avoids an unnecessary datastore migration during Shopify cutover. A later consolidation may remove it, but that is not a Phase 2–5 requirement.
 
 ## Open Questions & Brainstorming (Non-blocking Validation Gates)
 
@@ -54,9 +54,10 @@ flowchart TD
 
     BFF --> Coordinator["Per-shop OrderSyncCoordinator Durable Object"]
     Coordinator --> Shopify["Shopify Admin GraphQL API"]
-    BFF --> Redis["Upstash Redis"]
+    BFF -->|"X-Order-Manager-Key over HTTPS"| Adapter["Render data adapter"]
+    Adapter --> Redis["Existing Redis Cloud"]
     BFF --> R2["Private Cloudflare R2"]
-    BFF --> SS["S&S Activewear API"]
+    Adapter --> SS["S&S Activewear API"]
     Coordinator -->|"Authenticated WebSocket fanout"| Electron
     Coordinator -->|"Authenticated WebSocket fanout"| Web
     Coordinator -->|"Authenticated WebSocket fanout"| Block
@@ -66,13 +67,14 @@ flowchart TD
 
 | Component | Responsibilities |
 |---|---|
-| Worker BFF | Authentication, authorization, API validation, DTO merge, Redis/R2/S&S access, webhook verification, audit emission, and stable `/v1` contracts |
+| Worker BFF | Authentication, authorization, API validation, Shopify access, DTO merge, R2 access, webhook verification, and stable public `/v1` contracts |
 | `OrderSyncCoordinator` Durable Object | Per-shop Shopify request queue, cost reservations, refresh single-flight, dirty-GID coalescing, WebSocket ticket redemption, and revision fanout |
-| Upstash Redis | Durable production metadata, indexes, Shopify cache, migration ledger, webhook dedupe, batch state machine, and audit stream |
+| Render data adapter | The only process holding `REDIS_URL`; executes Redis commands/Lua and existing S&S operations for authenticated Worker requests |
+| Redis Cloud | Durable production metadata, indexes, Shopify cache, migration ledger, webhook dedupe, batch state machine, and audit stream |
 | R2 | Private artwork objects and temporary migration objects |
 | Electron preload/main | Token custody, safe API bridge, OS keychain encryption, and downloads; no business secrets or direct datastore connections |
 
-All Worker-to-Upstash, Worker-to-Shopify, Worker-to-R2, and Worker-to-S&S credentials are server-side encrypted bindings. Browser and renderer code receive no long-lived infrastructure secrets.
+All Worker-to-Render, Worker-to-Shopify, Worker-to-R2, and Render-to-Redis/S&S credentials are server-side secrets. Browser and renderer code receive no long-lived infrastructure secrets.
 
 ---
 
@@ -325,7 +327,7 @@ Regular queries must remain below Shopify’s single-query maximum. Bulk Operati
 
 ---
 
-## 6. Upstash Redis Schema and Atomicity
+## 6. Redis Cloud Schema and Atomicity
 
 Cloudflare Workers KV is not used for production metadata, caching, indexes, locks, webhook dedupe, batches, or audit events. Those features require Redis semantics.
 
@@ -361,7 +363,7 @@ One short Lua script performs each conditional mutation:
 8. Record the mutation idempotency result.
 9. Return the new version and changed fields.
 
-The script declares every touched key through `KEYS` and uses Upstash key-based Lua locking. Pipelines may reduce round trips for reads but are never used for conditional writes.
+The script declares every touched key through `KEYS` and executes atomically inside Redis. Pipelines may reduce round trips for reads but are never used for conditional writes.
 
 ### Index integrity
 
@@ -502,7 +504,7 @@ Phase 1 deployment bindings are fail-closed: the Worker requires Shopify client/
 
 ### Secrets
 
-Shopify offline access token, Shopify app secret, Upstash token, R2 credentials, S&S credentials, OIDC configuration secrets, and signing keys remain only in server bindings. Electron `.env` packaging for infrastructure credentials is removed before cutover.
+Shopify access tokens, Shopify app secret, Worker-to-Render key, Redis URL, R2 bindings, S&S credentials, OIDC configuration secrets, and signing keys remain only in their server runtimes. Electron `.env` packaging for infrastructure credentials is removed before cutover.
 
 ---
 
@@ -627,10 +629,11 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 
 #### Phase 2 — Shadow v1 data plane
 
-- Deploy Upstash schema, Shopify cache, Durable Object coordinator, R2 private assets, and v1 DTO in shadow mode.
-- Run idempotent metadata/assets migration.
-- Compare legacy and v1 boards for order membership, quantities, stages, bundles, notes, progress, and attachment counts.
-- Require zero unexplained mismatches for seven consecutive days.
+- [x] Implement the Redis Cloud hash/index/cache schema in the authenticated Render adapter, plus Worker Shopify cache/coordinator, migration, parity, private-R2 read, and v1 DTO paths.
+- [ ] Deploy the Render adapter and Worker configuration, provision/bind the private R2 bucket and SQLite-backed Durable Object, and smoke-test live Shopify token acquisition.
+- [ ] Run the idempotent metadata/assets migration against the backed-up legacy queue.
+- [ ] Compare legacy and v1 boards for order membership, quantities, stages, bundles, notes, progress, and attachment counts.
+- [ ] Require zero unexplained mismatches for seven consecutive days before Phase 3.
 
 #### Phase 3 — Dual-write canary
 
@@ -648,7 +651,7 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 #### Phase 5 — Retire legacy
 
 - Stop legacy writes, retain the backed-up list read-only for 30 days, and then remove legacy queue adapters.
-- Remove `UPSTREAM_BASE` if it only served the legacy Order Manager API.
+- Retain or consolidate `UPSTREAM_BASE` based on a separate post-cutover operational decision; it remains the supported Redis Cloud adapter in this plan.
 - Graduate shipped facts into current-state architecture/workflow docs.
 
 ### Rollback
@@ -707,14 +710,15 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 
 - [ ] Scaffold the Shopify app/Admin UI extension and pin API `2026-07`.
 - [x] Implement Worker auth middleware and OIDC partner allowlists.
-- [ ] Add Upstash Redis, private R2, and per-shop Durable Object bindings.
+- [x] Implement the existing Redis Cloud adapter and declare private R2 plus per-shop Durable Object bindings.
+- [ ] Provision/deploy the R2 bucket, SQLite-backed Durable Object namespace, and updated Render service.
 - [ ] Add v1 schema validation and standard errors.
 
 ### Data plane
 
-- [ ] Implement Redis Lua mutations and integrity repair.
-- [ ] Implement Shopify request coordinator, cache, pagination, and reconciliation.
-- [ ] Implement canonical DTO adapters and detail projections.
+- [x] Implement Redis Lua mutations and integrity repair.
+- [x] Implement Shopify request coordinator, cache, pagination, and reconciliation.
+- [x] Implement canonical DTO adapters and detail projections.
 - [ ] Implement WebSocket ticketing/fanout.
 
 ### Operational safeguards
@@ -757,14 +761,14 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 - [GET Orders lookup by PO/order/invoice/GUID](https://api.ssactivewear.com/V2/Orders.aspx)
 - [S&S API rate limit](https://api.ssactivewear.com/v2/)
 
-### Cloudflare, Upstash, and Electron
+### Cloudflare, Redis, and Electron
 
 - [Durable Object WebSocket hibernation](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)
 - [R2 presigned URLs and bearer-token considerations](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)
 - [Workers KV eventual consistency and transaction limitations](https://developers.cloudflare.com/kv/concepts/how-kv-works/)
 - [Workers Logs and Logpush](https://developers.cloudflare.com/workers/observability/logs/workers-logs/)
-- [Upstash Redis transactions](https://upstash.com/docs/redis/sdks/ts/pipelining/pipeline-transaction)
-- [Upstash Redis Lua atomic operations](https://upstash.com/blog/lua-scripting-on-upstash-redis-atomic-operations-over-http)
+- [Redis transactions](https://redis.io/docs/latest/develop/using-commands/transactions/)
+- [Redis Lua atomic execution](https://redis.io/docs/latest/develop/programmability/eval-intro/)
 - [Electron `safeStorage`](https://electronjs.org/docs/latest/api/safe-storage)
 - [OAuth 2.0 for native apps: external browser and loopback redirects](https://datatracker.ietf.org/doc/html/rfc8252)
 
@@ -774,5 +778,6 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 
 - **2026-07-21**: Initial proposal for live Shopify API sync created.
 - **2026-07-22**: Added unified backend, GraphQL/Redis/R2 safeguards, production diff workflow, webhooks, offline behavior, and initial test plan.
-- **2026-07-22**: Finalized implementation contracts after authoritative platform research: canonical lifecycle and DTO/API, cache/pagination/coordinator behavior, Upstash Lua schema, S&S PO reconciliation, surface authentication, R2 lifecycle, migration/rollback, rollout phases, and acceptance criteria. Status advanced to `[Spec Ready]`.
+- **2026-07-22**: Finalized implementation contracts after authoritative platform research: canonical lifecycle and DTO/API, cache/pagination/coordinator behavior, Redis Lua schema, S&S PO reconciliation, surface authentication, R2 lifecycle, migration/rollback, rollout phases, and acceptance criteria. Status advanced to `[Spec Ready]`.
+- **2026-07-22**: Implemented the local Phase 2 shadow plane using the existing Redis Cloud database behind the authenticated Render adapter. Added Shopify client-credential token refresh, cost-aware GraphQL reads, summary/detail caches, webhook invalidation, Durable Object reconciliation, CAS production metadata, migration/quarantine/parity tooling, and private R2 read tickets. Deployment, live migration, and the seven-day zero-mismatch gate remain open.
 - **2026-07-22**: Implemented Phase 0 backup/fixture tooling and the Phase 1 authenticated legacy adapter. Added Shopify token validation, generic Electron OIDC Authorization Code + PKCE, safe refresh-token storage, atomic Lua queue changes, authenticated R2 reads, unified web/Desktop routes, packaging secret removal, and focused Phase 1 contract verification. Status advanced to `[In Progress]`; deployed staging smoke tests and credential/provider configuration remain rollout gates.

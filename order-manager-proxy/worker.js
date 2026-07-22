@@ -18,6 +18,29 @@ function configuredIds(value) {
     return new Set(String(value || "").split(",").map(v => v.trim()).filter(Boolean));
 }
 
+async function verifyShopifyWebhookHmac(rawBody, hmacHeader, secret) {
+    if (!hmacHeader || !secret) return false;
+    try {
+        const key = await crypto.subtle.importKey(
+            "raw",
+            new TextEncoder().encode(secret),
+            { name: "HMAC", hash: "SHA-256" },
+            false,
+            ["sign"]
+        );
+        const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBody));
+        const bytes = new Uint8Array(signature);
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        const expected = btoa(binary);
+        return expected === hmacHeader;
+    } catch (_) {
+        return false;
+    }
+}
+
 function validateJwtTimes(payload) {
     const now = Math.floor(Date.now() / 1000);
     if (!Number.isFinite(payload.exp) || payload.exp < now - 10) throw new Error("Bearer token expired");
@@ -90,7 +113,7 @@ async function authenticateRequest(request, env) {
 }
 
 export default {
-    async fetch(request, env) {
+    async fetch(request, env, ctx) {
         const url = new URL(request.url);
 
         // Only proxy the order-manager API paths
@@ -121,8 +144,14 @@ export default {
             });
         }
 
+        // EARLY UNAUTHENTICATED ROUTE: Shopify Webhook signature verification (HMAC)
+        if (url.pathname === "/order-manager/v1/webhooks/shopify" && request.method === "POST") {
+            return handleShopifyWebhook(request, env, allowOrigin || origin || "*", reqAllowHeaders, ctx);
+        }
+
+        let identity;
         try {
-            await authenticateRequest(request, env);
+            identity = await authenticateRequest(request, env);
         } catch (err) {
             return jsonResponse({ error: err.message }, allowOrigin || origin || "*", reqAllowHeaders, 401, {
                 "WWW-Authenticate": 'Bearer realm="printmo"',
@@ -151,7 +180,6 @@ export default {
             );
         }
 
-        // ✅ Added: metadata/head endpoint used by storage-browser.js (GET /order-manager/storage/head?key=...)
         if (url.pathname === "/order-manager/storage/head") {
             return handleStorageHead(
                 request,
@@ -214,15 +242,50 @@ export default {
         }
 
         if (url.pathname === "/order-manager/v1/legacy/queue/mutate" && request.method === "POST") {
-            return handleLegacyQueueMutate(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+            return handleLegacyQueueMutate(request, env, allowOrigin || origin || "*", reqAllowHeaders, ctx);
         }
 
         if (url.pathname === "/order-manager/v1/legacy/queue/item" && request.method === "DELETE") {
-            return handleLegacyQueueDelete(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+            return handleLegacyQueueDelete(request, env, allowOrigin || origin || "*", reqAllowHeaders, ctx);
         }
 
         if (url.pathname === "/order-manager/v1/legacy/ss/batch" && request.method === "POST") {
-            return handleLegacySSBatch(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+            return handleLegacySSBatch(request, env, allowOrigin || origin || "*", reqAllowHeaders, ctx);
+        }
+
+        // -----------------------------
+        // PHASE 2 SHADOW V1 ENDPOINTS
+        // -----------------------------
+        if (url.pathname === "/order-manager/v1/orders" && request.method === "GET") {
+            return handleV1OrdersGet(request, env, allowOrigin || origin || "*");
+        }
+
+        if (url.pathname.startsWith("/order-manager/v1/orders/") && url.pathname.endsWith("/production") && request.method === "PATCH") {
+            return handleV1ProductionPatch(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
+        }
+
+        if (url.pathname.startsWith("/order-manager/v1/orders/") && request.method === "GET") {
+            return handleV1OrderDetailGet(request, env, allowOrigin || origin || "*");
+        }
+
+        if (url.pathname.startsWith("/order-manager/v1/assets/") && url.pathname.endsWith("/read-ticket") && request.method === "POST") {
+            return handleV1AssetReadTicket(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
+        if (url.pathname.startsWith("/order-manager/v1/assets/") && url.pathname.endsWith("/read") && request.method === "GET") {
+            return handleV1AssetRead(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
+        if (url.pathname === "/order-manager/v1/parity/check" && request.method === "POST") {
+            return handleV1ParityCheck(request, env, allowOrigin || origin || "*");
+        }
+
+        if (url.pathname === "/order-manager/v1/parity/report" && request.method === "GET") {
+            return handleV1ParityReport(request, env, allowOrigin || origin || "*");
+        }
+
+        if (url.pathname === "/order-manager/v1/migration/run" && request.method === "POST") {
+            return handleV1MigrationRun(request, env, allowOrigin || origin || "*");
         }
 
         // -----------------------------
@@ -243,13 +306,13 @@ export default {
             return new Response("Missing ORDER_MANAGER_ADMIN_KEY", { status: 500 });
         }
         reqHeaders.set("X-Order-Manager-Key", adminKey);
+        if (env.SHOPIFY_SHOP_DOMAIN) reqHeaders.set("X-Shopify-Shop-Domain", String(env.SHOPIFY_SHOP_DOMAIN).toLowerCase());
 
         // --- WebSocket upgrade special-case ---
-        // For WS, you must return fetch() directly so the upgrade can be proxied.
         const isWebSocket = (request.headers.get("Upgrade") || "").toLowerCase() === "websocket";
         if (isWebSocket) {
             const wsReq = new Request(upstreamUrl, {
-                method: request.method, // should be GET
+                method: request.method,
                 headers: reqHeaders,
             });
             return fetch(wsReq);
@@ -276,6 +339,19 @@ export default {
             headers: outHeaders,
         });
     },
+
+    async scheduled(event, env, ctx) {
+        const shop = (env.SHOPIFY_SHOP_DOMAIN || 'printmo-test.myshopify.com').toLowerCase();
+        if (env.ORDER_SYNC_COORDINATOR) {
+            const id = env.ORDER_SYNC_COORDINATOR.idFromName(shop);
+            const coordinator = env.ORDER_SYNC_COORDINATOR.get(id);
+            if (event.cron === "*/5 * * * *") {
+                ctx.waitUntil(coordinator.fetch(new Request("https://internal/reconcile-incremental")).catch(err => console.error("Cron incremental error:", err)));
+            } else if (event.cron === "0 2 * * *") {
+                ctx.waitUntil(coordinator.fetch(new Request("https://internal/reconcile-integrity")).catch(err => console.error("Cron integrity error:", err)));
+            }
+        }
+    }
 };
 
 function pickAllowOrigin(origin, env) {
@@ -1777,27 +1853,25 @@ for index, value in ipairs(raw) do
 end
 return 0`;
 
-async function upstashRedis(env, commandArray) {
-    if (!env.UPSTASH_REDIS_REST_URL || !env.UPSTASH_REDIS_REST_TOKEN) {
-        throw new Error("Missing UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN in Worker environment");
+async function upstreamDataRequest(env, path, options = {}) {
+    const upstreamBase = String(env.UPSTREAM_BASE || '').replace(/\/+$/, '');
+    const adminKey = env.ORDER_MANAGER_ADMIN_KEY;
+    if (!upstreamBase || !adminKey) throw new Error('Render data adapter is not configured');
+    const headers = new Headers(options.headers || {});
+    headers.set('X-Order-Manager-Key', adminKey);
+    if (env.SHOPIFY_SHOP_DOMAIN) headers.set('X-Shopify-Shop-Domain', String(env.SHOPIFY_SHOP_DOMAIN).toLowerCase());
+    if (options.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    const response = await fetch(`${upstreamBase}${path}`, { ...options, headers });
+    const text = await response.text();
+    let body = null;
+    try { body = text ? JSON.parse(text) : null; } catch { body = { error: text || `Upstream HTTP ${response.status}` }; }
+    if (!response.ok) {
+        const error = new Error(body?.error?.message || body?.error || `Render data adapter HTTP ${response.status}`);
+        error.status = response.status;
+        error.body = body;
+        throw error;
     }
-    const res = await fetch(env.UPSTASH_REDIS_REST_URL.replace(/\/+$/, ''), {
-        method: "POST",
-        headers: {
-            "Authorization": `Bearer ${env.UPSTASH_REDIS_REST_TOKEN}`,
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify(commandArray)
-    });
-    if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`Upstash Redis HTTP ${res.status}: ${errText}`);
-    }
-    const json = await res.json();
-    if (json.error) {
-        throw new Error(`Upstash Redis error: ${json.error}`);
-    }
-    return json.result;
+    return body;
 }
 
 function normalizeQueueOrder(order) {
@@ -1816,23 +1890,14 @@ function normalizeQueueOrder(order) {
 
 async function handleLegacyQueueGet(request, env, allowOrigin, reqAllowHeaders) {
     try {
-        const rawList = await upstashRedis(env, ["LRANGE", QUEUE_KEY, 0, -1]);
-        const orders = [];
-        if (Array.isArray(rawList)) {
-            for (let i = 0; i < rawList.length; i++) {
-                const item = rawList[i];
-                const order = typeof item === 'string' ? JSON.parse(item) : item;
-                normalizeQueueOrder(order);
-                orders.push(order);
-            }
-        }
+        const orders = await upstreamDataRequest(env, '/order-manager/v1/legacy/queue');
         return jsonResponse(orders, allowOrigin, reqAllowHeaders);
     } catch (err) {
         return jsonResponse({ error: err.message }, allowOrigin, reqAllowHeaders, 500);
     }
 }
 
-async function handleLegacyQueueMutate(request, env, allowOrigin, reqAllowHeaders) {
+async function handleLegacyQueueMutate(request, env, allowOrigin, reqAllowHeaders, ctx) {
     try {
         const body = await request.json();
         const { orderName, orderNames, bundleName, patch } = body;
@@ -1844,14 +1909,16 @@ async function handleLegacyQueueMutate(request, env, allowOrigin, reqAllowHeader
             bundleName: bundleName || null,
             patch
         };
-        const result = await upstashRedis(env, ["EVAL", MUTATE_QUEUE_LUA, 1, QUEUE_KEY, JSON.stringify(spec)]);
-        return jsonResponse(typeof result === "string" ? JSON.parse(result) : result, allowOrigin, reqAllowHeaders);
+        const result = await upstreamDataRequest(env, '/order-manager/v1/legacy/queue/mutate', {
+            method: 'POST', body: JSON.stringify(spec)
+        });
+        return jsonResponse(result, allowOrigin, reqAllowHeaders);
     } catch (err) {
         return jsonResponse({ error: err.message }, allowOrigin, reqAllowHeaders, 500);
     }
 }
 
-async function handleLegacyQueueDelete(request, env, allowOrigin, reqAllowHeaders) {
+async function handleLegacyQueueDelete(request, env, allowOrigin, reqAllowHeaders, ctx) {
     try {
         const body = await request.json();
         const { orderName } = body;
@@ -1859,11 +1926,10 @@ async function handleLegacyQueueDelete(request, env, allowOrigin, reqAllowHeader
             return jsonResponse({ error: "Missing orderName" }, allowOrigin, reqAllowHeaders, 400);
         }
 
-        const deleted = Number(await upstashRedis(env, ["EVAL", DELETE_QUEUE_ITEM_LUA, 1, QUEUE_KEY, orderName]));
-        if (!deleted) {
-            return jsonResponse({ success: false, message: "Order not found" }, allowOrigin, reqAllowHeaders, 404);
-        }
-        return jsonResponse({ success: true, deleted: orderName }, allowOrigin, reqAllowHeaders);
+        const result = await upstreamDataRequest(env, '/order-manager/v1/legacy/queue/item', {
+            method: 'DELETE', body: JSON.stringify({ orderName })
+        });
+        return jsonResponse(result, allowOrigin, reqAllowHeaders);
     } catch (err) {
         return jsonResponse({ error: err.message }, allowOrigin, reqAllowHeaders, 500);
     }
@@ -1872,98 +1938,863 @@ async function handleLegacyQueueDelete(request, env, allowOrigin, reqAllowHeader
 async function handleLegacySSBatch(request, env, allowOrigin, reqAllowHeaders) {
     try {
         const body = await request.json();
-        const { orderIds } = body;
-        if (!Array.isArray(orderIds) || !orderIds.length) {
+        if (!Array.isArray(body.orderIds) || !body.orderIds.length) {
             return jsonResponse({ error: "No orderIds provided for batch" }, allowOrigin, reqAllowHeaders, 400);
         }
-
-        const ssAccount = env.SS_ACCOUNT_NUMBER;
-        const ssApiKey = env.SS_API_KEY;
-        const ssPaymentProfileId = env.SS_PAYMENT_PROFILE_ID;
-        const ssPaymentProfileEmail = env.SS_PAYMENT_PROFILE_EMAIL;
-
-        if (!ssAccount || !ssApiKey || !ssPaymentProfileId || !ssPaymentProfileEmail) {
-            return jsonResponse({ error: "S&S credentials not configured on Worker" }, allowOrigin, reqAllowHeaders, 500);
-        }
-
-        const rawList = await upstashRedis(env, ["LRANGE", QUEUE_KEY, 0, -1]);
-        const targetSet = new Set(orderIds);
-        const toProcess = [];
-
-        if (Array.isArray(rawList)) {
-            for (const item of rawList) {
-                const order = typeof item === 'string' ? JSON.parse(item) : item;
-                if (targetSet.has(order.name)) {
-                    toProcess.push(order);
-                }
-            }
-        }
-
-        if (!toProcess.length) {
-            return jsonResponse({ error: "No matching orders found in queue" }, allowOrigin, reqAllowHeaders, 404);
-        }
-
-        const agg = {};
-        toProcess.forEach(o => {
-            if (Array.isArray(o.items)) {
-                o.items.forEach(({ sku, qty }) => {
-                    if (sku) agg[sku] = (agg[sku] || 0) + (qty || 0);
-                });
-            }
-        });
-
-        const auth = 'Basic ' + btoa(`${ssAccount}:${ssApiKey}`);
-        let subtotal = 0;
-
-        for (const [sku, qty] of Object.entries(agg)) {
-            const res = await fetch(`https://api.ssactivewear.com/v2/products/${encodeURIComponent(sku)}?mediatype=json`, {
-                headers: { Authorization: auth, Accept: 'application/json' }
-            });
-            if (res.ok) {
-                const js = await res.json();
-                const price = js.Price ?? js.price ?? 0;
-                subtotal += price * qty;
-            }
-        }
-
-        const payload = {
-            customer: `Batch of ${toProcess.length} orders`,
-            testOrder: true,
-            autoSelectWarehouse: true,
-            rejectLineErrors: false,
-            shippingAddress: {
-                Name: 'LoGo Fishin Attn: TJ Reid',
-                Address: '328 Bristlecone Ct S',
-                City: 'Saint Charles',
-                State: 'MO',
-                Zip: '63304',
-                Country: 'USA'
-            },
-            Lines: Object.entries(agg).map(([Identifier, Qty]) => ({ Identifier, Qty })),
-            PaymentProfile: {
-                ProfileID: parseInt(ssPaymentProfileId || '0', 10),
-                Email: ssPaymentProfileEmail || ''
-            }
-        };
-
-        const resp = await fetch('https://api.ssactivewear.com/v2/orders/', {
+        const result = await upstreamDataRequest(env, '/order-manager/orders/process-batch', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': auth
-            },
-            body: JSON.stringify(payload)
+            body: JSON.stringify({ orderIds: body.orderIds, orderNames: body.orderIds })
         });
-
-        const json = await resp.json();
-        const created = json.orders?.[0];
-        if (!created?.orderNumber) {
-            return jsonResponse({ error: `S&S Batch failed: ${JSON.stringify(json)}` }, allowOrigin, reqAllowHeaders, 400);
-        }
-
-        return jsonResponse({ orderNumber: created.orderNumber, count: toProcess.length }, allowOrigin, reqAllowHeaders);
+        return jsonResponse(result, allowOrigin, reqAllowHeaders);
     } catch (err) {
-        return jsonResponse({ error: err.message }, allowOrigin, reqAllowHeaders, 500);
+        return jsonResponse({ error: err.message }, allowOrigin, reqAllowHeaders, err.status || 500);
+    }
+}
+// -----------------------------
+// PHASE 2 SHADOW DATA PLANE
+// Redis remains private behind the authenticated Render adapter. Shopify access,
+// rate coordination, cache refreshes, webhook intake, and R2 reads live here.
+// -----------------------------
+const shopifyAccessTokenCache = new Map();
+const SHOPIFY_API_VERSION = '2026-07';
+
+const ORDER_SUMMARIES_QUERY = `query PrintMOOrderSummaries($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on Order {
+      id name createdAt updatedAt displayFinancialStatus displayFulfillmentStatus cancelledAt currencyCode
+      currentSubtotalLineItemsQuantity
+      currentSubtotalPriceSet { shopMoney { amount currencyCode } }
+      currentTotalPriceSet { shopMoney { amount currencyCode } }
+      customer { displayName }
+      lineItems(first: 25) {
+        nodes {
+          id sku title variantTitle quantity currentQuantity
+          variant { id }
+          originalUnitPriceSet { shopMoney { amount currencyCode } }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}`;
+
+const ORDER_LINE_ITEMS_QUERY = `query PrintMOOrderLineItems($id: ID!, $after: String) {
+  order(id: $id) {
+    lineItems(first: 25, after: $after) {
+      nodes {
+        id sku title variantTitle quantity currentQuantity
+        variant { id }
+        originalUnitPriceSet { shopMoney { amount currencyCode } }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}`;
+
+const ORDER_DETAIL_QUERY = `query PrintMOOrderDetail($id: ID!, $after: String) {
+  order(id: $id) {
+    id name createdAt updatedAt note cancelledAt displayFinancialStatus displayFulfillmentStatus currencyCode
+    currentSubtotalLineItemsQuantity
+    currentSubtotalPriceSet { shopMoney { amount currencyCode } }
+    currentTotalPriceSet { shopMoney { amount currencyCode } }
+    customer { displayName }
+    shippingAddress { name address1 address2 city provinceCode zip countryCodeV2 }
+    fulfillments { id status createdAt updatedAt trackingInfo { number url company } }
+    lineItems(first: 25, after: $after) {
+      nodes {
+        id sku title variantTitle quantity currentQuantity customAttributes { key value }
+        variant { id }
+        originalUnitPriceSet { shopMoney { amount currencyCode } }
+        discountAllocations { allocatedAmountSet { shopMoney { amount currencyCode } } }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}`;
+
+const ORDER_SEARCH_QUERY = `query PrintMOOrderSearch($query: String!) {
+  orders(first: 5, query: $query) { nodes { id name createdAt updatedAt displayFinancialStatus } }
+}`;
+
+const UPDATED_ORDERS_QUERY = `query PrintMOUpdatedOrders($query: String!, $after: String) {
+  orders(first: 50, after: $after, sortKey: UPDATED_AT, query: $query) {
+    nodes { id name createdAt updatedAt displayFinancialStatus }
+    pageInfo { hasNextPage endCursor }
+  }
+}`;
+
+function v1Error(error, allowOrigin, reqAllowHeaders, status = 500, details) {
+    const requestId = crypto.randomUUID();
+    const code = typeof error === 'string' ? error : error?.code || 'INTERNAL_ERROR';
+    const message = typeof error === 'string' ? error : error?.message || 'Unexpected error';
+    return jsonResponse({ error: { code, message, requestId, ...(details ? { details } : {}) } }, allowOrigin, reqAllowHeaders, status);
+}
+
+function sleepMs(ms) {
+    return new Promise(resolve => setTimeout(resolve, Math.max(0, Math.min(ms, 30000))));
+}
+
+function base64UrlEncode(value) {
+    const bytes = value instanceof Uint8Array ? value : new TextEncoder().encode(String(value));
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function decodeJsonBase64Url(value) {
+    return JSON.parse(new TextDecoder().decode(decodeBase64Url(value)));
+}
+
+function bytesToHex(bytes) {
+    return [...new Uint8Array(bytes)].map(value => value.toString(16).padStart(2, '0')).join('');
+}
+
+async function hmacBase64Url(payload, secret) {
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    return base64UrlEncode(new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload))));
+}
+
+async function encodeSignedCursor(value, env) {
+    const payload = base64UrlEncode(JSON.stringify(value));
+    return `${payload}.${await hmacBase64Url(payload, env.SHOPIFY_API_SECRET)}`;
+}
+
+async function decodeSignedCursor(cursor, expectedFilter, env) {
+    if (!cursor) return 0;
+    const [payload, signature] = String(cursor).split('.');
+    if (!payload || !signature || signature !== await hmacBase64Url(payload, env.SHOPIFY_API_SECRET)) {
+        throw Object.assign(new Error('Invalid board cursor'), { code: 'INVALID_CURSOR', status: 400 });
+    }
+    const value = decodeJsonBase64Url(payload);
+    if (value.v !== 1 || value.filter !== expectedFilter || !Number.isInteger(value.offset) || value.offset < 0) {
+        throw Object.assign(new Error('Cursor does not match this board query'), { code: 'INVALID_CURSOR', status: 400 });
+    }
+    return value.offset;
+}
+
+function numericIdFromGid(value) {
+    const match = /(?:gid:\/\/shopify\/Order\/)?(\d+)$/.exec(String(value || ''));
+    return match ? match[1] : null;
+}
+
+function canonicalOrderGid(value) {
+    const id = numericIdFromGid(value);
+    return id ? `gid://shopify/Order/${id}` : null;
+}
+
+function shopDomain(env) {
+    const shop = String(env.SHOPIFY_SHOP_DOMAIN || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop)) throw new Error('SHOPIFY_SHOP_DOMAIN is invalid');
+    return shop;
+}
+
+async function getShopifyAccessToken(env) {
+    const shop = shopDomain(env);
+    const cached = shopifyAccessTokenCache.get(shop);
+    if (cached && cached.expiresAt > Date.now() + 60000) return cached.token;
+    if (!env.SHOPIFY_API_KEY || !env.SHOPIFY_API_SECRET) throw new Error('Shopify client credentials are not configured');
+    const body = new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: env.SHOPIFY_API_KEY,
+        client_secret: env.SHOPIFY_API_SECRET
+    });
+    const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body
+    });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok || !json.access_token) {
+        const message = json.error_description || json.error || `Shopify token exchange failed with HTTP ${response.status}`;
+        throw new Error(message);
+    }
+    const expiresIn = Number(json.expires_in || 86399);
+    shopifyAccessTokenCache.set(shop, { token: json.access_token, expiresAt: Date.now() + expiresIn * 1000 });
+    return json.access_token;
+}
+
+async function performShopifyGraphQL(env, query, variables, operationName) {
+    const token = await getShopifyAccessToken(env);
+    const headers = {
+        'Content-Type': 'application/json',
+        'X-Shopify-Access-Token': token
+    };
+    if (env.SHOPIFY_COST_DEBUG === '1') headers['Shopify-GraphQL-Cost-Debug'] = '1';
+    const response = await fetch(`https://${shopDomain(env)}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ query, variables: variables || {}, ...(operationName ? { operationName } : {}) })
+    });
+    const apiVersion = response.headers.get('X-Shopify-API-Version');
+    const json = await response.json().catch(() => ({}));
+    return {
+        httpStatus: response.status,
+        ok: response.ok,
+        apiVersion,
+        data: json.data || null,
+        errors: Array.isArray(json.errors) ? json.errors : [],
+        extensions: json.extensions || {}
+    };
+}
+
+function isThrottled(result) {
+    return result.httpStatus === 429 || result.errors.some(error => error?.extensions?.code === 'THROTTLED');
+}
+
+function requireShopifyData(result, operationName) {
+    if (result?.ok !== false && result?.data) return result.data;
+    const first = result?.errors?.[0];
+    const error = new Error(first?.message || `${operationName} failed with Shopify HTTP ${result?.httpStatus || 'unknown'}`);
+    error.code = first?.extensions?.code || 'SHOPIFY_API_ERROR';
+    error.status = result?.httpStatus === 404 ? 404 : 502;
+    throw error;
+}
+
+async function shopifyGraphQLWithRetry(env, query, variables, operationName) {
+    let last;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        last = await performShopifyGraphQL(env, query, variables, operationName);
+        if (!isThrottled(last)) return last;
+        const throttle = last.extensions?.cost?.throttleStatus || {};
+        const requested = Number(last.extensions?.cost?.requestedQueryCost || 50);
+        const available = Number(throttle.currentlyAvailable || 0);
+        const rate = Math.max(Number(throttle.restoreRate || 50), 1);
+        await sleepMs(((Math.max(requested - available, 1) / rate) * 1000) + Math.random() * 250);
+    }
+    return last;
+}
+
+async function coordinatorGraphQL(env, query, variables, operationName) {
+    if (!env.ORDER_SYNC_COORDINATOR) return shopifyGraphQLWithRetry(env, query, variables, operationName);
+    const id = env.ORDER_SYNC_COORDINATOR.idFromName(shopDomain(env));
+    const response = await env.ORDER_SYNC_COORDINATOR.get(id).fetch(new Request('https://internal/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, variables, operationName })
+    }));
+    const body = await response.json();
+    if (!response.ok) throw Object.assign(new Error(body?.error || 'Shopify coordinator failed'), { status: response.status });
+    return body;
+}
+
+function moneyValue(moneySet, fallbackCurrency) {
+    const money = moneySet?.shopMoney;
+    return money ? { amount: String(money.amount), currencyCode: money.currencyCode || fallbackCurrency } : null;
+}
+
+function normalizeLineItem(item) {
+    return {
+        id: item.id,
+        variantId: item.variant?.id || null,
+        sku: item.sku || null,
+        title: item.title || '',
+        variantTitle: item.variantTitle || '',
+        quantity: Number(item.quantity || 0),
+        currentQuantity: Number(item.currentQuantity || 0),
+        unitPrice: String(item.originalUnitPriceSet?.shopMoney?.amount || '0'),
+        ...(item.customAttributes ? { customAttributes: item.customAttributes } : {}),
+        ...(item.discountAllocations ? { discountAllocations: item.discountAllocations } : {})
+    };
+}
+
+async function completeLineItems(env, orderId, connection, graphQL = coordinatorGraphQL) {
+    const items = (connection?.nodes || []).map(normalizeLineItem);
+    let pageInfo = connection?.pageInfo || { hasNextPage: false, endCursor: null };
+    while (pageInfo.hasNextPage) {
+        const result = await graphQL(env, ORDER_LINE_ITEMS_QUERY, { id: orderId, after: pageInfo.endCursor }, 'PrintMOOrderLineItems');
+        const next = result.data?.order?.lineItems;
+        if (!next) return { items, complete: false, errors: result.errors || [] };
+        items.push(...(next.nodes || []).map(normalizeLineItem));
+        pageInfo = next.pageInfo || { hasNextPage: false, endCursor: null };
+    }
+    return { items, complete: true, errors: [] };
+}
+
+async function normalizeShopifySummary(env, node, resultErrors = [], graphQL = coordinatorGraphQL) {
+    const now = new Date();
+    const lines = await completeLineItems(env, node.id, node.lineItems, graphQL);
+    const currency = node.currencyCode || node.currentTotalPriceSet?.shopMoney?.currencyCode || null;
+    const errors = [...resultErrors, ...lines.errors].map(error => ({ message: error.message, code: error?.extensions?.code || null }));
+    return {
+        id: node.id,
+        displayName: node.name,
+        createdAt: node.createdAt,
+        shopifyUpdatedAt: node.updatedAt,
+        customer: { displayName: node.customer?.displayName || null },
+        commerce: {
+            financialStatus: node.displayFinancialStatus || null,
+            fulfillmentStatus: node.displayFulfillmentStatus || null,
+            cancelledAt: node.cancelledAt || null,
+            currencyCode: currency,
+            subtotal: moneyValue(node.currentSubtotalPriceSet, currency)?.amount || null,
+            total: moneyValue(node.currentTotalPriceSet, currency)?.amount || null,
+            currentLineItemQuantity: Number(node.currentSubtotalLineItemsQuantity || 0),
+            lineItemsComplete: lines.complete,
+            lineItems: lines.items
+        },
+        sync: {
+            fetchedAt: now.toISOString(),
+            freshUntil: new Date(now.getTime() + 60000).toISOString(),
+            hardExpiresAt: new Date(now.getTime() + 86400000).toISOString(),
+            stale: false,
+            partial: errors.length > 0 || !lines.complete,
+            cacheRevision: now.getTime(),
+            errors
+        }
+    };
+}
+
+async function storeSummaries(env, summaries) {
+    if (!summaries.length) return;
+    await upstreamDataRequest(env, '/order-manager/v1/data/cache/summaries', {
+        method: 'POST', body: JSON.stringify({ shop: shopDomain(env), summaries })
+    });
+}
+
+async function refreshSummaries(env, gids, graphQL = coordinatorGraphQL) {
+    const valid = [...new Set(gids.map(canonicalOrderGid).filter(Boolean))];
+    const summaries = [];
+    for (let index = 0; index < valid.length; index += 20) {
+        const chunk = valid.slice(index, index + 20);
+        const result = await graphQL(env, ORDER_SUMMARIES_QUERY, { ids: chunk }, 'PrintMOOrderSummaries');
+        const data = requireShopifyData(result, 'PrintMOOrderSummaries');
+        for (const node of data.nodes || []) {
+            if (node?.id) summaries.push(await normalizeShopifySummary(env, node, result.errors || [], graphQL));
+        }
+    }
+    await storeSummaries(env, summaries);
+    return summaries;
+}
+
+async function refreshThroughCoordinator(env, gids) {
+    if (!env.ORDER_SYNC_COORDINATOR) return refreshSummaries(env, gids, coordinatorGraphQL);
+    const id = env.ORDER_SYNC_COORDINATOR.idFromName(shopDomain(env));
+    const response = await env.ORDER_SYNC_COORDINATOR.get(id).fetch(new Request('https://internal/refresh', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gids })
+    }));
+    const body = await response.json();
+    if (!response.ok) throw new Error(body?.error || 'Shopify refresh failed');
+    return body.summaries || [];
+}
+
+function computeProductionDiff(summary, snapshot) {
+    if (!snapshot || !summary?.commerce) return [];
+    const reasons = [];
+    const before = new Map((snapshot.lineItems || []).map(item => [item.id, item]));
+    const live = new Map((summary.commerce.lineItems || []).map(item => [item.id, item]));
+    for (const [id, item] of live) {
+        const prior = before.get(id);
+        if (!prior) reasons.push('LINE_ITEM_ADDED');
+        else {
+            if ((prior.sku || null) !== (item.sku || null)) reasons.push('SKU_CHANGED');
+            if (Number(item.currentQuantity) > Number(prior.currentQuantity)) reasons.push('QUANTITY_INCREASED');
+            if (Number(item.currentQuantity) < Number(prior.currentQuantity)) reasons.push('QUANTITY_DECREASED');
+        }
+    }
+    for (const id of before.keys()) if (!live.has(id)) reasons.push('LINE_ITEM_REMOVED');
+    if (summary.commerce.cancelledAt) reasons.push('ORDER_CANCELLED');
+    if (String(summary.commerce.financialStatus || '').includes('REFUND')) reasons.push('ORDER_REFUNDED');
+    return [...new Set(reasons)];
+}
+
+function boardDto(record) {
+    const production = record.production || { stage: 'received', version: 0, assets: [] };
+    const summary = record.summary;
+    if (!summary) {
+        return {
+            id: record.gid,
+            displayName: production.legacyIdentifier || record.gid,
+            createdAt: production.createdAt,
+            shopifyUpdatedAt: null,
+            customer: { displayName: null },
+            commerce: null,
+            production,
+            attention: { required: false, reasons: [], acknowledgedAt: null },
+            sync: { fetchedAt: null, freshUntil: null, hardExpiresAt: null, stale: true, partial: true, errors: [{ code: 'SHOPIFY_UNAVAILABLE', message: 'Live Shopify fields are unavailable.' }] }
+        };
+    }
+    const reasons = computeProductionDiff(summary, production.productionSnapshot);
+    return {
+        ...summary,
+        production,
+        attention: { required: reasons.length > 0, reasons, acknowledgedAt: null }
+    };
+}
+
+async function loadDataPage(env, stage, limit, offset) {
+    const query = new URLSearchParams({ shop: shopDomain(env), limit: String(limit), offset: String(offset) });
+    if (stage) query.set('stage', stage);
+    return upstreamDataRequest(env, `/order-manager/v1/data/orders?${query}`);
+}
+
+async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const url = new URL(request.url);
+        const stage = url.searchParams.get('stage') || '';
+        const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 50), 1), 50);
+        const filter = JSON.stringify({ stage, limit });
+        const offset = await decodeSignedCursor(url.searchParams.get('cursor'), filter, env);
+        let page = await loadDataPage(env, stage, limit, offset);
+        const staleGids = (page.records || []).filter(record => {
+            const summary = record.summary;
+            return !summary || summary.sync?.stale || !summary.sync?.freshUntil || Date.parse(summary.sync.freshUntil) <= Date.now();
+        }).map(record => record.gid);
+        if (staleGids.length) {
+            try {
+                await refreshThroughCoordinator(env, staleGids);
+                page = await loadDataPage(env, stage, limit, offset);
+            } catch (error) {
+                console.error('Shopify summary refresh failed:', error.message);
+            }
+        }
+        const nextCursor = page.nextOffset === null ? null : await encodeSignedCursor({ v: 1, filter, offset: page.nextOffset }, env);
+        return jsonResponse({ data: (page.records || []).map(boardDto), pageInfo: { nextCursor, total: page.total } }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
     }
 }
 
+function orderIdFromV1Path(pathname) {
+    const raw = pathname.replace(/^\/order-manager\/v1\/orders\//, '').replace(/\/production$/, '');
+    try { return canonicalOrderGid(decodeURIComponent(raw)); } catch { return null; }
+}
+
+async function fetchOrderDetail(env, gid) {
+    let result = await coordinatorGraphQL(env, ORDER_DETAIL_QUERY, { id: gid, after: null }, 'PrintMOOrderDetail');
+    const node = requireShopifyData(result, 'PrintMOOrderDetail').order;
+    if (!node) throw Object.assign(new Error('Shopify order not found'), { status: 404, code: 'ORDER_NOT_FOUND' });
+    const lines = await completeLineItems(env, gid, node.lineItems, coordinatorGraphQL);
+    const summary = await normalizeShopifySummary(env, { ...node, lineItems: { nodes: lines.items.map(item => ({
+        ...item,
+        variant: { id: item.variantId },
+        originalUnitPriceSet: { shopMoney: { amount: item.unitPrice, currencyCode: node.currencyCode } }
+    })), pageInfo: { hasNextPage: false } } }, result.errors || [], coordinatorGraphQL);
+    const now = Date.now();
+    const detail = {
+        id: gid,
+        summary,
+        orderNote: node.note || null,
+        shippingAddress: node.shippingAddress || null,
+        fulfillments: node.fulfillments || [],
+        lineItems: lines.items,
+        fetchedAt: new Date(now).toISOString(),
+        freshUntil: new Date(now + 300000).toISOString(),
+        hardExpiresAt: new Date(now + 900000).toISOString(),
+        partial: !lines.complete || (result.errors || []).length > 0,
+        errors: result.errors || []
+    };
+    await upstreamDataRequest(env, '/order-manager/v1/data/cache/details', {
+        method: 'POST', body: JSON.stringify({ shop: shopDomain(env), detail })
+    });
+    return detail;
+}
+
+async function handleV1OrderDetailGet(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const gid = orderIdFromV1Path(new URL(request.url).pathname);
+        if (!gid) return v1Error({ code: 'INVALID_ORDER_ID', message: 'Invalid Shopify order GID' }, allowOrigin, reqAllowHeaders, 400);
+        const id = numericIdFromGid(gid);
+        let record = await upstreamDataRequest(env, `/order-manager/v1/data/orders/${id}?shop=${encodeURIComponent(shopDomain(env))}`);
+        let detail = record.detail;
+        if (!detail || !detail.freshUntil || Date.parse(detail.freshUntil) <= Date.now()) {
+            try { detail = await fetchOrderDetail(env, gid); } catch (error) {
+                if (!detail || !detail.hardExpiresAt || Date.parse(detail.hardExpiresAt) <= Date.now()) throw error;
+                detail = { ...detail, stale: true, errors: [...(detail.errors || []), { message: error.message, code: 'STALE_FALLBACK' }] };
+            }
+            record = await upstreamDataRequest(env, `/order-manager/v1/data/orders/${id}?shop=${encodeURIComponent(shopDomain(env))}`);
+        }
+        return jsonResponse({ ...boardDto(record), detail: detail || record.detail }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500, error.body);
+    }
+}
+
+async function handleV1ProductionPatch(request, env, allowOrigin, reqAllowHeaders, identity) {
+    try {
+        const gid = orderIdFromV1Path(new URL(request.url).pathname);
+        if (!gid) return v1Error({ code: 'INVALID_ORDER_ID', message: 'Invalid Shopify order GID' }, allowOrigin, reqAllowHeaders, 400);
+        const body = await request.json();
+        const result = await upstreamDataRequest(env, `/order-manager/v1/data/orders/${numericIdFromGid(gid)}/production`, {
+            method: 'PATCH',
+            body: JSON.stringify({ ...body, shop: shopDomain(env), actor: identity?.subject || 'unknown' })
+        });
+        return jsonResponse(result, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error.body?.error || error, allowOrigin, reqAllowHeaders, error.status || 500, error.body);
+    }
+}
+
+function assetIdFromPath(pathname) {
+    return decodeURIComponent(pathname.replace(/^\/order-manager\/v1\/assets\//, '').replace(/\/(read-ticket|read)$/, ''));
+}
+
+async function signAssetTicket(payload, env) {
+    const encoded = base64UrlEncode(JSON.stringify(payload));
+    return `${encoded}.${await hmacBase64Url(encoded, env.SHOPIFY_API_SECRET)}`;
+}
+
+async function verifyAssetTicket(ticket, env) {
+    const [payload, signature] = String(ticket || '').split('.');
+    if (!payload || !signature || signature !== await hmacBase64Url(payload, env.SHOPIFY_API_SECRET)) return null;
+    const value = decodeJsonBase64Url(payload);
+    return Number(value.exp) >= Math.floor(Date.now() / 1000) ? value : null;
+}
+
+async function handleV1AssetReadTicket(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const assetId = assetIdFromPath(new URL(request.url).pathname);
+        const asset = await upstreamDataRequest(env, `/order-manager/v1/data/assets/${encodeURIComponent(assetId)}?shop=${encodeURIComponent(shopDomain(env))}`);
+        const ticket = await signAssetTicket({ assetId, key: asset.objectKey, exp: Math.floor(Date.now() / 1000) + 60 }, env);
+        return jsonResponse({ assetId, url: `/order-manager/v1/assets/${encodeURIComponent(assetId)}/read?ticket=${encodeURIComponent(ticket)}`, expiresIn: 60 }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+async function handleV1AssetRead(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const url = new URL(request.url);
+        const assetId = assetIdFromPath(url.pathname);
+        const ticket = await verifyAssetTicket(url.searchParams.get('ticket'), env);
+        if (!ticket || ticket.assetId !== assetId) return v1Error({ code: 'INVALID_ASSET_TICKET', message: 'Asset ticket is invalid or expired' }, allowOrigin, reqAllowHeaders, 401);
+        if (!env.R2_BUCKET) return v1Error({ code: 'R2_NOT_CONFIGURED', message: 'Private artwork storage is not configured' }, allowOrigin, reqAllowHeaders, 503);
+        const object = await env.R2_BUCKET.get(ticket.key);
+        if (!object) return v1Error({ code: 'ASSET_NOT_FOUND', message: 'Asset object was not found' }, allowOrigin, reqAllowHeaders, 404);
+        const headers = new Headers();
+        object.writeHttpMetadata(headers);
+        headers.set('ETag', object.httpEtag);
+        headers.set('Cache-Control', 'private, no-store');
+        for (const [key, value] of Object.entries(corsHeaders(allowOrigin, reqAllowHeaders))) headers.set(key, value);
+        return new Response(object.body, { headers });
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+async function verifyWebhookHmacSafe(rawBytes, header, secret) {
+    if (!header || !secret) return false;
+    try {
+        const expected = Uint8Array.from(atob(header), character => character.charCodeAt(0));
+        const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+        return crypto.subtle.verify('HMAC', key, expected, rawBytes);
+    } catch { return false; }
+}
+
+async function forwardPaidWebhookToLegacyQueue(request, rawBytes, env) {
+    const upstreamBase = String(env.UPSTREAM_BASE || '').replace(/\/+$/, '');
+    if (!upstreamBase) throw Object.assign(new Error('Render legacy ingestion is not configured'), { status: 503 });
+    const headers = new Headers({ 'Content-Type': request.headers.get('Content-Type') || 'application/json' });
+    for (const name of ['X-Shopify-Hmac-Sha256', 'X-Shopify-Shop-Domain', 'X-Shopify-Webhook-Id', 'X-Shopify-Topic']) {
+        const value = request.headers.get(name);
+        if (value) headers.set(name, value);
+    }
+    const response = await fetch(`${upstreamBase}/webhooks/orders/paid`, { method: 'POST', headers, body: rawBytes });
+    if (!response.ok) {
+        throw Object.assign(new Error(`Legacy queue ingestion failed with HTTP ${response.status}`), { status: 502 });
+    }
+}
+
+async function handleShopifyWebhook(request, env, allowOrigin, reqAllowHeaders, ctx) {
+    try {
+        const rawBytes = await request.arrayBuffer();
+        const secret = env.SHOPIFY_WEBHOOK_SECRET || env.SHOPIFY_API_SECRET;
+        const valid = await verifyWebhookHmacSafe(rawBytes, request.headers.get('X-Shopify-Hmac-Sha256'), secret);
+        if (!valid) return v1Error({ code: 'INVALID_WEBHOOK_HMAC', message: 'Webhook signature verification failed' }, allowOrigin, reqAllowHeaders, 401);
+        const headerShop = String(request.headers.get('X-Shopify-Shop-Domain') || shopDomain(env)).toLowerCase();
+        if (headerShop !== shopDomain(env)) return v1Error({ code: 'INVALID_WEBHOOK_SHOP', message: 'Webhook shop is not authorized' }, allowOrigin, reqAllowHeaders, 403);
+        const webhookId = request.headers.get('X-Shopify-Webhook-Id');
+        if (!webhookId) return v1Error({ code: 'MISSING_WEBHOOK_ID', message: 'Webhook delivery ID is required' }, allowOrigin, reqAllowHeaders, 400);
+        const payload = JSON.parse(new TextDecoder().decode(rawBytes));
+        const topic = request.headers.get('X-Shopify-Topic') || '';
+        if (topic === 'orders/paid') {
+            // Phase 2 remains shadow-only: preserve the authoritative legacy ingestion path.
+            // The Render endpoint is idempotent, so retries and any overlapping old subscription are safe.
+            await forwardPaidWebhookToLegacyQueue(request, rawBytes, env);
+        }
+        const dedupe = await upstreamDataRequest(env, '/order-manager/v1/data/webhooks/dedupe', {
+            method: 'POST', body: JSON.stringify({ shop: shopDomain(env), webhookId })
+        });
+        if (!dedupe.accepted) return jsonResponse({ ok: true, duplicate: true }, allowOrigin, reqAllowHeaders);
+        const gid = canonicalOrderGid(payload.admin_graphql_api_id || payload.order_id || payload.id);
+        if (gid && topic === 'orders/paid') {
+            const legacy = { status: 'received', name: payload.name || `#${payload.order_number || payload.id}`, orderNumber: String(payload.order_number || '').replace('#', ''), receivedAt: payload.created_at };
+            await upstreamDataRequest(env, '/order-manager/v1/data/project', {
+                method: 'POST', body: JSON.stringify({ shop: shopDomain(env), gid, legacy, preserveExistingStage: true })
+            });
+            for (const key of [legacy.name, legacy.orderNumber].filter(Boolean)) {
+                await upstreamDataRequest(env, '/order-manager/v1/data/mappings', {
+                    method: 'POST', body: JSON.stringify({ shop: shopDomain(env), legacyKey: key, gid, ledger: { matchResult: 'webhook' } })
+                });
+            }
+        }
+        if (gid) {
+            await upstreamDataRequest(env, '/order-manager/v1/data/cache/dirty', {
+                method: 'POST', body: JSON.stringify({ shop: shopDomain(env), gids: [gid] })
+            });
+            const refresh = refreshThroughCoordinator(env, [gid]).catch(error => console.error('Webhook refresh failed:', error.message));
+            if (ctx?.waitUntil) ctx.waitUntil(refresh);
+        }
+        return jsonResponse({ ok: true }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        console.error('Shopify webhook error:', error.message);
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+async function handleV1ParityCheck(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const report = await upstreamDataRequest(env, '/order-manager/v1/data/parity', {
+            method: 'POST', body: JSON.stringify({ shop: shopDomain(env) })
+        });
+        return jsonResponse(report, allowOrigin, reqAllowHeaders);
+    } catch (error) { return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500); }
+}
+
+async function handleV1ParityReport(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const report = await upstreamDataRequest(env, `/order-manager/v1/data/parity/reports?shop=${encodeURIComponent(shopDomain(env))}`);
+        return jsonResponse(report, allowOrigin, reqAllowHeaders);
+    } catch (error) { return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500); }
+}
+
+function legacyOrderNumber(order) {
+    const value = String(order?.orderNumber || order?.name || '').trim();
+    const match = /#?(\d+)/.exec(value);
+    return match ? match[1] : null;
+}
+
+async function matchLegacyOrder(env, legacy) {
+    const direct = canonicalOrderGid(legacy?.admin_graphql_api_id);
+    if (direct) return { gid: direct, matchResult: 'admin_graphql_api_id' };
+    const number = legacyOrderNumber(legacy);
+    if (!number) return { gid: null, matchResult: 'missing_identifier' };
+    const expectedName = `#${number}`;
+    const result = await coordinatorGraphQL(env, ORDER_SEARCH_QUERY, { query: `name:${expectedName}` }, 'PrintMOOrderSearch');
+    const exact = (requireShopifyData(result, 'PrintMOOrderSearch').orders?.nodes || []).filter(order => order.name === expectedName);
+    return exact.length === 1
+        ? { gid: exact[0].id, matchResult: 'unique_order_name' }
+        : { gid: null, matchResult: exact.length > 1 ? 'ambiguous_order_name' : 'not_found' };
+}
+
+function safeAssetName(value) {
+    return String(value || 'attachment').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^\.+/, '').slice(0, 120) || 'attachment';
+}
+
+async function stableAssetId(value) {
+    return bytesToHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value)))).slice(0, 24);
+}
+
+async function migrateLegacyAssets(env, gid, legacy, execute) {
+    const orderId = numericIdFromGid(gid);
+    const manifests = [];
+    for (const item of Array.isArray(legacy.items) ? legacy.items : []) {
+        for (const asset of Array.isArray(item?.assets) ? item.assets : []) {
+            if (!asset?.key) continue;
+            const name = safeAssetName(String(asset.key).split('/').pop());
+            const assetId = await stableAssetId(`${gid}:${asset.key}`);
+            const objectKey = `orders/${orderId}/assets/${assetId}/${name}`;
+            let byteSize = null;
+            let sha256 = null;
+            if (execute) {
+                if (!env.R2_BUCKET) throw new Error('R2_BUCKET is required to migrate legacy artwork');
+                if (!asset.url || !String(asset.url).startsWith('https://')) throw new Error(`Legacy artwork URL is missing for ${name}`);
+                const source = await fetch(asset.url);
+                if (!source.ok) throw new Error(`Unable to read legacy artwork ${name}: HTTP ${source.status}`);
+                const bytes = new Uint8Array(await source.arrayBuffer());
+                if (bytes.byteLength > 50 * 1024 * 1024) throw new Error(`Legacy artwork ${name} exceeds the 50 MiB migration limit`);
+                byteSize = bytes.byteLength;
+                sha256 = bytesToHex(await crypto.subtle.digest('SHA-256', bytes));
+                await env.R2_BUCKET.put(objectKey, bytes, {
+                    httpMetadata: { contentType: source.headers.get('Content-Type') || asset.contentType || 'application/octet-stream' },
+                    customMetadata: { sha256, legacyKey: asset.key }
+                });
+            }
+            manifests.push({
+                assetId,
+                objectKey,
+                name,
+                contentType: asset.contentType || (asset.ext ? `image/${asset.ext === 'jpg' ? 'jpeg' : asset.ext}` : null),
+                byteSize,
+                sha256,
+                migrationState: execute ? 'verified' : 'planned'
+            });
+        }
+    }
+    for (const attachment of Array.isArray(legacy.attachments) ? legacy.attachments : []) {
+        const raw = attachment?.data || attachment?.base64 || attachment?.content;
+        if (!raw) continue;
+        const encoded = String(raw).replace(/^data:[^;]+;base64,/, '');
+        const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+        if (bytes.byteLength > 50 * 1024 * 1024) throw new Error('Legacy attachment exceeds the 50 MiB migration limit');
+        const name = safeAssetName(attachment.name || attachment.filename);
+        const assetId = await stableAssetId(`${gid}:${name}:${bytes.byteLength}`);
+        const objectKey = `orders/${orderId}/assets/${assetId}/${name}`;
+        const sha256 = bytesToHex(await crypto.subtle.digest('SHA-256', bytes));
+        if (execute) {
+            if (!env.R2_BUCKET) throw new Error('R2_BUCKET is required to migrate Base64 attachments');
+            await env.R2_BUCKET.put(objectKey, bytes, { httpMetadata: { contentType: attachment.type || attachment.contentType || 'application/octet-stream' }, customMetadata: { sha256 } });
+        }
+        manifests.push({ assetId, objectKey, name, contentType: attachment.type || attachment.contentType || null, byteSize: bytes.byteLength, sha256, migrationState: execute ? 'verified' : 'planned' });
+    }
+    return manifests;
+}
+
+async function handleV1MigrationRun(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const body = await request.json().catch(() => ({}));
+        const execute = body.execute === true;
+        if (execute && body.confirmShop !== shopDomain(env)) {
+            return v1Error({ code: 'MIGRATION_CONFIRMATION_REQUIRED', message: 'Execution requires confirmShop to exactly match the configured Shopify domain.' }, allowOrigin, reqAllowHeaders, 400);
+        }
+        const limit = Math.min(Math.max(Number(body.limit || 1), 1), 5);
+        const offset = Math.max(Number(body.offset || 0), 0);
+        const page = await upstreamDataRequest(env, `/order-manager/v1/data/legacy?offset=${offset}&limit=${limit}`);
+        const report = { execute, offset, total: page.total, matched: 0, migrated: 0, quarantined: 0, errors: [], nextOffset: page.nextOffset };
+        for (const legacy of page.records || []) {
+            const source = JSON.stringify(legacy);
+            const sourceDigest = bytesToHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source)));
+            const identifier = legacy.orderNumber || String(legacy.name || '').split(/[–-]/)[0].trim();
+            try {
+                const match = await matchLegacyOrder(env, legacy);
+                if (!match.gid) {
+                    report.quarantined++;
+                    if (execute) await upstreamDataRequest(env, '/order-manager/v1/data/quarantine', {
+                        method: 'POST', body: JSON.stringify({ shop: shopDomain(env), sourceDigest, legacyIdentifier: identifier, reason: match.matchResult })
+                    });
+                    continue;
+                }
+                report.matched++;
+                if (!execute) continue;
+                const summaries = await refreshThroughCoordinator(env, [match.gid]);
+                const assets = await migrateLegacyAssets(env, match.gid, legacy, true);
+                const keys = [...new Set([identifier, legacy.orderNumber, legacy.name, `source:${sourceDigest}`].filter(Boolean))];
+                for (const key of keys) await upstreamDataRequest(env, '/order-manager/v1/data/mappings', {
+                    method: 'POST',
+                    body: JSON.stringify({ shop: shopDomain(env), legacyKey: key, gid: match.gid, ledger: { matchResult: match.matchResult, assetCount: assets.length, assetChecksums: assets.map(asset => asset.sha256).filter(Boolean) } })
+                });
+                await upstreamDataRequest(env, '/order-manager/v1/data/project', {
+                    method: 'POST', body: JSON.stringify({ shop: shopDomain(env), gid: match.gid, legacy: { ...legacy, v1Assets: assets }, commerce: summaries[0] || null })
+                });
+                report.migrated++;
+            } catch (error) {
+                report.errors.push({ orderIdentifier: identifier || 'unknown', code: 'MIGRATION_ERROR', message: error.message });
+            }
+        }
+        return jsonResponse(report, allowOrigin, reqAllowHeaders);
+    } catch (error) { return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500); }
+}
+
+export class OrderSyncCoordinator {
+    constructor(state, env) {
+        this.state = state;
+        this.env = env;
+        this.throttle = { currentlyAvailable: 1000, maximumAvailable: 1000, restoreRate: 50, updatedAt: Date.now() };
+        this.estimates = new Map();
+        this.inflightRefreshes = new Map();
+    }
+
+    async reserve(operationName) {
+        const now = Date.now();
+        const elapsed = Math.max(0, now - this.throttle.updatedAt) / 1000;
+        this.throttle.currentlyAvailable = Math.min(this.throttle.maximumAvailable, this.throttle.currentlyAvailable + elapsed * this.throttle.restoreRate);
+        this.throttle.updatedAt = now;
+        const estimate = Math.max(Number(this.estimates.get(operationName) || 50), 1);
+        if (this.throttle.currentlyAvailable < estimate) {
+            await sleepMs(((estimate - this.throttle.currentlyAvailable) / Math.max(this.throttle.restoreRate, 1)) * 1000 + Math.random() * 200);
+        }
+        this.throttle.currentlyAvailable = Math.max(0, this.throttle.currentlyAvailable - estimate);
+    }
+
+    observe(operationName, result) {
+        const cost = result.extensions?.cost;
+        if (Number.isFinite(cost?.requestedQueryCost)) this.estimates.set(operationName, cost.requestedQueryCost);
+        if (cost?.throttleStatus) this.throttle = { ...cost.throttleStatus, updatedAt: Date.now() };
+        if (result.apiVersion && result.apiVersion !== SHOPIFY_API_VERSION) console.error(`Shopify API version fall-forward: requested ${SHOPIFY_API_VERSION}, received ${result.apiVersion}`);
+    }
+
+    async graphql(query, variables, operationName = 'AnonymousQuery') {
+        let last;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            await this.reserve(operationName);
+            last = await performShopifyGraphQL(this.env, query, variables, operationName);
+            this.observe(operationName, last);
+            if (!isThrottled(last)) return last;
+            const throttle = last.extensions?.cost?.throttleStatus || this.throttle;
+            const cost = Number(last.extensions?.cost?.requestedQueryCost || this.estimates.get(operationName) || 50);
+            await sleepMs(((Math.max(cost - Number(throttle.currentlyAvailable || 0), 1) / Math.max(Number(throttle.restoreRate || 50), 1)) * 1000) + Math.random() * 250);
+        }
+        return last;
+    }
+
+    async refresh(gids) {
+        const key = [...new Set(gids)].sort().join(',');
+        if (this.inflightRefreshes.has(key)) return this.inflightRefreshes.get(key);
+        const promise = refreshSummaries(this.env, gids, (_env, query, variables, operationName) => this.graphql(query, variables, operationName))
+            .finally(() => this.inflightRefreshes.delete(key));
+        this.inflightRefreshes.set(key, promise);
+        return promise;
+    }
+
+    async reconcileIncremental() {
+        const checkpointResult = await upstreamDataRequest(this.env, `/order-manager/v1/data/checkpoint?shop=${encodeURIComponent(shopDomain(this.env))}`);
+        const checkpoint = checkpointResult.checkpoint ? Date.parse(checkpointResult.checkpoint) : Date.now() - 300000;
+        const overlap = new Date(checkpoint - 120000).toISOString();
+        let after = null;
+        let newest = checkpoint;
+        const gids = [];
+        do {
+            const result = await this.graphql(UPDATED_ORDERS_QUERY, { query: `updated_at:>='${overlap}'`, after }, 'PrintMOUpdatedOrders');
+            const connection = result.data?.orders;
+            if (!connection) throw new Error('Incremental reconciliation returned no orders connection');
+            for (const order of connection.nodes || []) {
+                gids.push(order.id);
+                newest = Math.max(newest, Date.parse(order.updatedAt) || newest);
+                if (order.displayFinancialStatus === 'PAID') {
+                    await upstreamDataRequest(this.env, '/order-manager/v1/data/project', {
+                        method: 'POST', body: JSON.stringify({
+                            shop: shopDomain(this.env),
+                            gid: order.id,
+                            legacy: { status: 'received', name: order.name, receivedAt: order.createdAt },
+                            preserveExistingStage: true
+                        })
+                    });
+                }
+            }
+            after = connection.pageInfo?.hasNextPage ? connection.pageInfo.endCursor : null;
+        } while (after);
+        if (gids.length) await this.refresh(gids);
+        await upstreamDataRequest(this.env, '/order-manager/v1/data/checkpoint', {
+            method: 'POST', body: JSON.stringify({ shop: shopDomain(this.env), checkpoint: new Date(newest).toISOString() })
+        });
+        return { ok: true, refreshed: gids.length, checkpoint: new Date(newest).toISOString() };
+    }
+
+    async reconcileIntegrity() {
+        const integrity = await upstreamDataRequest(this.env, '/order-manager/v1/data/integrity', {
+            method: 'POST', body: JSON.stringify({ shop: shopDomain(this.env) })
+        });
+        const parity = await upstreamDataRequest(this.env, '/order-manager/v1/data/parity', {
+            method: 'POST', body: JSON.stringify({ shop: shopDomain(this.env) })
+        });
+        return { ok: true, integrity, parity };
+    }
+
+    async fetch(request) {
+        try {
+            const url = new URL(request.url);
+            if (url.pathname === '/graphql' && request.method === 'POST') {
+                const body = await request.json();
+                return Response.json(await this.graphql(body.query, body.variables, body.operationName));
+            }
+            if (url.pathname === '/refresh' && request.method === 'POST') {
+                const body = await request.json();
+                return Response.json({ summaries: await this.refresh(body.gids || []) });
+            }
+            if (url.pathname === '/reconcile-incremental') return Response.json(await this.reconcileIncremental());
+            if (url.pathname === '/reconcile-integrity') return Response.json(await this.reconcileIntegrity());
+            return new Response('Not Found', { status: 404 });
+        } catch (error) {
+            return Response.json({ error: error.message }, { status: error.status || 500 });
+        }
+    }
+}

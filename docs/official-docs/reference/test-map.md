@@ -25,6 +25,8 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Desktop Renderer | `node --check renderer.js` | Silent exit code 0 |
 | Cloudflare Worker Proxy | `node --check order-manager-proxy/worker.js` | Silent exit code 0 |
 | Phase 1 Auth/Transport Contract | `npm run verify:phase1` | `Phase 1 contract verification passed.` |
+| Phase 2 Worker Shadow Contract | `npm run verify:phase2` | `Phase 2 shadow data plane verification passed.` |
+| Phase 2 Render Redis Adapter | Run `npm test` in `E:\PrintMO\shopify-ss-integration` | `Render Phase 2 Redis adapter verification passed.` |
 | Web Client Renderer | `node --check order-manager-web/renderer.js` | Silent exit code 0 |
 | Web Storage Adapter | `node --check order-manager-web/storage-browser.js` | Silent exit code 0 |
 

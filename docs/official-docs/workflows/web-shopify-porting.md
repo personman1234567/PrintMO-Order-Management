@@ -28,7 +28,8 @@ flowchart LR
     IndexHTML --> WebShim[web-shim.js]
     WebShim --> StorageBrowser[storage-browser.js]
     StorageBrowser -->|Shopify bearer token + HTTPS| CFWorker[order-manager-proxy/worker.js]
-    CFWorker -->|Redis REST / S&S API| BackendServices[Backend Services]
+    CFWorker -->|Authenticated HTTPS| RenderAdapter[Render data adapter]
+    RenderAdapter -->|Private connection| RedisCloud[(Redis Cloud)]
 ```
 
 ---
@@ -46,7 +47,8 @@ flowchart LR
 - **Deployment**: Deployed as a Cloudflare Worker.
 - **Responsibilities**:
   - Enforces allowed origins plus Shopify App Bridge bearer-token signature, shop, audience, expiry, and partner-user validation.
-  - Owns atomic legacy Redis queue mutations and S&S calls without exposing credentials client-side.
+  - Calls the authenticated Render adapter for atomic legacy/v1 Redis mutations and existing S&S operations; Redis and S&S credentials never reach clients or the Worker bundle.
+  - Owns Shopify Admin GraphQL access, cost-aware cache refresh, webhook verification/invalidation, and stable v1 DTO assembly.
   - Requires authenticated fetches for R2 bytes; the browser renders returned blobs rather than public Worker object URLs.
   - Handled via `scripts/prepare-cloudflare-pages-upload.sh`.
 

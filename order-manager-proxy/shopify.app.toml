@@ -1,0 +1,31 @@
+# Shopify App Configuration for PrintMO Live API Sync
+name = "printmo-order-management"
+client_id = "119d00a9567e8b0d647409f27c939d5d"
+application_url = "https://print-mo-order-manager.pages.dev"
+embedded = true
+
+[access_scopes]
+scopes = "read_orders"
+
+[webhooks]
+api_version = "2026-07"
+
+  [[webhooks.subscriptions]]
+  topics = [ "orders/paid" ]
+  uri = "https://order-manager-proxy.printmobusiness.workers.dev/order-manager/v1/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  topics = [ "orders/updated" ]
+  uri = "https://order-manager-proxy.printmobusiness.workers.dev/order-manager/v1/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  topics = [ "orders/cancelled" ]
+  uri = "https://order-manager-proxy.printmobusiness.workers.dev/order-manager/v1/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  topics = [ "refunds/create" ]
+  uri = "https://order-manager-proxy.printmobusiness.workers.dev/order-manager/v1/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "https://order-manager-proxy.printmobusiness.workers.dev/order-manager/v1/webhooks/shopify"

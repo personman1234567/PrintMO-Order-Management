@@ -50,14 +50,15 @@ Electron preserves the existing `window.api` IPC contract, but `main.js` now sen
 
 - Electron contains no direct Redis or S&S code path and packages no `.env`.
 - `get-queue` reads the legacy list through the Worker adapter.
-- Queue mutations and deletion are executed by atomic Redis Lua scripts in the Worker.
-- `process-batch` executes through the authenticated Worker; S&S credentials remain Worker-only.
+- The Worker forwards queue operations over authenticated HTTPS to the Render data adapter; only that adapter holds `REDIS_URL`.
+- Queue mutations and deletion are executed by atomic Redis Lua scripts in the Render adapter.
+- `process-batch` executes through the authenticated Worker and Render adapter; S&S credentials remain server-only.
 
 ---
 
 ## 3. Redis Data Schema (shopifyOrdersQueue)
 
-During Shopify-sync Phase 1, this list remains the operational source of truth but is reachable only through the Worker. Phase 2 shadows the replacement hash/index schema without changing this live contract.
+During Shopify-sync Phase 1 and Phase 2 shadow operation, this list remains the operational source of truth. Clients reach it only through the Worker, which calls the authenticated Render adapter. Phase 2 shadows the replacement hash/index schema in the same Redis Cloud database without changing the live queue contract.
 
 The queue stores a JSON-serialized list under the key `shopifyOrdersQueue`:
 
@@ -102,6 +103,6 @@ In the web interface (`order-manager-web/`), native IPC is unavailable (`window.
 
 | Symptom / Trap | Root Cause | Diagnosis & Recovery |
 |---|---|---|
-| Queue mutation conflict or shifted index | A caller bypassed the authenticated Worker/Lua adapter | Confirm both clients use `/order-manager/v1/legacy/*`; Electron must not contain `REDIS_URL`. |
+| Queue mutation conflict or shifted index | A caller bypassed the authenticated Worker/Render Lua adapter | Confirm both clients use `/order-manager/v1/legacy/*`; only the Render service may contain `REDIS_URL`. |
 | Redis memory spike or slow `getQueue` | Large Base64 attachment files stored directly in list JSON | Inspect file upload sizes; compress or move large attachments to external blob storage. |
 | `TypeError: window.api.getQueue is not a function` in web mode | `web-shim.js` or `storage-browser.js` failed to initialize | Ensure `web-shim.js` is loaded prior to `renderer.js` in `order-manager-web/index.html`. |

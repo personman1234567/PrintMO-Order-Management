@@ -39,20 +39,19 @@ async function run() {
     SHOPIFY_API_SECRET: secret,
     SHOPIFY_SHOP_DOMAIN: 'printmo-test.myshopify.com',
     PARTNER_USER_IDS: 'partner-1,partner-2',
-    UPSTASH_REDIS_REST_URL: 'https://redis.example.test',
-    UPSTASH_REDIS_REST_TOKEN: 'redis-test-token'
+    UPSTREAM_BASE: 'https://render.example.test',
+    ORDER_MANAGER_ADMIN_KEY: 'render-admin-key'
   };
 
   const unauthorized = await worker.fetch(new Request('https://worker.test/order-manager/v1/legacy/queue'), env);
   assert.equal(unauthorized.status, 401, 'queue must reject missing bearer tokens');
 
-  const commands = [];
+  const requests = [];
   const nativeFetch = globalThis.fetch;
-  globalThis.fetch = async (_url, options) => {
-    const command = JSON.parse(options.body);
-    commands.push(command);
-    const result = command[0] === 'LRANGE' ? [] : JSON.stringify({ success: true, count: 1, updated: [] });
-    return new Response(JSON.stringify({ result }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url: String(url), options });
+    const result = String(url).endsWith('/legacy/queue') ? [] : { success: true, count: 1, updated: [] };
+    return new Response(JSON.stringify(result), { status: 200, headers: { 'Content-Type': 'application/json' } });
   };
   try {
     const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -62,7 +61,8 @@ async function run() {
       method: 'POST', headers, body: JSON.stringify({ orderName: '#1 – Test', patch: { status: 'print' } })
     }), env);
     assert.equal(mutation.status, 200, 'authenticated mutation must succeed');
-    assert.equal(commands.at(-1)[0], 'EVAL', 'legacy mutation must use atomic Lua');
+    assert(requests.at(-1).url.endsWith('/order-manager/v1/legacy/queue/mutate'), 'legacy mutation must use the Render data adapter');
+    assert.equal(requests.at(-1).options.headers.get('X-Order-Manager-Key'), 'render-admin-key', 'Render adapter calls must carry the server-only admin key');
 
     const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
     const publicJwk = publicKey.export({ format: 'jwk' });
@@ -76,14 +76,13 @@ async function run() {
         return new Response(JSON.stringify({ issuer: 'https://identity.example.test', jwks_uri: 'https://identity.example.test/jwks' }), { status: 200 });
       }
       if (String(url).endsWith('/jwks')) return new Response(JSON.stringify({ keys: [publicJwk] }), { status: 200 });
-      const command = JSON.parse(options.body);
-      return new Response(JSON.stringify({ result: command[0] === 'LRANGE' ? [] : null }), { status: 200 });
+      return new Response(JSON.stringify([]), { status: 200 });
     };
     const oidcResponse = await worker.fetch(new Request('https://worker.test/order-manager/v1/legacy/queue', {
       headers: { Authorization: `Bearer ${oidcToken}` }
     }), {
       OIDC_ISSUER: 'https://identity.example.test', OIDC_CLIENT_ID: 'desktop-client', PARTNER_SUBJECT_IDS: 'desktop-partner',
-      UPSTASH_REDIS_REST_URL: 'https://redis.example.test', UPSTASH_REDIS_REST_TOKEN: 'redis-test-token'
+      UPSTREAM_BASE: 'https://render.example.test', ORDER_MANAGER_ADMIN_KEY: 'render-admin-key'
     });
     assert.equal(oidcResponse.status, 200, 'valid Electron OIDC token must reach queue adapter');
   } finally {
@@ -100,4 +99,8 @@ async function run() {
   console.log('Phase 1 contract verification passed.');
 }
 
-run().catch(err => { console.error(err); process.exit(1); });
+if (require.main === module) {
+  run().catch(err => { console.error(err); process.exit(1); });
+}
+
+module.exports = { run };
