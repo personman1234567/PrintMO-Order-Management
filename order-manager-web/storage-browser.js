@@ -1855,6 +1855,29 @@
       btn.addEventListener('click', () => setActiveView(btn.dataset.view));
     });
 
+    // Mobile workflow navigation must use the same view controller as the
+    // desktop header so data loading, ARIA state, and the selected tab stay in sync.
+    document.querySelectorAll('.mobile-tab').forEach((btn) => {
+      btn.addEventListener('click', (event) => {
+        if (!window.matchMedia('(max-width: 900px)').matches) return;
+        const nextTab = btn.dataset.tab || 'pipeline';
+
+        if (nextTab === 'storage') {
+          event.stopImmediatePropagation();
+          setActiveView('storage');
+          return;
+        }
+
+        if (document.body.dataset.activeView === 'storage') {
+          event.stopImmediatePropagation();
+          setActiveView('orders');
+          if (typeof window.setActiveMobileTab === 'function') {
+            window.setActiveMobileTab(nextTab);
+          }
+        }
+      }, true);
+    });
+
     elements.loadMoreBtn.addEventListener('click', renderNextGroupChunk);
 
     elements.detailClose.addEventListener('click', closeDetail);

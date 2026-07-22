@@ -15,12 +15,14 @@
     }
     .hidden { display: none !important; }
     /* Mobile-only UI stays hidden on desktop; see mobile.css for overrides. */
+    #mobile-command-surface,
     #mobile-tab-bar,
     #mobile-selection-actions,
     .mobile-selection-shell,
     .mobile-select-toggle,
     #mobile-notes-edit,
     #mobile-items-expand,
+    #mobile-production-toggle,
     #mobile-notes-save,
     .mobile-items-footer {
       display: none;
@@ -5244,6 +5246,13 @@
     .dashboard-filtered-out {
       display: none !important;
     }
+    .panel-title {
+      margin: 0;
+      font: inherit;
+    }
+    .panel-title-mobile {
+      display: none;
+    }
 
     .pipeline-main-card .card-body {
       align-items: stretch;
@@ -5443,5 +5452,27 @@
       .dashboard-filter:hover,
       .pipeline .cards .dashboard-triaged:hover {
         transform: none !important;
+      }
+    }
+
+    /* Narrow desktop/tablet seam: preserve all three workflow panels while
+       letting the fulfillment controls wrap inside their actual container. */
+    @media (min-width: 901px) and (max-width: 1023px) {
+      #blanks-section .blanks-workflow-controls {
+        flex: 1 1 200px;
+      }
+
+      #blanks-section .blanks-segmented {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+      }
+
+      #blanks-section .blanks-segment {
+        justify-content: center;
+        min-width: 0;
+        gap: 3px;
+        padding-inline: 3px;
+        font-size: 0.72rem;
       }
     }

@@ -6,6 +6,7 @@
 
 ## Skip This When
 - You are looking for test verification commands $\rightarrow$ read [reference/test-map.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/reference/test-map.md).
+- You are auditing UI container layouts, modal fields, or card data sources $\rightarrow$ read [reference/ui-containers-and-views.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/reference/ui-containers-and-views.md).
 
 ## Section Map
 - [1. Core Desktop App (Electron)](#1-core-desktop-app-electron)

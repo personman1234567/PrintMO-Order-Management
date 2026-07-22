@@ -177,7 +177,7 @@
   }
 
   function decorateCard(card, order, style) {
-    if (!card || !order || !desktopQuery.matches) return card;
+    if (!card || !order) return card;
     const triage = evaluateOrder(order);
     setCardDatasets(card, order, triage);
     card.classList.add('dashboard-triaged', `dashboard-tone-${triage.tone}`);
@@ -187,7 +187,9 @@
     card.classList.toggle('dashboard-missing-mockup', triage.missingMockup);
     card.classList.toggle('dashboard-missing-files', triage.missingFiles);
 
-    if (style !== 'pipeline') return card;
+    // Keep filtering and sorting data available everywhere. The denser card
+    // decoration remains desktop-only so mobile cards retain their compact anatomy.
+    if (!desktopQuery.matches || style !== 'pipeline') return card;
 
     const body = card.querySelector('.card-body');
     const footer = card.querySelector('.card-footer');
@@ -246,7 +248,7 @@
   }
 
   function decorateBundle(card, orders) {
-    if (!card || !desktopQuery.matches) return card;
+    if (!card) return card;
     const triage = aggregateBundleTriage(orders);
     card.classList.add('dashboard-triaged', 'dashboard-bundle-card');
     card.classList.toggle('dashboard-needs-attention', triage.tags.includes('attention'));
@@ -307,7 +309,7 @@
 
   function applyDashboardTriage() {
     const container = document.getElementById('col-received');
-    if (!container || !desktopQuery.matches) return;
+    if (!container) return;
     sortCards(container);
     const cards = Array.from(container.querySelectorAll(':scope > .pipeline-card'));
     let visible = 0;
@@ -388,9 +390,7 @@
     requestAnimationFrame(applyDashboardTriage);
   });
   desktopQuery.addEventListener('change', () => {
-    if (desktopQuery.matches) {
-      patchCardFactories();
-      requestAnimationFrame(applyDashboardTriage);
-    }
+    patchCardFactories();
+    requestAnimationFrame(applyDashboardTriage);
   });
 })();

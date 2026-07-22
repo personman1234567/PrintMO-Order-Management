@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'self';
     img-src 'self' data: blob: https:;
@@ -16,6 +16,7 @@
   <title>PrintMO Order Management</title>
   <link rel="stylesheet" href="./desktop.css" media="(min-width: 901px)" />
   <link rel="stylesheet" href="./mobile.css" media="(max-width: 900px)" />
+  <link rel="stylesheet" href="./accessibility-hardening.css" />
 </head>
 <body data-active-tab="pipeline" data-active-view="orders">
   <header class="app-header">
@@ -26,13 +27,54 @@
       <button id="order-manager-refresh-btn" class="order-manager-refresh-btn" type="button" aria-label="Refresh orders and mockups">Refresh</button>
     </nav>
   </header>
+  <div id="mobile-command-surface" class="mobile-command-surface">
+    <nav id="mobile-tab-bar" class="mobile-tab-bar" aria-label="Shop workflow stages">
+      <button class="mobile-tab mobile-stage-tab" type="button" data-tab="pipeline" data-mobile-stage="orders" aria-label="Orders">
+        <span class="mobile-tab-icon" aria-hidden="true">
+          <img src="./Assets/PipelineIcon.svg" alt="" />
+        </span>
+        <span class="mobile-tab-label">Orders</span>
+      </button>
+      <button class="mobile-tab mobile-stage-tab" type="button" data-tab="blanksCart" data-mobile-stage="blanks" aria-label="Blanks">
+        <span class="mobile-tab-icon" aria-hidden="true">
+          <img src="./Assets/Blanks Ordered Icon.svg" alt="" />
+        </span>
+        <span class="mobile-tab-label">Blanks</span>
+      </button>
+      <button class="mobile-tab mobile-stage-tab" type="button" data-tab="readyToPrint" data-mobile-stage="print" aria-label="Print">
+        <span class="mobile-tab-icon" aria-hidden="true">
+          <img src="./Assets/Ready To Print Icon.svg" alt="" />
+        </span>
+        <span class="mobile-tab-label">Print</span>
+      </button>
+      <button class="mobile-tab mobile-stage-tab" type="button" data-tab="storage" data-mobile-stage="storage" aria-label="Storage">
+        <span class="mobile-tab-icon" aria-hidden="true">
+          <img src="./Assets/Storage Browser Icon.svg" alt="" />
+        </span>
+        <span class="mobile-tab-label">Storage</span>
+      </button>
+      <button id="mobile-refresh-btn" class="mobile-refresh-btn" type="button" aria-label="Refresh orders and mockups">
+        <span aria-hidden="true">↻</span>
+        <span class="mobile-refresh-label">Sync</span>
+      </button>
+    </nav>
+    <nav id="mobile-blanks-subnav" class="mobile-blanks-subnav" aria-label="Blanks workflow" hidden>
+      <button type="button" data-mobile-blanks-target="to-order" aria-pressed="true">To order</button>
+      <button type="button" data-mobile-blanks-target="in-cart" aria-pressed="false">In cart</button>
+      <button type="button" data-mobile-blanks-target="ordered" aria-pressed="false">Ordered</button>
+      <button type="button" data-mobile-blanks-target="batches" aria-pressed="false">Batches</button>
+    </nav>
+  </div>
   <main class="app-content">
   <div id="orders-view" class="app-view">
     <div class="container">
     <!-- LEFT: Pipeline -->
     <div class="panel pipeline">
       <div class="panel-header">
-        ORDER PIPELINE
+        <h2 class="panel-title">
+          <span class="panel-title-desktop">ORDER PIPELINE</span>
+          <span class="panel-title-mobile">Orders</span>
+        </h2>
         <span id="pipeline-count">0</span>
         <button id="received-bundle-start" class="bundle-btn">Bundle</button>
         <button id="received-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
@@ -133,9 +175,9 @@
   </div>
 
   <!-- order detail modal -->
-  <div id="detail-overlay" class="hidden">
-    <div id="detail-card">
-      <button id="detail-close">&times;</button>
+  <div id="detail-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="detail-order-id" aria-hidden="true">
+    <div id="detail-card" tabindex="-1">
+      <button id="detail-close" type="button" aria-label="Close order details">&times;</button>
       <div id="detail-header">
         <div class="detail-title-block">
           <h2 id="detail-order-id"></h2>
@@ -213,6 +255,7 @@
             <section id="detail-production-card" class="detail-section">
               <div class="production-section-header">
                 <h4>Production Status</h4>
+                <button id="mobile-production-toggle" type="button" aria-expanded="false">Show all steps</button>
                 <span id="production-status-pill" class="production-status-pill" aria-live="polite">Not ready</span>
               </div>
               <div id="ready-controls" class="production-timeline" aria-label="Production readiness milestones">
@@ -365,18 +408,19 @@
     </div>
   </div>
 
-<div id="bundle-overlay" class="hidden">
-  <div id="bundle-modal">
+<div id="bundle-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="bundle-title" aria-hidden="true">
+  <div id="bundle-modal" tabindex="-1">
     <h2 id="bundle-title"></h2>
     <div id="bundle-cards"></div>
     <button id="bundle-destroy" class="fullscreen-btn">Destroy Bundle</button>
   </div>
 </div>
 
-<div id="bundle-name-overlay" class="hidden">
-  <div id="bundle-name-modal">
-    <h2>Please Name Bundle</h2>
-    <input id="bundle-name-input" type="text" />
+<div id="bundle-name-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="bundle-name-title" aria-hidden="true">
+  <div id="bundle-name-modal" tabindex="-1">
+    <h2 id="bundle-name-title">Please Name Bundle</h2>
+    <label class="visually-hidden" for="bundle-name-input">Bundle name</label>
+    <input id="bundle-name-input" type="text" autocomplete="off" />
     <div class="buttons">
       <button id="bundle-name-confirm">Confirm</button>
       <button id="bundle-name-cancel">Cancel</button>
@@ -384,8 +428,10 @@
   </div>
 </div>
 
-<div id="notes-overlay" class="hidden">
-  <div id="notes-modal">
+<div id="notes-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="notes-modal-title" aria-hidden="true">
+  <div id="notes-modal" tabindex="-1">
+    <h2 id="notes-modal-title" class="visually-hidden">Edit order notes</h2>
+    <label class="visually-hidden" for="notes-input">Order notes</label>
     <textarea id="notes-input"></textarea>
     <div class="buttons">
       <button id="notes-confirm">Confirm</button>
@@ -394,9 +440,11 @@
   </div>
 </div>
 
-<div id="name-overlay" class="hidden">
-  <div id="name-modal">
-    <input id="name-input" type="text" />
+<div id="name-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="name-modal-title" aria-hidden="true">
+  <div id="name-modal" tabindex="-1">
+    <h2 id="name-modal-title" class="visually-hidden">Edit customer name</h2>
+    <label class="visually-hidden" for="name-input">Customer name</label>
+    <input id="name-input" type="text" autocomplete="name" />
     <div class="buttons">
       <button id="name-confirm">Confirm</button>
       <button id="name-cancel">Cancel</button>
@@ -404,9 +452,9 @@
   </div>
 </div>
 
-<div id="progress-overlay" class="hidden">
-  <div id="progress-modal">
-    <label for="progress-input">Enter number of items completed</label>
+<div id="progress-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="progress-modal-title" aria-hidden="true">
+  <div id="progress-modal" tabindex="-1">
+    <label id="progress-modal-title" for="progress-input">Enter number of items completed</label>
     <input id="progress-input" type="number" min="0" />
     <div class="buttons">
       <button id="progress-confirm">Confirm</button>
@@ -415,15 +463,17 @@
   </div>
 </div>
 
-  <div id="view-notes-overlay" class="hidden">
-    <div id="view-notes-modal">
+  <div id="view-notes-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="view-notes-title" aria-hidden="true">
+    <div id="view-notes-modal" tabindex="-1">
+      <h2 id="view-notes-title" class="visually-hidden">Order notes</h2>
+      <button id="view-notes-close" type="button" aria-label="Close order notes">&times;</button>
       <p id="view-notes-text"></p>
     </div>
   </div>
 
-  <div id="asset-viewer" class="hidden">
-    <div class="viewer-content">
-      <button id="asset-viewer-close">&times;</button>
+  <div id="asset-viewer" class="hidden" role="dialog" aria-modal="true" aria-label="Asset preview" aria-hidden="true">
+    <div class="viewer-content" tabindex="-1">
+      <button id="asset-viewer-close" type="button" aria-label="Close asset preview">&times;</button>
       <img id="asset-viewer-img" alt="Asset preview" />
       <div id="asset-viewer-caption" class="asset-viewer-caption"></div>
     </div>
@@ -486,8 +536,8 @@
     </div>
   </section>
 
-  <div id="storage-detail-overlay" class="storage-detail-overlay hidden" role="dialog" aria-modal="true" aria-label="Storage item detail">
-    <div class="storage-detail-card">
+  <div id="storage-detail-overlay" class="storage-detail-overlay hidden" role="dialog" aria-modal="true" aria-label="Storage item detail" aria-hidden="true">
+    <div class="storage-detail-card" tabindex="-1">
       <button id="storage-detail-close" class="storage-detail-close" type="button" aria-label="Close detail">&times;</button>
       <div class="storage-detail-header">
         <div>
@@ -511,39 +561,6 @@
   </div>
   </main>
 
-  <nav id="mobile-tab-bar" class="mobile-tab-bar" aria-label="Order manager navigation">
-    <button class="mobile-tab" type="button" data-tab="pipeline" aria-label="Pipeline">
-      <span class="mobile-tab-icon" aria-hidden="true">
-        <img src="./Assets/PipelineIcon.svg" alt="" />
-      </span>
-      <span class="mobile-tab-label">Pipeline</span>
-    </button>
-    <button class="mobile-tab" type="button" data-tab="blanksCart" aria-label="Blanks Cart">
-      <span class="mobile-tab-icon" aria-hidden="true">
-        <img src="./Assets/Blanks Cart Icon.svg" alt="" />
-      </span>
-      <span class="mobile-tab-label">Blanks Cart</span>
-    </button>
-    <button class="mobile-tab" type="button" data-tab="blanksOrdered" aria-label="Blanks">
-      <span class="mobile-tab-icon" aria-hidden="true">
-        <img src="./Assets/Blanks Ordered Icon.svg" alt="" />
-      </span>
-      <span class="mobile-tab-label">Blanks</span>
-    </button>
-    <button class="mobile-tab" type="button" data-tab="readyToPrint" aria-label="Ready To Print">
-      <span class="mobile-tab-icon" aria-hidden="true">
-        <img src="./Assets/Ready To Print Icon.svg" alt="" />
-      </span>
-      <span class="mobile-tab-label">Ready To Print</span>
-    </button>
-    <button class="mobile-tab" type="button" data-tab="storage" aria-label="Storage">
-      <span class="mobile-tab-icon" aria-hidden="true">
-        <img src="./Assets/Storage Browser Icon.svg" alt="" />
-      </span>
-      <span class="mobile-tab-label">Storage</span>
-    </button>
-  </nav>
-
   <!-- existing renderer logic -->
   <script src="./web-shim.js"></script>
   <script src="./storage-browser.js"></script>
@@ -553,5 +570,7 @@
   <script src="./detail-overlay-enhancements.js"></script>
   <script src="./desktop-drag-polish.js"></script>
   <script src="./manual-add-checklist.js"></script>
+  <script src="./accessibility-hardening.js"></script>
+  <script src="./shopify-embedded-mobile.js"></script>
 </body>
 </html>

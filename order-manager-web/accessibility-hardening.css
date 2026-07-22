@@ -1,0 +1,98 @@
+.visually-hidden,
+.card-a11y-open {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.card:focus-within,
+.bundle-card:focus-within {
+  outline: 3px solid #1a73e8;
+  outline-offset: 2px;
+}
+
+.card-a11y-move-controls {
+  position: absolute;
+  inset-inline: 8px;
+  bottom: 8px;
+  z-index: 6;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.card:focus-within .card-a11y-move-controls,
+.bundle-card:focus-within .card-a11y-move-controls {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.card-a11y-move-controls button {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid #9fb4cc;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172033;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.16);
+  font-size: 0.75rem;
+  font-weight: 800;
+  line-height: 1.1;
+  cursor: pointer;
+}
+
+.card-a11y-move-controls button:disabled {
+  display: none;
+}
+
+.card-a11y-move-controls button:focus-visible,
+[role="dialog"] button:focus-visible,
+[role="dialog"] input:focus-visible,
+[role="dialog"] textarea:focus-visible,
+[role="dialog"] select:focus-visible {
+  outline: 3px solid #1a73e8;
+  outline-offset: 2px;
+}
+
+#view-notes-modal {
+  position: relative;
+}
+
+#view-notes-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-width: 36px;
+  min-height: 36px;
+  border: 0;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #172033;
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .card-a11y-move-controls button,
+  #view-notes-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-a11y-move-controls {
+    transition: none;
+  }
+}

@@ -58,6 +58,25 @@ The web port must operate within constrained Shopify Admin viewports as well as 
 - `desktop.css`: High-density dashboard styles optimized for widescreen shop monitors.
 - `mobile.css`: Responsive mobile and constrained iframe styles enforcing min 44x44px touch targets and full operational capabilities across columns.
 
+### Shopify Embedded Mobile Interaction Contract
+
+The mobile web surface is an application viewport inside Shopify Admin, not a
+document page. Its outer shell remains fixed to the iframe viewport while the
+active queue, detail view, or workflow sheet owns vertical scrolling.
+
+- Phone order and production cards are tap targets, not draggable desktop
+  tiles. Native card dragging is disabled at the mobile breakpoint so it cannot
+  steal taps or vertical swipes on iOS.
+- Vertical gestures that start outside an active scroll owner, or reach the top
+  or bottom of one, are contained inside the app instead of chaining into the
+  surrounding Shopify Admin page.
+- Queue cards use a compact two-column grid in embedded mobile viewports. Card
+  mockups, names, and counts reduce proportionally so both columns remain
+  readable without horizontal clipping.
+- Regression checks must include working stage-navigation taps, order/bundle
+  opening, card `draggable=false`, a fixed root shell, and scroll containment at
+  both `320px` and `393px` widths.
+
 ---
 
 ## Common Failure Modes & Recovery
