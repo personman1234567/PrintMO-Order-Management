@@ -3,6 +3,7 @@
   "main": "worker.js",
   "compatibility_date": "2026-07-22",
   "keep_vars": true,
+  "preview_urls": false,
   "observability": { "enabled": true },
   "durable_objects": {
     "bindings": [
@@ -22,6 +23,10 @@
     "crons": ["*/5 * * * *", "0 2 * * *"]
   },
   "r2_buckets": [
+    {
+      "binding": "PREVIEWS",
+      "bucket_name": "designer-previews"
+    },
     {
       "binding": "R2_BUCKET",
       "bucket_name": "printmo-artwork-private"
