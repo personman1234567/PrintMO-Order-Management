@@ -59,8 +59,15 @@ window.api.transport = "http";
 
 // 1) Populate dashboard
 window.api.getQueue = async () => {
-  const data = await apiFetch("/order-manager/queue", { method: "GET" });
-  return data.orders || [];
+  try {
+    const data = await apiFetch("/order-manager/v1/legacy/queue", { method: "GET" });
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.orders)) return data.orders;
+  } catch (_) {
+    // fallback to legacy proxy path
+    const data = await apiFetch("/order-manager/queue", { method: "GET" });
+    return data.orders || [];
+  }
 };
 
 // 2) Drag/drop persistence

@@ -110,6 +110,25 @@ export default {
         }
 
         // -----------------------------
+        // UNIFIED LEGACY QUEUE & S&S ENDPOINTS (PHASE 1)
+        // -----------------------------
+        if (url.pathname === "/order-manager/v1/legacy/queue" && request.method === "GET") {
+            return handleLegacyQueueGet(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
+        if (url.pathname === "/order-manager/v1/legacy/queue/mutate" && request.method === "POST") {
+            return handleLegacyQueueMutate(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
+        if (url.pathname === "/order-manager/v1/legacy/queue/item" && request.method === "DELETE") {
+            return handleLegacyQueueDelete(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
+        if (url.pathname === "/order-manager/v1/legacy/ss/batch" && request.method === "POST") {
+            return handleLegacySSBatch(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
+        // -----------------------------
         // PROXY EVERYTHING ELSE UPSTREAM
         // -----------------------------
         const upstreamBase = (env.UPSTREAM_BASE || "").replace(/\/+$/, "");
@@ -1597,3 +1616,262 @@ async function handleManualChecklistBulk(request, env, allowOrigin, reqAllowHead
 
     return jsonResponse({ orders }, allowOrigin, reqAllowHeaders, 200);
 }
+
+// -----------------------------
+// LEGACY QUEUE & SS HANDLERS (PHASE 1)
+// -----------------------------
+const QUEUE_KEY = "shopifyOrdersQueue";
+
+async function upstashRedis(env, commandArray) {
+    if (!env.UPSTASH_REDIS_REST_URL || !env.UPSTASH_REDIS_REST_TOKEN) {
+        throw new Error("Missing UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN in Worker environment");
+    }
+    const res = await fetch(env.UPSTASH_REDIS_REST_URL.replace(/\/+$/, ''), {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${env.UPSTASH_REDIS_REST_TOKEN}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify(commandArray)
+    });
+    if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Upstash Redis HTTP ${res.status}: ${errText}`);
+    }
+    const json = await res.json();
+    if (json.error) {
+        throw new Error(`Upstash Redis error: ${json.error}`);
+    }
+    return json.result;
+}
+
+function normalizeQueueOrder(order) {
+    let updated = false;
+    if (!order.status) { order.status = 'received'; updated = true; }
+    if (typeof order.blanksStatus !== 'number') { order.blanksStatus = 0; updated = true; }
+    if (typeof order.printsStatus !== 'number') { order.printsStatus = 0; updated = true; }
+    if (typeof order.blanksOrdered !== 'number') { order.blanksOrdered = 0; updated = true; }
+    if (typeof order.printsOrdered !== 'number') { order.printsOrdered = 0; updated = true; }
+    if (typeof order.bundle !== 'string') { order.bundle = ''; updated = true; }
+    if (!Array.isArray(order.attachments)) { order.attachments = []; updated = true; }
+    if (typeof order.notes !== 'string') { order.notes = ''; updated = true; }
+    if (typeof order.progress !== 'number') { order.progress = 0; updated = true; }
+    return updated;
+}
+
+async function handleLegacyQueueGet(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const rawList = await upstashRedis(env, ["LRANGE", QUEUE_KEY, 0, -1]);
+        const orders = [];
+        if (Array.isArray(rawList)) {
+            for (let i = 0; i < rawList.length; i++) {
+                const item = rawList[i];
+                const order = typeof item === 'string' ? JSON.parse(item) : item;
+                if (normalizeQueueOrder(order)) {
+                    await upstashRedis(env, ["LSET", QUEUE_KEY, i, JSON.stringify(order)]);
+                }
+                orders.push(order);
+            }
+        }
+        return jsonResponse(orders, allowOrigin, reqAllowHeaders);
+    } catch (err) {
+        return jsonResponse({ error: err.message }, allowOrigin, reqAllowHeaders, 500);
+    }
+}
+
+async function handleLegacyQueueMutate(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const body = await request.json();
+        const { orderName, orderNames, bundleName, patch } = body;
+
+        const rawList = await upstashRedis(env, ["LRANGE", QUEUE_KEY, 0, -1]);
+        if (!Array.isArray(rawList)) {
+            return jsonResponse({ error: "Failed to read queue from Redis" }, allowOrigin, reqAllowHeaders, 500);
+        }
+
+        const targetNames = new Set();
+        if (orderName) targetNames.add(orderName);
+        if (Array.isArray(orderNames)) orderNames.forEach(n => targetNames.add(n));
+
+        let updatedCount = 0;
+        const updatedOrders = [];
+
+        for (let i = 0; i < rawList.length; i++) {
+            const raw = rawList[i];
+            const order = typeof raw === 'string' ? JSON.parse(raw) : raw;
+
+            let matches = false;
+            if (targetNames.has(order.name)) matches = true;
+            if (bundleName && order.bundle === bundleName) matches = true;
+
+            if (matches && patch && typeof patch === 'object') {
+                normalizeQueueOrder(order);
+
+                if (patch.status !== undefined) order.status = patch.status;
+                if (patch.blanksStatus !== undefined) order.blanksStatus = patch.blanksStatus;
+                if (patch.printsStatus !== undefined) order.printsStatus = patch.printsStatus;
+                if (patch.blanksOrdered !== undefined) order.blanksOrdered = patch.blanksOrdered;
+                if (patch.printsOrdered !== undefined) order.printsOrdered = patch.printsOrdered;
+                if (patch.bundle !== undefined) order.bundle = patch.bundle;
+                if (patch.notes !== undefined) order.notes = patch.notes;
+                if (patch.progress !== undefined) order.progress = patch.progress;
+                if (patch.custName !== undefined) {
+                    const [orderNum] = (order.name || '').split(' – ');
+                    order.name = `${orderNum} – ${patch.custName}`;
+                }
+                if (patch.addAttachment) {
+                    if (!Array.isArray(order.attachments)) order.attachments = [];
+                    order.attachments.push(patch.addAttachment);
+                }
+                if (Array.isArray(patch.removeAttachmentNames)) {
+                    if (Array.isArray(order.attachments)) {
+                        order.attachments = order.attachments.filter(att => !patch.removeAttachmentNames.includes(att.name));
+                    }
+                }
+
+                await upstashRedis(env, ["LSET", QUEUE_KEY, i, JSON.stringify(order)]);
+                updatedCount++;
+                updatedOrders.push(order);
+            }
+        }
+
+        return jsonResponse({ success: true, count: updatedCount, updated: updatedOrders }, allowOrigin, reqAllowHeaders);
+    } catch (err) {
+        return jsonResponse({ error: err.message }, allowOrigin, reqAllowHeaders, 500);
+    }
+}
+
+async function handleLegacyQueueDelete(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const body = await request.json();
+        const { orderName } = body;
+        if (!orderName) {
+            return jsonResponse({ error: "Missing orderName" }, allowOrigin, reqAllowHeaders, 400);
+        }
+
+        const rawList = await upstashRedis(env, ["LRANGE", QUEUE_KEY, 0, -1]);
+        if (!Array.isArray(rawList)) {
+            return jsonResponse({ error: "Failed to read queue from Redis" }, allowOrigin, reqAllowHeaders, 500);
+        }
+
+        let targetIndex = -1;
+        for (let i = 0; i < rawList.length; i++) {
+            const order = typeof rawList[i] === 'string' ? JSON.parse(rawList[i]) : rawList[i];
+            if (order.name === orderName) {
+                targetIndex = i;
+                break;
+            }
+        }
+
+        if (targetIndex === -1) {
+            return jsonResponse({ success: false, message: "Order not found" }, allowOrigin, reqAllowHeaders, 404);
+        }
+
+        const tombstone = `__printmo_deleted__:${Date.now()}:${Math.random()}`;
+        await upstashRedis(env, ["LSET", QUEUE_KEY, targetIndex, tombstone]);
+        await upstashRedis(env, ["LREM", QUEUE_KEY, 1, tombstone]);
+
+        return jsonResponse({ success: true, deleted: orderName }, allowOrigin, reqAllowHeaders);
+    } catch (err) {
+        return jsonResponse({ error: err.message }, allowOrigin, reqAllowHeaders, 500);
+    }
+}
+
+async function handleLegacySSBatch(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const body = await request.json();
+        const { orderIds } = body;
+        if (!Array.isArray(orderIds) || !orderIds.length) {
+            return jsonResponse({ error: "No orderIds provided for batch" }, allowOrigin, reqAllowHeaders, 400);
+        }
+
+        const ssAccount = env.SS_ACCOUNT_NUMBER;
+        const ssApiKey = env.SS_API_KEY;
+        const ssPaymentProfileId = env.SS_PAYMENT_PROFILE_ID;
+        const ssPaymentProfileEmail = env.SS_PAYMENT_PROFILE_EMAIL;
+
+        if (!ssAccount || !ssApiKey) {
+            return jsonResponse({ error: "S&S credentials not configured on Worker" }, allowOrigin, reqAllowHeaders, 500);
+        }
+
+        const rawList = await upstashRedis(env, ["LRANGE", QUEUE_KEY, 0, -1]);
+        const targetSet = new Set(orderIds);
+        const toProcess = [];
+
+        if (Array.isArray(rawList)) {
+            for (const item of rawList) {
+                const order = typeof item === 'string' ? JSON.parse(item) : item;
+                if (targetSet.has(order.name)) {
+                    toProcess.push(order);
+                }
+            }
+        }
+
+        if (!toProcess.length) {
+            return jsonResponse({ error: "No matching orders found in queue" }, allowOrigin, reqAllowHeaders, 404);
+        }
+
+        const agg = {};
+        toProcess.forEach(o => {
+            if (Array.isArray(o.items)) {
+                o.items.forEach(({ sku, qty }) => {
+                    if (sku) agg[sku] = (agg[sku] || 0) + (qty || 0);
+                });
+            }
+        });
+
+        const auth = 'Basic ' + btoa(`${ssAccount}:${ssApiKey}`);
+        let subtotal = 0;
+
+        for (const [sku, qty] of Object.entries(agg)) {
+            const res = await fetch(`https://api.ssactivewear.com/v2/products/${encodeURIComponent(sku)}?mediatype=json`, {
+                headers: { Authorization: auth, Accept: 'application/json' }
+            });
+            if (res.ok) {
+                const js = await res.json();
+                const price = js.Price ?? js.price ?? 0;
+                subtotal += price * qty;
+            }
+        }
+
+        const payload = {
+            customer: `Batch of ${toProcess.length} orders`,
+            testOrder: true,
+            autoSelectWarehouse: true,
+            rejectLineErrors: false,
+            shippingAddress: {
+                Name: 'LoGo Fishin Attn: TJ Reid',
+                Address: '328 Bristlecone Ct S',
+                City: 'Saint Charles',
+                State: 'MO',
+                Zip: '63304',
+                Country: 'USA'
+            },
+            Lines: Object.entries(agg).map(([Identifier, Qty]) => ({ Identifier, Qty })),
+            PaymentProfile: {
+                ProfileID: parseInt(ssPaymentProfileId || '0', 10),
+                Email: ssPaymentProfileEmail || ''
+            }
+        };
+
+        const resp = await fetch('https://api.ssactivewear.com/v2/orders/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': auth
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const json = await resp.json();
+        const created = json.orders?.[0];
+        if (!created?.orderNumber) {
+            return jsonResponse({ error: `S&S Batch failed: ${JSON.stringify(json)}` }, allowOrigin, reqAllowHeaders, 400);
+        }
+
+        return jsonResponse({ orderNumber: created.orderNumber, count: toProcess.length }, allowOrigin, reqAllowHeaders);
+    } catch (err) {
+        return jsonResponse({ error: err.message }, allowOrigin, reqAllowHeaders, 500);
+    }
+}
+

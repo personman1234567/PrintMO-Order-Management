@@ -5,6 +5,7 @@ dist/
 patch.diff
 .gitconfig
 SampleOrders/
+backups/
 
 # Impeccable project configuration stays tracked:
 #   .impeccable/design.json

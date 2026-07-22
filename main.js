@@ -27,10 +27,35 @@ function safeDownloadName(name) {
   return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
 }
 
-// ─── Redis & Env Setup ───────────────────────────────────────────────────────
-const redis = createClient({ url: process.env.REDIS_URL });
-redis.on('error', e => console.error('❌ Redis error', e));
-redis.connect().catch(console.error);
+// ─── Worker API & Redis Transport Configuration ──────────────────────────────
+const WORKER_API_URL = (process.env.WORKER_API_URL || '').replace(/\/+$/, '');
+const REDIS_URL = process.env.REDIS_URL;
+
+let redis = null;
+if (REDIS_URL && !WORKER_API_URL) {
+  const { createClient } = require('redis');
+  redis = createClient({ url: REDIS_URL });
+  redis.on('error', e => console.error('❌ Redis error', e));
+  redis.connect().catch(console.error);
+} else if (WORKER_API_URL) {
+  console.log(`[Main] Worker API transport active: ${WORKER_API_URL}`);
+}
+
+async function workerFetch(endpoint, options = {}) {
+  const url = `${WORKER_API_URL}${endpoint}`;
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    }
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Worker API (${endpoint}) failed (${res.status}): ${errText}`);
+  }
+  return res.json();
+}
 
 const QUEUE_KEY = 'shopifyOrdersQueue';
 const {
@@ -259,6 +284,12 @@ ipcMain.on('get-asset-path', (event, file) => {
 
 // ─── IPC: delete order ───────────────────────────────────────────────────
 ipcMain.handle('delete-order', async (event, orderName) => {
+  if (WORKER_API_URL) {
+    return workerFetch('/order-manager/v1/legacy/queue/item', {
+      method: 'DELETE',
+      body: JSON.stringify({ orderName })
+    });
+  }
   return withQueueMutation(async () => {
     const record = await readIndexedQueueOrder(orderName);
     if (!record) return;
@@ -272,11 +303,20 @@ ipcMain.handle('delete-order', async (event, orderName) => {
 
 // ─── IPC: fetch all orders ───────────────────────────────────────────────────
 ipcMain.handle('get-queue', async () => {
+  if (WORKER_API_URL) {
+    return workerFetch('/order-manager/v1/legacy/queue');
+  }
   return withQueueMutation(() => rebuildQueueIndex({ normalizeRecords: true }));
 });
 
 // ─── IPC: update an order’s status ───────────────────────────────────────────
 ipcMain.handle('update-status', async (_e, orderId, status) => {
+  if (WORKER_API_URL) {
+    return workerFetch('/order-manager/v1/legacy/queue/mutate', {
+      method: 'POST',
+      body: JSON.stringify({ orderName: orderId, patch: { status } })
+    });
+  }
   return withQueueMutation(() =>
     mutateIndexedQueueOrder(orderId, order => {
       order.status = status;
@@ -286,6 +326,12 @@ ipcMain.handle('update-status', async (_e, orderId, status) => {
 
 // ─── IPC: update many order statuses in one indexed write batch ──────────────
 ipcMain.handle('update-statuses', async (_e, orderIds, status) => {
+  if (WORKER_API_URL) {
+    return workerFetch('/order-manager/v1/legacy/queue/mutate', {
+      method: 'POST',
+      body: JSON.stringify({ orderNames: orderIds, patch: { status } })
+    });
+  }
   return withQueueMutation(async () => {
     const updated = await mutateIndexedQueueOrders(orderIds, order => {
       order.status = status;
@@ -296,6 +342,12 @@ ipcMain.handle('update-statuses', async (_e, orderIds, status) => {
 
 // ─── IPC: update status for all orders in a bundle ──────────────────────────
 ipcMain.handle('update-bundle-status', async (_e, bundleName, status) => {
+  if (WORKER_API_URL) {
+    return workerFetch('/order-manager/v1/legacy/queue/mutate', {
+      method: 'POST',
+      body: JSON.stringify({ bundleName, patch: { status } })
+    });
+  }
   return withQueueMutation(async () => {
     await ensureQueueIndex();
     let orderNames = Array.from(queueBundleIndex.get(bundleName) || []);
@@ -312,6 +364,15 @@ ipcMain.handle('update-bundle-status', async (_e, bundleName, status) => {
 
 // ─── IPC: update blanks/prints readiness ─────────────────────────────────────
 ipcMain.handle('update-ready', async (_e, orderId, blanksStatus, printsStatus, blanksOrdered, printsOrdered) => {
+  if (WORKER_API_URL) {
+    return workerFetch('/order-manager/v1/legacy/queue/mutate', {
+      method: 'POST',
+      body: JSON.stringify({
+        orderName: orderId,
+        patch: { blanksStatus, printsStatus, blanksOrdered, printsOrdered }
+      })
+    });
+  }
   return withQueueMutation(() =>
     mutateIndexedQueueOrder(orderId, order => {
       order.blanksStatus = blanksStatus;
@@ -325,6 +386,12 @@ ipcMain.handle('update-ready', async (_e, orderId, blanksStatus, printsStatus, b
 // ─── IPC: assign bundle to orders ─────────────────────────────────────────────
 ipcMain.handle('set-bundle', async (_e, orderIds, bundleName) => {
   if (!Array.isArray(orderIds)) return;
+  if (WORKER_API_URL) {
+    return workerFetch('/order-manager/v1/legacy/queue/mutate', {
+      method: 'POST',
+      body: JSON.stringify({ orderNames: orderIds, patch: { bundle: bundleName } })
+    });
+  }
   return withQueueMutation(async () => {
     const updated = await mutateIndexedQueueOrders(orderIds, order => {
       order.bundle = bundleName;
@@ -335,6 +402,12 @@ ipcMain.handle('set-bundle', async (_e, orderIds, bundleName) => {
 
 // ─── IPC: add attachment to an order ─────────────────────────────────────────
 ipcMain.handle('add-file', async (_e, orderId, file) => {
+  if (WORKER_API_URL) {
+    return workerFetch('/order-manager/v1/legacy/queue/mutate', {
+      method: 'POST',
+      body: JSON.stringify({ orderName: orderId, patch: { addAttachment: file } })
+    });
+  }
   return withQueueMutation(() =>
     mutateIndexedQueueOrder(orderId, order => {
       if (!Array.isArray(order.attachments)) order.attachments = [];
@@ -345,6 +418,12 @@ ipcMain.handle('add-file', async (_e, orderId, file) => {
 
 // ─── IPC: remove attachments from an order ───────────────────────────────────
 ipcMain.handle('remove-files', async (_e, orderId, names) => {
+  if (WORKER_API_URL) {
+    return workerFetch('/order-manager/v1/legacy/queue/mutate', {
+      method: 'POST',
+      body: JSON.stringify({ orderName: orderId, patch: { removeAttachmentNames: names } })
+    });
+  }
   return withQueueMutation(() =>
     mutateIndexedQueueOrder(orderId, order => {
       if (!Array.isArray(order.attachments)) order.attachments = [];
@@ -355,6 +434,12 @@ ipcMain.handle('remove-files', async (_e, orderId, names) => {
 
 // ─── IPC: update notes for an order ───────────────────────────────────────────
 ipcMain.handle('update-notes', async (_e, orderId, notes) => {
+  if (WORKER_API_URL) {
+    return workerFetch('/order-manager/v1/legacy/queue/mutate', {
+      method: 'POST',
+      body: JSON.stringify({ orderName: orderId, patch: { notes } })
+    });
+  }
   return withQueueMutation(() =>
     mutateIndexedQueueOrder(orderId, order => {
       order.notes = notes;
@@ -364,6 +449,12 @@ ipcMain.handle('update-notes', async (_e, orderId, notes) => {
 
 // ─── IPC: update customer name for an order ─────────────────────────────────
 ipcMain.handle('update-name', async (_e, orderId, newCust) => {
+  if (WORKER_API_URL) {
+    return workerFetch('/order-manager/v1/legacy/queue/mutate', {
+      method: 'POST',
+      body: JSON.stringify({ orderName: orderId, patch: { custName: newCust } })
+    });
+  }
   return withQueueMutation(() =>
     mutateIndexedQueueOrder(orderId, order => {
       const [orderNum] = order.name.split(' – ');
@@ -374,6 +465,12 @@ ipcMain.handle('update-name', async (_e, orderId, newCust) => {
 
 // ─── IPC: update progress for an order ───────────────────────────────────────
 ipcMain.handle('update-progress', async (_e, orderId, progress) => {
+  if (WORKER_API_URL) {
+    return workerFetch('/order-manager/v1/legacy/queue/mutate', {
+      method: 'POST',
+      body: JSON.stringify({ orderName: orderId, patch: { progress } })
+    });
+  }
   return withQueueMutation(() =>
     mutateIndexedQueueOrder(orderId, order => {
       order.progress = progress;
@@ -385,6 +482,13 @@ ipcMain.handle('update-progress', async (_e, orderId, progress) => {
 ipcMain.handle('process-batch', async (_e, orderIds) => {
   if (!Array.isArray(orderIds) || !orderIds.length) {
     throw new Error('No orders to submit');
+  }
+
+  if (WORKER_API_URL) {
+    return workerFetch('/order-manager/v1/legacy/ss/batch', {
+      method: 'POST',
+      body: JSON.stringify({ orderIds })
+    });
   }
 
   // Batch reads should see the queue after any pending indexed writes settle.
