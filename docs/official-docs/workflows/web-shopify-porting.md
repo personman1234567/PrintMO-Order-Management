@@ -70,6 +70,9 @@ active queue, detail view, or workflow sheet owns vertical scrolling.
 - Vertical gestures that start outside an active scroll owner, or reach the top
   or bottom of one, are contained inside the app instead of chaining into the
   surrounding Shopify Admin page.
+- Storage Browser is the exception to the fixed workflow-screen pattern: its
+  full view is top-anchored and owns vertical scrolling, while horizontal
+  scrolling and scroll chaining into Shopify Admin remain disabled.
 - Queue cards use a compact two-column grid in embedded mobile viewports. Card
   mockups, names, and counts reduce proportionally so both columns remain
   readable without horizontal clipping.
