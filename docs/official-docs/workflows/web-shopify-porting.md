@@ -27,7 +27,7 @@ flowchart LR
     Browser[Web Browser / Shopify Admin Iframe] -->|Loads| IndexHTML[order-manager-web/index.html]
     IndexHTML --> WebShim[web-shim.js]
     WebShim --> StorageBrowser[storage-browser.js]
-    StorageBrowser -->|HTTP / CORS| CFWorker[order-manager-proxy/worker.js]
+    StorageBrowser -->|Shopify bearer token + HTTPS| CFWorker[order-manager-proxy/worker.js]
     CFWorker -->|Redis REST / S&S API| BackendServices[Backend Services]
 ```
 
@@ -45,9 +45,12 @@ flowchart LR
 - **File**: `order-manager-proxy/worker.js`
 - **Deployment**: Deployed as a Cloudflare Worker.
 - **Responsibilities**:
-  - Serves as CORS middleware allowing requests from Shopify Admin origins.
-  - Proxies calls to Redis and S&S Activewear without exposing API credentials client-side.
+  - Enforces allowed origins plus Shopify App Bridge bearer-token signature, shop, audience, expiry, and partner-user validation.
+  - Owns atomic legacy Redis queue mutations and S&S calls without exposing credentials client-side.
+  - Requires authenticated fetches for R2 bytes; the browser renders returned blobs rather than public Worker object URLs.
   - Handled via `scripts/prepare-cloudflare-pages-upload.sh`.
+
+The prepared Cloudflare Pages artifact injects the public Shopify client ID into the App Bridge meta tag. Source HTML intentionally contains a placeholder and must not be deployed without `npm run prepare:cloudflare`.
 
 ---
 

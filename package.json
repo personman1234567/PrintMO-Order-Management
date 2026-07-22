@@ -6,17 +6,19 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "predist": "node scripts/create-desktop-config.js",
     "dist": "electron-builder",
-    "prepare:cloudflare": "bash scripts/prepare-cloudflare-pages-upload.sh"
+    "prepare:cloudflare": "bash scripts/prepare-cloudflare-pages-upload.sh",
+    "verify:phase1": "node scripts/verify-phase1.js"
   },
   "dependencies": {
     "dotenv": "^16.5.0",
-    "node-fetch": "^2.6.7",
-    "redis": "^4.7.0"
+    "node-fetch": "^2.6.7"
   },
   "devDependencies": {
     "electron": "^26.0.0",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "redis": "^4.7.0"
   },
   "build": {
     "appId": "com.printmo.orders",
@@ -27,10 +29,10 @@
     },
     "extraResources": [
       {
-        "from": ".env",
-        "to": ".env",
+        "from": ".build/app-config.json",
+        "to": "app-config.json",
         "filter": ["**/*"]
-        },
+      },
       {
         "from": "Assets/ApparelCount.svg",
         "to": "Assets/ApparelCount.svg"
@@ -38,7 +40,7 @@
       {
         "from": "Assets/PrintCount.svg",
         "to": "Assets/PrintCount.svg"
-        },
+      },
       {
         "from": "Assets/ApparelCountGreen.svg",
         "to": "Assets/ApparelCountGreen.svg"
@@ -49,15 +51,18 @@
       }
     ],
     "files": [
-      "**/*"
+      "**/*",
+      "!.env",
+      "!backups/**",
+      "!.build/**"
     ],
     "mac": {
       "icon": "PrintMO_Orders.icns",
-      "target": ["dmg","zip"]
+      "target": ["dmg", "zip"]
     },
     "win": {
       "icon": "PrintMO_Orders.ico",
-      "target": ["nsis","zip"]
+      "target": ["nsis", "zip"]
     }
   }
 }

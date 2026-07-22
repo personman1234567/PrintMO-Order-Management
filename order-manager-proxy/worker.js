@@ -1,4 +1,94 @@
 // worker.js — Order Manager proxy + R2 Storage Browser endpoints
+const oidcCache = new Map();
+
+function decodeBase64Url(value) {
+    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+    return Uint8Array.from(atob(padded), c => c.charCodeAt(0));
+}
+
+function decodeJwt(token) {
+    const parts = token.split(".");
+    if (parts.length !== 3) throw new Error("Malformed bearer token");
+    const parse = part => JSON.parse(new TextDecoder().decode(decodeBase64Url(part)));
+    return { header: parse(parts[0]), payload: parse(parts[1]), signingInput: `${parts[0]}.${parts[1]}`, signature: decodeBase64Url(parts[2]) };
+}
+
+function configuredIds(value) {
+    return new Set(String(value || "").split(",").map(v => v.trim()).filter(Boolean));
+}
+
+function validateJwtTimes(payload) {
+    const now = Math.floor(Date.now() / 1000);
+    if (!Number.isFinite(payload.exp) || payload.exp < now - 10) throw new Error("Bearer token expired");
+    if (Number.isFinite(payload.nbf) && payload.nbf > now + 10) throw new Error("Bearer token is not active");
+}
+
+function audienceIncludes(aud, expected) {
+    return Array.isArray(aud) ? aud.includes(expected) : aud === expected;
+}
+
+async function verifyShopifyToken(jwt, env) {
+    const clientId = env.SHOPIFY_CLIENT_ID || env.SHOPIFY_API_KEY;
+    const secret = env.SHOPIFY_APP_SECRET || env.SHOPIFY_API_SECRET;
+    const expectedShop = String(env.SHOPIFY_SHOP_DOMAIN || "").toLowerCase();
+    if (!clientId || !secret || !expectedShop) throw new Error("Shopify authentication is not configured");
+    if (jwt.header.alg !== "HS256") throw new Error("Unsupported Shopify token algorithm");
+
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+    const valid = await crypto.subtle.verify("HMAC", key, jwt.signature, new TextEncoder().encode(jwt.signingInput));
+    if (!valid) throw new Error("Invalid Shopify token signature");
+
+    validateJwtTimes(jwt.payload);
+    if (!audienceIncludes(jwt.payload.aud, clientId)) throw new Error("Invalid Shopify token audience");
+    const dest = new URL(jwt.payload.dest);
+    if (dest.protocol !== "https:" || dest.hostname.toLowerCase() !== expectedShop) throw new Error("Invalid Shopify shop");
+    if (jwt.payload.iss !== `${dest.origin}/admin`) throw new Error("Invalid Shopify token issuer");
+    const partners = configuredIds(env.PARTNER_USER_IDS);
+    if (!partners.size || !partners.has(String(jwt.payload.sub))) throw new Error("Shopify user is not authorized");
+    return { kind: "shopify", subject: String(jwt.payload.sub), shop: expectedShop };
+}
+
+async function cachedJson(url) {
+    const cached = oidcCache.get(url);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const response = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error("Unable to load OIDC metadata");
+    const value = await response.json();
+    oidcCache.set(url, { value, expiresAt: Date.now() + 300000 });
+    return value;
+}
+
+async function verifyOidcToken(jwt, env) {
+    const issuer = String(env.OIDC_ISSUER || "").replace(/\/+$/, "");
+    const audience = env.OIDC_AUDIENCE || env.OIDC_CLIENT_ID;
+    if (!issuer || !audience) throw new Error("Electron OIDC authentication is not configured");
+    if (jwt.header.alg !== "RS256" || !jwt.header.kid) throw new Error("Unsupported OIDC token algorithm");
+    if (jwt.payload.iss !== issuer) throw new Error("Invalid OIDC issuer");
+
+    const discovery = await cachedJson(`${issuer}/.well-known/openid-configuration`);
+    if (discovery.issuer !== issuer || !String(discovery.jwks_uri || "").startsWith("https://")) throw new Error("Invalid OIDC metadata");
+    const jwks = await cachedJson(discovery.jwks_uri);
+    const jwk = Array.isArray(jwks.keys) ? jwks.keys.find(key => key.kid === jwt.header.kid && key.kty === "RSA") : null;
+    if (!jwk) throw new Error("OIDC signing key not found");
+    const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+    const valid = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, jwt.signature, new TextEncoder().encode(jwt.signingInput));
+    if (!valid) throw new Error("Invalid OIDC token signature");
+
+    validateJwtTimes(jwt.payload);
+    if (!audienceIncludes(jwt.payload.aud, audience)) throw new Error("Invalid OIDC audience");
+    const partners = configuredIds(env.PARTNER_SUBJECT_IDS);
+    if (!partners.size || !partners.has(String(jwt.payload.sub))) throw new Error("OIDC user is not authorized");
+    return { kind: "oidc", subject: String(jwt.payload.sub) };
+}
+
+async function authenticateRequest(request, env) {
+    const match = /^Bearer\s+(.+)$/i.exec(request.headers.get("Authorization") || "");
+    if (!match) throw new Error("Missing bearer token");
+    const jwt = decodeJwt(match[1]);
+    return jwt.header.alg === "HS256" ? verifyShopifyToken(jwt, env) : verifyOidcToken(jwt, env);
+}
+
 export default {
     async fetch(request, env) {
         const url = new URL(request.url);
@@ -31,10 +121,17 @@ export default {
             });
         }
 
+        try {
+            await authenticateRequest(request, env);
+        } catch (err) {
+            return jsonResponse({ error: err.message }, allowOrigin || origin || "*", reqAllowHeaders, 401, {
+                "WWW-Authenticate": 'Bearer realm="printmo"',
+                "X-Shopify-Retry-Invalid-Session-Request": "1"
+            });
+        }
+
         // -----------------------------
-        // LOCAL R2 STORAGE ENDPOINTS
-        // NOTE: These MUST NOT require browser-sent auth headers.
-        // We rely on your Origin allowlist above + the fact this app runs in your admin.
+        // AUTHENTICATED R2 STORAGE ENDPOINTS
         // -----------------------------
         if (url.pathname === "/order-manager/storage/list") {
             return handleStorageList(
@@ -209,13 +306,14 @@ function corsHeaders(allowOrigin, allowHeaders) {
 // -----------------------------
 // R2 HELPERS
 // -----------------------------
-function jsonResponse(body, allowOrigin, reqAllowHeaders, status = 200) {
+function jsonResponse(body, allowOrigin, reqAllowHeaders, status = 200, extraHeaders = {}) {
     const headers = new Headers();
     headers.set("Content-Type", "application/json");
     headers.set("Cache-Control", "no-store");
     for (const [k, v] of Object.entries(corsHeaders(allowOrigin, reqAllowHeaders))) {
         headers.set(k, v);
     }
+    for (const [k, v] of Object.entries(extraHeaders)) headers.set(k, v);
     return new Response(JSON.stringify(body), { status, headers });
 }
 
@@ -1217,7 +1315,7 @@ async function handleStorageList(request, env, allowOrigin, reqAllowHeaders) {
 // Query:
 //  - key (required)
 // Returns JSON including customMetadata for storage-browser.js hydration.
-// IMPORTANT: No auth required from browser (no 401).
+// Authentication is enforced before route dispatch.
 // -----------------------------
 async function handleStorageHead(request, env, allowOrigin, reqAllowHeaders) {
     if (!env.PREVIEWS) {
@@ -1274,7 +1372,7 @@ async function handleStorageHead(request, env, allowOrigin, reqAllowHeaders) {
 // Behavior:
 //  - GET returns bytes
 //  - HEAD returns metadata headers only
-// IMPORTANT: No auth required from browser (no 401).
+// Authentication is enforced before route dispatch.
 // -----------------------------
 async function handleStorageObject(request, env, allowOrigin, reqAllowHeaders) {
     if (!env.PREVIEWS) {
@@ -1621,6 +1719,63 @@ async function handleManualChecklistBulk(request, env, allowOrigin, reqAllowHead
 // LEGACY QUEUE & SS HANDLERS (PHASE 1)
 // -----------------------------
 const QUEUE_KEY = "shopifyOrdersQueue";
+const MUTATE_QUEUE_LUA = `
+local spec = cjson.decode(ARGV[1])
+local targets = {}
+for _, name in ipairs(spec.orderNames or {}) do targets[name] = true end
+local raw = redis.call('LRANGE', KEYS[1], 0, -1)
+local updated = {}
+for index, value in ipairs(raw) do
+  local order = cjson.decode(value)
+  local matches = targets[order.name] == true or (spec.bundleName and order.bundle == spec.bundleName)
+  if matches then
+    local patch = spec.patch or {}
+    if patch.status ~= nil then order.status = patch.status end
+    if patch.blanksStatus ~= nil then order.blanksStatus = patch.blanksStatus end
+    if patch.printsStatus ~= nil then order.printsStatus = patch.printsStatus end
+    if patch.blanksOrdered ~= nil then order.blanksOrdered = patch.blanksOrdered end
+    if patch.printsOrdered ~= nil then order.printsOrdered = patch.printsOrdered end
+    if patch.bundle ~= nil then order.bundle = patch.bundle end
+    if patch.notes ~= nil then order.notes = patch.notes end
+    if patch.progress ~= nil then order.progress = patch.progress end
+    if patch.custName ~= nil then
+      local separator = ' – '
+      local start = string.find(order.name or '', separator, 1, true)
+      local number = start and string.sub(order.name, 1, start - 1) or (order.name or '')
+      order.name = number .. separator .. patch.custName
+    end
+    if patch.addAttachment ~= nil then
+      order.attachments = order.attachments or {}
+      table.insert(order.attachments, patch.addAttachment)
+    end
+    if patch.removeAttachmentNames ~= nil then
+      local remove = {}
+      for _, name in ipairs(patch.removeAttachmentNames) do remove[name] = true end
+      local kept = {}
+      for _, attachment in ipairs(order.attachments or {}) do
+        if not remove[attachment.name] then table.insert(kept, attachment) end
+      end
+      order.attachments = kept
+    end
+    redis.call('LSET', KEYS[1], index - 1, cjson.encode(order))
+    table.insert(updated, order)
+  end
+end
+return cjson.encode({ success = true, count = #updated, updated = updated })`;
+
+const DELETE_QUEUE_ITEM_LUA = `
+local target = ARGV[1]
+local raw = redis.call('LRANGE', KEYS[1], 0, -1)
+for index, value in ipairs(raw) do
+  local order = cjson.decode(value)
+  if order.name == target then
+    local tombstone = '__printmo_deleted__:' .. redis.call('TIME')[1] .. ':' .. index
+    redis.call('LSET', KEYS[1], index - 1, tombstone)
+    redis.call('LREM', KEYS[1], 1, tombstone)
+    return 1
+  end
+end
+return 0`;
 
 async function upstashRedis(env, commandArray) {
     if (!env.UPSTASH_REDIS_REST_URL || !env.UPSTASH_REDIS_REST_TOKEN) {
@@ -1667,9 +1822,7 @@ async function handleLegacyQueueGet(request, env, allowOrigin, reqAllowHeaders) 
             for (let i = 0; i < rawList.length; i++) {
                 const item = rawList[i];
                 const order = typeof item === 'string' ? JSON.parse(item) : item;
-                if (normalizeQueueOrder(order)) {
-                    await upstashRedis(env, ["LSET", QUEUE_KEY, i, JSON.stringify(order)]);
-                }
+                normalizeQueueOrder(order);
                 orders.push(order);
             }
         }
@@ -1683,59 +1836,16 @@ async function handleLegacyQueueMutate(request, env, allowOrigin, reqAllowHeader
     try {
         const body = await request.json();
         const { orderName, orderNames, bundleName, patch } = body;
-
-        const rawList = await upstashRedis(env, ["LRANGE", QUEUE_KEY, 0, -1]);
-        if (!Array.isArray(rawList)) {
-            return jsonResponse({ error: "Failed to read queue from Redis" }, allowOrigin, reqAllowHeaders, 500);
+        if ((!orderName && !Array.isArray(orderNames) && !bundleName) || !patch || typeof patch !== "object") {
+            return jsonResponse({ error: "Mutation target and patch are required" }, allowOrigin, reqAllowHeaders, 400);
         }
-
-        const targetNames = new Set();
-        if (orderName) targetNames.add(orderName);
-        if (Array.isArray(orderNames)) orderNames.forEach(n => targetNames.add(n));
-
-        let updatedCount = 0;
-        const updatedOrders = [];
-
-        for (let i = 0; i < rawList.length; i++) {
-            const raw = rawList[i];
-            const order = typeof raw === 'string' ? JSON.parse(raw) : raw;
-
-            let matches = false;
-            if (targetNames.has(order.name)) matches = true;
-            if (bundleName && order.bundle === bundleName) matches = true;
-
-            if (matches && patch && typeof patch === 'object') {
-                normalizeQueueOrder(order);
-
-                if (patch.status !== undefined) order.status = patch.status;
-                if (patch.blanksStatus !== undefined) order.blanksStatus = patch.blanksStatus;
-                if (patch.printsStatus !== undefined) order.printsStatus = patch.printsStatus;
-                if (patch.blanksOrdered !== undefined) order.blanksOrdered = patch.blanksOrdered;
-                if (patch.printsOrdered !== undefined) order.printsOrdered = patch.printsOrdered;
-                if (patch.bundle !== undefined) order.bundle = patch.bundle;
-                if (patch.notes !== undefined) order.notes = patch.notes;
-                if (patch.progress !== undefined) order.progress = patch.progress;
-                if (patch.custName !== undefined) {
-                    const [orderNum] = (order.name || '').split(' – ');
-                    order.name = `${orderNum} – ${patch.custName}`;
-                }
-                if (patch.addAttachment) {
-                    if (!Array.isArray(order.attachments)) order.attachments = [];
-                    order.attachments.push(patch.addAttachment);
-                }
-                if (Array.isArray(patch.removeAttachmentNames)) {
-                    if (Array.isArray(order.attachments)) {
-                        order.attachments = order.attachments.filter(att => !patch.removeAttachmentNames.includes(att.name));
-                    }
-                }
-
-                await upstashRedis(env, ["LSET", QUEUE_KEY, i, JSON.stringify(order)]);
-                updatedCount++;
-                updatedOrders.push(order);
-            }
-        }
-
-        return jsonResponse({ success: true, count: updatedCount, updated: updatedOrders }, allowOrigin, reqAllowHeaders);
+        const spec = {
+            orderNames: [...new Set([...(Array.isArray(orderNames) ? orderNames : []), ...(orderName ? [orderName] : [])])],
+            bundleName: bundleName || null,
+            patch
+        };
+        const result = await upstashRedis(env, ["EVAL", MUTATE_QUEUE_LUA, 1, QUEUE_KEY, JSON.stringify(spec)]);
+        return jsonResponse(typeof result === "string" ? JSON.parse(result) : result, allowOrigin, reqAllowHeaders);
     } catch (err) {
         return jsonResponse({ error: err.message }, allowOrigin, reqAllowHeaders, 500);
     }
@@ -1749,28 +1859,10 @@ async function handleLegacyQueueDelete(request, env, allowOrigin, reqAllowHeader
             return jsonResponse({ error: "Missing orderName" }, allowOrigin, reqAllowHeaders, 400);
         }
 
-        const rawList = await upstashRedis(env, ["LRANGE", QUEUE_KEY, 0, -1]);
-        if (!Array.isArray(rawList)) {
-            return jsonResponse({ error: "Failed to read queue from Redis" }, allowOrigin, reqAllowHeaders, 500);
-        }
-
-        let targetIndex = -1;
-        for (let i = 0; i < rawList.length; i++) {
-            const order = typeof rawList[i] === 'string' ? JSON.parse(rawList[i]) : rawList[i];
-            if (order.name === orderName) {
-                targetIndex = i;
-                break;
-            }
-        }
-
-        if (targetIndex === -1) {
+        const deleted = Number(await upstashRedis(env, ["EVAL", DELETE_QUEUE_ITEM_LUA, 1, QUEUE_KEY, orderName]));
+        if (!deleted) {
             return jsonResponse({ success: false, message: "Order not found" }, allowOrigin, reqAllowHeaders, 404);
         }
-
-        const tombstone = `__printmo_deleted__:${Date.now()}:${Math.random()}`;
-        await upstashRedis(env, ["LSET", QUEUE_KEY, targetIndex, tombstone]);
-        await upstashRedis(env, ["LREM", QUEUE_KEY, 1, tombstone]);
-
         return jsonResponse({ success: true, deleted: orderName }, allowOrigin, reqAllowHeaders);
     } catch (err) {
         return jsonResponse({ error: err.message }, allowOrigin, reqAllowHeaders, 500);
@@ -1790,7 +1882,7 @@ async function handleLegacySSBatch(request, env, allowOrigin, reqAllowHeaders) {
         const ssPaymentProfileId = env.SS_PAYMENT_PROFILE_ID;
         const ssPaymentProfileEmail = env.SS_PAYMENT_PROFILE_EMAIL;
 
-        if (!ssAccount || !ssApiKey) {
+        if (!ssAccount || !ssApiKey || !ssPaymentProfileId || !ssPaymentProfileEmail) {
             return jsonResponse({ error: "S&S credentials not configured on Worker" }, allowOrigin, reqAllowHeaders, 500);
         }
 

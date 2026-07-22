@@ -8,6 +8,12 @@ async function apiFetch(path, opts = {}) {
   if (!isFormData && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  if (!window.shopify || typeof window.shopify.idToken !== "function") {
+    throw new Error("Shopify authentication is unavailable. Open PrintMO from Shopify Admin.");
+  }
+  const token = await window.shopify.idToken();
+  if (!token) throw new Error("Shopify authentication did not return an ID token.");
+  headers.set("Authorization", `Bearer ${token}`);
   const res = await fetch(`${API_BASE}${path}`, {
     ...rest,
     headers,
@@ -59,39 +65,34 @@ window.api.transport = "http";
 
 // 1) Populate dashboard
 window.api.getQueue = async () => {
-  try {
-    const data = await apiFetch("/order-manager/v1/legacy/queue", { method: "GET" });
-    if (Array.isArray(data)) return data;
-    if (Array.isArray(data?.orders)) return data.orders;
-  } catch (_) {
-    // fallback to legacy proxy path
-    const data = await apiFetch("/order-manager/queue", { method: "GET" });
-    return data.orders || [];
-  }
+  const data = await apiFetch("/order-manager/v1/legacy/queue", { method: "GET" });
+  return Array.isArray(data) ? data : (data?.orders || []);
 };
 
 // 2) Drag/drop persistence
 window.api.updateStatus = async (name, status) => {
-  await apiFetch("/order-manager/orders/status", {
-    method: "PATCH",
-    body: JSON.stringify({ name, status }),
+  await apiFetch("/order-manager/v1/legacy/queue/mutate", {
+    method: "POST",
+    body: JSON.stringify({ orderName: name, patch: { status } }),
   });
   return true;
 };
 
 window.api.updateNotes = async (a, b) => {
   const payload = (a && typeof a === "object") ? a : { name: a, notes: b };
-  return apiFetch("/order-manager/orders/notes", {
-    method: "PATCH",
-    body: JSON.stringify(payload),
+  return apiFetch("/order-manager/v1/legacy/queue/mutate", {
+    method: "POST",
+    body: JSON.stringify({ orderName: payload.name, patch: { notes: payload.notes } }),
   });
 };
 
 window.api.setBundle = async (a, b) => {
-  const payload = (a && typeof a === "object") ? a : { name: a, bundle: b };
-  return apiFetch("/order-manager/orders/bundle", {
-    method: "PATCH",
-    body: JSON.stringify(payload),
+  const payload = Array.isArray(a)
+    ? { names: a, bundle: b }
+    : ((a && typeof a === "object") ? a : { name: a, bundle: b });
+  return apiFetch("/order-manager/v1/legacy/queue/mutate", {
+    method: "POST",
+    body: JSON.stringify({ orderNames: payload.names || [payload.name], patch: { bundle: payload.bundle } }),
   });
 };
 
@@ -117,33 +118,34 @@ window.api.updateReady = async (...args) => {
     throw new Error("updateReady requires an order name");
   }
 
-  return apiFetch("/order-manager/orders/ready", {
-    method: "PATCH",
-    body: JSON.stringify(payload),
+  const { name, ...patch } = payload;
+  return apiFetch("/order-manager/v1/legacy/queue/mutate", {
+    method: "POST",
+    body: JSON.stringify({ orderName: name, patch }),
   });
 };
 
 window.api.updateProgress = async (a, b) => {
   const payload = (a && typeof a === "object") ? a : { name: a, progress: b };
-  return apiFetch("/order-manager/orders/progress", {
-    method: "PATCH",
-    body: JSON.stringify(payload),
+  return apiFetch("/order-manager/v1/legacy/queue/mutate", {
+    method: "POST",
+    body: JSON.stringify({ orderName: payload.name, patch: { progress: payload.progress } }),
   });
 };
 
 window.api.updateName = async (a, b) => {
   const payload = (a && typeof a === "object") ? a : { name: a, newName: b };
-  return apiFetch("/order-manager/orders/rename", {
-    method: "PATCH",
-    body: JSON.stringify(payload),
+  return apiFetch("/order-manager/v1/legacy/queue/mutate", {
+    method: "POST",
+    body: JSON.stringify({ orderName: payload.name, patch: { custName: payload.newName ?? payload.custName } }),
   });
 };
 
 window.api.deleteOrder = async (a) => {
   const payload = (a && typeof a === "object") ? a : { name: a };
-  return apiFetch("/order-manager/orders/delete", {
-    method: "POST",
-    body: JSON.stringify(payload),
+  return apiFetch("/order-manager/v1/legacy/queue/item", {
+    method: "DELETE",
+    body: JSON.stringify({ orderName: payload.name }),
   });
 };
 
@@ -152,17 +154,17 @@ window.api.updateBundleStatus = async (bundleName, status) => {
     ? bundleName
     : { bundle: bundleName, name: bundleName, status };
 
-  return apiFetch("/order-manager/orders/bundle/status", {
-    method: "PATCH",
-    body: JSON.stringify(payload),
+  return apiFetch("/order-manager/v1/legacy/queue/mutate", {
+    method: "POST",
+    body: JSON.stringify({ bundleName: payload.bundle, patch: { status: payload.status } }),
   });
 };
 
 window.api.processBatch = async (orderIds) => {
   const names = Array.isArray(orderIds) ? orderIds : [];
-  return apiFetch("/order-manager/orders/process-batch", {
+  return apiFetch("/order-manager/v1/legacy/ss/batch", {
     method: "POST",
-    body: JSON.stringify({ names }),
+    body: JSON.stringify({ orderIds: names }),
   });
 };
 
@@ -221,16 +223,39 @@ window.api.headStorageObject = async (key) => {
   return apiFetch(`/order-manager/storage/head${query}`, { method: "GET" });
 };
 
-window.api.getStorageObjectUrl = (key) => {
+const storageObjectUrls = new Map();
+
+window.api.getStorageObjectUrl = async (key) => {
   if (!key) return "";
+  if (storageObjectUrls.has(key)) return storageObjectUrls.get(key);
   const query = buildQuery({ key });
-  return `${API_BASE}/order-manager/storage/object${query}`;
+  const blob = await apiFetch(`/order-manager/storage/object${query}`, { method: "GET", expect: "blob" });
+  const url = URL.createObjectURL(blob);
+  if (storageObjectUrls.size >= 200) {
+    const oldestKey = storageObjectUrls.keys().next().value;
+    URL.revokeObjectURL(storageObjectUrls.get(oldestKey));
+    storageObjectUrls.delete(oldestKey);
+  }
+  storageObjectUrls.set(key, url);
+  return url;
 };
+
+async function hydrateAssetUrls(result) {
+  const manifests = result?.orders && typeof result.orders === "object"
+    ? Object.values(result.orders)
+    : [result];
+  for (const manifest of manifests) {
+    for (const asset of (manifest?.assets || [])) {
+      if (asset?.key) asset.url = await window.api.getStorageObjectUrl(asset.key);
+    }
+  }
+  return result;
+}
 
 window.api.listManualMockups = async (orderNumber) => {
   if (!orderNumber) throw new Error("Order number is required");
   const query = buildQuery({ orderNumber });
-  return apiFetch(`/order-manager/orders/manual-mockups${query}`, { method: "GET" });
+  return hydrateAssetUrls(await apiFetch(`/order-manager/orders/manual-mockups${query}`, { method: "GET" }));
 };
 
 window.api.uploadManualMockup = async (orderNumber, file) => {
@@ -239,10 +264,10 @@ window.api.uploadManualMockup = async (orderNumber, file) => {
   const form = new FormData();
   form.set("file", file, file.name || "mockup");
   const query = buildQuery({ orderNumber });
-  return apiFetch(`/order-manager/orders/manual-mockups${query}`, {
+  return hydrateAssetUrls(await apiFetch(`/order-manager/orders/manual-mockups${query}`, {
     method: "POST",
     body: form,
-  });
+  }));
 };
 
 window.api.deleteManualMockup = async (orderNumber, assetId) => {
@@ -255,10 +280,10 @@ window.api.deleteManualMockup = async (orderNumber, assetId) => {
 window.api.bulkListManualMockups = async (orderNumbers) => {
   const unique = Array.from(new Set((Array.isArray(orderNumbers) ? orderNumbers : []).filter(Boolean)));
   if (!unique.length) return { orders: {} };
-  return apiFetch("/order-manager/orders/manual-mockups/bulk", {
+  return hydrateAssetUrls(await apiFetch("/order-manager/orders/manual-mockups/bulk", {
     method: "POST",
     body: JSON.stringify({ orderNumbers: unique }),
-  });
+  }));
 };
 
 window.api.listManualChecklist = async (orderNumber) => {
@@ -316,9 +341,9 @@ function triggerBlobDownload(blob, filename) {
 window.api.downloadAsset = async (url, filename) => {
   if (!url) throw new Error("Asset URL is required");
 
-  // Fetch the asset directly — URLs are already publicly accessible
-  // (they're the same ones rendered as <img> previews in the detail panel).
-  const res = await fetch(url, { cache: "no-store" });
+  const res = url.startsWith(API_BASE)
+    ? await apiFetch(url.slice(API_BASE.length), { method: "GET", rawResponse: true })
+    : await fetch(url, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`Download failed: ${res.status} ${res.statusText}`);
   }
@@ -331,34 +356,7 @@ window.api.downloadAsset = async (url, filename) => {
 };
 
 window.api.subscribeQueueChanges = (onEvent) => {
-  let ws = null;
-  let stopped = false;
-  let retryMs = 500;
-
-  const wsUrl = API_BASE.replace(/^http/, "ws").replace(/\/+$/, "") + "/order-manager/ws";
-
-  function connect() {
-    if (stopped) return;
-    ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => { retryMs = 500; };
-    ws.onmessage = (ev) => {
-      try { onEvent(JSON.parse(ev.data)); } catch {}
-    };
-    ws.onclose = () => {
-      if (stopped) return;
-      setTimeout(connect, retryMs);
-      retryMs = Math.min(8000, Math.floor(retryMs * 1.6));
-    };
-    ws.onerror = () => {
-      try { ws.close(); } catch {}
-    };
-  }
-
-  connect();
-
-  return () => {
-    stopped = true;
-    try { ws && ws.close(); } catch {}
-  };
+  // Phase 1 uses authenticated polling; Phase 2 replaces this with one-use WS tickets.
+  const timer = setInterval(() => onEvent({ type: "queue_changed" }), 30000);
+  return () => clearInterval(timer);
 };

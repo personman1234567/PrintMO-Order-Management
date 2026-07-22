@@ -740,10 +740,10 @@
     if (imageObserver) return;
     if (!('IntersectionObserver' in window)) {
       imageObserver = {
-        observe: (img) => {
-          const src = img.dataset.src;
-          if (src) {
-            img.src = src;
+        observe: async (img) => {
+          const key = img.dataset.storageKey;
+          if (key) {
+            img.src = await window.api.getStorageObjectUrl(key);
             img.classList.add('loaded');
           }
         },
@@ -753,12 +753,12 @@
     }
 
     imageObserver = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
+      entries.forEach(async (entry) => {
         if (!entry.isIntersecting) return;
         const img = entry.target;
-        const src = img.dataset.src;
-        if (src && !img.src) {
-          img.src = src;
+        const key = img.dataset.storageKey;
+        if (key && !img.src) {
+          img.src = await window.api.getStorageObjectUrl(key);
           img.onload = () => img.classList.add('loaded');
         }
         imageObserver.unobserve(img);
@@ -1443,7 +1443,7 @@
     img.alt = item.filename;
     img.loading = 'lazy';
     img.decoding = 'async';
-    img.dataset.src = window.api.getStorageObjectUrl(item.key);
+    img.dataset.storageKey = item.key;
     setupImageObserver();
     imageObserver.observe(img);
 
@@ -1467,7 +1467,7 @@
     img.alt = item.filename;
     img.loading = 'lazy';
     img.decoding = 'async';
-    img.dataset.src = window.api.getStorageObjectUrl(item.key);
+    img.dataset.storageKey = item.key;
     setupImageObserver();
     imageObserver.observe(img);
 
@@ -1683,7 +1683,7 @@
     state.detailTab = tab;
     renderDetailFields(item, meta, tab);
 
-    const src = window.api.getStorageObjectUrl(item.key);
+    const src = await window.api.getStorageObjectUrl(item.key);
     elements.detailImage.removeAttribute('src');
     elements.detailImage.src = src;
     elements.detailImage.classList.remove('loaded');

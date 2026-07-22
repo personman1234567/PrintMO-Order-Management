@@ -24,6 +24,7 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Preload Script | `node --check preload.js` | Silent exit code 0 |
 | Desktop Renderer | `node --check renderer.js` | Silent exit code 0 |
 | Cloudflare Worker Proxy | `node --check order-manager-proxy/worker.js` | Silent exit code 0 |
+| Phase 1 Auth/Transport Contract | `npm run verify:phase1` | `Phase 1 contract verification passed.` |
 | Web Client Renderer | `node --check order-manager-web/renderer.js` | Silent exit code 0 |
 | Web Storage Adapter | `node --check order-manager-web/storage-browser.js` | Silent exit code 0 |
 
@@ -38,7 +39,7 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Order Detail Modal | Click any order card | Modal overlays dashboard showing customer info, SKU variants, unit costs, and attachments. |
 | Attachment File Upload | Upload image attachment via detail modal | FileReader encodes image Base64, IPC `add-file` persists file, image renders in preview tab. |
 | S&S Blank Batching | Drag multiple cards to Create Blanks Order zone, click Submit | SKUs aggregate, API call executes, order confirmation returns, cards advance to `Blanks Ordered`. |
-| Web Client Fallback | Open `order-manager-web/index.html` in browser | App loads without Electron runtime, `web-shim.js` initializes storage without console errors. |
+| Embedded Web Authentication | Run `npm run prepare:cloudflare`, deploy the generated artifact, and open it from Shopify Admin | App Bridge supplies a bearer token; queue and asset calls succeed while unauthenticated calls return `401`. |
 
 ---
 

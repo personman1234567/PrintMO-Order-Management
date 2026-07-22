@@ -1,6 +1,6 @@
 # Shopify Live API Sync, Decoupled Architecture & Zero-Trust Partner Security Plan
 
-- **Status**: `[Spec Ready]`
+- **Status**: `[In Progress]`
 - **Owner / Target Milestone**: `v1.4 Backlog`
 - **Last Updated**: `2026-07-22`
 
@@ -473,9 +473,9 @@ The selected transport is a Durable Object WebSocket using hibernation.
 
 ### Shopify surfaces
 
-Admin UI extensions and the embedded Shopify surface use Shopify OpenID Connect ID tokens. Requests to the configured app domain rely on Shopify’s automatic authorization header; cross-domain requests explicitly call `idToken()`.
+Admin UI extensions and the embedded Shopify surface use short-lived Shopify App Bridge ID/session tokens. Requests to the Worker domain explicitly call `shopify.idToken()` and send the result as a bearer token.
 
-The Worker validates the token against Shopify's published OpenID configuration and public keys. Validation must cover the algorithm and key ID, issuer, audience, expiration/not-before times, subject, and the documented shop-identity claim for the selected token version; the implementation must not assume legacy session-token claims are present in an OpenID Connect ID token. The verified shop must equal the requested shop, and the verified subject must match one of the two configured partner user IDs. A valid Shopify identity is authentication, not sufficient authorization by itself.
+The Phase 1 Worker validates Shopify’s documented `HS256` token signature with the app secret plus `aud`, `iss`, `dest`, `exp`, `nbf`, and `sub`. The verified shop must equal `SHOPIFY_SHOP_DOMAIN`, and the subject must appear in `PARTNER_USER_IDS`. A valid Shopify identity is authentication, not sufficient authorization by itself.
 
 ### Electron
 
@@ -490,6 +490,8 @@ Electron uses OIDC Authorization Code with PKCE:
 7. If OS encryption is unavailable, use session-only authentication and require sign-in after restart.
 
 The deployment provides `OIDC_ISSUER`, `OIDC_CLIENT_ID`, and the two allowed subject IDs. Choosing the company’s identity provider is configuration, not an application protocol fork.
+
+Phase 1 deployment bindings are fail-closed: the Worker requires Shopify client/secret/shop and partner-user bindings for web requests, plus `OIDC_ISSUER`, `OIDC_CLIENT_ID` or `OIDC_AUDIENCE`, and `PARTNER_SUBJECT_IDS` for Electron. Electron packages contain only the Worker URL and public OIDC configuration generated at build time; `.env`, Redis, Shopify Admin API, and S&S credentials are never packaged.
 
 ### Authorization
 
@@ -612,16 +614,16 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 
 #### Phase 0 — Backup and fixtures
 
-- Export an immutable-dated backup of `shopifyOrdersQueue` and attachment counts/checksums.
-- Capture representative sanitized Shopify/order fixtures.
-- Establish staging Shopify/S&S credentials; S&S staging uses `testOrder: true`.
+- [x] Export an immutable-dated backup of `shopifyOrdersQueue` and attachment counts/checksums.
+- [x] Capture representative sanitized Shopify/order fixtures.
+- [ ] Establish and verify staging Shopify/S&S credentials; S&S staging uses `testOrder: true`.
 
 #### Phase 1 — Unify transport while retaining legacy storage
 
-- Ship Worker API adapters for the legacy queue.
-- Move web and Electron onto the authenticated Worker API.
-- Remove Electron direct Redis/S&S calls and packaged infrastructure secrets.
-- Do not change user-visible workflow yet.
+- [x] Ship Worker API adapters for the legacy queue, with atomic Lua mutation/delete operations.
+- [x] Move web and Electron onto the authenticated Worker API.
+- [x] Remove Electron direct Redis/S&S calls and packaged infrastructure secrets.
+- [ ] Complete deployed staging smoke tests proving the user-visible workflow is unchanged on both surfaces.
 
 #### Phase 2 — Shadow v1 data plane
 
@@ -704,7 +706,7 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 ### Foundation
 
 - [ ] Scaffold the Shopify app/Admin UI extension and pin API `2026-07`.
-- [ ] Implement Worker auth middleware and OIDC partner allowlists.
+- [x] Implement Worker auth middleware and OIDC partner allowlists.
 - [ ] Add Upstash Redis, private R2, and per-shop Durable Object bindings.
 - [ ] Add v1 schema validation and standard errors.
 
@@ -724,7 +726,7 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 
 ### Migration and rollout
 
-- [ ] Move both clients behind the authenticated legacy adapter.
+- [x] Move both clients behind the authenticated legacy adapter.
 - [ ] Run shadow migration and seven-day parity window.
 - [ ] Run dual-write canary and cutover.
 - [ ] Retire legacy queue/upstream after the rollback window.
@@ -773,3 +775,4 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 - **2026-07-21**: Initial proposal for live Shopify API sync created.
 - **2026-07-22**: Added unified backend, GraphQL/Redis/R2 safeguards, production diff workflow, webhooks, offline behavior, and initial test plan.
 - **2026-07-22**: Finalized implementation contracts after authoritative platform research: canonical lifecycle and DTO/API, cache/pagination/coordinator behavior, Upstash Lua schema, S&S PO reconciliation, surface authentication, R2 lifecycle, migration/rollback, rollout phases, and acceptance criteria. Status advanced to `[Spec Ready]`.
+- **2026-07-22**: Implemented Phase 0 backup/fixture tooling and the Phase 1 authenticated legacy adapter. Added Shopify token validation, generic Electron OIDC Authorization Code + PKCE, safe refresh-token storage, atomic Lua queue changes, authenticated R2 reads, unified web/Desktop routes, packaging secret removal, and focused Phase 1 contract verification. Status advanced to `[In Progress]`; deployed staging smoke tests and credential/provider configuration remain rollout gates.

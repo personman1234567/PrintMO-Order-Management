@@ -1,0 +1,6 @@
+{
+  "workerApiUrl": "https://order-manager-proxy.printmobusiness.workers.dev",
+  "oidcIssuer": "https://your-identity-provider.example.com",
+  "oidcClientId": "your-public-native-client-id",
+  "oidcScopes": "openid profile offline_access"
+}

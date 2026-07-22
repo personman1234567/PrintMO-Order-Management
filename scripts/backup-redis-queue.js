@@ -21,6 +21,22 @@ if (!REDIS_URL) {
 }
 
 const QUEUE_KEY = 'shopifyOrdersQueue';
+const SENSITIVE_FIXTURE_KEY = /(customer|email|phone|address|company|first_?name|last_?name|note)/i;
+
+function sanitizeFixture(value, key = '') {
+  if (Array.isArray(value)) return value.map(item => sanitizeFixture(item, key));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, sanitizeFixture(child, childKey)]));
+  }
+  if (key === 'name' && typeof value === 'string') {
+    return `${value.split(' – ')[0]} – [REDACTED]`;
+  }
+  if (key === 'data' && typeof value === 'string' && /^data:.*;base64,/i.test(value)) {
+    return '[BASE64_TRUNCATED_FOR_FIXTURE]';
+  }
+  if (SENSITIVE_FIXTURE_KEY.test(key) && value !== null && value !== undefined) return '[REDACTED]';
+  return value;
+}
 
 async function runBackup() {
   console.log(`[Backup] Connecting to Redis...`);
@@ -105,24 +121,17 @@ async function runBackup() {
       masterSha256
     },
     attachmentManifest,
+    rawQueue: rawList,
     queue: orders
   };
 
   fs.writeFileSync(backupFilePath, JSON.stringify(backupPayload, null, 2), 'utf8');
   console.log(`[Backup] Full backup saved to: ${backupFilePath}`);
 
-  // Create sanitized test fixtures sample (max 10 orders, base64 payload truncated)
-  const sampleFixtures = orders.slice(0, 10).map((ord) => {
-    const copy = JSON.parse(JSON.stringify(ord));
-    if (Array.isArray(copy.attachments)) {
-      copy.attachments = copy.attachments.map((att) => ({
-        name: att.name,
-        type: att.type,
-        data: '[BASE64_TRUNCATED_FOR_FIXTURE]'
-      }));
-    }
-    return copy;
-  });
+  if (parseErrors) throw new Error(`Backup contains ${parseErrors} unparseable queue item(s); fixture generation aborted`);
+
+  // Preserve shape while redacting customer fields, names, notes, and attachment bytes.
+  const sampleFixtures = orders.slice(0, 10).map(ord => sanitizeFixture(ord));
 
   const fixtureFilePath = path.join(backupDir, 'fixtures-sample.json');
   fs.writeFileSync(fixtureFilePath, JSON.stringify(sampleFixtures, null, 2), 'utf8');

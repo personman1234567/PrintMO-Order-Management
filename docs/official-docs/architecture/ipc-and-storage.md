@@ -46,16 +46,18 @@ contextBridge.exposeInMainWorld('api', {
 
 ## 2. Main Process Handlers (main.js)
 
-The Electron main process (`main.js`) handles these channels by executing operations against Redis list `shopifyOrdersQueue`:
+Electron preserves the existing `window.api` IPC contract, but `main.js` now sends every queue and S&S operation to authenticated `/order-manager/v1/legacy/*` Worker endpoints. Electron obtains a short-lived OIDC ID token through Authorization Code + PKCE in the system browser and stores only a rotating refresh token through `safeStorage`.
 
-- `get-queue`: Fetches all list entries via `lRange('shopifyOrdersQueue', 0, -1)`, parses JSON, patches missing default attributes, and rewrites normalized list entries back to Redis.
-- `update-status`: Reads entry at index `LINDEX`, mutates `.status`, and writes back with `LSET`.
-- `add-file` / `remove-files`: Appends or removes Base64-encoded attachment objects in the target order's `.files` array.
-- `process-batch`: Aggregates line items by SKU across selected orders, calls the S&S Activewear API, records blank order confirmation numbers, and updates order status to `blanks`.
+- Electron contains no direct Redis or S&S code path and packages no `.env`.
+- `get-queue` reads the legacy list through the Worker adapter.
+- Queue mutations and deletion are executed by atomic Redis Lua scripts in the Worker.
+- `process-batch` executes through the authenticated Worker; S&S credentials remain Worker-only.
 
 ---
 
 ## 3. Redis Data Schema (shopifyOrdersQueue)
+
+During Shopify-sync Phase 1, this list remains the operational source of truth but is reachable only through the Worker. Phase 2 shadows the replacement hash/index schema without changing this live contract.
 
 The queue stores a JSON-serialized list under the key `shopifyOrdersQueue`:
 
@@ -100,6 +102,6 @@ In the web interface (`order-manager-web/`), native IPC is unavailable (`window.
 
 | Symptom / Trap | Root Cause | Diagnosis & Recovery |
 |---|---|---|
-| Index mismatch on Redis update | Race condition when list entries shift while an index-based `LSET` is executed | Verify list indices prior to write; use order `id` matching where possible. |
+| Queue mutation conflict or shifted index | A caller bypassed the authenticated Worker/Lua adapter | Confirm both clients use `/order-manager/v1/legacy/*`; Electron must not contain `REDIS_URL`. |
 | Redis memory spike or slow `getQueue` | Large Base64 attachment files stored directly in list JSON | Inspect file upload sizes; compress or move large attachments to external blob storage. |
 | `TypeError: window.api.getQueue is not a function` in web mode | `web-shim.js` or `storage-browser.js` failed to initialize | Ensure `web-shim.js` is loaded prior to `renderer.js` in `order-manager-web/index.html`. |
