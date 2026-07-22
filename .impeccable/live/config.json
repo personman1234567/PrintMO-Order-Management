@@ -1,0 +1,7 @@
+{
+  "files": [
+    "order-manager-web/index.html"
+  ],
+  "insertBefore": "</body>",
+  "commentSyntax": "html"
+}

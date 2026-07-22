@@ -1,0 +1,209 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-21T20:58:42.8244331-05:00",
+  "title": "Design System: PrintMO Order Management",
+  "extensions": {
+    "colorMeta": {
+      "action-blue": {
+        "role": "primary",
+        "displayName": "Action Blue",
+        "canonical": "#1A73E8",
+        "tonalRamp": ["oklch(15% 0.18 257)", "oklch(27% 0.18 257)", "oklch(39% 0.18 257)", "oklch(51% 0.18 257)", "oklch(63% 0.18 257)", "oklch(75% 0.16 257)", "oklch(87% 0.10 257)", "oklch(95% 0.04 257)"]
+      },
+      "action-blue-hover": {
+        "role": "primary",
+        "displayName": "Pressed Action Blue",
+        "canonical": "#1765C1",
+        "tonalRamp": ["oklch(15% 0.15 257)", "oklch(27% 0.15 257)", "oklch(39% 0.15 257)", "oklch(51% 0.15 257)", "oklch(63% 0.15 257)", "oklch(75% 0.13 257)", "oklch(87% 0.08 257)", "oklch(95% 0.03 257)"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Shop Ink",
+        "canonical": "#0F172A",
+        "tonalRamp": ["oklch(15% 0.04 265)", "oklch(27% 0.04 265)", "oklch(39% 0.035 265)", "oklch(51% 0.03 265)", "oklch(63% 0.025 265)", "oklch(75% 0.02 265)", "oklch(87% 0.012 265)", "oklch(95% 0.006 265)"]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Working Slate",
+        "canonical": "#334155",
+        "tonalRamp": ["oklch(15% 0.03 255)", "oklch(27% 0.03 255)", "oklch(39% 0.028 255)", "oklch(51% 0.025 255)", "oklch(63% 0.02 255)", "oklch(75% 0.016 255)", "oklch(87% 0.01 255)", "oklch(95% 0.005 255)"]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted Slate",
+        "canonical": "#64748B",
+        "tonalRamp": ["oklch(15% 0.025 250)", "oklch(27% 0.025 250)", "oklch(39% 0.023 250)", "oklch(51% 0.02 250)", "oklch(63% 0.018 250)", "oklch(75% 0.014 250)", "oklch(87% 0.008 250)", "oklch(95% 0.004 250)"]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Cool Canvas",
+        "canonical": "#F8FAFC",
+        "tonalRamp": ["oklch(15% 0.008 250)", "oklch(27% 0.008 250)", "oklch(39% 0.007 250)", "oklch(51% 0.006 250)", "oklch(63% 0.005 250)", "oklch(75% 0.004 250)", "oklch(87% 0.003 250)", "oklch(95% 0.002 250)"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Tool Surface",
+        "canonical": "#FFFFFF",
+        "tonalRamp": ["oklch(15% 0 0)", "oklch(27% 0 0)", "oklch(39% 0 0)", "oklch(51% 0 0)", "oklch(63% 0 0)", "oklch(75% 0 0)", "oklch(87% 0 0)", "oklch(95% 0 0)"]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Structural Line",
+        "canonical": "#CBD5E1",
+        "tonalRamp": ["oklch(15% 0.014 250)", "oklch(27% 0.014 250)", "oklch(39% 0.013 250)", "oklch(51% 0.012 250)", "oklch(63% 0.01 250)", "oklch(75% 0.008 250)", "oklch(87% 0.005 250)", "oklch(95% 0.002 250)"]
+      },
+      "success": {
+        "role": "secondary",
+        "displayName": "Production Green",
+        "canonical": "#16A34A",
+        "tonalRamp": ["oklch(15% 0.16 145)", "oklch(27% 0.17 145)", "oklch(39% 0.18 145)", "oklch(51% 0.18 145)", "oklch(63% 0.17 145)", "oklch(75% 0.14 145)", "oklch(87% 0.08 145)", "oklch(95% 0.03 145)"]
+      },
+      "success-soft": {
+        "role": "secondary",
+        "displayName": "Completion Wash",
+        "canonical": "#DCFCE7",
+        "tonalRamp": ["oklch(15% 0.05 145)", "oklch(27% 0.05 145)", "oklch(39% 0.05 145)", "oklch(51% 0.05 145)", "oklch(63% 0.045 145)", "oklch(75% 0.04 145)", "oklch(87% 0.03 145)", "oklch(95% 0.015 145)"]
+      },
+      "warning": {
+        "role": "tertiary",
+        "displayName": "Attention Umber",
+        "canonical": "#92400E",
+        "tonalRamp": ["oklch(15% 0.12 48)", "oklch(27% 0.13 48)", "oklch(39% 0.14 48)", "oklch(51% 0.14 48)", "oklch(63% 0.13 48)", "oklch(75% 0.10 48)", "oklch(87% 0.06 48)", "oklch(95% 0.025 48)"]
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "Failure Red",
+        "canonical": "#B42318",
+        "tonalRamp": ["oklch(15% 0.15 29)", "oklch(27% 0.16 29)", "oklch(39% 0.17 29)", "oklch(51% 0.17 29)", "oklch(63% 0.15 29)", "oklch(75% 0.12 29)", "oklch(87% 0.07 29)", "oklch(95% 0.03 29)"]
+      }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "Page and major overlay titles only." },
+      "title": { "displayName": "Title", "purpose": "Panel headers and workflow regions." },
+      "body": { "displayName": "Body", "purpose": "Order detail, notes, and supporting content." },
+      "label": { "displayName": "Label", "purpose": "Controls, status labels, and compact data headers." },
+      "caption": { "displayName": "Caption", "purpose": "Timestamps, counts, and secondary metadata." }
+    },
+    "shadows": [
+      { "name": "card-rest", "value": "0 1px 3px rgba(15, 23, 42, 0.08)", "purpose": "Movable order cards and small raised controls." },
+      { "name": "panel-rest", "value": "0 2px 6px rgba(0, 0, 0, 0.10)", "purpose": "Main workflow panels when tonal separation is insufficient." },
+      { "name": "section-lift", "value": "0 2px 9px rgba(15, 23, 42, 0.05)", "purpose": "Detail sections and nested operational groups." },
+      { "name": "overlay-lift", "value": "0 18px 44px rgba(15, 23, 42, 0.28)", "purpose": "Dialogs and drag previews only." }
+    ],
+    "motion": [
+      { "name": "fast-state", "value": "150ms ease", "purpose": "Press, hover, focus, and compact tab feedback." },
+      { "name": "standard-state", "value": "220ms ease", "purpose": "Card and panel state transitions." },
+      { "name": "spatial-drag", "value": "240ms cubic-bezier(0.2, 0.8, 0.2, 1)", "purpose": "Drag continuity and spatial reordering." }
+    ],
+    "breakpoints": [
+      { "name": "mobile-max", "value": "900px" },
+      { "name": "desktop-min", "value": "901px" },
+      { "name": "compact-desktop", "value": "1024px" },
+      { "name": "tight-desktop", "value": "1199px" },
+      { "name": "wide-desktop", "value": "1400px" },
+      { "name": "narrow-phone", "value": "380px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single primary action within a decision cluster.",
+      "html": "<button class=\"ds-btn-primary\">Advance order</button>",
+      "css": ".ds-btn-primary { min-height: 44px; padding: 8px 14px; border: 0; border-radius: 999px; background: #1A73E8; color: #FFFFFF; font: 700 0.78rem/1.2 system-ui, sans-serif; cursor: pointer; transition: background 150ms ease, transform 150ms ease; } .ds-btn-primary:hover { background: #1765C1; } .ds-btn-primary:active { transform: scale(0.98); } .ds-btn-primary:focus-visible { outline: 2px solid #1A73E8; outline-offset: 2px; } .ds-btn-primary:disabled { opacity: 0.58; cursor: not-allowed; transform: none; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A reversible or supporting action that stays visually subordinate.",
+      "html": "<button class=\"ds-btn-secondary\">View details</button>",
+      "css": ".ds-btn-secondary { min-height: 44px; padding: 8px 12px; border: 1px solid #CBD5E1; border-radius: 10px; background: #FFFFFF; color: #334155; font: 700 0.78rem/1.2 system-ui, sans-serif; cursor: pointer; transition: background 150ms ease, border-color 150ms ease; } .ds-btn-secondary:hover { background: #F8FAFC; border-color: #94A3B8; } .ds-btn-secondary:active { background: #F1F5F9; } .ds-btn-secondary:focus-visible { outline: 2px solid #1A73E8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Workflow Filter",
+      "kind": "chip",
+      "refersTo": "filter-chip",
+      "description": "A compact workflow filter with an inherited count state.",
+      "html": "<button class=\"ds-filter\" aria-pressed=\"true\"><span>Attention</span><strong>3</strong></button>",
+      "css": ".ds-filter { min-height: 36px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid #1A73E8; border-radius: 999px; background: #1A73E8; color: #FFFFFF; font: 700 0.78rem/1 system-ui, sans-serif; cursor: pointer; transition: background 150ms ease, transform 150ms ease; } .ds-filter strong { min-width: 18px; padding: 2px 5px; border-radius: 999px; background: rgba(255,255,255,0.22); font-size: 0.72rem; } .ds-filter:hover { background: #1765C1; } .ds-filter:active { transform: scale(0.98); } .ds-filter:focus-visible { outline: 2px solid #1A73E8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Operational Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A readable field for filters, dates, notes, and operational values.",
+      "html": "<label class=\"ds-field\"><span>Order search</span><input type=\"search\" placeholder=\"Customer or order number\"></label>",
+      "css": ".ds-field { display: grid; gap: 6px; color: #334155; font: 700 0.78rem/1.2 system-ui, sans-serif; } .ds-field input { min-height: 44px; padding: 8px 12px; border: 1px solid #CBD5E1; border-radius: 10px; background: #FFFFFF; color: #0F172A; font: 400 0.95rem/1.4 system-ui, sans-serif; } .ds-field input::placeholder { color: #64748B; } .ds-field input:hover { border-color: #94A3B8; } .ds-field input:focus-visible { outline: 2px solid #1A73E8; outline-offset: 1px; border-color: #1A73E8; } .ds-field input:disabled { background: #F1F5F9; color: #64748B; cursor: not-allowed; }"
+    },
+    {
+      "name": "Operational Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "The largest workflow container; broad rounding is reserved for this level.",
+      "html": "<section class=\"ds-panel\"><header>Order pipeline <span>12</span></header><div>Current production work appears here.</div></section>",
+      "css": ".ds-panel { width: min(100%, 360px); overflow: hidden; border-radius: 22px; background: #FFFFFF; color: #0F172A; box-shadow: 0 2px 6px rgba(0,0,0,0.10); font-family: system-ui, sans-serif; } .ds-panel header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #CBD5E1; font-size: 1.2rem; font-weight: 700; } .ds-panel header span { min-width: 24px; padding: 3px 7px; border-radius: 999px; background: #F1F5F9; color: #334155; font-size: 0.78rem; text-align: center; } .ds-panel > div { padding: 16px; color: #334155; font-size: 0.95rem; } .ds-panel:focus-within { outline: 2px solid #1A73E8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Order Workflow Card",
+      "kind": "custom",
+      "refersTo": "order-card",
+      "description": "The signature movable unit for identity, stage, urgency, and mockup state.",
+      "html": "<article class=\"ds-order-card\" tabindex=\"0\"><div class=\"ds-order-top\"><strong>#1048</strong><span>Ready</span></div><h3>Jordan Lee</h3><p>2 garments · mockup attached</p><small>Updated 8m ago</small></article>",
+      "css": ".ds-order-card { width: 210px; padding: 10px; border: 0; border-radius: 8px; background: #FFFFFF; color: #0F172A; box-shadow: 0 1px 3px rgba(15,23,42,0.08); font-family: system-ui, sans-serif; cursor: grab; transition: transform 220ms cubic-bezier(0.2,0.8,0.2,1), box-shadow 180ms ease; } .ds-order-card:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(15,23,42,0.12); } .ds-order-card:focus-visible { outline: 2px solid #1A73E8; outline-offset: 2px; } .ds-order-top { display: flex; justify-content: space-between; gap: 8px; } .ds-order-top span { padding: 3px 7px; border-radius: 999px; background: #DCFCE7; color: #166534; font-size: 0.72rem; font-weight: 700; } .ds-order-card h3 { margin: 10px 0 4px; font-size: 1rem; } .ds-order-card p { margin: 0 0 10px; color: #334155; font-size: 0.82rem; } .ds-order-card small { color: #64748B; font-size: 0.72rem; }"
+    },
+    {
+      "name": "Mobile Workflow Dock",
+      "kind": "nav",
+      "refersTo": "filter-chip-active",
+      "description": "Five complete workflow destinations within the constrained Shopify Admin viewport.",
+      "html": "<nav class=\"ds-mobile-dock\" aria-label=\"Workflow\"><button class=\"is-active\" aria-current=\"page\"><span>1</span><small>Pipeline</small></button><button><span>2</span><small>Blanks</small></button><button><span>3</span><small>Ordered</small></button><button><span>4</span><small>Print</small></button><button><span>5</span><small>Storage</small></button></nav>",
+      "css": ".ds-mobile-dock { width: min(100%, 340px); display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 4px; padding: 5px 7px; border: 1px solid rgba(203,213,225,0.9); border-radius: 999px; background: rgba(255,255,255,0.94); box-shadow: 0 8px 18px rgba(15,23,42,0.14); font-family: system-ui, sans-serif; } .ds-mobile-dock button { min-width: 0; min-height: 44px; display: grid; place-items: center; gap: 2px; border: 0; border-radius: 999px; background: transparent; color: #334155; cursor: pointer; } .ds-mobile-dock button span { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; font-size: 0.72rem; font-weight: 800; } .ds-mobile-dock button small { font-size: 0.68rem; } .ds-mobile-dock button.is-active span { background: #DBEAFE; color: #1765C1; } .ds-mobile-dock button:active { transform: scale(0.96); } .ds-mobile-dock button:focus-visible { outline: 2px solid #1A73E8; outline-offset: 1px; }"
+    },
+    {
+      "name": "Workflow Segmented Control",
+      "kind": "chip",
+      "refersTo": "filter-chip",
+      "description": "A compact switch between adjacent production states.",
+      "html": "<div class=\"ds-segments\" role=\"tablist\"><button role=\"tab\" aria-selected=\"true\">In cart <span>4</span></button><button role=\"tab\" aria-selected=\"false\">Ordered <span>7</span></button></div>",
+      "css": ".ds-segments { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid #CBD5E1; border-radius: 999px; background: #F8FAFC; font-family: system-ui, sans-serif; } .ds-segments button { min-height: 36px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 0; border-radius: 999px; background: transparent; color: #334155; font-size: 0.78rem; font-weight: 700; cursor: pointer; } .ds-segments button[aria-selected=\"true\"] { background: #1A73E8; color: #FFFFFF; } .ds-segments button span { min-width: 18px; padding: 2px 5px; border-radius: 999px; background: rgba(15,23,42,0.08); font-size: 0.72rem; } .ds-segments button[aria-selected=\"true\"] span { background: rgba(255,255,255,0.22); } .ds-segments button:hover { background: #EFF6FF; color: #1765C1; } .ds-segments button[aria-selected=\"true\"]:hover { background: #1765C1; color: #FFFFFF; } .ds-segments button:focus-visible { outline: 2px solid #1A73E8; outline-offset: 1px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Precision Workbench",
+    "overview": "The interface should feel like a well-organized production surface: every tool and piece of order information has a clear place, the next action is visible, and nothing competes for attention without an operational reason. The visual register is restrained and work-focused, using a white and slate foundation with Action Blue reserved for active state and primary action. Density is allowed because this is a real shop tool, but structure must do the work. Desktop and mobile are two complete arrangements of the same workflow; mobile is not a reduced companion.",
+    "keyCharacteristics": [
+      "Purpose-built around the order-production sequence",
+      "Compact, legible, and low-noise",
+      "Clear state, urgency, and action hierarchy",
+      "Complete capability across desktop and Shopify Admin mobile viewports",
+      "Modular enough to accept new stages without losing coherence"
+    ],
+    "rules": [
+      { "name": "The One Active Signal Rule", "body": "Action Blue marks what is active or what should happen next; it is forbidden as ambient decoration.", "section": "colors" },
+      { "name": "The Status Must Mean Something Rule", "body": "Green, umber, and red appear only when the underlying order state justifies them, and every state also has a text or icon cue.", "section": "colors" },
+      { "name": "The Scan Before Read Rule", "body": "Order number, customer, status, blocker, and next action must be distinguishable before the user reads supporting detail.", "section": "typography" },
+      { "name": "The No Decorative Type Rule", "body": "Display fonts, excessive tracking, and oversized fluid headings are forbidden in this task surface.", "section": "typography" },
+      { "name": "The Structural Shadow Rule", "body": "A shadow must explain stacking or movement. Never pair a one-pixel decorative border with a wide soft shadow on an ordinary card or button.", "section": "elevation" },
+      { "name": "The One Floating Layer Rule", "body": "Translucency and backdrop blur are reserved for the compact mobile dock; they must not spread to panels or cards.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do use Action Blue only for the current state, focus, selection, and the primary action in a decision cluster.",
+      "Do use the 4px micro-step and the 8px, 12px, and 16px rhythm to keep dense layouts orderly.",
+      "Do preserve the complete workflow on desktop and mobile, including mockups, batching, production detail, and stage changes.",
+      "Do maintain at least 44 by 44 CSS-pixel touch targets, visible focus, and WCAG 2.2 AA contrast.",
+      "Do provide immediate feedback for state changes and a safe recovery path wherever practical.",
+      "Do extend the interface through the existing workflow model when new stages or shop operations are added."
+    ],
+    "donts": [
+      "Don't use generic dashboard conventions that are disconnected from PrintMO's real workflow.",
+      "Don't allow visual density to become noisy or overwhelming; remove or progressively disclose information that is not needed for the current task.",
+      "Don't accumulate new capabilities as unrelated panels or generic cards; connect them to the order-production sequence.",
+      "Don't reduce mobile to a read-only or feature-limited companion, or assume a full-screen mobile browser outside Shopify Admin.",
+      "Don't use gradient text, decorative side-stripe borders, repeating stripe or grid backgrounds, or decorative glass panels.",
+      "Don't combine one-pixel borders with wide soft shadows, use card radii above 25px, or animate layout properties for decoration.",
+      "Don't use color as the only status cue or hide secondary text with low contrast."
+    ]
+  }
+}
