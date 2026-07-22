@@ -65,6 +65,37 @@ The embedded web header exposes a **Redis board / Shopify live** data-view switc
 - Customer identity, contact, and address fields are protected customer data. The detail view labels missing values as not returned and explains that the cause can be guest checkout or missing protected-data approval; it does not invent a customer identity.
 - The Shopify preview exposes no drag, batch, notes, attachment, or production mutation controls. Neither its list nor detail endpoint calls the Render adapter or enumerates `shopifyOrdersQueue`.
 - Returning to **Redis board** immediately restores the unchanged production workflow. This diagnostic preview is not the Phase 3 read-source feature flag and does not advance cutover.
+- Redis-board card rendering treats `item.assets` as legacy/untrusted input. Only arrays are enumerated; an object, scalar, or null container contributes no artwork and must not abort rendering of the remaining orders. This is display hardening only and does not rewrite Redis.
+
+#### Current endpoint and data contract
+
+| Endpoint | Shopify operation | Returned data | Cache / boundary |
+|---|---|---|---|
+| `GET /order-manager/v1/shopify-preview/orders?limit=50` | `PrintMOShopifyPreviewOrders` | GID/name, created/updated timestamps, customer display name when returned, item quantity, subtotal/total, payment, fulfillment, and cancellation status | Maximum 50 orders; 30-second Worker-isolate cache; no Redis/Render request |
+| `GET /order-manager/v1/shopify-preview/orders/:gid` | `PrintMOShopifyPreviewOrderDetail` | Identity/timestamps, Shopify order note and tags, current totals, transactions, customer/contact fields, shipping/billing destinations, shipping lines, fulfillment orders/methods, fulfillments/tracking, conversion summary, discounts, line items, and 25 recent events | Fetched only when opened; five-minute Worker-isolate cache; no Redis/Render request |
+| Detail line-item continuation | `PrintMOShopifyPreviewOrderLineItems` | Every remaining Shopify line item page, including SKU, variant, original/current quantities, pricing, discounts, and custom attributes | Pages at 50 until `hasNextPage` is false; `lineItemsComplete` records completion |
+
+The detail response is grouped under these stable UI-facing properties:
+
+- `data.customer`: Shopify customer name/contact/locale when returned.
+- `data.commerce`: display statuses, current totals, payment gateways, and transaction history.
+- `data.delivery`: shipping/billing addresses, checkout shipping lines, fulfillment-order delivery method, and completed fulfillments/tracking.
+- `data.conversion`: customer order index, days to conversion, and first/last attributed visit.
+- `data.discounts`, `data.lineItems`, and `data.timeline`: normalized order discounts, all line items, and recent Shopify order events.
+- `data.note` and `data.tags`: the Shopify order note and Shopify order tags. Redis `production.internalNotes` is intentionally not part of this Shopify-only view.
+
+The controller is `order-manager-web/shopify-preview.js`; authenticated transport methods are `getShopifyPreviewOrders` and `getShopifyPreviewOrderDetail` in `web-shim.js`; GraphQL queries, caches, and normalization live in `order-manager-proxy/worker.js`. The Pages build must include `shopify-preview.js` and `shopify-preview.css` through `scripts/prepare-cloudflare-pages-upload.sh`.
+
+#### Shopify access requirements and current limitation
+
+- `read_orders` covers the base order, line items, transactions, fulfillments, conversion summary, discounts, and events for the normal Shopify order-access window.
+- `Order.fulfillmentOrders` returns `FulfillmentOrder` objects, which Shopify governs through fulfillment-order scopes. This order-management read requires at least `read_merchant_managed_fulfillment_orders`; include `read_third_party_fulfillment_orders` when the app must see orders assigned to third-party fulfillment services. See Shopify's [FulfillmentOrder access-scope contract](https://shopify.dev/docs/api/admin-graphql/latest/objects/FulfillmentOrder).
+- Name, address, phone, and email are separately governed protected customer fields. Request only the fields the operational UI needs through Shopify's [protected customer data process](https://shopify.dev/docs/apps/launch/protected-customer-data).
+- `read_all_orders` is separate and is needed only if the app must read orders older than Shopify's default order-access window.
+
+**Known deployed limitation (2026-07-22):** the production app installation used for live verification is authorized only for `read_orders`. The list preview is verified live, but opening rich detail queries `fulfillmentOrders` and Shopify returns `ACCESS_DENIED`. Shopify responds HTTP 200 with `data.order: null`; the current Worker incorrectly converts that state to `404 ORDER_NOT_FOUND`, and `web-shim.js` stringifies the structured error as `404 - [object Object]`. The Redis board is unaffected. The local TOML may request broader scopes, but they have no live effect until a Shopify app version containing them is released and its permission update is approved. No partial-query fallback or error-formatting fix has been applied yet.
+
+Changing Shopify scopes is a deployment and merchant-approval operation: update `order-manager-proxy/shopify.app.toml`, release a new Shopify app version, and approve the permission update on the production `Print-MO` installation. A Worker or Pages deploy alone does not grant Shopify scopes.
 
 ---
 
@@ -105,6 +136,7 @@ active queue, detail view, or workflow sheet owns vertical scrolling.
 |---|---|---|
 | CORS error in browser console when fetching orders | Missing origin headers in Cloudflare Worker proxy | Inspect `order-manager-proxy/worker.js` CORS header headers (`Access-Control-Allow-Origin`). |
 | Shopify live preview fails while Redis board works | Shopify token exchange, scope approval, GraphQL response, or throttling failure | Keep production work on Redis board and inspect the Worker request log for `PrintMOShopifyPreviewOrders`, `PrintMOShopifyPreviewOrderDetail`, or its line-item pagination operation. |
+| Shopify detail shows `404 - [object Object]` while the order exists | Current rich-detail query requests `fulfillmentOrders`, but the installed app has only `read_orders`; the Worker masks Shopify's `ACCESS_DENIED`/null-order response as not found | This is the known 2026-07-22 scope gate. Keep using Redis. Confirm the GraphQL error path is `order.fulfillmentOrders`; then either release/approve the minimum fulfillment-order read scopes or remove/fallback that enrichment in a future code change. |
 | Shopify detail shows customer fields as not returned | Guest checkout or protected customer data fields are not approved for the app | Confirm the order has customer data in Shopify Admin, then review the app's protected customer data API access request. Do not broaden scopes or expose credentials in the client. |
 | Data changes not saved in browser | `storage-browser.js` falling back to read-only state | Check browser local storage permissions and network logs. |
 | Layout broken inside Shopify Admin iframe | Mobile CSS media query override missing | Verify `mobile.css` breakpoint rules and container width limits. |

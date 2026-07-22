@@ -540,6 +540,7 @@ Default retention is active production lifetime plus 90 days after completion; a
 ### Shopify scopes
 
 - Baseline: `read_orders`.
+- Rich detail's `Order.fulfillmentOrders` read additionally requires fulfillment-order access. For this order-management app, request `read_merchant_managed_fulfillment_orders` and add `read_third_party_fulfillment_orders` only when third-party-assigned fulfillment orders must be visible.
 - `read_all_orders` is requested only if migration or active production must access orders older than 60 days.
 - `write_orders` is not requested by this feature because PrintMO does not mutate Shopify orders.
 - Protected customer-data fields are requested individually and limited to what the UI demonstrably uses.
@@ -633,7 +634,8 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 
 - [x] Implement the Redis Cloud hash/index/cache schema in the authenticated Render adapter, plus Worker Shopify cache/coordinator, migration, parity, private-R2 read, and v1 DTO paths.
 - [x] Deploy the Render adapter and Worker configuration, provision/bind the private R2 bucket and SQLite-backed Durable Object, and smoke-test live Shopify token acquisition.
-- [x] Expose an embedded, read-only Shopify live preview with a bounded list and on-demand rich detail so operators can inspect live commerce, payment, delivery, conversion, discount, line-item, fulfillment, and timeline facts without switching the production Redis read path.
+- [x] Expose and verify an embedded, read-only bounded Shopify list without switching the production Redis read path.
+- [ ] Complete rich-detail activation: release/approve fulfillment-order read scopes (or implement optional enrichment), verify a live non-null order response, and correct the misleading null-order `404 - [object Object]` error path.
 - [ ] Run the idempotent metadata/assets migration against the backed-up legacy queue.
 - [ ] Compare legacy and v1 boards for order membership, quantities, stages, bundles, notes, progress, and attachment counts.
 - [ ] Require zero unexplained mismatches for seven consecutive days before Phase 3.
@@ -784,4 +786,6 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 - **2026-07-22**: Finalized implementation contracts after authoritative platform research: canonical lifecycle and DTO/API, cache/pagination/coordinator behavior, Redis Lua schema, S&S PO reconciliation, surface authentication, R2 lifecycle, migration/rollback, rollout phases, and acceptance criteria. Status advanced to `[Spec Ready]`.
 - **2026-07-22**: Implemented the local Phase 2 shadow plane using the existing Redis Cloud database behind the authenticated Render adapter. Added Shopify client-credential token refresh, cost-aware GraphQL reads, summary/detail caches, webhook invalidation, Durable Object reconciliation, CAS production metadata, migration/quarantine/parity tooling, and private R2 read tickets.
 - **2026-07-22**: Deployed the Phase 2 Worker, Render adapter, private R2 bucket, Durable Object, Shopify app scopes/webhooks, and Cloudflare Pages client. Live token acquisition and a read-only Shopify-only list preview are verified. Added on-demand rich detail with full line-item pagination and protected-customer-data-aware rendering; live migration and the seven-day zero-mismatch gate remain open.
+- **2026-07-22**: Live rich-detail verification found Shopify `ACCESS_DENIED` at `order.fulfillmentOrders` because the production installation is still authorized only for `read_orders`. The Worker currently maps the resulting null order to `404 ORDER_NOT_FOUND`, and the client displays the structured error as `[object Object]`. Rich detail remains implemented but not operationally verified; a local scope-config edit does not change this until released and approved. Redis production behavior is unaffected and the permission/error-handling follow-up is intentionally deferred.
+- **2026-07-22**: Hardened desktop and embedded-web Redis card rendering after one legacy line item supplied `assets: {}` and stopped the board render. The queue remained intact (21 parseable records); renderers now ignore non-array asset containers without mutating Redis, and the incident/recovery path is recorded in the troubleshooting runbook.
 - **2026-07-22**: Implemented Phase 0 backup/fixture tooling and the Phase 1 authenticated legacy adapter. Added Shopify token validation, generic Electron OIDC Authorization Code + PKCE, safe refresh-token storage, atomic Lua queue changes, authenticated R2 reads, unified web/Desktop routes, packaging secret removal, and focused Phase 1 contract verification. Status advanced to `[In Progress]`; deployed staging smoke tests and credential/provider configuration remain rollout gates.

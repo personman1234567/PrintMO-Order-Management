@@ -34,6 +34,8 @@
 | [index.html](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/index.html) | Standalone web / Shopify Admin iframe container |
 | [renderer.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/renderer.js) | Web-specific renderer logic adapted for browser DOM |
 | [web-shim.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/web-shim.js) | Shim replacing Electron `window.api` with web-safe async handlers |
+| [shopify-preview.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/shopify-preview.js) | Redis/Shopify data-view switch, bounded Shopify list rendering, and on-demand read-only detail rendering |
+| [shopify-preview.css](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/shopify-preview.css) | Shopify live list/detail, dialog, status, responsive, focus, and reduced-motion styles |
 | [storage-browser.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/storage-browser.js) | LocalStorage & remote endpoint storage adapter |
 | [blanks-batches.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/blanks-batches.js) | Batch ordering and blank-apparel aggregation module |
 | [detail-overlay-enhancements.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/detail-overlay-enhancements.js) | Enhanced order detail modal & variant breakdown views |
@@ -49,7 +51,8 @@
 
 | File / Component | Primary Responsibilities |
 |---|---|
-| [worker.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-proxy/worker.js) | Serverless proxy for S&S Activewear API, CORS handling, and remote Redis bridging |
+| [worker.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-proxy/worker.js) | Authenticated BFF for Shopify GraphQL/webhooks, cost coordination and preview/detail caches, R2 access, S&S proxying, CORS, and authenticated Render/Redis bridging |
+| [shopify.app.toml](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-proxy/shopify.app.toml) | Shopify app identity, embedded URL, requested scopes, API version, and webhook subscriptions; changes require app-version release and installation approval |
 
 ---
 

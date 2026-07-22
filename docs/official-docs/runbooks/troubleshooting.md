@@ -22,6 +22,9 @@
 | Large file attachments cause slow UI load or Redis timeouts | Base64 payload size bloat in Redis list items | `main.js:149-177`, `renderer.js:910-961` | Compress attachment image client-side prior to Base64 encoding. |
 | Dragged Kanban card resets position after drop | Out-of-sync list array index during Redis `LSET` | `main.js:93-105`, `renderer.js:1290-1310` | Force full queue refresh (`getQueue`) before index mutation. |
 | Web client error: `window.api is undefined` | Web shim loading order mismatch | `order-manager-web/web-shim.js`, `order-manager-web/index.html` | Verify `web-shim.js` is loaded prior to `renderer.js` script tag. |
+| Redis board shows zero cards while bundle tiles remain; console says `(assets || []).forEach is not a function` | A legacy line item contains a non-array `assets` value, causing card rendering to stop mid-board | `renderer.js:splitOrderAssets`, `order-manager-web/renderer.js:splitOrderAssets` | Confirm queue length read-only before any restore. Current renderers ignore malformed asset containers and continue rendering; inspect and repair the source record separately only if its missing artwork is operationally important. |
+| Shopify detail error: `404 - [object Object]` | `fulfillmentOrders` is denied because the installed app lacks fulfillment-order read scopes; current error mapping hides Shopify's actual error | `order-manager-proxy/worker.js`, `order-manager-web/web-shim.js`, `order-manager-proxy/shopify.app.toml` | Keep production on Redis; follow Procedure C and do not treat the order as missing. |
+| Shopify detail customer fields say `Not returned` | Guest checkout or unapproved protected customer fields | `order-manager-proxy/worker.js`, Shopify app API access requests | Compare with Shopify Admin, then follow Procedure D before changing requested PII. |
 | Packaged desktop app fails to connect to Redis | `process.resourcesPath` `.env` path resolution failure | `main.js:7-21` | Ensure `.env` is properly copied by `electron-builder` `extraResources`. |
 | S&S Batch submission returns 401 Unauthorized | Missing or expired `SS_API_KEY` | `main.js:206-258` | Check `.env` key value; re-authenticate credentials. |
 
@@ -43,6 +46,32 @@
 - **Recovery**:
   1. Match target order `id` string before executing index mutations.
   2. Implement optimistic UI locking or immediate re-fetch (`getQueue`).
+
+### C. Shopify Live Detail Scope Failure
+
+- **Observed symptom**: The Shopify list loads, but clicking a known order opens an empty read-only dialog with `Shopify order details could not load: 404 - [object Object]`; DevTools shows the detail GET returning 404.
+- **Actual upstream result**: Shopify returns HTTP 200, `data.order: null`, and `ACCESS_DENIED` at GraphQL path `order.fulfillmentOrders`. The order still exists.
+- **Why the displayed error is misleading**: The Worker treats every null order as `ORDER_NOT_FOUND`; `web-shim.js` then converts the nested `{ error: { code, message, requestId } }` body to `[object Object]`.
+- **Current live authorization**: The production app installation used for the 2026-07-22 test is authorized only for `read_orders`. A local TOML edit does not change that authorization until the app version is released and the installation approves the permission update. The deployed list is usable; rich detail is scope-blocked. Redis remains the production workflow.
+- **Recovery choices**:
+  1. Permission route: add the minimum fulfillment-order read scopes, release a Shopify app version, and approve the updated permissions on the production store installation.
+  2. Code route: make fulfillment-order enrichment optional and preserve Shopify's partial GraphQL errors. This route has not been implemented.
+- **Verification**: After a scope release, retry a recent known order and confirm the GraphQL operation returns a non-null order. A Worker/Pages redeploy by itself cannot update installed Shopify permissions.
+
+### D. Protected Customer Data Redaction
+
+- Shopify order/customer/shipping data is protected customer data; name, address, phone, and email are protected fields requested individually.
+- Unapproved fields can return null plus GraphQL errors while approved order fields remain available.
+- Confirm the field exists in Shopify Admin before assuming a permission issue. Request only operationally necessary fields through the app's API access requests and keep the Redis board available during approval.
+- Reference: [Shopify protected customer data](https://shopify.dev/docs/apps/launch/protected-customer-data).
+
+### E. Empty Redis Board Caused by Malformed Line-Item Assets
+
+- **Observed symptom**: Board counts/cards fall to zero or rendering stops, while a bundle tile may already be visible and Redis still contains orders. DevTools reports `TypeError: (assets || []).forEach is not a function` from `splitOrderAssets`.
+- **Meaning**: This is a client rendering failure, not proof of queue deletion. One line item's `assets` field is present but is not an array (for example `{}`).
+- **Safe diagnosis**: Check `LLEN shopifyOrdersQueue`, JSON parse success, status counts, and `Array.isArray(item.assets)` without logging customer details, attachment payloads, credentials, or full orders. Do not restore a backup merely because the board is blank.
+- **Shipped behavior**: Desktop and embedded-web renderers normalize non-array line-item asset containers to an empty list. The affected card remains usable but cannot show artwork from that malformed field; other cards continue rendering.
+- **2026-07-22 incident**: All 21 queue records were intact and parseable. One item on order `#1558` contained `assets: {}`. No Redis mutation or restore was required.
 
 ---
 

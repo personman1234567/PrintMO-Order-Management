@@ -741,7 +741,8 @@ function splitOrderAssets(order) {
   const seen = new Set();
   const buckets = { mockups: [], front: [], back: [], extras: [] };
   (order.items || []).forEach(item => {
-    (item.assets || []).forEach(asset => {
+    const assets = Array.isArray(item?.assets) ? item.assets : [];
+    assets.forEach(asset => {
       const url = getAssetUrlValue(asset);
       if (typeof url !== 'string') return;
       if (!url.toLowerCase().includes('/orders/')) return;
