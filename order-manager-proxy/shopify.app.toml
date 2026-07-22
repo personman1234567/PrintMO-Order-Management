@@ -1,8 +1,11 @@
 # Shopify App Configuration for PrintMO Live API Sync
-name = "printmo-order-management"
+name = "Print-MO Order Manager"
 client_id = "119d00a9567e8b0d647409f27c939d5d"
 application_url = "https://print-mo-order-manager.pages.dev"
 embedded = true
+
+[auth]
+redirect_urls = [ "https://print-mo-order-manager.pages.dev/auth/callback" ]
 
 [access_scopes]
 scopes = "read_orders"
