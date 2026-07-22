@@ -19,10 +19,20 @@
   <link rel="stylesheet" href="./desktop.css" media="(min-width: 901px)" />
   <link rel="stylesheet" href="./mobile.css" media="(max-width: 900px)" />
   <link rel="stylesheet" href="./accessibility-hardening.css" />
+  <link rel="stylesheet" href="./shopify-preview.css" />
 </head>
 <body data-active-tab="pipeline" data-active-view="orders">
   <header class="app-header">
     <div class="app-brand">PrintMO Order Manager</div>
+    <div class="order-source-switch" role="group" aria-label="Order data view">
+      <span class="order-source-label">Data view</span>
+      <button id="order-source-redis" class="order-source-option active" type="button" data-order-source-target="redis" aria-pressed="true">
+        Redis board
+      </button>
+      <button id="order-source-shopify" class="order-source-option" type="button" data-order-source-target="shopify" aria-pressed="false">
+        Shopify live
+      </button>
+    </div>
     <nav class="app-nav" aria-label="Primary navigation">
       <button class="app-nav-tab" type="button" data-view="orders" aria-pressed="true">Orders</button>
       <button class="app-nav-tab" type="button" data-view="storage" aria-pressed="false">Storage Browser</button>
@@ -60,6 +70,10 @@
         <span class="mobile-refresh-label">Sync</span>
       </button>
     </nav>
+    <div class="mobile-order-source-switch" role="group" aria-label="Order data view">
+      <button class="order-source-option active" type="button" data-order-source-target="redis" aria-pressed="true">Redis board</button>
+      <button class="order-source-option" type="button" data-order-source-target="shopify" aria-pressed="false">Shopify live</button>
+    </div>
     <nav id="mobile-blanks-subnav" class="mobile-blanks-subnav" aria-label="Blanks workflow" hidden>
       <button type="button" data-mobile-blanks-target="to-order" aria-pressed="true">To order</button>
       <button type="button" data-mobile-blanks-target="in-cart" aria-pressed="false">In cart</button>
@@ -68,6 +82,56 @@
     </nav>
   </div>
   <main class="app-content">
+  <section id="shopify-preview-view" class="shopify-preview-view" aria-hidden="true" hidden>
+    <div class="shopify-preview-shell">
+      <header class="shopify-preview-header">
+        <div>
+          <p class="shopify-preview-eyebrow">Shopify Admin GraphQL</p>
+          <h1>Live order preview</h1>
+          <p id="shopify-preview-description">Commerce facts come only from Shopify. The Redis production board remains unchanged.</p>
+        </div>
+        <span class="shopify-preview-readonly">Read only</span>
+      </header>
+      <div class="shopify-preview-meta" aria-live="polite">
+        <span id="shopify-preview-status">Choose Shopify live to load recent orders.</span>
+        <span id="shopify-preview-source">Redis queue is not used in this view.</span>
+      </div>
+      <div id="shopify-preview-error" class="shopify-preview-error" role="alert" hidden></div>
+      <div class="shopify-preview-table-wrap">
+        <table class="shopify-preview-table">
+          <thead>
+            <tr>
+              <th scope="col">Order</th>
+              <th scope="col">Customer</th>
+              <th scope="col">Received</th>
+              <th scope="col">Items</th>
+              <th scope="col">Total</th>
+              <th scope="col">Payment</th>
+              <th scope="col">Fulfillment</th>
+              <th scope="col">Shopify updated</th>
+            </tr>
+          </thead>
+          <tbody id="shopify-preview-rows"></tbody>
+        </table>
+        <div id="shopify-preview-empty" class="shopify-preview-empty" hidden>No recent Shopify orders were returned.</div>
+      </div>
+    </div>
+    <dialog id="shopify-preview-detail" class="shopify-preview-detail" aria-labelledby="shopify-preview-detail-title">
+      <div class="shopify-preview-detail-shell">
+        <header class="shopify-preview-detail-header">
+          <div>
+            <p class="shopify-preview-eyebrow">Shopify live · read only</p>
+            <h2 id="shopify-preview-detail-title">Order details</h2>
+            <p id="shopify-preview-detail-meta">Loading directly from Shopify…</p>
+          </div>
+          <button id="shopify-preview-detail-close" class="shopify-preview-detail-close" type="button" aria-label="Close Shopify order details">×</button>
+        </header>
+        <div id="shopify-preview-detail-loading" class="shopify-preview-detail-loading" aria-live="polite">Reading the latest order details from Shopify…</div>
+        <div id="shopify-preview-detail-error" class="shopify-preview-error" role="alert" hidden></div>
+        <div id="shopify-preview-detail-content" class="shopify-preview-detail-content" hidden></div>
+      </div>
+    </dialog>
+  </section>
   <div id="orders-view" class="app-view">
     <div class="container">
     <!-- LEFT: Pipeline -->
@@ -567,6 +631,7 @@
   <script src="./web-shim.js"></script>
   <script src="./storage-browser.js"></script>
   <script src="./renderer.js"></script>
+  <script src="./shopify-preview.js"></script>
   <script src="./dashboard-triage-enhancements.js"></script>
   <script src="./blanks-batches.js"></script>
   <script src="./detail-overlay-enhancements.js"></script>

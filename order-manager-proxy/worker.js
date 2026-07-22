@@ -276,6 +276,14 @@ export default {
         // -----------------------------
         // PHASE 2 SHADOW V1 ENDPOINTS
         // -----------------------------
+        if (url.pathname.startsWith("/order-manager/v1/shopify-preview/orders/") && request.method === "GET") {
+            return handleShopifyPreviewOrderDetailGet(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
+        if (url.pathname === "/order-manager/v1/shopify-preview/orders" && request.method === "GET") {
+            return handleShopifyPreviewOrdersGet(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
         if (url.pathname === "/order-manager/v1/orders" && request.method === "GET") {
             return handleV1OrdersGet(request, env, allowOrigin || origin || "*");
         }
@@ -1976,7 +1984,125 @@ async function handleLegacySSBatch(request, env, allowOrigin, reqAllowHeaders) {
 // rate coordination, cache refreshes, webhook intake, and R2 reads live here.
 // -----------------------------
 const shopifyAccessTokenCache = new Map();
+const shopifyPreviewCache = new Map();
 const SHOPIFY_API_VERSION = '2026-07';
+const SHOPIFY_PREVIEW_TTL_MS = 30000;
+const SHOPIFY_PREVIEW_DETAIL_TTL_MS = 300000;
+
+const SHOPIFY_PREVIEW_ORDERS_QUERY = `query PrintMOShopifyPreviewOrders($first: Int!) {
+  orders(first: $first, sortKey: CREATED_AT, reverse: true) {
+    nodes {
+      id name createdAt updatedAt displayFinancialStatus displayFulfillmentStatus cancelledAt currencyCode
+      currentSubtotalLineItemsQuantity
+      currentSubtotalPriceSet { shopMoney { amount currencyCode } }
+      currentTotalPriceSet { shopMoney { amount currencyCode } }
+      customer { displayName }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}`;
+
+const SHOPIFY_PREVIEW_ORDER_DETAIL_QUERY = `query PrintMOShopifyPreviewOrderDetail($id: ID!) {
+  order(id: $id) {
+    id name createdAt processedAt updatedAt cancelledAt closedAt cancelReason note tags test sourceName
+    email phone customerLocale
+    customer { id displayName email phone }
+    shippingAddress { name company address1 address2 city province provinceCode zip country countryCodeV2 phone }
+    billingAddress { name company address1 address2 city province provinceCode zip country countryCodeV2 phone }
+    displayFinancialStatus displayFulfillmentStatus fullyPaid unpaid currencyCode
+    currentSubtotalLineItemsQuantity
+    currentSubtotalPriceSet { shopMoney { amount currencyCode } }
+    currentShippingPriceSet { shopMoney { amount currencyCode } }
+    currentTotalDiscountsSet { shopMoney { amount currencyCode } }
+    currentTotalTaxSet { shopMoney { amount currencyCode } }
+    currentTotalPriceSet { shopMoney { amount currencyCode } }
+    totalReceivedSet { shopMoney { amount currencyCode } }
+    totalRefundedSet { shopMoney { amount currencyCode } }
+    totalOutstandingSet { shopMoney { amount currencyCode } }
+    paymentGatewayNames
+    transactions(first: 25) {
+      id kind status gateway formattedGateway createdAt processedAt test errorCode
+      amountSet { shopMoney { amount currencyCode } }
+    }
+    shippingLines(first: 10) {
+      nodes {
+        id title code source deliveryCategory custom
+        originalPriceSet { shopMoney { amount currencyCode } }
+        currentDiscountedPriceSet { shopMoney { amount currencyCode } }
+        discountAllocations { allocatedAmountSet { shopMoney { amount currencyCode } } }
+      }
+    }
+    fulfillmentOrders(first: 10) {
+      nodes {
+        id status requestStatus fulfillAt fulfillBy
+        deliveryMethod {
+          id methodType presentedName serviceCode minDeliveryDateTime maxDeliveryDateTime
+        }
+      }
+    }
+    fulfillments {
+      id name status displayStatus createdAt updatedAt deliveredAt estimatedDeliveryAt totalQuantity
+      trackingInfo(first: 10) { company number url }
+    }
+    customerJourneySummary {
+      ready customerOrderIndex daysToConversion
+      firstVisit { id occurredAt source sourceDescription sourceType landingPage referrerUrl referralCode }
+      lastVisit { id occurredAt source sourceDescription sourceType landingPage referrerUrl referralCode }
+    }
+    discountApplications(first: 10) {
+      nodes {
+        __typename allocationMethod targetSelection targetType
+        value {
+          __typename
+          ... on MoneyV2 { amount currencyCode }
+          ... on PricingPercentageValue { percentage }
+        }
+        ... on AutomaticDiscountApplication { title }
+        ... on DiscountCodeApplication { code }
+        ... on ManualDiscountApplication { title description }
+        ... on ScriptDiscountApplication { title }
+      }
+    }
+    events(first: 25, reverse: true) {
+      nodes {
+        __typename id createdAt criticalAlert message
+        ... on BasicEvent { action appTitle author secondaryMessage }
+        ... on CommentEvent { action rawMessage }
+      }
+    }
+    lineItems(first: 50) {
+      nodes {
+        id sku title variantTitle vendor quantity currentQuantity unfulfilledQuantity requiresShipping
+        customAttributes { key value }
+        variant { id }
+        originalUnitPriceSet { shopMoney { amount currencyCode } }
+        originalTotalSet { shopMoney { amount currencyCode } }
+        totalDiscountSet { shopMoney { amount currencyCode } }
+        priceAfterAllDiscountsBeforeTaxesSet { shopMoney { amount currencyCode } }
+        discountAllocations { allocatedAmountSet { shopMoney { amount currencyCode } } }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}`;
+
+const SHOPIFY_PREVIEW_ORDER_LINE_ITEMS_QUERY = `query PrintMOShopifyPreviewOrderLineItems($id: ID!, $after: String) {
+  order(id: $id) {
+    lineItems(first: 50, after: $after) {
+      nodes {
+        id sku title variantTitle vendor quantity currentQuantity unfulfilledQuantity requiresShipping
+        customAttributes { key value }
+        variant { id }
+        originalUnitPriceSet { shopMoney { amount currencyCode } }
+        originalTotalSet { shopMoney { amount currencyCode } }
+        totalDiscountSet { shopMoney { amount currencyCode } }
+        priceAfterAllDiscountsBeforeTaxesSet { shopMoney { amount currencyCode } }
+        discountAllocations { allocatedAmountSet { shopMoney { amount currencyCode } } }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}`;
 
 const ORDER_SUMMARIES_QUERY = `query PrintMOOrderSummaries($ids: [ID!]!) {
   nodes(ids: $ids) {
@@ -2315,6 +2441,335 @@ function computeProductionDiff(summary, snapshot) {
     if (summary.commerce.cancelledAt) reasons.push('ORDER_CANCELLED');
     if (String(summary.commerce.financialStatus || '').includes('REFUND')) reasons.push('ORDER_REFUNDED');
     return [...new Set(reasons)];
+}
+
+async function handleShopifyPreviewOrdersGet(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const url = new URL(request.url);
+        const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 50), 1), 50);
+        const forceRefresh = url.searchParams.get('refresh') === '1';
+        const cacheKey = `${shopDomain(env)}:${limit}`;
+        const cached = shopifyPreviewCache.get(cacheKey);
+        if (!forceRefresh && cached && cached.expiresAt > Date.now()) {
+            return jsonResponse({ ...cached.payload, cached: true }, allowOrigin, reqAllowHeaders);
+        }
+
+        const result = await coordinatorGraphQL(
+            env,
+            SHOPIFY_PREVIEW_ORDERS_QUERY,
+            { first: limit },
+            'PrintMOShopifyPreviewOrders'
+        );
+        const connection = requireShopifyData(result, 'PrintMOShopifyPreviewOrders').orders;
+        const fetchedAt = new Date().toISOString();
+        const data = (connection?.nodes || []).map(node => ({
+            id: node.id,
+            displayName: node.name,
+            createdAt: node.createdAt,
+            shopifyUpdatedAt: node.updatedAt,
+            customer: { displayName: node.customer?.displayName || null },
+            commerce: {
+                financialStatus: node.displayFinancialStatus || null,
+                fulfillmentStatus: node.displayFulfillmentStatus || null,
+                cancelledAt: node.cancelledAt || null,
+                currencyCode: node.currencyCode || node.currentTotalPriceSet?.shopMoney?.currencyCode || null,
+                subtotal: node.currentSubtotalPriceSet?.shopMoney?.amount || null,
+                total: node.currentTotalPriceSet?.shopMoney?.amount || null,
+                currentLineItemQuantity: Number(node.currentSubtotalLineItemsQuantity || 0)
+            }
+        }));
+        const payload = {
+            source: 'shopify-admin-graphql',
+            readOnly: true,
+            cached: false,
+            fetchedAt,
+            apiVersion: result.apiVersion || SHOPIFY_API_VERSION,
+            data,
+            pageInfo: {
+                returned: data.length,
+                hasNextPage: Boolean(connection?.pageInfo?.hasNextPage),
+                limit
+            },
+            errors: (result.errors || []).map(error => ({
+                code: error?.extensions?.code || null,
+                message: error?.message || 'Shopify returned a partial error'
+            }))
+        };
+        shopifyPreviewCache.set(cacheKey, { payload, expiresAt: Date.now() + SHOPIFY_PREVIEW_TTL_MS });
+        return jsonResponse(payload, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 502);
+    }
+}
+
+function normalizePreviewAddress(address) {
+    if (!address) return null;
+    return {
+        name: address.name || null,
+        company: address.company || null,
+        address1: address.address1 || null,
+        address2: address.address2 || null,
+        city: address.city || null,
+        province: address.province || null,
+        provinceCode: address.provinceCode || null,
+        zip: address.zip || null,
+        country: address.country || null,
+        countryCode: address.countryCodeV2 || null,
+        phone: address.phone || null
+    };
+}
+
+function normalizePreviewVisit(visit) {
+    if (!visit) return null;
+    return {
+        id: visit.id,
+        occurredAt: visit.occurredAt,
+        source: visit.source || null,
+        sourceDescription: visit.sourceDescription || null,
+        sourceType: visit.sourceType || null,
+        landingPage: visit.landingPage || null,
+        referrerUrl: visit.referrerUrl || null,
+        referralCode: visit.referralCode || null
+    };
+}
+
+function normalizePreviewDiscount(discount) {
+    const value = discount?.value || null;
+    return {
+        type: discount?.__typename || 'DiscountApplication',
+        label: discount?.code || discount?.title || discount?.description || 'Discount',
+        code: discount?.code || null,
+        description: discount?.description || null,
+        allocationMethod: discount?.allocationMethod || null,
+        targetSelection: discount?.targetSelection || null,
+        targetType: discount?.targetType || null,
+        value: value?.__typename === 'MoneyV2'
+            ? { type: 'money', amount: String(value.amount), currencyCode: value.currencyCode }
+            : value?.__typename === 'PricingPercentageValue'
+                ? { type: 'percentage', percentage: Number(value.percentage) }
+                : null
+    };
+}
+
+function normalizePreviewLineItem(item, fallbackCurrency) {
+    return {
+        id: item.id,
+        variantId: item.variant?.id || null,
+        sku: item.sku || null,
+        title: item.title || '',
+        variantTitle: item.variantTitle || null,
+        vendor: item.vendor || null,
+        quantity: Number(item.quantity || 0),
+        currentQuantity: Number(item.currentQuantity || 0),
+        unfulfilledQuantity: Number(item.unfulfilledQuantity || 0),
+        requiresShipping: Boolean(item.requiresShipping),
+        unitPrice: moneyValue(item.originalUnitPriceSet, fallbackCurrency),
+        originalTotal: moneyValue(item.originalTotalSet, fallbackCurrency),
+        totalDiscount: moneyValue(item.totalDiscountSet, fallbackCurrency),
+        currentTotal: moneyValue(item.priceAfterAllDiscountsBeforeTaxesSet, fallbackCurrency),
+        customAttributes: Array.isArray(item.customAttributes) ? item.customAttributes : [],
+        discountAllocations: (item.discountAllocations || []).map(allocation =>
+            moneyValue(allocation.allocatedAmountSet, fallbackCurrency)
+        ).filter(Boolean)
+    };
+}
+
+async function completePreviewLineItems(env, orderId, connection, fallbackCurrency) {
+    const items = (connection?.nodes || []).map(item => normalizePreviewLineItem(item, fallbackCurrency));
+    const errors = [];
+    let pageInfo = connection?.pageInfo || { hasNextPage: false, endCursor: null };
+    while (pageInfo.hasNextPage) {
+        const result = await coordinatorGraphQL(
+            env,
+            SHOPIFY_PREVIEW_ORDER_LINE_ITEMS_QUERY,
+            { id: orderId, after: pageInfo.endCursor },
+            'PrintMOShopifyPreviewOrderLineItems'
+        );
+        errors.push(...(result.errors || []));
+        const next = result.data?.order?.lineItems;
+        if (!next) return { items, complete: false, errors };
+        items.push(...(next.nodes || []).map(item => normalizePreviewLineItem(item, fallbackCurrency)));
+        pageInfo = next.pageInfo || { hasNextPage: false, endCursor: null };
+    }
+    return { items, complete: true, errors };
+}
+
+function previewError(error) {
+    return {
+        code: error?.extensions?.code || null,
+        message: error?.message || 'Shopify returned a partial error',
+        path: Array.isArray(error?.path) ? error.path : []
+    };
+}
+
+async function handleShopifyPreviewOrderDetailGet(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const url = new URL(request.url);
+        const prefix = '/order-manager/v1/shopify-preview/orders/';
+        const rawId = decodeURIComponent(url.pathname.slice(prefix.length));
+        const gid = canonicalOrderGid(rawId);
+        if (!gid) return v1Error({ code: 'INVALID_ORDER_ID', message: 'A valid Shopify order ID is required' }, allowOrigin, reqAllowHeaders, 400);
+
+        const forceRefresh = url.searchParams.get('refresh') === '1';
+        const cacheKey = `detail:${shopDomain(env)}:${gid}`;
+        const cached = shopifyPreviewCache.get(cacheKey);
+        if (!forceRefresh && cached && cached.expiresAt > Date.now()) {
+            return jsonResponse({ ...cached.payload, cached: true }, allowOrigin, reqAllowHeaders);
+        }
+
+        const result = await coordinatorGraphQL(
+            env,
+            SHOPIFY_PREVIEW_ORDER_DETAIL_QUERY,
+            { id: gid },
+            'PrintMOShopifyPreviewOrderDetail'
+        );
+        const order = requireShopifyData(result, 'PrintMOShopifyPreviewOrderDetail').order;
+        if (!order) return v1Error({ code: 'ORDER_NOT_FOUND', message: 'Shopify order was not found' }, allowOrigin, reqAllowHeaders, 404);
+
+        const currency = order.currencyCode || order.currentTotalPriceSet?.shopMoney?.currencyCode || null;
+        const lineItems = await completePreviewLineItems(env, gid, order.lineItems, currency);
+        const rawErrors = [...(result.errors || []), ...lineItems.errors];
+        const identityReturned = Boolean(
+            order.customer?.displayName || order.customer?.email || order.customer?.phone ||
+            order.email || order.phone || order.shippingAddress?.name || order.billingAddress?.name
+        );
+        const protectedDataError = rawErrors.some(error => {
+            const message = String(error?.message || '').toLowerCase();
+            const path = Array.isArray(error?.path) ? error.path.join('.').toLowerCase() : '';
+            return message.includes('protected customer') ||
+                (error?.extensions?.code === 'ACCESS_DENIED' && /customer|email|phone|address/.test(path || message));
+        });
+
+        const payload = {
+            source: 'shopify-admin-graphql',
+            readOnly: true,
+            cached: false,
+            fetchedAt: new Date().toISOString(),
+            apiVersion: result.apiVersion || SHOPIFY_API_VERSION,
+            data: {
+                id: order.id,
+                displayName: order.name,
+                createdAt: order.createdAt,
+                processedAt: order.processedAt,
+                shopifyUpdatedAt: order.updatedAt,
+                closedAt: order.closedAt || null,
+                cancelledAt: order.cancelledAt || null,
+                cancelReason: order.cancelReason || null,
+                note: order.note || null,
+                tags: order.tags || [],
+                test: Boolean(order.test),
+                sourceName: order.sourceName || null,
+                customer: {
+                    id: order.customer?.id || null,
+                    displayName: order.customer?.displayName || null,
+                    email: order.customer?.email || order.email || null,
+                    phone: order.customer?.phone || order.phone || null,
+                    locale: order.customerLocale || null
+                },
+                protectedCustomerData: {
+                    identityReturned,
+                    possiblyRestricted: protectedDataError || !identityReturned
+                },
+                commerce: {
+                    financialStatus: order.displayFinancialStatus || null,
+                    fulfillmentStatus: order.displayFulfillmentStatus || null,
+                    fullyPaid: Boolean(order.fullyPaid),
+                    unpaid: Boolean(order.unpaid),
+                    currencyCode: currency,
+                    lineItemQuantity: Number(order.currentSubtotalLineItemsQuantity || 0),
+                    subtotal: moneyValue(order.currentSubtotalPriceSet, currency),
+                    shipping: moneyValue(order.currentShippingPriceSet, currency),
+                    discounts: moneyValue(order.currentTotalDiscountsSet, currency),
+                    tax: moneyValue(order.currentTotalTaxSet, currency),
+                    total: moneyValue(order.currentTotalPriceSet, currency),
+                    received: moneyValue(order.totalReceivedSet, currency),
+                    refunded: moneyValue(order.totalRefundedSet, currency),
+                    outstanding: moneyValue(order.totalOutstandingSet, currency),
+                    paymentGateways: order.paymentGatewayNames || [],
+                    transactions: (order.transactions || []).map(transaction => ({
+                        id: transaction.id,
+                        kind: transaction.kind,
+                        status: transaction.status,
+                        gateway: transaction.formattedGateway || transaction.gateway || null,
+                        createdAt: transaction.createdAt,
+                        processedAt: transaction.processedAt || null,
+                        test: Boolean(transaction.test),
+                        errorCode: transaction.errorCode || null,
+                        amount: moneyValue(transaction.amountSet, currency)
+                    }))
+                },
+                delivery: {
+                    shippingAddress: normalizePreviewAddress(order.shippingAddress),
+                    billingAddress: normalizePreviewAddress(order.billingAddress),
+                    shippingLines: (order.shippingLines?.nodes || []).map(line => ({
+                        id: line.id,
+                        title: line.title,
+                        code: line.code || null,
+                        source: line.source || null,
+                        deliveryCategory: line.deliveryCategory || null,
+                        custom: Boolean(line.custom),
+                        originalPrice: moneyValue(line.originalPriceSet, currency),
+                        currentPrice: moneyValue(line.currentDiscountedPriceSet, currency),
+                        discountAllocations: (line.discountAllocations || []).map(allocation =>
+                            moneyValue(allocation.allocatedAmountSet, currency)
+                        ).filter(Boolean)
+                    })),
+                    fulfillmentOrders: (order.fulfillmentOrders?.nodes || []).map(fulfillmentOrder => ({
+                        id: fulfillmentOrder.id,
+                        status: fulfillmentOrder.status,
+                        requestStatus: fulfillmentOrder.requestStatus,
+                        fulfillAt: fulfillmentOrder.fulfillAt || null,
+                        fulfillBy: fulfillmentOrder.fulfillBy || null,
+                        method: fulfillmentOrder.deliveryMethod ? {
+                            type: fulfillmentOrder.deliveryMethod.methodType,
+                            presentedName: fulfillmentOrder.deliveryMethod.presentedName || null,
+                            serviceCode: fulfillmentOrder.deliveryMethod.serviceCode || null,
+                            minDeliveryAt: fulfillmentOrder.deliveryMethod.minDeliveryDateTime || null,
+                            maxDeliveryAt: fulfillmentOrder.deliveryMethod.maxDeliveryDateTime || null
+                        } : null
+                    })),
+                    fulfillments: (order.fulfillments || []).map(fulfillment => ({
+                        id: fulfillment.id,
+                        name: fulfillment.name,
+                        status: fulfillment.status,
+                        displayStatus: fulfillment.displayStatus || null,
+                        createdAt: fulfillment.createdAt,
+                        updatedAt: fulfillment.updatedAt,
+                        deliveredAt: fulfillment.deliveredAt || null,
+                        estimatedDeliveryAt: fulfillment.estimatedDeliveryAt || null,
+                        totalQuantity: Number(fulfillment.totalQuantity || 0),
+                        tracking: fulfillment.trackingInfo || []
+                    }))
+                },
+                conversion: order.customerJourneySummary ? {
+                    ready: Boolean(order.customerJourneySummary.ready),
+                    customerOrderIndex: order.customerJourneySummary.customerOrderIndex,
+                    daysToConversion: order.customerJourneySummary.daysToConversion,
+                    firstVisit: normalizePreviewVisit(order.customerJourneySummary.firstVisit),
+                    lastVisit: normalizePreviewVisit(order.customerJourneySummary.lastVisit)
+                } : null,
+                discounts: (order.discountApplications?.nodes || []).map(normalizePreviewDiscount),
+                lineItems: lineItems.items,
+                lineItemsComplete: lineItems.complete,
+                timeline: (order.events?.nodes || []).map(event => ({
+                    id: event.id,
+                    type: event.__typename,
+                    createdAt: event.createdAt,
+                    critical: Boolean(event.criticalAlert),
+                    action: event.action || null,
+                    appTitle: event.appTitle || null,
+                    author: event.author || null,
+                    message: event.rawMessage || event.message || null,
+                    secondaryMessage: event.secondaryMessage || null
+                }))
+            },
+            errors: rawErrors.map(previewError)
+        };
+        shopifyPreviewCache.set(cacheKey, { payload, expiresAt: Date.now() + SHOPIFY_PREVIEW_DETAIL_TTL_MS });
+        return jsonResponse(payload, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 502);
+    }
 }
 
 function boardDto(record) {

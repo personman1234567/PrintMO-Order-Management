@@ -54,6 +54,18 @@ flowchart LR
 
 The prepared Cloudflare Pages artifact injects the public Shopify client ID into the App Bridge meta tag. Source HTML intentionally contains a placeholder and must not be deployed without `npm run prepare:cloudflare`.
 
+### Read-only Shopify live preview
+
+The embedded web header exposes a **Redis board / Shopify live** data-view switch:
+
+- **Redis board** is the default after every page load and remains the only operational Kanban during Phase 2 shadow mode.
+- **Shopify live** calls authenticated `GET /order-manager/v1/shopify-preview/orders?limit=50`. The Worker issues one cost-bounded Shopify Admin GraphQL list query and keeps a 30-second in-isolate response cache.
+- Clicking an order calls authenticated `GET /order-manager/v1/shopify-preview/orders/:gid`. This Shopify-only, read-only detail fetch is deferred until the operator opens an order, uses a five-minute in-isolate cache, and paginates all line-item pages before reporting `lineItemsComplete: true`.
+- Detail includes current totals, payment transactions, discounts, customer/contact fields when approved, shipping and billing destinations, shipping selection, Shopify delivery method/pickup classification, fulfillments and tracking, conversion attribution, and the 25 most recent Shopify timeline events.
+- Customer identity, contact, and address fields are protected customer data. The detail view labels missing values as not returned and explains that the cause can be guest checkout or missing protected-data approval; it does not invent a customer identity.
+- The Shopify preview exposes no drag, batch, notes, attachment, or production mutation controls. Neither its list nor detail endpoint calls the Render adapter or enumerates `shopifyOrdersQueue`.
+- Returning to **Redis board** immediately restores the unchanged production workflow. This diagnostic preview is not the Phase 3 read-source feature flag and does not advance cutover.
+
 ---
 
 ## 4. Viewport & CSS Decoupling
@@ -92,5 +104,7 @@ active queue, detail view, or workflow sheet owns vertical scrolling.
 | Symptom / Trap | Root Cause | Diagnosis & Recovery |
 |---|---|---|
 | CORS error in browser console when fetching orders | Missing origin headers in Cloudflare Worker proxy | Inspect `order-manager-proxy/worker.js` CORS header headers (`Access-Control-Allow-Origin`). |
+| Shopify live preview fails while Redis board works | Shopify token exchange, scope approval, GraphQL response, or throttling failure | Keep production work on Redis board and inspect the Worker request log for `PrintMOShopifyPreviewOrders`, `PrintMOShopifyPreviewOrderDetail`, or its line-item pagination operation. |
+| Shopify detail shows customer fields as not returned | Guest checkout or protected customer data fields are not approved for the app | Confirm the order has customer data in Shopify Admin, then review the app's protected customer data API access request. Do not broaden scopes or expose credentials in the client. |
 | Data changes not saved in browser | `storage-browser.js` falling back to read-only state | Check browser local storage permissions and network logs. |
 | Layout broken inside Shopify Admin iframe | Mobile CSS media query override missing | Verify `mobile.css` breakpoint rules and container width limits. |

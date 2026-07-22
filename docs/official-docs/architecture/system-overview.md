@@ -56,6 +56,7 @@ flowchart TD
 ## 3. Key System Invariants
 
 1. **Order Persistence**: During Phase 2 shadow mode, `shopifyOrdersQueue` remains operationally authoritative while Shopify commerce facts and the v1 Redis hash/index projection are synchronized in parallel.
+   The embedded web surface also offers a read-only Shopify live preview backed by a bounded GraphQL list query plus an on-demand detail query. Detail reads paginate all line items and may expose payment, delivery, conversion, discount, fulfillment, and timeline facts, but never read Redis or expose mutations. Customer PII is rendered only when Shopify returns approved protected fields. The surface resets to the Redis board on reload.
 2. **Viewport Parity**: Both desktop and web platforms MUST maintain complete functional parity (viewing orders, batching blanks, adding attachments).
 3. **Secret Isolation**: Frontend code in `renderer.js` or `order-manager-web/` must never contain hardcoded API keys or database URLs.
 

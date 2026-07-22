@@ -69,6 +69,25 @@ window.api.getQueue = async () => {
   return Array.isArray(data) ? data : (data?.orders || []);
 };
 
+// Read-only Shopify commerce preview. This endpoint never enumerates or mutates
+// the legacy Redis queue; production workflow continues through getQueue().
+window.api.getShopifyPreviewOrders = async ({ limit = 50, refresh = false } = {}) => {
+  const query = buildQuery({
+    limit: Math.min(Math.max(Number(limit) || 50, 1), 50),
+    refresh: refresh ? 1 : undefined,
+  });
+  return apiFetch(`/order-manager/v1/shopify-preview/orders${query}`, { method: "GET" });
+};
+
+window.api.getShopifyPreviewOrderDetail = async (orderId, { refresh = false } = {}) => {
+  if (!orderId) throw new Error("A Shopify order ID is required");
+  const query = buildQuery({ refresh: refresh ? 1 : undefined });
+  return apiFetch(
+    `/order-manager/v1/shopify-preview/orders/${encodeURIComponent(orderId)}${query}`,
+    { method: "GET" }
+  );
+};
+
 // 2) Drag/drop persistence
 window.api.updateStatus = async (name, status) => {
   await apiFetch("/order-manager/v1/legacy/queue/mutate", {

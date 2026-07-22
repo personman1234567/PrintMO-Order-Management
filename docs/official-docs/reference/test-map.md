@@ -26,6 +26,7 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Cloudflare Worker Proxy | `node --check order-manager-proxy/worker.js` | Silent exit code 0 |
 | Phase 1 Auth/Transport Contract | `npm run verify:phase1` | `Phase 1 contract verification passed.` |
 | Phase 2 Worker Shadow Contract | `npm run verify:phase2` | `Phase 2 shadow data plane verification passed.` |
+| Shopify Live Preview Controller | `node --check order-manager-web/shopify-preview.js` | Silent exit code 0 |
 | Phase 2 Render Redis Adapter | Run `npm test` in `E:\PrintMO\shopify-ss-integration` | `Render Phase 2 Redis adapter verification passed.` |
 | Web Client Renderer | `node --check order-manager-web/renderer.js` | Silent exit code 0 |
 | Web Storage Adapter | `node --check order-manager-web/storage-browser.js` | Silent exit code 0 |
@@ -42,6 +43,7 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Attachment File Upload | Upload image attachment via detail modal | FileReader encodes image Base64, IPC `add-file` persists file, image renders in preview tab. |
 | S&S Blank Batching | Drag multiple cards to Create Blanks Order zone, click Submit | SKUs aggregate, API call executes, order confirmation returns, cards advance to `Blanks Ordered`. |
 | Embedded Web Authentication | Run `npm run prepare:cloudflare`, deploy the generated artifact, and open it from Shopify Admin | App Bridge supplies a bearer token; queue and asset calls succeed while unauthenticated calls return `401`. |
+| Shopify Live Preview Isolation | Switch to **Shopify live**, open an order, then return to **Redis board** | List and detail identify Shopify Admin GraphQL as their source, expose no mutation controls, paginate line items, and Redis board returns unchanged. `npm run verify:phase2` asserts both preview endpoints make no Render/Redis request and verifies payment, delivery method, conversion, discount, timeline, and pagination normalization. |
 
 ---
 

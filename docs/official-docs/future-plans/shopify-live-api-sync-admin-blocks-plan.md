@@ -216,6 +216,8 @@ Snapshots exclude customer names, contact information, and addresses.
 | Method and path | Purpose |
 |---|---|
 | `GET /v1/orders?stage=&limit=&cursor=` | Cursor-paginated board DTOs; `limit` defaults to 50 and cannot exceed 50 |
+| `GET /v1/shopify-preview/orders?limit=` | Phase 2 read-only diagnostic list sourced only from one bounded Shopify GraphQL query; 30-second cache, maximum 50, and no production mutations |
+| `GET /v1/shopify-preview/orders/:gid` | Phase 2 on-demand Shopify-only diagnostic detail; five-minute cache, all line-item pages, protected-data-aware customer fields, and no Redis read or production mutations |
 | `GET /v1/orders/:gid` | Fully merged detail DTO |
 | `PATCH /v1/orders/:gid/production` | Version-checked metadata mutation |
 | `POST /v1/orders/:gid/attention/resolve` | Record an operator reconciliation decision |
@@ -630,7 +632,8 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 #### Phase 2 — Shadow v1 data plane
 
 - [x] Implement the Redis Cloud hash/index/cache schema in the authenticated Render adapter, plus Worker Shopify cache/coordinator, migration, parity, private-R2 read, and v1 DTO paths.
-- [ ] Deploy the Render adapter and Worker configuration, provision/bind the private R2 bucket and SQLite-backed Durable Object, and smoke-test live Shopify token acquisition.
+- [x] Deploy the Render adapter and Worker configuration, provision/bind the private R2 bucket and SQLite-backed Durable Object, and smoke-test live Shopify token acquisition.
+- [x] Expose an embedded, read-only Shopify live preview with a bounded list and on-demand rich detail so operators can inspect live commerce, payment, delivery, conversion, discount, line-item, fulfillment, and timeline facts without switching the production Redis read path.
 - [ ] Run the idempotent metadata/assets migration against the backed-up legacy queue.
 - [ ] Compare legacy and v1 boards for order membership, quantities, stages, bundles, notes, progress, and attachment counts.
 - [ ] Require zero unexplained mismatches for seven consecutive days before Phase 3.
@@ -711,7 +714,7 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 - [ ] Scaffold the Shopify app/Admin UI extension and pin API `2026-07`.
 - [x] Implement Worker auth middleware and OIDC partner allowlists.
 - [x] Implement the existing Redis Cloud adapter and declare private R2 plus per-shop Durable Object bindings.
-- [ ] Provision/deploy the R2 bucket, SQLite-backed Durable Object namespace, and updated Render service.
+- [x] Provision/deploy the R2 bucket, SQLite-backed Durable Object namespace, and updated Render service.
 - [ ] Add v1 schema validation and standard errors.
 
 ### Data plane
@@ -779,5 +782,6 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 - **2026-07-21**: Initial proposal for live Shopify API sync created.
 - **2026-07-22**: Added unified backend, GraphQL/Redis/R2 safeguards, production diff workflow, webhooks, offline behavior, and initial test plan.
 - **2026-07-22**: Finalized implementation contracts after authoritative platform research: canonical lifecycle and DTO/API, cache/pagination/coordinator behavior, Redis Lua schema, S&S PO reconciliation, surface authentication, R2 lifecycle, migration/rollback, rollout phases, and acceptance criteria. Status advanced to `[Spec Ready]`.
-- **2026-07-22**: Implemented the local Phase 2 shadow plane using the existing Redis Cloud database behind the authenticated Render adapter. Added Shopify client-credential token refresh, cost-aware GraphQL reads, summary/detail caches, webhook invalidation, Durable Object reconciliation, CAS production metadata, migration/quarantine/parity tooling, and private R2 read tickets. Deployment, live migration, and the seven-day zero-mismatch gate remain open.
+- **2026-07-22**: Implemented the local Phase 2 shadow plane using the existing Redis Cloud database behind the authenticated Render adapter. Added Shopify client-credential token refresh, cost-aware GraphQL reads, summary/detail caches, webhook invalidation, Durable Object reconciliation, CAS production metadata, migration/quarantine/parity tooling, and private R2 read tickets.
+- **2026-07-22**: Deployed the Phase 2 Worker, Render adapter, private R2 bucket, Durable Object, Shopify app scopes/webhooks, and Cloudflare Pages client. Live token acquisition and a read-only Shopify-only list preview are verified. Added on-demand rich detail with full line-item pagination and protected-customer-data-aware rendering; live migration and the seven-day zero-mismatch gate remain open.
 - **2026-07-22**: Implemented Phase 0 backup/fixture tooling and the Phase 1 authenticated legacy adapter. Added Shopify token validation, generic Electron OIDC Authorization Code + PKCE, safe refresh-token storage, atomic Lua queue changes, authenticated R2 reads, unified web/Desktop routes, packaging secret removal, and focused Phase 1 contract verification. Status advanced to `[In Progress]`; deployed staging smoke tests and credential/provider configuration remain rollout gates.
