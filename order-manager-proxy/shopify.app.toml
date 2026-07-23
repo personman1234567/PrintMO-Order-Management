@@ -8,7 +8,7 @@ embedded = true
 redirect_urls = [ "https://print-mo-order-manager.pages.dev/auth/callback" ]
 
 [access_scopes]
-scopes = "read_orders"
+scopes = "read_orders,read_merchant_managed_fulfillment_orders,read_third_party_fulfillment_orders"
 
 [webhooks]
 api_version = "2026-07"

@@ -154,13 +154,16 @@ async function run() {
     if (target.includes('/order-manager/v1/data/orders?')) {
       return Response.json({ records: [{ gid: shopifyNode().id, production, summary: storedSummary }], total: 1, nextOffset: null });
     }
+    if (target.includes('/order-manager/v1/data/orders/60129381?')) {
+      return Response.json({ gid: shopifyNode().id, production, summary: storedSummary, detail: null });
+    }
     if (target.endsWith('/order-manager/v1/data/cache/summaries')) {
       storedSummary = JSON.parse(options.body).summaries[0];
       return Response.json({ ok: true, count: 1 });
     }
     if (target.endsWith('/order-manager/v1/data/webhooks/dedupe')) return Response.json({ accepted: true });
     if (target.endsWith('/order-manager/v1/data/project') || target.endsWith('/order-manager/v1/data/mappings') || target.endsWith('/order-manager/v1/data/cache/dirty')) return Response.json({ ok: true });
-    if (target.includes('/order-manager/v1/data/orders/60129381/production')) return Response.json({ ok: true, version: 2, production: { ...production, version: 2, stage: 'to_order' } });
+    if (target.includes('/order-manager/v1/data/orders/60129381/production')) return Response.json({ ok: true, version: 2, mirroredLegacy: true, production: { ...production, version: 2, stage: 'to_order' } });
     if (target.includes('/order-manager/v1/data/assets/asset-1')) return Response.json({ assetId: 'asset-1', objectKey: 'orders/60129381/assets/asset-1/art.png' });
     if (target.endsWith('/order-manager/v1/data/parity')) return Response.json({ checkedAt: new Date().toISOString(), unexplainedMismatchCount: 0, parityStatus: 'PASSED' });
     if (target.includes('/order-manager/v1/data/legacy?')) return Response.json({ records: [], total: 0, nextOffset: null });
@@ -222,10 +225,18 @@ async function run() {
     const renderCallsAfterDetail = calls.filter(call => call.target.startsWith('https://render.example.test')).length;
     assert.equal(renderCallsAfterDetail, renderCallsAfterPreview, 'Shopify detail preview must not read the Redis/Render adapter');
 
+    const productionRead = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
+      headers: { ...headers, Origin: 'https://extensions.shopifycdn.com' }
+    }), env);
+    assert.equal(productionRead.status, 200, 'lightweight production metadata read must succeed');
+    assert.equal((await productionRead.json()).production.stage, 'received');
+    assert.equal(productionRead.headers.get('Access-Control-Allow-Origin'), 'https://extensions.shopifycdn.com', 'Shopify admin extensions must receive exact-origin CORS');
+
     const mutation = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
       method: 'PATCH', headers, body: JSON.stringify({ expectedVersion: 1, patch: { stage: 'to_order' }, idempotencyKey: 'mutation-1' })
     }), env);
     assert.equal(mutation.status, 200, 'versioned production mutation must use the Render CAS adapter');
+    assert.equal((await mutation.json()).mirroredLegacy, true, 'production mutations must confirm legacy queue mirroring');
 
     const ticketResponse = await worker.fetch(new Request('https://worker.test/order-manager/v1/assets/asset-1/read-ticket', { method: 'POST', headers }), env);
     assert.equal(ticketResponse.status, 200, 'asset read ticket must be issued');
@@ -243,7 +254,9 @@ async function run() {
       method: 'POST', headers, body: JSON.stringify({ execute: false, offset: 0, limit: 10 })
     }), env);
     assert.equal(migration.status, 200, 'dry-run migration must be available');
-    assert.equal((await migration.json()).execute, false);
+    const migrationJson = await migration.json();
+    assert.equal(migrationJson.execute, false);
+    assert.equal(migrationJson.projectionMode, 'metadata_only');
 
     const unsafeMigration = await worker.fetch(new Request('https://worker.test/order-manager/v1/migration/run', {
       method: 'POST', headers, body: JSON.stringify({ execute: true, offset: 0, limit: 1 })
@@ -262,6 +275,8 @@ async function run() {
   const opts = migrationTool.parseArgs(['--dry-run', '--shop', 'printmo-test.myshopify.com', '--env', 'production']);
   assert.equal(opts.execute, false);
   assert.equal(opts.dryRun, true);
+  assert.equal(opts.includeAssets, false);
+  assert(source.includes('https://extensions.shopifycdn.com'), 'Worker must allow the exact Shopify admin extension origin');
   const previewHtml = fs.readFileSync(path.join(root, 'order-manager-web', 'index.html'), 'utf8');
   assert(previewHtml.includes('data-order-source-target="shopify"'), 'web UI must expose the Shopify preview toggle');
   assert(previewHtml.includes('shopify-preview.js'), 'web UI must load the read-only preview controller');

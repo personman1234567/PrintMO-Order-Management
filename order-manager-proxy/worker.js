@@ -288,6 +288,10 @@ export default {
             return handleV1OrdersGet(request, env, allowOrigin || origin || "*");
         }
 
+        if (url.pathname.startsWith("/order-manager/v1/orders/") && url.pathname.endsWith("/production") && request.method === "GET") {
+            return handleV1ProductionGet(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
         if (url.pathname.startsWith("/order-manager/v1/orders/") && url.pathname.endsWith("/production") && request.method === "PATCH") {
             return handleV1ProductionPatch(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
         }
@@ -384,6 +388,8 @@ export default {
 
 function pickAllowOrigin(origin, env) {
     if (!origin) return ""; // curl/server-to-server has no Origin
+
+    if (origin === "https://extensions.shopifycdn.com") return origin;
 
     const exact = (env.ALLOW_ORIGIN_EXACT || "").replace(/\/+$/, "");
     const suffix = (env.ALLOW_ORIGIN_SUFFIX || "").trim();
@@ -2884,6 +2890,20 @@ async function handleV1OrderDetailGet(request, env, allowOrigin, reqAllowHeaders
     }
 }
 
+async function handleV1ProductionGet(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const gid = orderIdFromV1Path(new URL(request.url).pathname);
+        if (!gid) return v1Error({ code: 'INVALID_ORDER_ID', message: 'Invalid Shopify order GID' }, allowOrigin, reqAllowHeaders, 400);
+        const record = await upstreamDataRequest(
+            env,
+            `/order-manager/v1/data/orders/${numericIdFromGid(gid)}?shop=${encodeURIComponent(shopDomain(env))}`
+        );
+        return jsonResponse({ gid, production: record.production }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error.body?.error || error, allowOrigin, reqAllowHeaders, error.status || 500, error.body);
+    }
+}
+
 async function handleV1ProductionPatch(request, env, allowOrigin, reqAllowHeaders, identity) {
     try {
         const gid = orderIdFromV1Path(new URL(request.url).pathname);
@@ -3118,13 +3138,25 @@ async function handleV1MigrationRun(request, env, allowOrigin, reqAllowHeaders) 
     try {
         const body = await request.json().catch(() => ({}));
         const execute = body.execute === true;
+        const includeAssets = body.includeAssets === true;
         if (execute && body.confirmShop !== shopDomain(env)) {
             return v1Error({ code: 'MIGRATION_CONFIRMATION_REQUIRED', message: 'Execution requires confirmShop to exactly match the configured Shopify domain.' }, allowOrigin, reqAllowHeaders, 400);
         }
         const limit = Math.min(Math.max(Number(body.limit || 1), 1), 5);
         const offset = Math.max(Number(body.offset || 0), 0);
         const page = await upstreamDataRequest(env, `/order-manager/v1/data/legacy?offset=${offset}&limit=${limit}`);
-        const report = { execute, offset, total: page.total, matched: 0, migrated: 0, quarantined: 0, errors: [], nextOffset: page.nextOffset };
+        const report = {
+            execute,
+            includeAssets,
+            projectionMode: includeAssets ? 'metadata_and_assets' : 'metadata_only',
+            offset,
+            total: page.total,
+            matched: 0,
+            migrated: 0,
+            quarantined: 0,
+            errors: [],
+            nextOffset: page.nextOffset
+        };
         for (const legacy of page.records || []) {
             const source = JSON.stringify(legacy);
             const sourceDigest = bytesToHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source)));
@@ -3141,14 +3173,20 @@ async function handleV1MigrationRun(request, env, allowOrigin, reqAllowHeaders) 
                 report.matched++;
                 if (!execute) continue;
                 const summaries = await refreshThroughCoordinator(env, [match.gid]);
-                const assets = await migrateLegacyAssets(env, match.gid, legacy, true);
+                const assets = includeAssets ? await migrateLegacyAssets(env, match.gid, legacy, true) : [];
                 const keys = [...new Set([identifier, legacy.orderNumber, legacy.name, `source:${sourceDigest}`].filter(Boolean))];
                 for (const key of keys) await upstreamDataRequest(env, '/order-manager/v1/data/mappings', {
                     method: 'POST',
                     body: JSON.stringify({ shop: shopDomain(env), legacyKey: key, gid: match.gid, ledger: { matchResult: match.matchResult, assetCount: assets.length, assetChecksums: assets.map(asset => asset.sha256).filter(Boolean) } })
                 });
                 await upstreamDataRequest(env, '/order-manager/v1/data/project', {
-                    method: 'POST', body: JSON.stringify({ shop: shopDomain(env), gid: match.gid, legacy: { ...legacy, v1Assets: assets }, commerce: summaries[0] || null })
+                    method: 'POST',
+                    body: JSON.stringify({
+                        shop: shopDomain(env),
+                        gid: match.gid,
+                        legacy: includeAssets ? { ...legacy, v1Assets: assets } : legacy,
+                        commerce: summaries[0] || null
+                    })
                 });
                 report.migrated++;
             } catch (error) {

@@ -2,7 +2,7 @@
 
 - **Status**: `[In Progress]`
 - **Owner / Target Milestone**: `v1.4 Backlog`
-- **Last Updated**: `2026-07-22`
+- **Last Updated**: `2026-07-23`
 
 ---
 
@@ -216,6 +216,7 @@ Snapshots exclude customer names, contact information, and addresses.
 | Method and path | Purpose |
 |---|---|
 | `GET /v1/orders?stage=&limit=&cursor=` | Cursor-paginated board DTOs; `limit` defaults to 50 and cannot exceed 50 |
+| `GET /v1/orders/:gid/production` | Lightweight PrintMO production metadata only; does not query Shopify and is intended for the Admin order block |
 | `GET /v1/shopify-preview/orders?limit=` | Phase 2 read-only diagnostic list sourced only from one bounded Shopify GraphQL query; 30-second cache, maximum 50, and no production mutations |
 | `GET /v1/shopify-preview/orders/:gid` | Phase 2 on-demand Shopify-only diagnostic detail; five-minute cache, all line-item pages, protected-data-aware customer fields, and no Redis read or production mutations |
 | `GET /v1/orders/:gid` | Fully merged detail DTO |
@@ -635,10 +636,26 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 - [x] Implement the Redis Cloud hash/index/cache schema in the authenticated Render adapter, plus Worker Shopify cache/coordinator, migration, parity, private-R2 read, and v1 DTO paths.
 - [x] Deploy the Render adapter and Worker configuration, provision/bind the private R2 bucket and SQLite-backed Durable Object, and smoke-test live Shopify token acquisition.
 - [x] Expose and verify an embedded, read-only bounded Shopify list without switching the production Redis read path.
-- [ ] Complete rich-detail activation: release/approve fulfillment-order read scopes (or implement optional enrichment), verify a live non-null order response, and correct the misleading null-order `404 - [object Object]` error path.
+- [x] Complete rich-detail activation and verify live order summary, customer fields when returned, delivery, conversion, discounts, line items, and timeline data.
 - [ ] Run the idempotent metadata/assets migration against the backed-up legacy queue.
 - [ ] Compare legacy and v1 boards for order membership, quantities, stages, bundles, notes, progress, and attachment counts.
 - [ ] Require zero unexplained mismatches for seven consecutive days before Phase 3.
+
+##### Task 1 transition layer — projection complete; deployment pending
+
+- [x] Make shadow migration metadata-only by default. Artwork copying requires the separate explicit `includeAssets` option and is not part of Task 1.
+- [x] Add `GET /v1/orders/:gid/production` for the future Admin order block, with Shopify ID-token authentication and exact `https://extensions.shopifycdn.com` CORS support.
+- [x] Make compatible production metadata changes update the v1 hash/index and the current `shopifyOrdersQueue` record in one Redis Lua operation. The temporary mirror covers stage, bundle, internal notes, printed count, and readiness flags.
+- [x] Reject a mirrored mutation before either representation changes when its legacy order cannot be found or when the requested stage has no safe legacy equivalent.
+- [x] Broadcast `queue-changed` after a successful mirrored write so the existing Redis board refreshes.
+- [x] Verify the Worker and Render adapter contracts locally.
+- [x] Review and approve the production metadata projection report before executing it.
+- [x] Project the 19 approved orders as metadata only and quarantine legacy test order `#1000`. Post-write verification confirmed 19 hashes, 19 mappings, no artwork bytes, and an unchanged 20-record `shopifyOrdersQueue`.
+- [x] Archive two pre-existing shadow-only active records (`#1563` and `#1565`) that were no longer members of the legacy queue.
+- [x] Run post-projection parity: 19 matched records, one approved quarantine, and zero unexplained mismatches. The legacy queue remained at 20 records with an unchanged digest.
+- [ ] Deploy the Render adapter and Worker changes as part of the later deployment task; the local implementation is not active in production yet.
+
+The 2026-07-23 read-only projection preview inspected 20 parseable legacy records without writing data. Nineteen order numbers matched exactly one Shopify order; legacy test order `#1000` matched none and must be quarantined rather than guessed. The deployed queue records do not contain Shopify GIDs, so the temporary mirror deliberately supports the existing `orderNumber`/name-prefix identifiers.
 
 #### Phase 3 — Dual-write canary
 
@@ -787,5 +804,9 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 - **2026-07-22**: Implemented the local Phase 2 shadow plane using the existing Redis Cloud database behind the authenticated Render adapter. Added Shopify client-credential token refresh, cost-aware GraphQL reads, summary/detail caches, webhook invalidation, Durable Object reconciliation, CAS production metadata, migration/quarantine/parity tooling, and private R2 read tickets.
 - **2026-07-22**: Deployed the Phase 2 Worker, Render adapter, private R2 bucket, Durable Object, Shopify app scopes/webhooks, and Cloudflare Pages client. Live token acquisition and a read-only Shopify-only list preview are verified. Added on-demand rich detail with full line-item pagination and protected-customer-data-aware rendering; live migration and the seven-day zero-mismatch gate remain open.
 - **2026-07-22**: Live rich-detail verification found Shopify `ACCESS_DENIED` at `order.fulfillmentOrders` because the production installation is still authorized only for `read_orders`. The Worker currently maps the resulting null order to `404 ORDER_NOT_FOUND`, and the client displays the structured error as `[object Object]`. Rich detail remains implemented but not operationally verified; a local scope-config edit does not change this until released and approved. Redis production behavior is unaffected and the permission/error-handling follow-up is intentionally deferred.
+- **2026-07-23**: Released the required Shopify scopes and verified rich Shopify detail live, including totals, payment history, delivery, conversion, discounts, complete line items, and timeline data. Missing protected customer fields remain explicitly labeled rather than inferred.
+- **2026-07-23**: Implemented Task 1 locally: metadata-only projection by default, lightweight production reads for the future Admin block, exact extension-origin CORS, and atomic v1-to-legacy transition writes. A read-only production preview matched 19 of 20 legacy records and identified `#1000` for quarantine. No production migration or deployment was performed.
+- **2026-07-23**: With explicit approval, projected metadata for the 19 uniquely matched orders and quarantined `#1000`. Verification found 19 hashes and mappings, zero unsafe artwork payloads, and a byte-stable 20-record legacy queue. The first parity report also exposed two older shadow-only active records (`#1563`, `#1565`) awaiting an explicit archive decision.
+- **2026-07-23**: With explicit follow-up approval, archived only the stale v1 shadow records for `#1563` and `#1565`. Final parity passed with 19 matched records, one explained quarantine, zero unexplained mismatches, and no legacy queue change. Task 1 data work is complete; deployment of the transition routes remains a later task.
 - **2026-07-22**: Hardened desktop and embedded-web Redis card rendering after one legacy line item supplied `assets: {}` and stopped the board render. The queue remained intact (21 parseable records); renderers now ignore non-array asset containers without mutating Redis, and the incident/recovery path is recorded in the troubleshooting runbook.
 - **2026-07-22**: Implemented Phase 0 backup/fixture tooling and the Phase 1 authenticated legacy adapter. Added Shopify token validation, generic Electron OIDC Authorization Code + PKCE, safe refresh-token storage, atomic Lua queue changes, authenticated R2 reads, unified web/Desktop routes, packaging secret removal, and focused Phase 1 contract verification. Status advanced to `[In Progress]`; deployed staging smoke tests and credential/provider configuration remain rollout gates.
