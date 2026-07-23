@@ -641,7 +641,7 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 - [ ] Compare legacy and v1 boards for order membership, quantities, stages, bundles, notes, progress, and attachment counts.
 - [ ] Require zero unexplained mismatches for seven consecutive days before Phase 3.
 
-##### Task 1 transition layer — projection complete; deployment pending
+##### Task 1 transition layer — projection and canary deployment complete
 
 - [x] Make shadow migration metadata-only by default. Artwork copying requires the separate explicit `includeAssets` option and is not part of Task 1.
 - [x] Add `GET /v1/orders/:gid/production` for the future Admin order block, with Shopify ID-token authentication and exact `https://extensions.shopifycdn.com` CORS support.
@@ -653,11 +653,11 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 - [x] Project the 19 approved orders as metadata only and quarantine legacy test order `#1000`. Post-write verification confirmed 19 hashes, 19 mappings, no artwork bytes, and an unchanged 20-record `shopifyOrdersQueue`.
 - [x] Archive two pre-existing shadow-only active records (`#1563` and `#1565`) that were no longer members of the legacy queue.
 - [x] Run post-projection parity: 19 matched records, one approved quarantine, and zero unexplained mismatches. The legacy queue remained at 20 records with an unchanged digest.
-- [ ] Deploy the Render adapter and Worker changes as part of the later deployment task; the local implementation is not active in production yet.
+- [x] Deploy the Render adapter and Worker transition routes as part of the Task 2 canary release.
 
 The 2026-07-23 read-only projection preview inspected 20 parseable legacy records without writing data. Nineteen order numbers matched exactly one Shopify order; legacy test order `#1000` matched none and must be quarantined rather than guessed. The deployed queue records do not contain Shopify GIDs, so the temporary mirror deliberately supports the existing `orderNumber`/name-prefix identifiers.
 
-##### Task 2 operator surfaces — implemented locally; deployment pending
+##### Task 2 operator surfaces — canary deployed; live save pending
 
 - [x] Scaffold `printmo-production-status` as a Shopify Admin order-details block pinned to API `2026-07`.
 - [x] Read the current order GID from the Admin extension selected-order API and authenticate Worker requests with a Shopify ID token.
@@ -666,7 +666,8 @@ The 2026-07-23 read-only projection preview inspected 20 parseable legacy record
 - [x] Submit minimal patches with `expectedVersion` and an idempotency key; refresh rather than overwrite on a `409 VERSION_CONFLICT`.
 - [x] Label Shopify commerce as read-only and keep Shopify order notes/tags/customer/payment/fulfillment facts separate from PrintMO production metadata.
 - [x] Add Task 2 contract verification and successfully build the Shopify extension.
-- [ ] Deploy the Render transition adapter and Worker routes, deploy the Pages bundle, release the Shopify app extension version, and complete the manual cross-surface smoke test in Task 3.
+- [x] Deploy the Render transition adapter and Worker routes, deploy the Pages production bundle, and release the Shopify app extension version.
+- [ ] Complete one manual authenticated cross-surface save test on a projected order before treating the Task 2 canary as verified.
 
 #### Phase 3 — Dual-write canary
 
@@ -820,5 +821,6 @@ The 2026-07-23 read-only projection preview inspected 20 parseable legacy record
 - **2026-07-23**: With explicit approval, projected metadata for the 19 uniquely matched orders and quarantined `#1000`. Verification found 19 hashes and mappings, zero unsafe artwork payloads, and a byte-stable 20-record legacy queue. The first parity report also exposed two older shadow-only active records (`#1563`, `#1565`) awaiting an explicit archive decision.
 - **2026-07-23**: With explicit follow-up approval, archived only the stale v1 shadow records for `#1563` and `#1565`. Final parity passed with 19 matched records, one explained quarantine, zero unexplained mismatches, and no legacy queue change. Task 1 data work is complete; deployment of the transition routes remains a later task.
 - **2026-07-23**: Implemented Task 2 locally. Added a Shopify Admin order-details block and a Shopify Live production editor for the mirrored v1 fields, both using Shopify ID-token authentication, compare-and-set versions, idempotency keys, minimal patches, and conflict refresh. Shopify commerce stays read-only and the Redis board code path stays unchanged. Contract tests and the API `2026-07` extension build pass; coordinated deployment and live cross-surface verification remain Task 3.
+- **2026-07-23**: Deployed the Task 2 canary in dependency order. Pushed Render adapter commit `5622c1e`, deployed Worker version `b62c072d-47da-4409-8768-28d14e141566`, deployed Pages production version `e83efcfc-c6ed-4417-8acb-5f134702aaeb`, and activated Shopify app version `task2-canary-2026-07-23`. Production Pages contains the new controls and the Worker returns exact Admin-extension CORS. One authenticated in-app read/save and Redis-board confirmation remains.
 - **2026-07-22**: Hardened desktop and embedded-web Redis card rendering after one legacy line item supplied `assets: {}` and stopped the board render. The queue remained intact (21 parseable records); renderers now ignore non-array asset containers without mutating Redis, and the incident/recovery path is recorded in the troubleshooting runbook.
 - **2026-07-22**: Implemented Phase 0 backup/fixture tooling and the Phase 1 authenticated legacy adapter. Added Shopify token validation, generic Electron OIDC Authorization Code + PKCE, safe refresh-token storage, atomic Lua queue changes, authenticated R2 reads, unified web/Desktop routes, packaging secret removal, and focused Phase 1 contract verification. Status advanced to `[In Progress]`; deployed staging smoke tests and credential/provider configuration remain rollout gates.

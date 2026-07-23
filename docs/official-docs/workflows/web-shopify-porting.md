@@ -92,7 +92,7 @@ The detail response is grouped under these stable UI-facing properties:
 
 The controller is `order-manager-web/shopify-preview.js`; authenticated transport methods are `getShopifyPreviewOrders`, `getShopifyPreviewOrderDetail`, `getProductionMetadata`, and `updateProductionMetadata` in `web-shim.js`. GraphQL queries, caches, and Worker routing live in `order-manager-proxy/worker.js`; the Redis compare-and-set/mirror lives in the Render adapter's `phase2-data.js`. The Shopify Admin block is under `order-manager-proxy/extensions/printmo-production-status/`. The Pages build must include `shopify-preview.js` and `shopify-preview.css` through `scripts/prepare-cloudflare-pages-upload.sh`.
 
-**Release state (2026-07-23):** Task 2 controls and the Admin block are implemented and build-verified locally. They are not active until the Task 1 Worker/Render routes, Pages bundle, and Shopify app extension version are deployed in the coordinated release task.
+**Release state (2026-07-23):** the Task 1 transition adapter/routes and Task 2 operator surfaces have been released as a production canary. The Worker is on version `b62c072d-47da-4409-8768-28d14e141566`, Cloudflare Pages production is on deployment `e83efcfc-c6ed-4417-8acb-5f134702aaeb`, and Shopify app version `task2-canary-2026-07-23` is active. The remaining release check is one authenticated in-app save on a projected order followed by confirmation that the Redis board shows the same value.
 
 #### Shopify access requirements and current limitation
 
