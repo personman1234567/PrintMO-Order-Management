@@ -657,6 +657,17 @@ Bundles are re-keyed from mutable order names to GIDs. Display names remain labe
 
 The 2026-07-23 read-only projection preview inspected 20 parseable legacy records without writing data. Nineteen order numbers matched exactly one Shopify order; legacy test order `#1000` matched none and must be quarantined rather than guessed. The deployed queue records do not contain Shopify GIDs, so the temporary mirror deliberately supports the existing `orderNumber`/name-prefix identifiers.
 
+##### Task 2 operator surfaces — implemented locally; deployment pending
+
+- [x] Scaffold `printmo-production-status` as a Shopify Admin order-details block pinned to API `2026-07`.
+- [x] Read the current order GID from the Admin extension selected-order API and authenticate Worker requests with a Shopify ID token.
+- [x] Expose the transition-safe production controls in the block: stage, readiness flags, printed count, bundle, internal notes, and read-only blanks PO references.
+- [x] Add the same rough production editor to Shopify Live order detail without changing the Redis-board renderer or default data view.
+- [x] Submit minimal patches with `expectedVersion` and an idempotency key; refresh rather than overwrite on a `409 VERSION_CONFLICT`.
+- [x] Label Shopify commerce as read-only and keep Shopify order notes/tags/customer/payment/fulfillment facts separate from PrintMO production metadata.
+- [x] Add Task 2 contract verification and successfully build the Shopify extension.
+- [ ] Deploy the Render transition adapter and Worker routes, deploy the Pages bundle, release the Shopify app extension version, and complete the manual cross-surface smoke test in Task 3.
+
 #### Phase 3 — Dual-write canary
 
 - Make v1 the write path for one surface while the backend mirrors compatible production mutations to the legacy list.
@@ -730,7 +741,7 @@ The 2026-07-23 read-only projection preview inspected 20 parseable legacy record
 
 ### Foundation
 
-- [ ] Scaffold the Shopify app/Admin UI extension and pin API `2026-07`.
+- [x] Scaffold the Shopify app/Admin UI extension and pin API `2026-07`.
 - [x] Implement Worker auth middleware and OIDC partner allowlists.
 - [x] Implement the existing Redis Cloud adapter and declare private R2 plus per-shop Durable Object bindings.
 - [x] Provision/deploy the R2 bucket, SQLite-backed Durable Object namespace, and updated Render service.
@@ -808,5 +819,6 @@ The 2026-07-23 read-only projection preview inspected 20 parseable legacy record
 - **2026-07-23**: Implemented Task 1 locally: metadata-only projection by default, lightweight production reads for the future Admin block, exact extension-origin CORS, and atomic v1-to-legacy transition writes. A read-only production preview matched 19 of 20 legacy records and identified `#1000` for quarantine. No production migration or deployment was performed.
 - **2026-07-23**: With explicit approval, projected metadata for the 19 uniquely matched orders and quarantined `#1000`. Verification found 19 hashes and mappings, zero unsafe artwork payloads, and a byte-stable 20-record legacy queue. The first parity report also exposed two older shadow-only active records (`#1563`, `#1565`) awaiting an explicit archive decision.
 - **2026-07-23**: With explicit follow-up approval, archived only the stale v1 shadow records for `#1563` and `#1565`. Final parity passed with 19 matched records, one explained quarantine, zero unexplained mismatches, and no legacy queue change. Task 1 data work is complete; deployment of the transition routes remains a later task.
+- **2026-07-23**: Implemented Task 2 locally. Added a Shopify Admin order-details block and a Shopify Live production editor for the mirrored v1 fields, both using Shopify ID-token authentication, compare-and-set versions, idempotency keys, minimal patches, and conflict refresh. Shopify commerce stays read-only and the Redis board code path stays unchanged. Contract tests and the API `2026-07` extension build pass; coordinated deployment and live cross-surface verification remain Task 3.
 - **2026-07-22**: Hardened desktop and embedded-web Redis card rendering after one legacy line item supplied `assets: {}` and stopped the board render. The queue remained intact (21 parseable records); renderers now ignore non-array asset containers without mutating Redis, and the incident/recovery path is recorded in the troubleshooting runbook.
 - **2026-07-22**: Implemented Phase 0 backup/fixture tooling and the Phase 1 authenticated legacy adapter. Added Shopify token validation, generic Electron OIDC Authorization Code + PKCE, safe refresh-token storage, atomic Lua queue changes, authenticated R2 reads, unified web/Desktop routes, packaging secret removal, and focused Phase 1 contract verification. Status advanced to `[In Progress]`; deployed staging smoke tests and credential/provider configuration remain rollout gates.

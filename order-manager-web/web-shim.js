@@ -39,7 +39,9 @@ async function apiFetch(path, opts = {}) {
   if (!res.ok) {
     const msg = await parseErrorBody();
     const base = `${res.status} ${res.statusText}`.trim();
-    throw new Error([base, msg].filter(Boolean).join(" - "));
+    const error = new Error([base, msg].filter(Boolean).join(" - "));
+    error.status = res.status;
+    throw error;
   }
 
   if (rawResponse) return res;
@@ -85,6 +87,28 @@ window.api.getShopifyPreviewOrderDetail = async (orderId, { refresh = false } = 
   return apiFetch(
     `/order-manager/v1/shopify-preview/orders/${encodeURIComponent(orderId)}${query}`,
     { method: "GET" }
+  );
+};
+
+// Production metadata is separate from the Shopify commerce response. These
+// endpoints update the v1 order hash and atomically mirror supported fields to
+// the legacy Redis queue while that board remains in production.
+window.api.getProductionMetadata = async (orderId) => {
+  if (!orderId) throw new Error("A Shopify order ID is required");
+  return apiFetch(
+    `/order-manager/v1/orders/${encodeURIComponent(orderId)}/production`,
+    { method: "GET" }
+  );
+};
+
+window.api.updateProductionMetadata = async (orderId, payload = {}) => {
+  if (!orderId) throw new Error("A Shopify order ID is required");
+  return apiFetch(
+    `/order-manager/v1/orders/${encodeURIComponent(orderId)}/production`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }
   );
 };
 

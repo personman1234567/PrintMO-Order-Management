@@ -434,13 +434,256 @@
     return section;
   }
 
+  const productionStages = [
+    ['received', 'Received'],
+    ['to_order', 'Create blanks order'],
+    ['blanks_cart', 'Blanks cart'],
+    ['blanks_ordered', 'Blanks ordered'],
+    ['print', 'Ready to print'],
+  ];
+
+  function normalizeProduction(value = {}) {
+    return {
+      stage: productionStages.some(([stage]) => stage === value.stage) ? value.stage : 'received',
+      version: Number.isInteger(Number(value.version)) ? Number(value.version) : 0,
+      bundleId: value.bundleId || '',
+      blanksPo: Array.isArray(value.blanksPo) ? value.blanksPo : [],
+      printedCount: Math.max(0, Number(value.printedCount) || 0),
+      blanksStatus: Number(value.blanksStatus) ? 1 : 0,
+      printsStatus: Number(value.printsStatus) ? 1 : 0,
+      printsOrdered: Number(value.printsOrdered) ? 1 : 0,
+      internalNotes: value.internalNotes || '',
+      updatedAt: value.updatedAt || null,
+    };
+  }
+
+  function productionPatch(original, draft) {
+    const fields = [
+      ['stage', 'stage'],
+      ['bundleId', 'bundle_id'],
+      ['internalNotes', 'internal_notes'],
+      ['printedCount', 'printed_count'],
+      ['blanksStatus', 'blanks_status'],
+      ['printsStatus', 'prints_status'],
+      ['printsOrdered', 'prints_ordered'],
+    ];
+    return fields.reduce((patch, [clientField, apiField]) => {
+      if (draft[clientField] !== original[clientField]) patch[apiField] = draft[clientField];
+      return patch;
+    }, {});
+  }
+
+  function productionPoLabel(values) {
+    if (!values.length) return 'None recorded';
+    return values.map((value) => {
+      if (typeof value === 'string' || typeof value === 'number') return String(value);
+      return value?.poNumber || value?.id || value?.name || 'Recorded PO';
+    }).join(', ');
+  }
+
+  function productionControl(label, control) {
+    const wrapper = element('label', 'shopify-production-control');
+    wrapper.appendChild(element('span', '', label));
+    wrapper.appendChild(control);
+    return wrapper;
+  }
+
+  function productionCheckbox(name, label, checked) {
+    const wrapper = element('label', 'shopify-production-check');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.name = name;
+    input.checked = Boolean(checked);
+    wrapper.append(input, element('span', '', label));
+    return wrapper;
+  }
+
+  function readProductionDraft(form) {
+    return normalizeProduction({
+      stage: form.elements.stage.value,
+      bundleId: form.elements.bundleId.value.trim(),
+      internalNotes: form.elements.internalNotes.value,
+      printedCount: form.elements.printedCount.value,
+      blanksStatus: form.elements.blanksStatus.checked ? 1 : 0,
+      printsStatus: form.elements.printsStatus.checked ? 1 : 0,
+      printsOrdered: form.elements.printsOrdered.checked ? 1 : 0,
+    });
+  }
+
+  function setProductionFormBusy(form, busy) {
+    form.setAttribute('aria-busy', busy ? 'true' : 'false');
+    form.querySelectorAll('input, select, textarea, button').forEach((control) => {
+      control.disabled = Boolean(busy);
+    });
+  }
+
+  function createProductionForm(orderId, production, section) {
+    const baseline = normalizeProduction(production);
+    const form = element('form', 'shopify-production-form');
+    form.noValidate = true;
+
+    const stage = document.createElement('select');
+    stage.name = 'stage';
+    productionStages.forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      option.selected = baseline.stage === value;
+      stage.appendChild(option);
+    });
+
+    const printedCount = document.createElement('input');
+    printedCount.type = 'number';
+    printedCount.name = 'printedCount';
+    printedCount.min = '0';
+    printedCount.step = '1';
+    printedCount.value = String(baseline.printedCount);
+
+    const bundleId = document.createElement('input');
+    bundleId.type = 'text';
+    bundleId.name = 'bundleId';
+    bundleId.autocomplete = 'off';
+    bundleId.value = baseline.bundleId;
+
+    const notes = document.createElement('textarea');
+    notes.name = 'internalNotes';
+    notes.rows = 3;
+    notes.value = baseline.internalNotes;
+
+    const fields = element('div', 'shopify-production-fields');
+    fields.append(
+      productionControl('Production stage', stage),
+      productionControl('Pieces printed', printedCount),
+      productionControl('Bundle', bundleId),
+      productionControl('Internal production notes', notes),
+    );
+
+    const readiness = element('fieldset', 'shopify-production-readiness');
+    readiness.appendChild(element('legend', '', 'Readiness'));
+    const choices = element('div', 'shopify-production-checks');
+    choices.append(
+      productionCheckbox('blanksStatus', 'Blanks ready', baseline.blanksStatus),
+      productionCheckbox('printsOrdered', 'Prints ordered', baseline.printsOrdered),
+      productionCheckbox('printsStatus', 'Prints ready', baseline.printsStatus),
+    );
+    readiness.appendChild(choices);
+
+    const po = element('p', 'shopify-production-po');
+    po.appendChild(element('strong', '', 'Blanks PO: '));
+    po.appendChild(document.createTextNode(productionPoLabel(baseline.blanksPo)));
+
+    const feedback = element('p', 'shopify-production-feedback');
+    feedback.setAttribute('role', 'status');
+    feedback.setAttribute('aria-live', 'polite');
+    feedback.textContent = baseline.updatedAt
+      ? `Version ${baseline.version} · Last saved ${formatDate(baseline.updatedAt)}`
+      : `Version ${baseline.version}`;
+
+    const actions = element('div', 'shopify-production-actions');
+    const save = element('button', 'shopify-production-save', 'Save production status');
+    save.type = 'submit';
+    save.disabled = true;
+    const refresh = element('button', 'shopify-production-refresh', 'Refresh');
+    refresh.type = 'button';
+    actions.append(save, refresh);
+
+    const refreshDirtyState = () => {
+      save.disabled = Object.keys(productionPatch(baseline, readProductionDraft(form))).length === 0;
+    };
+    form.addEventListener('input', refreshDirtyState);
+    form.addEventListener('change', refreshDirtyState);
+
+    refresh.addEventListener('click', () => loadProductionEditor(orderId, section));
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const patch = productionPatch(baseline, readProductionDraft(form));
+      if (!Object.keys(patch).length) return;
+      setProductionFormBusy(form, true);
+      feedback.className = 'shopify-production-feedback';
+      feedback.textContent = 'Saving production status…';
+      try {
+        const result = await window.api.updateProductionMetadata(orderId, {
+          expectedVersion: baseline.version,
+          patch,
+          idempotencyKey: globalThis.crypto?.randomUUID
+            ? globalThis.crypto.randomUUID()
+            : `${orderId}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+        });
+        if (state.detailOrderId !== orderId) return;
+        renderProductionEditor(orderId, result?.production, section);
+        const nextFeedback = section.querySelector('.shopify-production-feedback');
+        if (nextFeedback) {
+          nextFeedback.classList.add('is-success');
+          nextFeedback.textContent = result?.mirroredLegacy
+            ? 'Saved to PrintMO and the Redis production board.'
+            : 'Saved to PrintMO.';
+        }
+      } catch (error) {
+        if (state.detailOrderId !== orderId) return;
+        if (error?.status === 409 || String(error?.message || '').startsWith('409')) {
+          feedback.classList.add('is-warning');
+          feedback.textContent = 'This order changed elsewhere. Refreshing so nothing is overwritten…';
+          await loadProductionEditor(orderId, section);
+        } else {
+          feedback.classList.add('is-error');
+          feedback.textContent = `Production status could not save: ${error?.message || error}`;
+          setProductionFormBusy(form, false);
+          refreshDirtyState();
+        }
+      }
+    });
+
+    form.append(fields, readiness, po, feedback, actions);
+    return form;
+  }
+
+  function renderProductionEditor(orderId, production, section) {
+    section.replaceChildren();
+    const header = element('header', 'shopify-detail-section-header shopify-production-header');
+    const heading = element('div');
+    heading.append(
+      element('h3', '', 'PrintMO production'),
+      element('p', '', 'Operational metadata shared with the current Redis production board.'),
+    );
+    const stage = normalizeProduction(production).stage;
+    const stageName = productionStages.find(([value]) => value === stage)?.[1] || 'Received';
+    const badge = element('span', `shopify-production-stage is-${stage.replaceAll('_', '-')}`, stageName);
+    header.append(heading, badge);
+    section.append(header, createProductionForm(orderId, production, section));
+  }
+
+  async function loadProductionEditor(orderId, section) {
+    section.replaceChildren(element('p', 'shopify-production-loading', 'Loading PrintMO production status…'));
+    try {
+      const result = await window.api.getProductionMetadata(orderId);
+      if (state.detailOrderId !== orderId) return;
+      renderProductionEditor(orderId, result?.production, section);
+    } catch (error) {
+      if (state.detailOrderId !== orderId) return;
+      section.replaceChildren();
+      const header = element('header', 'shopify-detail-section-header');
+      header.append(
+        element('h3', '', 'PrintMO production'),
+        element('p', '', 'Shopify order details are still available below.'),
+      );
+      const message = element('p', 'shopify-production-feedback is-error', `Production status could not load: ${error?.message || error}`);
+      const retry = element('button', 'shopify-production-refresh', 'Try again');
+      retry.type = 'button';
+      retry.addEventListener('click', () => loadProductionEditor(orderId, section));
+      section.append(header, message, retry);
+    }
+  }
+
   function renderOrderDetail(order, result) {
     els.detailTitle.textContent = `${order.displayName || 'Order'} · Shopify live`;
     const cacheLabel = result?.cached ? '5-minute detail cache' : 'live Shopify response';
-    els.detailMeta.textContent = `${cacheLabel} · Fetched ${formatDate(result?.fetchedAt)} · Redis queue not read`;
+    els.detailMeta.textContent = `${cacheLabel} · Fetched ${formatDate(result?.fetchedAt)} · Production controls sync through PrintMO metadata`;
+    const production = detailSection('PrintMO production', 'Loading operational metadata…');
+    production.classList.add('shopify-production-section');
     const content = document.createDocumentFragment();
     content.append(
       renderSummary(order),
+      production,
       renderFinancials(order),
       renderCustomer(order),
       renderDelivery(order),
@@ -451,6 +694,7 @@
     );
     els.detailContent.replaceChildren(content);
     els.detailContent.hidden = false;
+    loadProductionEditor(order.id, production);
   }
 
   function showDetailDialog() {

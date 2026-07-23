@@ -1,0 +1,14 @@
+{
+  "name": "printmo-order-manager-shopify-app",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "shopify app build",
+    "test": "node scripts/verify-task2.mjs"
+  },
+  "dependencies": {
+    "@preact/signals": "^2.10.0",
+    "@shopify/ui-extensions": "^2026.7.0",
+    "preact": "^10.29.7"
+  }
+}
