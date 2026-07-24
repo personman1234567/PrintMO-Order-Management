@@ -745,15 +745,18 @@ function splitOrderAssets(order) {
     assets.forEach(asset => {
       const url = getAssetUrlValue(asset);
       if (typeof url !== 'string') return;
-      if (!url.toLowerCase().includes('/orders/')) return;
+      const isPrivateManifest = Boolean(asset && typeof asset === 'object' && asset.assetId);
+      if (!url.toLowerCase().includes('/orders/') && !isPrivateManifest) return;
       const norm = url.toLowerCase();
       if (seen.has(norm)) return;
       seen.add(norm);
 
-      const isSvg = /\.svg(\?|$)/i.test(url);
-      const isMockup = /side\.png(\?|$)/i.test(norm);
-      const isFront = /(front\.(svg|png|jpe?g)|_front(?:\.[a-z0-9]+)?)(\?|$)/i.test(norm);
-      const isBack = /(back\.(svg|png|jpe?g)|_back(?:\.[a-z0-9]+)?)(\?|$)/i.test(norm);
+      const assetName = asset && typeof asset === 'object' ? String(asset.name || '') : '';
+      const classify = `${assetName} ${url}`.toLowerCase();
+      const isSvg = String(asset?.contentType || '').toLowerCase() === 'image/svg+xml' || /\.svg(\?|$)/i.test(classify);
+      const isMockup = asset?.role === 'mockup' || /side\.png(\?|$)/i.test(classify);
+      const isFront = asset?.side === 'front' || /(front\.(svg|png|jpe?g)|_front(?:\.[a-z0-9]+)?)(\?|$)/i.test(classify);
+      const isBack = asset?.side === 'back' || /(back\.(svg|png|jpe?g)|_back(?:\.[a-z0-9]+)?)(\?|$)/i.test(classify);
 
       const metadata = asset && typeof asset === 'object'
         ? (typeof asset.metadata === 'object' && asset.metadata) || (typeof asset.meta === 'object' && asset.meta) || undefined

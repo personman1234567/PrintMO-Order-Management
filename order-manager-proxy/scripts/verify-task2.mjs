@@ -5,6 +5,7 @@ import {dirname, resolve} from 'node:path';
 import {
   STAGE_OPTIONS,
   buildProductionPatch,
+  idempotencyKey,
   normalizeProduction,
   productionPath,
   responseError,
@@ -36,6 +37,13 @@ assert.equal(
   '/order-manager/v1/orders/gid%3A%2F%2Fshopify%2FOrder%2F123/production',
 );
 assert.equal(responseError(409, {error: {code: 'VERSION_CONFLICT', message: 'Changed'}}).code, 'VERSION_CONFLICT');
+const fallbackIdempotencyKey = idempotencyKey('gid://shopify/Order/123', {});
+assert.match(
+  fallbackIdempotencyKey,
+  /^[A-Za-z0-9._:-]{8,200}$/,
+  'Admin extension fallback idempotency keys must satisfy the Worker contract',
+);
+assert(!fallbackIdempotencyKey.includes('/'), 'Admin extension fallback keys must not embed Shopify GID separators');
 
 const [extensionConfig, blockSource, webShim, previewSource] = await Promise.all([
   readFile(resolve(proxyRoot, 'extensions/printmo-production-status/shopify.extension.toml'), 'utf8'),

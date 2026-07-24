@@ -14,12 +14,12 @@
 
 Candidate deployment on 2026-07-23:
 
-- Worker version: `c7622432-0a5b-4071-a8be-cb10014dd0f5`
-- Pages deployment: `4b211eb8.print-mo-order-manager.pages.dev`
-- Shopify app version: `task3-shopify-primary-2026-07-23`
+- Worker version: `f9fee090-bffc-4316-b8c6-4156aa249192`
+- Pages deployment: `83f3fc78.print-mo-order-manager.pages.dev`
+- Shopify app version: `designer-assets-idempotency-2026-07-23`
 - Stateless supplier gateway commit: `420ff72`
 
-The Shopify app version is released, but canonical writes/migration remain gated until the production installation approves the added scopes.
+The production installation has approved the candidate write/all-orders scopes, and canonical Shopify-board/Admin-block writes are live for acceptance. Final cutover, live S&S enablement, and permanent Redis retirement remain owner-gated.
 
 The application currently contains two deliberately isolated order sources:
 
@@ -61,7 +61,7 @@ The JSON metafield contains:
 
 Allowed stages are `received`, `to_order`, `blanks_cart`, `blanks_ordered`, `print`, and `completed`.
 
-Every client mutation supplies an expected revision and idempotency key. The Worker records the request in D1, reads the metafield digest, calls Shopify `metafieldsSet` with `compareDigest`, and then commits the D1 projection/audit result. If Shopify commits before D1 finalization, `lastMutationId` lets a retry repair D1. A concurrent edit returns `409 VERSION_CONFLICT`.
+Every client mutation supplies an expected revision and idempotency key. Keys use only the Worker-accepted `[A-Za-z0-9._:-]` character set and are generated independently of Shopify GIDs; a GID contains `/` separators and must never be embedded in a fallback key. The Worker records the request in D1, reads the metafield digest, calls Shopify `metafieldsSet` with `compareDigest`, and then commits the D1 projection/audit result. If Shopify commits before D1 finalization, `lastMutationId` lets a retry repair D1. A concurrent edit returns `409 VERSION_CONFLICT`.
 
 ## D1 Schema
 
@@ -78,6 +78,8 @@ Migration `order-manager-proxy/migrations/0001_redis_free.sql` creates:
 - `supplier_attempts`
 - `asset_manifests`
 - `migration_ledger`
+
+Migration `0002_designer_asset_metadata.sql` adds line-item, design-reference, role, and side metadata to `asset_manifests`. These fields let the shared renderer place private Designer Studio mockups and print files without exposing R2 object keys.
 
 The Worker binding is `ORDER_DB`. The production database is `printmo-order-manager`.
 
@@ -116,7 +118,18 @@ An ambiguous supplier result becomes `unknown` and cannot be blindly retried. Ni
 
 The migration bridge is available only while `MIGRATION_UPSTREAM_ENABLED=1`. It may read the immutable legacy source, but writes canonical production state to Shopify, manifests/ledgers to D1, and bytes to private R2. R2 uploads are read back and SHA-256 verified before a manifest becomes active.
 
-Asset reads resolve the manifest from D1 and issue a signed 60-second ticket. R2 object keys are not returned in the ticket response.
+Shopify summary reads retain the Designer Studio line-item properties `_designref`/`_design_ref` and `design_preview_url`/`design-preview-url`. Reconciliation converts only valid HTTPS `previews/YYYY-MM-DD/<designRef>/<file>` paths into asset candidates. It does not fetch the supplied hostname, so a line-item property cannot become an SSRF target. The Worker resolves bytes through the bound `PREVIEWS` bucket:
+
+1. try the original `previews/...` object key;
+2. if Designer Studio already promoted the purchase, search the bounded `orders/<orderNumber>_.../<designRef>/<file>` prefix/suffix;
+3. copy the object into `R2_BUCKET` under a deterministic private key;
+4. read it back and require the same SHA-256 before activating the D1 manifest.
+
+The first release runs a bounded active-order backfill of at most 50 orders and records the `designer-studio-assets-v1` reconciliation checkpoint only when every discovered candidate resolves. An incomplete run leaves no completion checkpoint and retries from the board background task or five-minute cron. Normal future summary/webhook refreshes use the same deterministic import path, so retries do not duplicate manifests.
+
+Production backfill evidence on 2026-07-23: 12 active orders scanned, 12 candidates resolved, 12 active `designer-studio-sync` manifests, zero failures, checkpoint `2026-07-24T03:28:53.220Z` (UTC).
+
+Board DTOs include manifest metadata but never private object keys. `web-shim.js` exchanges each manifest ID for a signed 60-second ticket, fetches the bytes with the current authenticated session, and gives the renderer a browser object URL. Asset role, side, line-item ID, and filename—not a public URL shape—drive mockup/design placement.
 
 ## Environment Flags
 

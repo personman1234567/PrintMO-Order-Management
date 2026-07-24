@@ -285,7 +285,7 @@ export default {
         }
 
         if (url.pathname === "/order-manager/v1/orders" && request.method === "GET") {
-            return handleV1OrdersGet(request, env, allowOrigin || origin || "*");
+            return handleV1OrdersGet(request, env, allowOrigin || origin || "*", reqAllowHeaders, ctx);
         }
 
         if (url.pathname.startsWith("/order-manager/v1/orders/") && url.pathname.endsWith("/production") && request.method === "GET") {
@@ -383,6 +383,7 @@ export default {
             const coordinator = env.ORDER_SYNC_COORDINATOR.get(id);
             if (event.cron === "*/5 * * * *") {
                 ctx.waitUntil(coordinator.fetch(new Request("https://internal/reconcile-incremental")).catch(err => console.error("Cron incremental error:", err)));
+                ctx.waitUntil(backfillDesignerStudioAssets(env).catch(err => console.error("Designer Studio asset backfill error:", err)));
             } else if (event.cron === "0 2 * * *") {
                 ctx.waitUntil(coordinator.fetch(new Request("https://internal/reconcile-integrity")).catch(err => console.error("Cron integrity error:", err)));
             }
@@ -2126,7 +2127,7 @@ const ORDER_SUMMARIES_QUERY = `query PrintMOOrderSummaries($ids: [ID!]!) {
       customer { displayName }
       lineItems(first: 25) {
         nodes {
-          id sku title variantTitle quantity currentQuantity
+          id sku title variantTitle quantity currentQuantity customAttributes { key value }
           variant { id }
           originalUnitPriceSet { shopMoney { amount currencyCode } }
         }
@@ -2140,7 +2141,7 @@ const ORDER_LINE_ITEMS_QUERY = `query PrintMOOrderLineItems($id: ID!, $after: St
   order(id: $id) {
     lineItems(first: 25, after: $after) {
       nodes {
-        id sku title variantTitle quantity currentQuantity
+        id sku title variantTitle quantity currentQuantity customAttributes { key value }
         variant { id }
         originalUnitPriceSet { shopMoney { amount currencyCode } }
       }
@@ -2457,19 +2458,54 @@ async function ensureCandidateOrder(env, gid, actor = 'system', graphQL = coordi
 
 async function d1AssetsForOrder(env, shopId, gid) {
     const result = await requireOrderDb(env).prepare(`
-      SELECT id, object_key, filename, content_type, byte_size, sha256, state, created_at
+      SELECT id, filename, content_type, byte_size, sha256, line_item_id, design_ref, role, side, state, created_at
       FROM asset_manifests
       WHERE shop_id = ? AND order_gid = ? AND state = 'active'
       ORDER BY created_at, id
     `).bind(shopId, gid).all();
     return (result.results || []).map(row => ({
         assetId: row.id,
-        objectKey: row.object_key,
         name: row.filename,
         contentType: row.content_type,
         byteSize: row.byte_size,
-        sha256: row.sha256
+        sha256: row.sha256,
+        lineItemId: row.line_item_id || null,
+        designRef: row.design_ref || null,
+        role: row.role || null,
+        side: row.side || null
     }));
+}
+
+async function d1AssetsForOrders(env, shopId, gids) {
+    const valid = [...new Set((gids || []).map(canonicalOrderGid).filter(Boolean))];
+    const byOrder = new Map(valid.map(gid => [gid, []]));
+    for (let index = 0; index < valid.length; index += 50) {
+        const chunk = valid.slice(index, index + 50);
+        const placeholders = chunk.map(() => '?').join(', ');
+        const result = await requireOrderDb(env).prepare(`
+          SELECT order_gid, id, filename, content_type, byte_size, sha256,
+                 line_item_id, design_ref, role, side
+          FROM asset_manifests
+          WHERE shop_id = ? AND state = 'active' AND order_gid IN (${placeholders})
+          ORDER BY created_at, id
+        `).bind(shopId, ...chunk).all();
+        for (const row of result.results || []) {
+            const assets = byOrder.get(row.order_gid) || [];
+            assets.push({
+                assetId: row.id,
+                name: row.filename,
+                contentType: row.content_type,
+                byteSize: row.byte_size,
+                sha256: row.sha256,
+                lineItemId: row.line_item_id || null,
+                designRef: row.design_ref || null,
+                role: row.role || null,
+                side: row.side || null
+            });
+            byOrder.set(row.order_gid, assets);
+        }
+    }
+    return byOrder;
 }
 
 async function d1ProjectionUpsert(env, shopId, gid, state, compareDigest, summary = undefined, order = {}) {
@@ -2751,6 +2787,166 @@ async function normalizeShopifySummary(env, node, resultErrors = [], graphQL = c
     };
 }
 
+const DESIGNER_REFERENCE_KEYS = new Set(['_designref', '_design_ref']);
+const DESIGNER_PREVIEW_KEYS = new Set(['design_preview_url', 'design-preview-url']);
+const DESIGNER_ASSET_MAX_BYTES = 50 * 1024 * 1024;
+const DESIGNER_ASSET_BACKFILL_CHECKPOINT = 'designer-studio-assets-v1';
+
+function designerAttributeMap(attributes) {
+    const values = new Map();
+    for (const attribute of Array.isArray(attributes) ? attributes : []) {
+        const key = String(attribute?.key || '').trim().toLowerCase();
+        if (key && !values.has(key)) values.set(key, String(attribute?.value || '').trim());
+    }
+    return values;
+}
+
+function designerSideFromName(name) {
+    const value = String(name || '').toLowerCase();
+    if (/(^|[_./-])front([_.-]|$)/.test(value)) return 'front';
+    if (/(^|[_./-])back([_.-]|$)/.test(value)) return 'back';
+    return null;
+}
+
+function designerAssetCandidates(summary) {
+    const orderNumber = /^#?(\d+)$/.exec(String(summary?.displayName || '').trim())?.[1] || null;
+    if (!orderNumber) return [];
+    const candidates = [];
+    for (const item of summary?.commerce?.lineItems || []) {
+        const values = designerAttributeMap(item.customAttributes);
+        const designRef = [...DESIGNER_REFERENCE_KEYS].map(key => values.get(key)).find(Boolean);
+        const previewUrl = [...DESIGNER_PREVIEW_KEYS].map(key => values.get(key)).find(Boolean);
+        if (!designRef || !previewUrl || !/^[A-Za-z0-9_-]{8,160}$/.test(designRef)) continue;
+        let parsed;
+        try { parsed = new URL(previewUrl); } catch (_) { continue; }
+        if (parsed.protocol !== 'https:') continue;
+        const match = parsed.pathname.match(/^\/previews\/(\d{4}-\d{2}-\d{2})\/([^/]+)\/(.+)$/);
+        if (!match) continue;
+        let pathDesignRef;
+        let rest;
+        try {
+            pathDesignRef = decodeURIComponent(match[2]);
+            rest = match[3].split('/').map(segment => decodeURIComponent(segment)).join('/');
+        } catch (_) {
+            continue;
+        }
+        if (pathDesignRef !== designRef) continue;
+        if (!rest || rest.split('/').some(segment => !segment || segment === '.' || segment === '..')) continue;
+        candidates.push({
+            lineItemId: item.id,
+            designRef,
+            previewKey: `previews/${match[1]}/${designRef}/${rest}`,
+            orderNumber,
+            rest,
+            name: safeAssetName(rest.split('/').pop()),
+            role: item.sku ? 'mockup' : 'design',
+            side: designerSideFromName(rest)
+        });
+    }
+    return candidates;
+}
+
+async function resolveDesignerSourceKey(env, candidate) {
+    if (!env.PREVIEWS) throw new Error('Designer Studio preview storage is not configured.');
+    if (await env.PREVIEWS.head(candidate.previewKey)) return candidate.previewKey;
+    const prefix = `orders/${candidate.orderNumber}_`;
+    const suffix = `/${candidate.designRef}/${candidate.rest}`;
+    let cursor;
+    const matches = [];
+    for (let page = 0; page < 5; page += 1) {
+        const result = await env.PREVIEWS.list({ prefix, cursor, limit: 1000 });
+        for (const object of result.objects || []) {
+            if (String(object.key || '').endsWith(suffix)) matches.push(object.key);
+        }
+        if (!result.truncated || !result.cursor) break;
+        cursor = result.cursor;
+    }
+    if (matches.length > 1) throw new Error(`Designer Studio asset is ambiguous for ${candidate.designRef}/${candidate.rest}.`);
+    return matches[0] || null;
+}
+
+async function copyDesignerAsset(env, shopId, gid, candidate) {
+    const sourceIdentity = `designer-studio:${candidate.lineItemId}:${candidate.previewKey}`;
+    const assetId = await stableAssetId(`${gid}:${sourceIdentity}`);
+    const existing = await requireOrderDb(env).prepare(`
+      SELECT id FROM asset_manifests
+      WHERE id = ? AND shop_id = ? AND state = 'active'
+    `).bind(assetId, shopId).first();
+    if (existing) return { state: 'existing', assetId };
+
+    const sourceKey = await resolveDesignerSourceKey(env, candidate);
+    if (!sourceKey) throw new Error(`Designer Studio asset was not found for ${candidate.designRef}/${candidate.rest}.`);
+    const source = await env.PREVIEWS.get(sourceKey);
+    if (!source) throw new Error(`Designer Studio source disappeared during import: ${sourceKey}.`);
+    const bytes = new Uint8Array(await source.arrayBuffer());
+    if (!bytes.byteLength || bytes.byteLength > DESIGNER_ASSET_MAX_BYTES) {
+        throw new Error(`Designer Studio asset size is invalid for ${candidate.name}.`);
+    }
+    const sha256 = bytesToHex(await crypto.subtle.digest('SHA-256', bytes));
+    const objectKey = `orders/${numericIdFromGid(gid)}/assets/${assetId}/${candidate.name}`;
+    const sourceHeaders = new Headers();
+    if (typeof source.writeHttpMetadata === 'function') source.writeHttpMetadata(sourceHeaders);
+    const contentType = sourceHeaders.get('Content-Type') || guessContentTypeFromKey(candidate.name);
+    if (!env.R2_BUCKET) throw new Error('Private artwork storage is not configured.');
+    await env.R2_BUCKET.put(objectKey, bytes, {
+        httpMetadata: { contentType },
+        customMetadata: { sha256, source: 'designer-studio' }
+    });
+    const stored = await env.R2_BUCKET.get(objectKey);
+    if (!stored) throw new Error(`Private R2 verification could not read ${candidate.name}.`);
+    const storedBytes = new Uint8Array(await stored.arrayBuffer());
+    const storedDigest = bytesToHex(await crypto.subtle.digest('SHA-256', storedBytes));
+    if (storedDigest !== sha256) throw new Error(`Private R2 checksum verification failed for ${candidate.name}.`);
+
+    const now = isoNow();
+    await requireOrderDb(env).prepare(`
+      INSERT INTO asset_manifests (
+        id, shop_id, order_gid, object_key, filename, content_type, byte_size,
+        sha256, state, source_key, created_by, created_at, updated_at,
+        line_item_id, design_ref, role, side
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 'designer-studio-sync', ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        object_key = excluded.object_key,
+        filename = excluded.filename,
+        content_type = excluded.content_type,
+        byte_size = excluded.byte_size,
+        sha256 = excluded.sha256,
+        state = 'active',
+        source_key = excluded.source_key,
+        line_item_id = excluded.line_item_id,
+        design_ref = excluded.design_ref,
+        role = excluded.role,
+        side = excluded.side,
+        deleted_at = NULL,
+        updated_at = excluded.updated_at
+    `).bind(
+        assetId, shopId, gid, objectKey, candidate.name, contentType, bytes.byteLength,
+        sha256, sourceKey, now, now, candidate.lineItemId, candidate.designRef,
+        candidate.role, candidate.side
+    ).run();
+    return { state: 'imported', assetId };
+}
+
+async function syncDesignerStudioAssetsForSummary(env, shopId, summary) {
+    const report = { candidates: 0, imported: 0, existing: 0, errors: [] };
+    const candidates = designerAssetCandidates(summary);
+    report.candidates = candidates.length;
+    for (const candidate of candidates) {
+        try {
+            const result = await copyDesignerAsset(env, shopId, summary.id, candidate);
+            report[result.state] += 1;
+        } catch (error) {
+            report.errors.push({
+                code: 'DESIGNER_ASSET_SYNC_FAILED',
+                message: error.message,
+                lineItemId: candidate.lineItemId,
+                designRef: candidate.designRef
+            });
+        }
+    }
+    return report;
+}
+
 async function storeSummaries(env, summaries) {
     if (!summaries.length) return;
     const shop = await d1Shop(env);
@@ -2780,6 +2976,20 @@ async function refreshSummaries(env, gids, graphQL = coordinatorGraphQL) {
             if (node?.id) summaries.push(await normalizeShopifySummary(env, node, result.errors || [], graphQL));
         }
     }
+    const shop = await d1Shop(env);
+    for (const summary of summaries) {
+        const assetSync = await syncDesignerStudioAssetsForSummary(env, shop.id, summary);
+        summary.sync.assetSync = {
+            candidates: assetSync.candidates,
+            imported: assetSync.imported,
+            existing: assetSync.existing,
+            failed: assetSync.errors.length
+        };
+        if (assetSync.errors.length) {
+            summary.sync.partial = true;
+            summary.sync.errors.push(...assetSync.errors);
+        }
+    }
     await storeSummaries(env, summaries);
     return summaries;
 }
@@ -2793,6 +3003,70 @@ async function refreshThroughCoordinator(env, gids) {
     const body = await response.json();
     if (!response.ok) throw new Error(body?.error || 'Shopify refresh failed');
     return body.summaries || [];
+}
+
+async function backfillDesignerStudioAssets(env) {
+    const shop = await d1Shop(env);
+    const db = requireOrderDb(env);
+    const completed = await db.prepare(`
+      SELECT checkpoint, last_result_json
+      FROM reconciliation_checkpoints
+      WHERE shop_id = ? AND name = ?
+    `).bind(shop.id, DESIGNER_ASSET_BACKFILL_CHECKPOINT).first();
+    if (completed) {
+        let previous = {};
+        try { previous = JSON.parse(completed.last_result_json || '{}'); } catch (_) {}
+        return { ok: true, alreadyCompleted: true, ...previous };
+    }
+    const rows = await db.prepare(`
+      SELECT order_gid
+      FROM order_projection
+      WHERE shop_id = ? AND active = 1
+      ORDER BY created_at DESC
+      LIMIT 50
+    `).bind(shop.id).all();
+    const gids = (rows.results || []).map(row => row.order_gid);
+    const startedAt = isoNow();
+    const summaries = gids.length ? await refreshThroughCoordinator(env, gids) : [];
+    const result = summaries.reduce((report, summary) => {
+        const sync = summary.sync?.assetSync || {};
+        report.candidates += Number(sync.candidates || 0);
+        report.imported += Number(sync.imported || 0);
+        report.existing += Number(sync.existing || 0);
+        report.failed += Number(sync.failed || 0);
+        return report;
+    }, {
+        orders: gids.length,
+        candidates: 0,
+        imported: 0,
+        existing: 0,
+        failed: 0,
+        completedAt: isoNow()
+    });
+    if (result.failed > 0) {
+        throw Object.assign(
+            new Error(`Designer Studio backfill left ${result.failed} asset(s) unresolved; it will retry.`),
+            { code: 'DESIGNER_ASSET_BACKFILL_INCOMPLETE', report: result }
+        );
+    }
+    await db.prepare(`
+      INSERT INTO reconciliation_checkpoints (
+        shop_id, name, checkpoint, last_started_at, last_completed_at, last_result_json
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(shop_id, name) DO UPDATE SET
+        checkpoint = excluded.checkpoint,
+        last_started_at = excluded.last_started_at,
+        last_completed_at = excluded.last_completed_at,
+        last_result_json = excluded.last_result_json
+    `).bind(
+        shop.id,
+        DESIGNER_ASSET_BACKFILL_CHECKPOINT,
+        result.completedAt,
+        startedAt,
+        result.completedAt,
+        JSON.stringify(result),
+    ).run();
+    return { ok: true, ...result };
 }
 
 async function bootstrapInitialBoard(env, graphQL = shopifyGraphQLWithRetry) {
@@ -3271,14 +3545,20 @@ async function loadDataPage(env, stage, limit, offset) {
     const count = await db.prepare(`SELECT COUNT(*) AS count FROM order_projection WHERE ${clause}`)
         .bind(...values).first();
     const total = Number(count?.count || 0);
+    const rowList = rows.results || [];
+    const assetsByOrder = await d1AssetsForOrders(env, shop.id, rowList.map(row => row.order_gid));
     return {
-        records: (rows.results || []).map(d1ProjectionRecord),
+        records: rowList.map(row => {
+            const record = d1ProjectionRecord(row);
+            record.production.assets = assetsByOrder.get(row.order_gid) || [];
+            return record;
+        }),
         total,
         nextOffset: offset + limit < total ? offset + limit : null
     };
 }
 
-async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders) {
+async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders, ctx) {
     try {
         const url = new URL(request.url);
         const stage = url.searchParams.get('stage') || '';
@@ -3318,6 +3598,11 @@ async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders) {
             } catch (error) {
                 console.error('Shopify summary refresh failed:', error.message);
             }
+        }
+        if (ctx?.waitUntil) {
+            ctx.waitUntil(backfillDesignerStudioAssets(env).catch(error => {
+                console.error('Designer Studio asset backfill error:', error.message);
+            }));
         }
         const nextCursor = page.nextOffset === null ? null : await encodeSignedCursor({ v: 1, filter, offset: page.nextOffset }, env);
         return jsonResponse({ data: (page.records || []).map(boardDto), pageInfo: { nextCursor, total: page.total } }, allowOrigin, reqAllowHeaders);

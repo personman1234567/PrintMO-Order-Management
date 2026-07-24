@@ -66,7 +66,9 @@ The header exposes **Legacy Redis / Shopify board**. Both use the established Ka
 - Shopify mode pages `GET /order-manager/v1/orders`, maps the stable DTO into the existing card contract, and routes drag/drop, notes, readiness, bundle, progress, archive, and batch actions to canonical endpoints.
 - A failed source switch restores the previous source and keeps its last rendered board. The Worker also rejects a false authoritative empty candidate until initial migration/reconciliation completes.
 - Shopify commerce fields remain read-only. Production fields are changed through `PATCH /order-manager/v1/orders/:gid/production` with expected revision and idempotency key.
+- Idempotency fallbacks generate `admin:...`, `board:...`, `detail:...`, or `batch:...` keys from timestamp plus random bytes. Never fall back to `${gid}:...`; Shopify GID slashes violate the Worker contract.
 - Full detail comes from `GET /order-manager/v1/orders/:gid`; line-item connections are fully paginated.
+- Summary line items retain the allowlisted Designer Studio properties. Reconciliation imports matching preview/promoted objects from the `PREVIEWS` binding into checksum-verified private R2 manifests. The board hydrates those manifests through authenticated one-minute tickets; it does not render or persist the public line-item URL.
 - The earlier Shopify diagnostic list/detail endpoints remain available for targeted comparison, but they are no longer the primary candidate surface.
 - Protected customer data is shown only when Shopify returns approved fields.
 - The Admin order block reads and edits the same metafield. Shopify may host-collapse content over 300px; `collapsedSummary` communicates stage/progress and controls use explicit labels.
@@ -75,7 +77,7 @@ The header exposes **Legacy Redis / Shopify board**. Both use the established Ka
 
 | Endpoint | Shopify operation | Returned data | Cache / boundary |
 |---|---|---|---|
-| `GET /order-manager/v1/orders` | Bounded stale refresh as needed | Cursor-paged board DTO with Shopify commerce and canonical production state | D1 enumeration; maximum 50; no Redis |
+| `GET /order-manager/v1/orders` | Bounded stale refresh as needed | Cursor-paged board DTO with Shopify commerce, canonical production state, and private asset manifest metadata | D1 enumeration; maximum 50; no Redis |
 | `GET /order-manager/v1/orders/:gid` | Rich order detail and line-item pagination | Shopify facts, production state, attention, and asset manifests | On demand; no Redis |
 | `GET /order-manager/v1/orders/:gid/production` | `PrintMOProductionState` | Canonical stage/revision/readiness/bundle/notes/progress/batch refs | Shopify metafield plus D1 asset manifests |
 | `PATCH /order-manager/v1/orders/:gid/production` | `metafieldsSet` with `compareDigest` | Committed production revision or conflict/sync-pending state | D1 idempotency/audit; no Redis |
@@ -92,7 +94,7 @@ The detail response is grouped under these stable UI-facing properties:
 
 The source adapter is `order-manager-web/web-shim.js`; source switching and diagnostic detail are in `shopify-preview.js`; canonical APIs live in `order-manager-proxy/worker.js`; the Admin block is under `order-manager-proxy/extensions/printmo-production-status/`.
 
-**Candidate release (2026-07-23):** Worker `c7622432-0a5b-4071-a8be-cb10014dd0f5`, Pages deployment `4b211eb8`, Shopify app version `task3-shopify-primary-2026-07-23`, and supplier gateway commit `420ff72`. Production scope approval and migration/acceptance are still required before cutover.
+**Candidate release (2026-07-23):** Worker `f9fee090-bffc-4316-b8c6-4156aa249192`, Pages deployment `83f3fc78`, Shopify app version `designer-assets-idempotency-2026-07-23`, and supplier gateway commit `420ff72`. The Designer Studio backfill completed with 12/12 active candidates imported and zero failures. Final migration/acceptance and owner-approved cutover remain separate gates.
 
 #### Shopify access requirements and current limitation
 
@@ -102,7 +104,7 @@ The source adapter is `order-manager-web/web-shim.js`; source switching and diag
 - `write_orders` is required for the app-owned production metafield.
 - `read_all_orders` keeps unfinished production work accessible beyond Shopify's default order window.
 
-The earlier rich-detail read scopes are approved. The Redis-free candidate release adds `write_orders` and `read_all_orders`; the owner must approve that installation update before canonical migration writes.
+The rich-detail scopes plus candidate `write_orders` and `read_all_orders` scopes are approved on the production installation. Canonical Shopify-board/Admin-block writes have been verified; final cutover remains a separate owner decision.
 
 Changing Shopify scopes is a deployment and merchant-approval operation: update `order-manager-proxy/shopify.app.toml`, release a new Shopify app version, and approve the permission update on the production `Print-MO` installation. A Worker or Pages deploy alone does not grant Shopify scopes.
 
@@ -145,7 +147,7 @@ active queue, detail view, or workflow sheet owns vertical scrolling.
 |---|---|---|
 | CORS error in browser console when fetching orders | Missing origin headers in Cloudflare Worker proxy | Inspect `order-manager-proxy/worker.js` CORS header headers (`Access-Control-Allow-Origin`). |
 | Shopify board fails while Legacy Redis works | Shopify token exchange, permission approval, D1 initialization, GraphQL response, or throttling failure | Keep production work on Legacy Redis. Inspect the structured Worker error and request ID; `BOARD_NOT_INITIALIZED` means migration/bootstrap has not established the candidate and must not be treated as an empty board. |
-| Shopify detail shows `404 - [object Object]` while the order exists | Current rich-detail query requests `fulfillmentOrders`, but the installed app has only `read_orders`; the Worker masks Shopify's `ACCESS_DENIED`/null-order response as not found | This is the known 2026-07-22 scope gate. Keep using Redis. Confirm the GraphQL error path is `order.fulfillmentOrders`; then either release/approve the minimum fulfillment-order read scopes or remove/fallback that enrichment in a future code change. |
+| Shopify detail again shows `404 - [object Object]` while the order exists | A released/installed scope regressed or another optional GraphQL field is denied; a null order is being mistaken for not found | The 2026-07-22 fulfillment-order gate is resolved in production. If it returns, inspect the structured GraphQL error path, compare released versus installed scopes, and preserve partial data rather than assuming deletion. |
 | Shopify detail shows customer fields as not returned | Guest checkout or protected customer data fields are not approved for the app | Confirm the order has customer data in Shopify Admin, then review the app's protected customer data API access request. Do not broaden scopes or expose credentials in the client. |
 | Data changes not saved in browser | `storage-browser.js` falling back to read-only state | Check browser local storage permissions and network logs. |
 | Layout broken inside Shopify Admin iframe | Mobile CSS media query override missing | Verify `mobile.css` breakpoint rules and container width limits. |

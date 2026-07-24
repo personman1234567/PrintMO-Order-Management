@@ -9,6 +9,18 @@
 
   const els = {};
 
+  function idempotencyKey() {
+    if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
+    const random = new Uint8Array(12);
+    if (typeof globalThis.crypto?.getRandomValues === 'function') {
+      globalThis.crypto.getRandomValues(random);
+    } else {
+      for (let index = 0; index < random.length; index += 1) random[index] = Math.floor(Math.random() * 256);
+    }
+    const entropy = Array.from(random, (value) => value.toString(16).padStart(2, '0')).join('');
+    return `detail:${Date.now().toString(36)}:${entropy}`;
+  }
+
   function formatDate(value) {
     const date = new Date(value || '');
     if (Number.isNaN(date.getTime())) return '—';
@@ -605,9 +617,7 @@
         const result = await window.api.updateProductionMetadata(orderId, {
           expectedVersion: baseline.version,
           patch,
-          idempotencyKey: globalThis.crypto?.randomUUID
-            ? globalThis.crypto.randomUUID()
-            : `${orderId}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+          idempotencyKey: idempotencyKey(),
         });
         if (state.detailOrderId !== orderId) return;
         renderProductionEditor(orderId, result?.production, section);

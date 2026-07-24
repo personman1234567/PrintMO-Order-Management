@@ -87,7 +87,16 @@ export async function authenticatedRequest(path, options = {}) {
   return body;
 }
 
-export function idempotencyKey(gid) {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  return `${gid}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+export function idempotencyKey(_gid, cryptoApi = globalThis.crypto) {
+  if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID();
+  const random = new Uint8Array(12);
+  if (typeof cryptoApi?.getRandomValues === 'function') {
+    cryptoApi.getRandomValues(random);
+  } else {
+    for (let index = 0; index < random.length; index += 1) {
+      random[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  const entropy = Array.from(random, (value) => value.toString(16).padStart(2, '0')).join('');
+  return `admin:${Date.now().toString(36)}:${entropy}`;
 }

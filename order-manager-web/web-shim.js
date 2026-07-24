@@ -75,10 +75,23 @@ function buildQuery(params = {}) {
   return query ? `?${query}` : '';
 }
 
+function newIdempotencyKey(prefix = "web") {
+  if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
+  const random = new Uint8Array(12);
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    globalThis.crypto.getRandomValues(random);
+  } else {
+    for (let index = 0; index < random.length; index += 1) random[index] = Math.floor(Math.random() * 256);
+  }
+  const entropy = Array.from(random, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `${prefix}:${Date.now().toString(36)}:${entropy}`;
+}
+
 window.api = window.api || {};
 window.api.transport = "http";
 
 const candidateOrdersByName = new Map();
+const candidateAssetObjectUrls = new Map();
 
 function isShopifyCandidateView() {
   return document.body?.dataset.orderSource === "shopify";
@@ -98,7 +111,7 @@ function boardStageToCandidate(status, current = {}) {
   return "received";
 }
 
-function candidateLineItem(item = {}) {
+function candidateLineItem(item = {}, assets = []) {
   const properties = (item.customAttributes || []).reduce((result, attribute) => {
     if (attribute?.key) result[attribute.key] = attribute.value;
     return result;
@@ -111,7 +124,7 @@ function candidateLineItem(item = {}) {
     qty: Number(item.currentQuantity ?? item.quantity ?? 0),
     price: Number(item.unitPrice || 0),
     properties,
-    assets: [],
+    assets,
   };
 }
 
@@ -120,6 +133,22 @@ function candidateOrderToBoard(order = {}) {
   const customer = order.customer?.displayName || "Guest";
   const displayName = order.displayName || order.id || "Shopify order";
   const name = `${displayName} – ${customer}`;
+  const orderAssets = Array.isArray(production.assets) ? production.assets : [];
+  const assetsByLine = new Map();
+  const unassignedAssets = [];
+  orderAssets.forEach((asset) => {
+    if (asset?.lineItemId) {
+      const current = assetsByLine.get(asset.lineItemId) || [];
+      current.push(asset);
+      assetsByLine.set(asset.lineItemId, current);
+    } else {
+      unassignedAssets.push(asset);
+    }
+  });
+  const lineItems = (order.commerce?.lineItems || []).map((item) =>
+    candidateLineItem(item, assetsByLine.get(item.id) || [])
+  );
+  if (lineItems.length && unassignedAssets.length) lineItems[0].assets.push(...unassignedAssets);
   const mapped = {
     _candidate: true,
     _gid: order.id,
@@ -128,7 +157,7 @@ function candidateOrderToBoard(order = {}) {
     orderNumber: String(displayName).replace(/^#/, ""),
     receivedAt: order.createdAt,
     status: candidateStageToBoard(production.stage),
-    items: (order.commerce?.lineItems || []).map(candidateLineItem),
+    items: lineItems,
     subtotal: Number(order.commerce?.subtotal || order.commerce?.total || 0),
     notes: production.internalNotes || "",
     bundle: production.bundleId || "",
@@ -144,6 +173,34 @@ function candidateOrderToBoard(order = {}) {
   return mapped;
 }
 
+async function candidateAssetObjectUrl(asset) {
+  if (!asset?.assetId) return "";
+  if (candidateAssetObjectUrls.has(asset.assetId)) return candidateAssetObjectUrls.get(asset.assetId);
+  const ticket = await apiFetch(
+    `/order-manager/v1/assets/${encodeURIComponent(asset.assetId)}/read-ticket`,
+    { method: "POST", body: "{}" }
+  );
+  if (!ticket?.url) throw new Error(`Private asset ticket was not returned for ${asset.name || asset.assetId}.`);
+  const blob = await apiFetch(ticket.url, { method: "GET", expect: "blob" });
+  const url = URL.createObjectURL(blob);
+  candidateAssetObjectUrls.set(asset.assetId, url);
+  return url;
+}
+
+async function hydrateCandidateAssets(records) {
+  const assets = [];
+  records.forEach((order) => {
+    (order?.production?.assets || []).forEach((asset) => assets.push(asset));
+  });
+  await Promise.all(assets.map(async (asset) => {
+    try {
+      asset.url = await candidateAssetObjectUrl(asset);
+    } catch (error) {
+      console.warn("Unable to hydrate private Designer Studio asset", asset?.assetId, error);
+    }
+  }));
+}
+
 async function loadCandidateQueue() {
   const records = [];
   let cursor = "";
@@ -154,6 +211,7 @@ async function loadCandidateQueue() {
     cursor = page?.pageInfo?.nextCursor || "";
   } while (cursor && records.length < 500);
   candidateOrdersByName.clear();
+  await hydrateCandidateAssets(records);
   return records.map(candidateOrderToBoard);
 }
 
@@ -169,9 +227,7 @@ async function updateCandidateOrder(name, patch) {
   const result = await window.api.updateProductionMetadata(order._gid, {
     expectedVersion: order._version,
     patch,
-    idempotencyKey: globalThis.crypto?.randomUUID
-      ? globalThis.crypto.randomUUID()
-      : `${order._gid}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+    idempotencyKey: newIdempotencyKey("board"),
   });
   const production = result?.production || {};
   order._version = Number(production.version ?? order._version + 1);
@@ -376,9 +432,7 @@ window.api.processBatch = async (orderIds) => {
       method: "POST",
       body: JSON.stringify({
         orderIds: orders.map((order) => order._gid),
-        idempotencyKey: globalThis.crypto?.randomUUID
-          ? globalThis.crypto.randomUUID()
-          : `batch:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+        idempotencyKey: newIdempotencyKey("batch"),
       }),
     });
     const now = Date.now();

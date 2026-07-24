@@ -27,6 +27,8 @@
 | Shopify detail customer fields say `Not returned` | Guest checkout or unapproved protected customer fields | `order-manager-proxy/worker.js`, Shopify app API access requests | Compare with Shopify Admin, then follow Procedure D before changing requested PII. |
 | Shopify board switch reports `503 - [object Object]` | The D1 projection has no migration/bootstrap checkpoint, and an older web bundle failed to render the structured Worker error | `handleV1OrdersGet`, `bootstrapInitialBoard`, `order-manager-web/web-shim.js:apiErrorMessage` | Deploy the current Worker and Pages bundle. The first candidate read performs a bounded paid/open Shopify bootstrap; if that read fails, the UI now shows `BOARD_NOT_INITIALIZED` with a request ID instead of a false empty board. |
 | Shopify board selector activates but the workspace is completely blank | Obsolete diagnostic-preview CSS hides `#orders-view` while the source controller also hides the retired preview table | `order-manager-web/shopify-preview.css`, `shopify-preview.js:setPreviewActive` | The shared Kanban must remain visible for both sources. Do not add a `body[data-order-source="shopify"] #orders-view { display: none }` rule; `npm run verify:phase2` enforces this regression contract. |
+| Admin order block says `A valid idempotency key is required` | A fallback mutation key embedded a Shopify GID, whose `/` separators are rejected by the Worker | `production-client.mjs:idempotencyKey`, `handleV1ProductionPatch` | Deploy/release the current extension. Fallback keys must match `^[A-Za-z0-9._:-]{8,200}$` and must not contain the GID. Run the Admin-block test before release. |
+| Designer Studio orders show blank placeholders or `Missing files`, while manual mockups work | Shopify summary omitted line-item design properties, the purchased object was promoted from `previews/...` to `orders/...`, or the D1/private-R2 import is incomplete | `ORDER_SUMMARIES_QUERY`, `syncDesignerStudioAssetsForSummary`, `asset_manifests`, `web-shim.js:candidateAssetObjectUrl` | Follow Procedure G. Do not restore Redis or persist the public preview URL as the candidate source. |
 | Packaged desktop app fails to connect to Redis | `process.resourcesPath` `.env` path resolution failure | `main.js:7-21` | Ensure `.env` is properly copied by `electron-builder` `extraResources`. |
 | S&S Batch submission returns 401 Unauthorized | Missing or expired `SS_API_KEY` | `main.js:206-258` | Check `.env` key value; re-authenticate credentials. |
 
@@ -74,6 +76,36 @@
 - **Safe diagnosis**: Check `LLEN shopifyOrdersQueue`, JSON parse success, status counts, and `Array.isArray(item.assets)` without logging customer details, attachment payloads, credentials, or full orders. Do not restore a backup merely because the board is blank.
 - **Shipped behavior**: Desktop and embedded-web renderers normalize non-array line-item asset containers to an empty list. The affected card remains usable but cannot show artwork from that malformed field; other cards continue rendering.
 - **2026-07-22 incident**: All 21 queue records were intact and parseable. One item on order `#1558` contained `assets: {}`. No Redis mutation or restore was required.
+
+### F. Admin Block Idempotency-Key Rejection
+
+- **Observed symptom**: The order block loads current production data, but save shows `A valid idempotency key is required`.
+- **Cause**: Shopify UI extensions do not guarantee `crypto.randomUUID()`. The retired fallback used `${gid}:${timestamp}:...`; Shopify GIDs contain `/`, while the Worker intentionally accepts only letters, digits, `.`, `_`, `:`, and `-`.
+- **Invariant**: Generate the key independently of the order identifier. The current extension uses `admin:<base36 timestamp>:<random hex>` when UUID generation is unavailable. Board/detail/batch fallbacks follow the same rule.
+- **Verification**:
+  1. Run `cd order-manager-proxy && npm test`.
+  2. Confirm the fallback-key fixture matches `^[A-Za-z0-9._:-]{8,200}$` and contains no `/`.
+  3. Release the Shopify app extension; a Worker/Pages deploy alone does not replace Admin-block JavaScript.
+  4. Save one changed field, refresh, and confirm the revision increases exactly once.
+
+### G. Designer Studio Asset Import and Backfill
+
+- **Expected source properties**: `_designref` or `_design_ref`, plus `design_preview_url` or `design-preview-url`.
+- **Expected path**: HTTPS URL whose path is `previews/YYYY-MM-DD/<designRef>/<file>`. The Worker uses only the validated path with its `PREVIEWS` R2 binding; it never server-fetches the supplied hostname.
+- **Promotion behavior**: A purchased design may no longer exist at the preview key. Resolution then lists at most five 1,000-object pages under `orders/<orderNumber>_` and requires one exact `/<designRef>/<file>` suffix match. Zero matches remain unresolved; multiple matches are rejected as ambiguous.
+- **Canonical result**: Private `R2_BUCKET` bytes, matching source/destination SHA-256, and an active `asset_manifests` row with `created_by='designer-studio-sync'`. Board responses expose the manifest ID/metadata, not `object_key`.
+- **Backfill evidence** (run from `order-manager-proxy/`):
+
+```text
+npx wrangler d1 execute printmo-order-manager --remote --command "SELECT checkpoint,last_result_json FROM reconciliation_checkpoints WHERE name='designer-studio-assets-v1';"
+npx wrangler d1 execute printmo-order-manager --remote --command "SELECT order_gid,filename,role,side,line_item_id,design_ref,state FROM asset_manifests WHERE created_by='designer-studio-sync' ORDER BY order_gid,filename;"
+```
+
+- **Recovery**:
+  1. If the checkpoint is absent, inspect Worker logs for `DESIGNER_ASSET_BACKFILL_INCOMPLETE`; the board background task and five-minute cron retry automatically.
+  2. If a candidate is missing, confirm Shopify still returns both expected properties and inspect the `PREVIEWS` bucket for either the exact preview key or the promoted order/design-ref suffix.
+  3. If the D1 manifest exists but the card is blank, verify the read-ticket POST and authenticated asset GET succeed, then verify the Pages bundle contains `candidateAssetObjectUrl` and renderer `assetId` handling.
+  4. Do not manually write an active manifest without source/private checksum equality. Do not expose `object_key` or reintroduce a permanent public `r2.dev` dependency.
 
 ---
 

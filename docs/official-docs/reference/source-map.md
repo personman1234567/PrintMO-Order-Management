@@ -55,6 +55,7 @@
 | `extensions/printmo-production-status/src/production-client.mjs` | Shared Admin-block normalization, minimal-patch, endpoint, authentication, and error helpers |
 | `scripts/verify-task2.mjs` | Admin-block labels/stages/source-switch transport contract |
 | `migrations/0001_redis_free.sql` | D1 projection, mutation, audit, webhook, reconciliation, batch, asset, and migration schema |
+| `migrations/0002_designer_asset_metadata.sql` | Designer Studio manifest linkage: line item, design reference, role, side, and source lookup index |
 | [worker.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-proxy/worker.js) | Authenticated BFF for Shopify canonical state/commerce, D1, R2, webhooks, reconciliation, migration, and supplier batch state; explicit legacy routes remain isolated |
 | [shopify.app.toml](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-proxy/shopify.app.toml) | Shopify app identity, app-owned metafield, requested scopes, API version, and webhook subscriptions |
 | [wrangler.jsonc](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-proxy/wrangler.jsonc) | Worker, Durable Object, D1, R2, cron, and pre-cutover flag bindings |

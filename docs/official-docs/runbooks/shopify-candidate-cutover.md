@@ -27,8 +27,9 @@ The Render repository must also pass `npm test`.
 2. Apply all remote migrations.
 3. Record the current D1 Time Travel bookmark.
 4. Confirm `R2_BUCKET` resolves to the private artwork bucket.
-5. Keep `SS_TEST_ORDER=1`.
-6. Confirm the stateless supplier gateway deployment contains `/order-manager/v1/supplier/ss/commit`.
+5. Confirm `PREVIEWS` resolves to the Designer Studio source bucket and remote migration `0002_designer_asset_metadata.sql` is applied before deploying Worker code that selects its columns.
+6. Keep `SS_TEST_ORDER=1`.
+7. Confirm the stateless supplier gateway deployment contains `/order-manager/v1/supplier/ss/commit`.
 
 ## 3. Shopify Release Gate
 
@@ -58,6 +59,8 @@ Verify:
 - the Admin block and Shopify board converge on the same revision;
 - simultaneous edits yield one success and one `409`;
 - a repeated idempotency key returns the stored result;
+- the Admin block fallback key saves when `randomUUID` is unavailable and never embeds a Shopify GID;
+- the `designer-studio-assets-v1` checkpoint reports zero failures and active Designer Studio orders display ticket-hydrated private mockups;
 - a confirmed S&S test batch creates one supplier order and advances selected orders;
 - an ambiguous S&S result is `unknown` and cannot be resent;
 - invalid/missing D1 does not render an authoritative empty board;

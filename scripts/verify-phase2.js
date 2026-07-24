@@ -62,7 +62,11 @@ function shopifyNode() {
       nodes: [{
         id: 'gid://shopify/LineItem/101', sku: 'B001', title: 'Fixture Shirt', variantTitle: 'Black / M',
         quantity: 2, currentQuantity: 2, variant: { id: 'gid://shopify/ProductVariant/201' },
-        originalUnitPriceSet: { shopMoney: { amount: '10.00', currencyCode: 'USD' } }
+        originalUnitPriceSet: { shopMoney: { amount: '10.00', currencyCode: 'USD' } },
+        customAttributes: [
+          { key: '_designref', value: 'fixture-design-ref' },
+          { key: 'design_preview_url', value: 'https://designer.example.test/previews/2026-07-20/fixture-design-ref/mockup_side.png' },
+        ],
       }],
       pageInfo: { hasNextPage: false, endCursor: null }
     }
@@ -113,7 +117,9 @@ async function run() {
 
   const root = path.join(__dirname, '..');
   const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8');
-  const schema = fs.readFileSync(path.join(root, 'order-manager-proxy', 'migrations', '0001_redis_free.sql'), 'utf8');
+  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql']
+    .map(file => fs.readFileSync(path.join(root, 'order-manager-proxy', 'migrations', file), 'utf8'))
+    .join('\n');
   const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
   const worker = module.default;
   assert.equal(typeof module.OrderSyncCoordinator, 'function', 'Durable Object coordinator must be exported');
@@ -124,20 +130,45 @@ async function run() {
     iss: 'https://printmo-test.myshopify.com/admin', dest: 'https://printmo-test.myshopify.com',
     aud: 'phase2-client', sub: 'partner-1', iat: now, nbf: now - 1, exp: now + 60
   });
+  const designerSourceKey = 'orders/1001_fixture-customer/fixture-design-ref/mockup_side.png';
+  const designerBytes = new TextEncoder().encode('designer-studio-preview');
+  const privateObjects = new Map([
+    ['orders/60129381/assets/asset-1/art.png', { bytes: new TextEncoder().encode('private-artwork'), contentType: 'image/png' }],
+  ]);
+  const r2Object = (record) => record ? {
+    body: record.bytes,
+    size: record.bytes.byteLength,
+    httpEtag: 'fixture-etag',
+    async arrayBuffer() {
+      return record.bytes.buffer.slice(record.bytes.byteOffset, record.bytes.byteOffset + record.bytes.byteLength);
+    },
+    writeHttpMetadata(headers) { headers.set('Content-Type', record.contentType); },
+  } : null;
   const env = {
     SHOPIFY_API_KEY: 'phase2-client', SHOPIFY_API_SECRET: secret,
     SHOPIFY_SHOP_DOMAIN: 'printmo-test.myshopify.com', PARTNER_USER_IDS: 'partner-1',
     UPSTREAM_BASE: 'https://render.example.test', ORDER_MANAGER_ADMIN_KEY: 'render-admin-key',
     MIGRATION_UPSTREAM_ENABLED: '1',
     ORDER_DB: createD1(schema),
-    R2_BUCKET: {
-      async get(key) {
-        if (key !== 'orders/60129381/assets/asset-1/art.png') return null;
+    PREVIEWS: {
+      async head(key) { return key === designerSourceKey ? { key, size: designerBytes.byteLength } : null; },
+      async get(key) { return key === designerSourceKey ? r2Object({ bytes: designerBytes, contentType: 'image/png' }) : null; },
+      async list({ prefix }) {
         return {
-          body: 'private-artwork', httpEtag: 'etag-1',
-          writeHttpMetadata(headers) { headers.set('Content-Type', 'image/png'); }
+          objects: designerSourceKey.startsWith(prefix) ? [{ key: designerSourceKey, size: designerBytes.byteLength }] : [],
+          truncated: false,
+          cursor: null,
         };
-      }
+      },
+    },
+    R2_BUCKET: {
+      async put(key, bytes, options = {}) {
+        privateObjects.set(key, {
+          bytes: new Uint8Array(bytes),
+          contentType: options.httpMetadata?.contentType || 'application/octet-stream',
+        });
+      },
+      async get(key) { return r2Object(privateObjects.get(key)); },
     }
   };
   const headers = { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' };
@@ -316,13 +347,28 @@ async function run() {
     }), env);
     assert.equal(invalidWebhook.status, 401, 'invalid webhook HMAC must be rejected');
 
-    const board = await worker.fetch(new Request('https://worker.test/order-manager/v1/orders?stage=received', { headers }), env);
+    let assetBackfill = null;
+    const board = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/orders?stage=received', { headers }),
+      env,
+      { waitUntil(promise) { assetBackfill = promise; } }
+    );
     assert.equal(board.status, 200, 'board endpoint must return a merged v1 DTO');
     const boardJson = await board.json();
     assert.equal(boardJson.data[0].id, shopifyNode().id);
     assert.equal(boardJson.data[0].commerce.lineItems[0].currentQuantity, 2);
+    assert.equal(boardJson.data[0].commerce.lineItems[0].customAttributes[0].key, '_designref');
     assert.equal(boardJson.data[0].production.stage, 'received');
+    assert.equal(boardJson.data[0].production.assets.length, 1, 'Designer Studio preview must be imported into the private asset manifest');
+    assert.equal(boardJson.data[0].production.assets[0].role, 'mockup');
+    assert.equal(boardJson.data[0].production.assets[0].lineItemId, 'gid://shopify/LineItem/101');
+    assert(!JSON.stringify(boardJson.data[0].production.assets).includes('orders/60129381/assets/'), 'board DTO must not expose private R2 object keys');
     assert.equal(boardJson.data[0].sync.stale, false);
+    if (assetBackfill) await assetBackfill;
+    const assetCheckpoint = await env.ORDER_DB.prepare(
+      `SELECT checkpoint FROM reconciliation_checkpoints WHERE name = 'designer-studio-assets-v1'`
+    ).first();
+    assert(assetCheckpoint?.checkpoint, 'active-order Designer Studio backfill must record its idempotent completion checkpoint');
 
     const renderCallsBeforePreview = calls.filter(call => call.target.startsWith('https://render.example.test')).length;
     const preview = await worker.fetch(new Request('https://worker.test/order-manager/v1/shopify-preview/orders?limit=50', { headers }), env);
@@ -442,6 +488,12 @@ async function run() {
   assert(previewController.includes('getShopifyPreviewOrderDetail'), 'preview controller must load details only when an order is opened');
   const webShim = fs.readFileSync(path.join(root, 'order-manager-web', 'web-shim.js'), 'utf8');
   assert(webShim.includes('apiErrorMessage'), 'web errors must render structured Worker errors instead of [object Object]');
+  assert(webShim.includes('candidateAssetObjectUrl'), 'Shopify board must hydrate private Designer Studio manifests through authenticated asset tickets');
+  assert(source.includes('customAttributes { key value }'), 'Shopify board summaries must retain Designer Studio line-item properties');
+  assert(source.includes('designer-studio-sync'), 'Shopify summary reconciliation must import Designer Studio assets into private R2');
+  assert(source.includes('designer-studio-assets-v1'), 'active-order Designer Studio backfill must have an idempotent checkpoint');
+  const webRenderer = fs.readFileSync(path.join(root, 'order-manager-web', 'renderer.js'), 'utf8');
+  assert(webRenderer.includes('assetId'), 'shared web renderer must recognize private manifest assets without public /orders/ URLs');
   const previewCss = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-preview.css'), 'utf8');
   assert(
     !/body\\[data-order-source=["']shopify["']\\]\\s+#orders-view\\s*\\{[^}]*display:\\s*none/im.test(previewCss),
