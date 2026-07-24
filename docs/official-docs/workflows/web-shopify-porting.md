@@ -94,7 +94,7 @@ The detail response is grouped under these stable UI-facing properties:
 
 The source adapter is `order-manager-web/web-shim.js`; source switching and diagnostic detail are in `shopify-preview.js`; canonical APIs live in `order-manager-proxy/worker.js`; the Admin block is under `order-manager-proxy/extensions/printmo-production-status/`.
 
-**Candidate release (2026-07-23):** Worker `f9fee090-bffc-4316-b8c6-4156aa249192`, Pages deployment `83f3fc78`, Shopify app version `designer-assets-idempotency-2026-07-23`, and supplier gateway commit `420ff72`. The Designer Studio backfill completed with 12/12 active candidates imported and zero failures. Final migration/acceptance and owner-approved cutover remain separate gates.
+**Candidate release (2026-07-23):** Worker `f9fee090-bffc-4316-b8c6-4156aa249192`, Pages deployment `3da86eec`, Shopify app version `designer-assets-idempotency-2026-07-23`, and supplier gateway commit `420ff72`. The Pages release includes the shared-renderer guard for the Shopify detail layout's intentionally absent legacy Files button. The Designer Studio backfill completed with 12/12 active candidates imported and zero failures. Final migration/acceptance and owner-approved cutover remain separate gates.
 
 #### Shopify access requirements and current limitation
 

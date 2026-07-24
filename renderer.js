@@ -1140,7 +1140,11 @@ function openDetail(o) {
     applyBtn.classList.add('hidden');
   };
 
-  document.getElementById('detail-files-btn').onclick = () => openFilesModal(o);
+  // The desktop detail surface still exposes the legacy aggregate Files button.
+  // The Shopify web detail surface renders mockups/design files inline instead,
+  // so this control is intentionally absent there.
+  const detailFilesBtn = document.getElementById('detail-files-btn');
+  if (detailFilesBtn) detailFilesBtn.onclick = () => openFilesModal(o);
 
   // show overlay
   document.getElementById('detail-overlay')

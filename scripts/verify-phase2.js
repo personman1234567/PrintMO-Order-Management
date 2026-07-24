@@ -494,6 +494,11 @@ async function run() {
   assert(source.includes('designer-studio-assets-v1'), 'active-order Designer Studio backfill must have an idempotent checkpoint');
   const webRenderer = fs.readFileSync(path.join(root, 'order-manager-web', 'renderer.js'), 'utf8');
   assert(webRenderer.includes('assetId'), 'shared web renderer must recognize private manifest assets without public /orders/ URLs');
+  const sharedRenderer = fs.readFileSync(path.join(root, 'renderer.js'), 'utf8');
+  assert(
+    sharedRenderer.includes('if (detailFilesBtn)'),
+    'shared detail renderer must tolerate the Shopify layout omitting the legacy aggregate Files button'
+  );
   const previewCss = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-preview.css'), 'utf8');
   assert(
     !/body\\[data-order-source=["']shopify["']\\]\\s+#orders-view\\s*\\{[^}]*display:\\s*none/im.test(previewCss),

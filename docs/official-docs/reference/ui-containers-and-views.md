@@ -105,6 +105,7 @@ Below is the complete inventory of all 10 modal overlays and secondary screens e
   - **Financial Summary** (`#detail-summary`): Line item discount totals (`#detail-discount`) and Order Grand Total (`#detail-total`).
   - **Checklist Controls** (`#ready-controls`): Status toggle checkboxes (`chk-blanks`, `chk-prints`, `chk-blanks-ordered`, `chk-prints-ordered`) and `Apply` button (`#ready-apply`).
   - **Design Files Side Panel** (`#detail-design-panel`): Dedicated print file sidebar categorized by `Front Prints` (`#design-front-list`), `Back Prints` (`#design-back-list`), and `Extras` (`#design-extras-list`), with file download triggers.
+  - **Surface-specific file access**: The desktop detail retains the legacy aggregate `#detail-files-btn` and attachments modal. The Shopify web detail intentionally omits that button because mockups and design files render inline. Shared renderer code must treat `#detail-files-btn` as optional; an unconditional listener assignment prevents the web overlay from opening.
 
 ### 2. Batch Order Summary Drawer (`.summary`)
 - **Purpose**: Displays pre-submission totals for blank apparel orders staged in `#col-toOrder`.
