@@ -52,7 +52,7 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Shopify Board | Switch to **Shopify board**, drag a card, edit notes/readiness/progress, and refresh | Same Kanban persists from Shopify/D1 and conflicts refresh instead of overwriting |
 | Shopify Admin Order Block | Open an order after the coordinated release | Block loads the selected GID, shows stage/progress summary and labeled controls, and converges with the Shopify board |
 | Candidate S&S Batch | Keep `SS_TEST_ORDER=1`; submit selected candidate orders once | D1 batch becomes confirmed, one supplier test order is returned, and Shopify stages become `blanks_ordered` |
-| Candidate Empty-State Safety | Use an unmigrated D1 database | Worker returns `BOARD_NOT_INITIALIZED`; UI restores the previous board rather than displaying zero |
+| Candidate Bootstrap and Empty-State Safety | Use a fresh D1 database, then repeat with the initial Shopify read forced to fail | A successful bounded read records `bootstrap` and returns the populated board; a failed read returns `BOARD_NOT_INITIALIZED` and the UI keeps the previous board instead of displaying zero |
 
 ---
 

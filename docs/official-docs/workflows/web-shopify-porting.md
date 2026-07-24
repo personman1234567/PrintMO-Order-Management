@@ -92,7 +92,7 @@ The detail response is grouped under these stable UI-facing properties:
 
 The source adapter is `order-manager-web/web-shim.js`; source switching and diagnostic detail are in `shopify-preview.js`; canonical APIs live in `order-manager-proxy/worker.js`; the Admin block is under `order-manager-proxy/extensions/printmo-production-status/`.
 
-**Candidate release (2026-07-23):** Worker `ca3b2acd-1fd1-49e0-9961-b22fbdca7939`, Pages deployment `14e995f2`, Shopify app version `task3-shopify-primary-2026-07-23`, and supplier gateway commit `420ff72`. Production scope approval and migration/acceptance are still required before cutover.
+**Candidate release (2026-07-23):** Worker `c7622432-0a5b-4071-a8be-cb10014dd0f5`, Pages deployment `b33302b4`, Shopify app version `task3-shopify-primary-2026-07-23`, and supplier gateway commit `420ff72`. Production scope approval and migration/acceptance are still required before cutover.
 
 #### Shopify access requirements and current limitation
 

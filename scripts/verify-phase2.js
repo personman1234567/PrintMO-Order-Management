@@ -149,6 +149,7 @@ async function run() {
     archivedAt: null, archivedBy: null, updatedAt: '2026-07-20T15:30:00Z', updatedBy: 'fixture'
   };
   let productionDigest = 'digest-1';
+  let failBootstrap = false;
   const calls = [];
   const nativeFetch = globalThis.fetch;
   globalThis.fetch = async (url, options = {}) => {
@@ -209,6 +210,37 @@ async function run() {
           totalDiscountSet: { shopMoney: { amount: '0.00', currencyCode: 'USD' } }, priceAfterAllDiscountsBeforeTaxesSet: { shopMoney: { amount: '5.00', currencyCode: 'USD' } }, discountAllocations: []
         }], pageInfo: { hasNextPage: false, endCursor: null } } } } });
       }
+      if (request.query.includes('PrintMOBootstrapOrders')) {
+        if (failBootstrap) {
+          return Response.json({
+            data: null,
+            errors: [{ message: 'Fixture bootstrap failure', extensions: { code: 'INTERNAL_SERVER_ERROR' } }],
+          });
+        }
+        return Response.json({
+          data: {
+            orders: {
+              nodes: [{
+                id: shopifyNode().id,
+                name: shopifyNode().name,
+                createdAt: shopifyNode().createdAt,
+                updatedAt: shopifyNode().updatedAt,
+                displayFinancialStatus: 'PAID',
+                metafield: {
+                  id: 'gid://shopify/Metafield/1',
+                  namespace: 'app--fixture--printmo',
+                  key: 'production_state_v1',
+                  value: JSON.stringify(productionState),
+                  compareDigest: productionDigest,
+                  updatedAt: productionState.updatedAt,
+                },
+              }],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          },
+          extensions: { cost: { requestedQueryCost: 12, actualQueryCost: 7, throttleStatus: { maximumAvailable: 1000, currentlyAvailable: 981, restoreRate: 50 } } },
+        });
+      }
       if (request.query.includes('PrintMOShopifyPreviewOrders')) {
         return new Response(JSON.stringify({
           data: { orders: { nodes: [shopifyNode()], pageInfo: { hasNextPage: false, endCursor: null } } },
@@ -243,12 +275,25 @@ async function run() {
   };
 
   try {
-    const uninitializedBoard = await worker.fetch(
+    failBootstrap = true;
+    const failedBootstrap = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/orders', { headers }),
+      { ...env, ORDER_DB: createD1(schema) }
+    );
+    failBootstrap = false;
+    assert.equal(failedBootstrap.status, 503, 'a failed initial Shopify read must not look like an empty board');
+    assert.equal((await failedBootstrap.json()).error.code, 'BOARD_NOT_INITIALIZED');
+
+    const bootstrappedBoard = await worker.fetch(
       new Request('https://worker.test/order-manager/v1/orders', { headers }),
       env
     );
-    assert.equal(uninitializedBoard.status, 503, 'an unmigrated empty projection must not look like an authoritative empty board');
-    assert.equal((await uninitializedBoard.json()).error.code, 'BOARD_NOT_INITIALIZED');
+    assert.equal(bootstrappedBoard.status, 200, 'an empty projection must perform one bounded Shopify bootstrap');
+    assert.equal((await bootstrappedBoard.json()).data[0].id, shopifyNode().id);
+    const bootstrapCheckpoint = await env.ORDER_DB.prepare(
+      `SELECT checkpoint FROM reconciliation_checkpoints WHERE name = 'bootstrap'`
+    ).first();
+    assert(bootstrapCheckpoint?.checkpoint, 'successful initial Shopify read must record a bootstrap checkpoint');
 
     const webhookBody = JSON.stringify({ id: '60129381', admin_graphql_api_id: shopifyNode().id, name: '#1001', order_number: 1001 });
     const hmac = crypto.createHmac('sha256', secret).update(webhookBody).digest('base64');
@@ -395,6 +440,8 @@ async function run() {
   assert(previewHtml.includes('shopify-preview-detail'), 'web UI must include the Shopify-only order detail dialog');
   const previewController = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-preview.js'), 'utf8');
   assert(previewController.includes('getShopifyPreviewOrderDetail'), 'preview controller must load details only when an order is opened');
+  const webShim = fs.readFileSync(path.join(root, 'order-manager-web', 'web-shim.js'), 'utf8');
+  assert(webShim.includes('apiErrorMessage'), 'web errors must render structured Worker errors instead of [object Object]');
   console.log('Phase 2 shadow data plane verification passed.');
 }
 

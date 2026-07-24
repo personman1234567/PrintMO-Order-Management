@@ -1,6 +1,19 @@
 // web-shim.js — backed by your Cloudflare Worker proxy (NO admin key in client)
 const API_BASE = "https://order-manager-proxy.printmobusiness.workers.dev";
 
+function apiErrorMessage(value) {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value !== "object") return String(value);
+  const code = value.code ? String(value.code) : "";
+  const message = value.message ? String(value.message) : "";
+  const requestId = value.requestId ? `Request ${value.requestId}` : "";
+  if (code && message) return `${code}: ${message}${requestId ? ` (${requestId})` : ""}`;
+  if (message) return `${message}${requestId ? ` (${requestId})` : ""}`;
+  if (code) return `${code}${requestId ? ` (${requestId})` : ""}`;
+  return requestId || "The server returned an unexpected error.";
+}
+
 async function apiFetch(path, opts = {}) {
   const { rawResponse, expect, ...rest } = opts;
   const headers = new Headers(rest.headers || {});
@@ -26,7 +39,7 @@ async function apiFetch(path, opts = {}) {
       try {
         const data = JSON.parse(text);
         const msg = data?.error || data?.message || data?.msg;
-        if (msg) return String(msg);
+        if (msg) return apiErrorMessage(msg);
       } catch (_) {
         // not JSON, fall through
       }

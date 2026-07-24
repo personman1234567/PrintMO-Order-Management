@@ -63,7 +63,21 @@ Verify:
 - invalid/missing D1 does not render an authoritative empty board;
 - private artwork requires a valid short-lived ticket.
 
-## 6. Cutover
+## 6. Security Hardening Gate
+
+Before owner go/no-go:
+
+1. Restrict CORS to exact production and explicitly approved staging origins.
+2. Set a response-header CSP with Shopify Admin `frame-ancestors`; tighten script sources and remove `'unsafe-inline'` where feasible.
+3. Apply Worker and supplier-gateway rate limits by verified identity and sensitive route.
+4. Configure dedicated cursor/asset-ticket signing secrets, constant-time verification, and a rotation procedure.
+5. Alert on elevated `401`/`403`/`5xx`, D1 failures, failed webhook receipts, `SYNC_PENDING`, reconciliation errors, and `unknown` S&S batches.
+6. Verify logs contain no bearer tokens, signed URLs, addresses, contacts, payment details, production notes, or asset bytes.
+7. Confirm Cloudflare, Shopify, Render, and GitHub operator accounts use MFA and least-privilege access.
+
+Do not describe these controls as active until their configuration and verification evidence exist.
+
+## 7. Cutover
 
 Cutover requires owner go/no-go.
 
@@ -85,4 +99,3 @@ Do not delete Redis or enable live S&S ordering as part of the same unobserved c
 - Projection loss: rebuild from Shopify metafields and commerce reads.
 - Confirmed supplier order with metadata repair list: do not resubmit; run integrity reconciliation.
 - D1 corruption: use Time Travel/export, then rebuild projections from Shopify.
-

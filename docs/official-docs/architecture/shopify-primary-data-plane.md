@@ -14,8 +14,8 @@
 
 Candidate deployment on 2026-07-23:
 
-- Worker version: `ca3b2acd-1fd1-49e0-9961-b22fbdca7939`
-- Pages deployment: `14e995f2.print-mo-order-manager.pages.dev`
+- Worker version: `c7622432-0a5b-4071-a8be-cb10014dd0f5`
+- Pages deployment: `b33302b4.print-mo-order-manager.pages.dev`
 - Shopify app version: `task3-shopify-primary-2026-07-23`
 - Stateless supplier gateway commit: `420ff72`
 
@@ -83,7 +83,7 @@ The Worker binding is `ORDER_DB`. The production database is `printmo-order-mana
 
 ## Board Reads
 
-`GET /order-manager/v1/orders` enumerates D1 projection rows in pages of at most 50. Stale commerce summaries refresh through the per-shop Durable Object in Shopify `nodes` chunks. The endpoint refuses an authoritative empty board until migration or initial reconciliation has recorded a checkpoint.
+`GET /order-manager/v1/orders` enumerates D1 projection rows in pages of at most 50. On a new or rebuilt database, the per-shop Durable Object performs one bounded read-only bootstrap of up to 50 recent paid/open Shopify orders, reads any existing canonical metafields, refreshes summaries in `nodes` chunks, and records a `bootstrap` checkpoint. Until that Shopify read succeeds, the endpoint returns `BOARD_NOT_INITIALIZED` instead of presenting an authoritative empty board. Stale commerce summaries then refresh through the same coordinator.
 
 `GET /order-manager/v1/orders/:gid` loads rich Shopify detail on demand and merges it with the canonical production metafield and D1 asset manifests.
 
@@ -127,3 +127,18 @@ Asset reads resolve the manifest from D1 and issue a signed 60-second ticket. R2
 | `SS_TEST_ORDER` | `1` | `0` only after explicit production approval |
 
 These are server-side Worker variables. Credentials remain secrets and never enter browser code.
+
+## Security Baseline and Remaining Hardening
+
+Active controls include signed Shopify/OIDC bearer validation, configured-shop and partner-user allowlists, raw-body webhook HMAC verification, webhook deduplication, prepared D1 statements, allowlisted production patches, Shopify compare-digest concurrency, mutation idempotency, private R2 storage, short-lived authenticated asset tickets, and server-only infrastructure credentials.
+
+Before final cutover, complete these defense-in-depth items:
+
+- replace broad Pages suffix CORS with exact deployed origins;
+- deliver a response-header CSP with Shopify-specific `frame-ancestors`, then remove broad `https:` and `'unsafe-inline'` script allowances where practical;
+- enforce per-identity/per-route request limits at the Worker and supplier gateway;
+- use dedicated, rotatable cursor/asset-ticket signing secrets and constant-time verification;
+- alert on authentication spikes, Worker/D1 failures, failed webhook receipts, `SYNC_PENDING` mutations, projection errors, and `unknown` supplier batches;
+- disable the migration and legacy-ingestion bridges immediately after their approved windows.
+
+These remaining items are cutover gates, not claims about current shipped behavior.

@@ -2180,9 +2180,20 @@ const UPDATED_ORDERS_QUERY = `query PrintMOUpdatedOrders($query: String!, $after
     pageInfo { hasNextPage endCursor }
   }
 }`;
-
 const PRODUCTION_METAFIELD_NAMESPACE = '$app:printmo';
 const PRODUCTION_METAFIELD_KEY = 'production_state_v1';
+const BOOTSTRAP_ORDERS_QUERY = `query PrintMOBootstrapOrders($query: String!, $first: Int!) {
+  orders(first: $first, sortKey: CREATED_AT, reverse: true, query: $query) {
+    nodes {
+      id name createdAt updatedAt displayFinancialStatus
+      metafield(namespace: "${PRODUCTION_METAFIELD_NAMESPACE}", key: "${PRODUCTION_METAFIELD_KEY}") {
+        id namespace key type value compareDigest createdAt updatedAt
+      }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}`;
+
 const PRODUCTION_STAGES = new Set(['received', 'to_order', 'blanks_cart', 'blanks_ordered', 'print', 'completed']);
 const PRODUCTION_STATE_QUERY = `query PrintMOProductionState($id: ID!) {
   order(id: $id) {
@@ -2784,6 +2795,88 @@ async function refreshThroughCoordinator(env, gids) {
     return body.summaries || [];
 }
 
+async function bootstrapInitialBoard(env, graphQL = shopifyGraphQLWithRetry) {
+    const shop = await d1Shop(env);
+    const db = requireOrderDb(env);
+    const existing = await db.prepare(`
+      SELECT checkpoint, last_result_json
+      FROM reconciliation_checkpoints
+      WHERE shop_id = ? AND name = 'bootstrap'
+    `).bind(shop.id).first();
+    if (existing) {
+        let previous = null;
+        try { previous = existing.last_result_json ? JSON.parse(existing.last_result_json) : null; } catch (_) {}
+        return { ok: true, alreadyInitialized: true, ...(previous || {}) };
+    }
+
+    const startedAt = isoNow();
+    const result = await graphQL(
+        env,
+        BOOTSTRAP_ORDERS_QUERY,
+        { query: 'financial_status:paid status:open', first: 50 },
+        'PrintMOBootstrapOrders'
+    );
+    const connection = requireShopifyData(result, 'PrintMOBootstrapOrders').orders;
+    if (!connection) {
+        throw Object.assign(new Error('Initial Shopify reconciliation returned no orders connection.'), {
+            code: 'BOOTSTRAP_ORDERS_MISSING',
+            status: 502
+        });
+    }
+
+    const gids = [];
+    for (const order of connection.nodes || []) {
+        const gid = canonicalOrderGid(order?.id);
+        if (!gid) continue;
+        const production = parseProductionMetafield(order.metafield, 'bootstrap');
+        await d1ProjectionUpsert(
+            env,
+            shop.id,
+            gid,
+            production.state,
+            production.compareDigest,
+            undefined,
+            order
+        );
+        gids.push(gid);
+    }
+    if (gids.length) await refreshSummaries(env, gids, graphQL);
+
+    const completedAt = isoNow();
+    const report = {
+        ok: true,
+        projected: gids.length,
+        truncated: Boolean(connection.pageInfo?.hasNextPage),
+        query: 'financial_status:paid status:open',
+        completedAt
+    };
+    await db.prepare(`
+      INSERT INTO reconciliation_checkpoints (
+        shop_id, name, checkpoint, last_started_at, last_completed_at, last_result_json
+      ) VALUES (?, 'bootstrap', ?, ?, ?, ?)
+      ON CONFLICT(shop_id, name) DO UPDATE SET
+        checkpoint = excluded.checkpoint,
+        last_started_at = excluded.last_started_at,
+        last_completed_at = excluded.last_completed_at,
+        last_result_json = excluded.last_result_json
+    `).bind(shop.id, completedAt, startedAt, completedAt, JSON.stringify(report)).run();
+    return report;
+}
+
+async function bootstrapThroughCoordinator(env) {
+    if (!env.ORDER_SYNC_COORDINATOR) return bootstrapInitialBoard(env, shopifyGraphQLWithRetry);
+    const id = env.ORDER_SYNC_COORDINATOR.idFromName(shopDomain(env));
+    const response = await env.ORDER_SYNC_COORDINATOR.get(id).fetch(new Request('https://internal/bootstrap'));
+    const body = await response.json();
+    if (!response.ok) {
+        throw Object.assign(new Error(body?.error || 'Initial Shopify reconciliation failed'), {
+            code: 'BOARD_BOOTSTRAP_FAILED',
+            status: response.status
+        });
+    }
+    return body;
+}
+
 function computeProductionDiff(summary, snapshot) {
     if (!snapshot || !summary?.commerce) return [];
     const reasons = [];
@@ -3202,10 +3295,16 @@ async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders) {
               LIMIT 1
             `).bind(shop.id).first();
             if (!initialized) {
-                return v1Error({
-                    code: 'BOARD_NOT_INITIALIZED',
-                    message: 'The Shopify board has not completed its first migration or reconciliation.'
-                }, allowOrigin, reqAllowHeaders, 503);
+                try {
+                    await bootstrapThroughCoordinator(env);
+                    page = await loadDataPage(env, stage, limit, offset);
+                } catch (error) {
+                    console.error('Initial Shopify board reconciliation failed:', error.message);
+                    return v1Error({
+                        code: 'BOARD_NOT_INITIALIZED',
+                        message: `The Shopify board could not complete its initial read: ${error.message}`
+                    }, allowOrigin, reqAllowHeaders, 503);
+                }
             }
         }
         const staleGids = (page.records || []).filter(record => {
@@ -4110,6 +4209,7 @@ export class OrderSyncCoordinator {
         this.throttle = { currentlyAvailable: 1000, maximumAvailable: 1000, restoreRate: 50, updatedAt: Date.now() };
         this.estimates = new Map();
         this.inflightRefreshes = new Map();
+        this.inflightBootstrap = null;
     }
 
     async reserve(operationName) {
@@ -4152,6 +4252,17 @@ export class OrderSyncCoordinator {
             .finally(() => this.inflightRefreshes.delete(key));
         this.inflightRefreshes.set(key, promise);
         return promise;
+    }
+
+    async bootstrap() {
+        if (this.inflightBootstrap) return this.inflightBootstrap;
+        this.inflightBootstrap = bootstrapInitialBoard(
+            this.env,
+            (_env, query, variables, operationName) => this.graphql(query, variables, operationName)
+        ).finally(() => {
+            this.inflightBootstrap = null;
+        });
+        return this.inflightBootstrap;
     }
 
     async reconcileIncremental() {
@@ -4275,6 +4386,7 @@ export class OrderSyncCoordinator {
                 const body = await request.json();
                 return Response.json({ summaries: await this.refresh(body.gids || []) });
             }
+            if (url.pathname === '/bootstrap') return Response.json(await this.bootstrap());
             if (url.pathname === '/reconcile-incremental') return Response.json(await this.reconcileIncremental());
             if (url.pathname === '/reconcile-integrity') return Response.json(await this.reconcileIntegrity());
             return new Response('Not Found', { status: 404 });

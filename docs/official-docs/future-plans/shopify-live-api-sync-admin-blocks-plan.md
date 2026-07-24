@@ -303,6 +303,11 @@ At cutover, **Shopify board** becomes the default. The legacy board becomes a hi
 - Clients receive no Shopify Admin token, D1/R2 credentials, S&S key, or infrastructure secret.
 - Minimum expected Shopify scopes are `read_orders`, `write_orders`, and `read_all_orders`, plus only scopes already justified by verified rich detail.
 - Production metafields have no storefront or customer-account access.
+- Before cutover, replace broad Pages-suffix CORS with exact origins.
+- Move CSP to response headers with Shopify-specific `frame-ancestors`; narrow script sources and remove `'unsafe-inline'` where feasible.
+- Add per-identity/per-route limits at the Worker and supplier gateway.
+- Use dedicated rotatable cursor/asset-ticket signing secrets with constant-time verification.
+- Alert on auth spikes, `5xx`, D1 errors, failed webhook receipts, `SYNC_PENDING`, reconciliation failures, and `unknown` supplier batches.
 
 ---
 
@@ -388,6 +393,15 @@ This is one delivery task with ordered internal work packages. Compilation or on
 - [ ] Prove production works with Redis network access unavailable.
 - [ ] Retain only dated export/read-only service snapshot pending deletion approval; neither is a runtime dependency.
 - [ ] Graduate contracts into current-state docs and mark this plan `[Graduated]`.
+
+### G. Complete security hardening
+
+- [ ] Restrict CORS to exact approved production/staging origins.
+- [ ] Deliver and verify response-header CSP and Shopify Admin `frame-ancestors`.
+- [ ] Add and test Worker/supplier rate limits without breaking Shopify webhook retries.
+- [ ] Separate and rotate asset-ticket/cursor signing secrets; use constant-time verification.
+- [ ] Configure actionable security/reliability alerts and verify redacted logs.
+- [ ] Verify MFA and least privilege for Cloudflare, Shopify, Render, and GitHub operators.
 
 ---
 
