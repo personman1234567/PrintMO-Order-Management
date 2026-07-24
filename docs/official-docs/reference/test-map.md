@@ -53,6 +53,7 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Shopify Admin Order Block | Open an order after the coordinated release | Block loads the selected GID, shows stage/progress summary and labeled controls, and converges with the Shopify board |
 | Candidate S&S Batch | Keep `SS_TEST_ORDER=1`; submit selected candidate orders once | D1 batch becomes confirmed, one supplier test order is returned, and Shopify stages become `blanks_ordered` |
 | Candidate Bootstrap and Empty-State Safety | Use a fresh D1 database, then repeat with the initial Shopify read forced to fail | A successful bounded read records `bootstrap` and returns the populated board; a failed read returns `BOARD_NOT_INITIALIZED` and the UI keeps the previous board instead of displaying zero |
+| Shared Board Source Visibility | Run `npm run verify:phase2`, then switch between Legacy Redis and Shopify board | Both sources keep `#orders-view` visible; obsolete diagnostic CSS cannot blank the Shopify workspace |
 
 ---
 

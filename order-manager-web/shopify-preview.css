@@ -775,10 +775,6 @@
   font-size: 0.76rem;
 }
 
-body[data-order-source="shopify"] #orders-view {
-  display: none !important;
-}
-
 @media (max-width: 900px) {
   .order-source-switch {
     width: 100%;
@@ -866,10 +862,6 @@ body[data-order-source="shopify"] #orders-view {
     min-height: 36px;
   }
 
-  body.mobile-mode[data-order-source="shopify"] .mobile-tab-bar,
-  body.mobile-mode[data-order-source="shopify"] .mobile-blanks-subnav {
-    display: none !important;
-  }
 }
 
 @media (max-width: 560px) {

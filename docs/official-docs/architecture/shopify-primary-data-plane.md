@@ -15,7 +15,7 @@
 Candidate deployment on 2026-07-23:
 
 - Worker version: `c7622432-0a5b-4071-a8be-cb10014dd0f5`
-- Pages deployment: `b33302b4.print-mo-order-manager.pages.dev`
+- Pages deployment: `4b211eb8.print-mo-order-manager.pages.dev`
 - Shopify app version: `task3-shopify-primary-2026-07-23`
 - Stateless supplier gateway commit: `420ff72`
 

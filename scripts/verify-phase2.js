@@ -442,6 +442,11 @@ async function run() {
   assert(previewController.includes('getShopifyPreviewOrderDetail'), 'preview controller must load details only when an order is opened');
   const webShim = fs.readFileSync(path.join(root, 'order-manager-web', 'web-shim.js'), 'utf8');
   assert(webShim.includes('apiErrorMessage'), 'web errors must render structured Worker errors instead of [object Object]');
+  const previewCss = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-preview.css'), 'utf8');
+  assert(
+    !/body\\[data-order-source=["']shopify["']\\]\\s+#orders-view\\s*\\{[^}]*display:\\s*none/im.test(previewCss),
+    'Shopify source must keep the shared operational board visible'
+  );
   console.log('Phase 2 shadow data plane verification passed.');
 }
 
