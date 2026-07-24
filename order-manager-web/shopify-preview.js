@@ -614,9 +614,7 @@
         const nextFeedback = section.querySelector('.shopify-production-feedback');
         if (nextFeedback) {
           nextFeedback.classList.add('is-success');
-          nextFeedback.textContent = result?.mirroredLegacy
-            ? 'Saved to PrintMO and the Redis production board.'
-            : 'Saved to PrintMO.';
+          nextFeedback.textContent = 'Saved to Shopify and the PrintMO board projection.';
         }
       } catch (error) {
         if (state.detailOrderId !== orderId) return;
@@ -643,7 +641,7 @@
     const heading = element('div');
     heading.append(
       element('h3', '', 'PrintMO production'),
-      element('p', '', 'Operational metadata shared with the current Redis production board.'),
+      element('p', '', 'Operational metadata stored canonically on this Shopify order.'),
     );
     const stage = normalizeProduction(production).stage;
     const stageName = productionStages.find(([value]) => value === stage)?.[1] || 'Received';
@@ -677,7 +675,7 @@
   function renderOrderDetail(order, result) {
     els.detailTitle.textContent = `${order.displayName || 'Order'} · Shopify live`;
     const cacheLabel = result?.cached ? '5-minute detail cache' : 'live Shopify response';
-    els.detailMeta.textContent = `${cacheLabel} · Fetched ${formatDate(result?.fetchedAt)} · Production controls sync through PrintMO metadata`;
+    els.detailMeta.textContent = `${cacheLabel} · Fetched ${formatDate(result?.fetchedAt)} · Production controls use canonical Shopify metadata`;
     const production = detailSection('PrintMO production', 'Loading operational metadata…');
     production.classList.add('shopify-production-section');
     const content = document.createDocumentFragment();
@@ -731,7 +729,7 @@
     } catch (error) {
       els.detailError.textContent = `Shopify order details could not load: ${error?.message || error}`;
       els.detailError.hidden = false;
-      els.detailMeta.textContent = 'The Redis production board remains safe and unchanged.';
+      els.detailMeta.textContent = 'The legacy Redis view remains isolated and unchanged.';
     } finally {
       state.detailLoading = false;
       els.detailLoading.hidden = true;
@@ -796,25 +794,41 @@
   }
 
   function setPreviewActive(active, { preserveActiveView = false } = {}) {
+    const previousSource = document.body.dataset.orderSource || 'redis';
     state.active = Boolean(active);
     document.body.dataset.orderSource = state.active ? 'shopify' : 'redis';
     syncSourceButtons(state.active ? 'shopify' : 'redis');
-    els.preview.hidden = !state.active;
-    els.preview.setAttribute('aria-hidden', state.active ? 'false' : 'true');
-    els.orders.hidden = state.active;
-    els.orders.setAttribute('aria-hidden', state.active ? 'true' : 'false');
+    // Both sources use the same production board. Only the data adapter changes.
+    els.preview.hidden = true;
+    els.preview.setAttribute('aria-hidden', 'true');
+    els.orders.hidden = false;
+    els.orders.setAttribute('aria-hidden', 'false');
 
     if (!state.active) closeOrderDetail();
     if (!preserveActiveView) setPrimaryOrderNav();
     setRefreshBusy(false);
-    if (state.active) loadPreview({ refresh: state.loaded });
+    if (typeof window.renderBoard === 'function') {
+      window.renderBoard().catch(async (error) => {
+        const failedSource = state.active ? 'Shopify board' : 'Legacy Redis';
+        console.error(`${failedSource} could not load`, error);
+        alert(`${failedSource} could not load. The previous board will stay active.\n\n${error?.message || error}`);
+        state.active = previousSource === 'shopify';
+        document.body.dataset.orderSource = previousSource;
+        syncSourceButtons(previousSource);
+        setRefreshBusy(false);
+        await window.renderBoard().catch((fallbackError) => {
+          console.error('Previous board could not be restored', fallbackError);
+        });
+      });
+    }
   }
 
   function handleRefresh(event) {
     if (!state.active) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    loadPreview({ refresh: true });
+    if (typeof window.refreshOrderManagerNow === 'function') window.refreshOrderManagerNow();
+    else if (typeof window.renderBoard === 'function') window.renderBoard();
   }
 
   document.addEventListener('DOMContentLoaded', () => {

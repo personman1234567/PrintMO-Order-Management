@@ -2,7 +2,7 @@
 
 ## Use This When
 - You are adding, modifying, or auditing any UI component, Kanban card tile, modal overlay, or display container in `index.html`, `renderer.js`, or `order-manager-web/`.
-- You need to determine what data fields are rendered in a specific UI container and where those fields originate from in the Redis `shopifyOrdersQueue` data model.
+- You need to determine what data fields are rendered in a specific UI container and where those fields originate from in either the legacy Redis queue or the Shopify candidate adapter.
 - You are adding new fields, badges, or buttons to collapsed order cards or detail overlays.
 
 ## Skip This When
@@ -22,7 +22,7 @@
 
 ## 1. Global Application Layout & Top-Level Containers
 
-The primary user interface is built as a three-column grid layout (`.container`) in desktop view, adapting to a tabbed navigation bar (`#mobile-tab-bar`) in constrained/mobile/Shopify Admin iframe views.
+The primary user interface is built as a three-column grid layout (`.container`) in desktop view, adapting to a tabbed navigation bar (`#mobile-tab-bar`) in constrained/mobile/Shopify Admin iframe views. In the embedded web app, the **Legacy Redis / Shopify board** source control reuses this same renderer. Legacy mode receives the original queue shape; Shopify mode maps the Worker board DTO into the renderer shape without reading or mutating Redis.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
@@ -148,7 +148,7 @@ Below is the complete inventory of all 10 modal overlays and secondary screens e
 
 ## 4. Data Field Source & Pipeline Mapping Table
 
-This table maps exact data fields from the Redis `shopifyOrdersQueue` JSON structure to their visual UI destination:
+This table maps the established renderer contract to its visual destinations. In Legacy Redis mode these fields come from `shopifyOrdersQueue`; in Shopify board mode `order-manager-web/web-shim.js` derives the commerce fields from Shopify/D1 DTOs and the writable production fields from the canonical Shopify metafield.
 
 | Data Field (JSON Schema) | Type | UI Destination & Element ID | Rendered Transformation / Format |
 |---|---|---|---|

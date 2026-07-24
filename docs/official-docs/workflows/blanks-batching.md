@@ -23,18 +23,22 @@ sequenceDiagram
     autonumber
     actor User
     participant UI as Renderer UI
-    participant Main as Main Process (main.js)
+    participant Worker as Cloudflare Worker
+    participant D1 as Cloudflare D1
+    participant Gateway as Stateless S&S gateway
     participant SS as S&S Activewear API
-    participant Redis as Redis Queue
 
     User->>UI: Drags Order Cards into Batch Zone
-    UI->>UI: Aggregate SKUs & Calculate Live Estimated Cost
-    User->>UI: Clicks "Submit to S&S"
-    UI->>Main: window.api.processBatch(toOrder)
-    Main->>SS: POST /api/orders (Consolidated SKU Payload)
-    SS-->>Main: HTTP 200 OK (PO # / Confirmation)
-    Main->>Redis: Update Status to "blanks" for selected orders
-    Main-->>UI: Return Success & Confirmation PO #
+    User->>UI: Clicks "Add to S&S Cart"
+    UI->>Worker: POST /v1/batches/commit (GIDs + idempotency key)
+    Worker->>D1: prepared -> submitting
+    Worker->>Gateway: Validated aggregate SKU lines
+    Gateway->>SS: POST /v2/orders
+    SS-->>Gateway: Confirmed order number
+    Gateway-->>Worker: Confirmed result
+    Worker->>D1: Store confirmed batch and attempt
+    Worker->>Worker: CAS Shopify production metafields
+    Worker-->>UI: Return PO and committed/repair state
     UI->>UI: Move Cards to "Blanks Ordered" Column
 ```
 
@@ -44,22 +48,25 @@ sequenceDiagram
 
 When orders are dragged into the batch zone:
 
-1. Extract `line_items` array from each selected order object.
-2. Filter items containing valid supplier `sku` strings.
-3. Group by `sku` and aggregate total required quantities:
+1. Resolve selected GIDs from active D1 projections and validate their production stages.
+2. Read complete Shopify-derived line items from the projection; exclude known print-service lines.
+3. Filter items containing valid supplier `sku` strings.
+4. Group by `sku` and aggregate total required quantities:
    $$\text{TotalQty}(\text{SKU}_k) = \sum_{i \in \text{SelectedOrders}} \text{ItemQty}_i(\text{SKU}_k)$$
-4. Query live per-unit pricing from S&S REST API and compute total estimated batch cost.
+5. Hash the canonical sorted line set and capture every selected production revision.
 
 ---
 
 ## 3. Batch Submission & State Update
 
-1. `main.js:process-batch` constructs the S&S PO payload and dispatches the request using basic authentication header (`SS_API_KEY`).
-2. Upon receiving a valid confirmation:
-   - For each order in the batch, set `.status = 'blanks'`.
-   - Record S&S purchase order reference ID into order metadata.
-   - Mutate entries in Redis via `LSET`.
-3. UI updates real-time board columns, shifting affected order cards to `Blanks Ordered`.
+1. The Worker inserts an idempotent D1 batch and allows only one transition to `submitting`.
+2. The Render gateway validates the already-aggregated lines, adds server-held credentials/payment/shipping configuration, performs pricing lookups, and posts to S&S without reading Redis.
+3. A confirmed S&S response is stored before Shopify metadata is advanced.
+4. Each selected order receives the PO in `batchRefs` and advances to `blanks_ordered` through compare-digest mutation.
+5. If the supplier confirms but metadata is incomplete, the response lists repair-required GIDs and nightly integrity reconciliation repairs them. The supplier order is never resent.
+6. A timeout or ambiguous gateway result is stored as `unknown` and requires reconciliation.
+
+Legacy Redis mode continues using its existing process-batch route until final cutover; candidate mode never calls it.
 
 ---
 

@@ -88,9 +88,7 @@ function Extension() {
       setDraft(next);
       setNotice({
         tone: 'success',
-        message: result?.mirroredLegacy
-          ? 'Saved to PrintMO and the Redis production board.'
-          : 'Saved to PrintMO.',
+        message: 'Saved to Shopify and the PrintMO board projection.',
       });
     } catch (error) {
       if (error?.status === 409 || error?.code === 'VERSION_CONFLICT') {
@@ -108,7 +106,10 @@ function Extension() {
   };
 
   return (
-    <s-admin-block heading="PrintMO production">
+    <s-admin-block
+      heading="PrintMO production"
+      collapsedSummary={draft ? `${stageLabel(draft.stage)} · ${draft.printedCount} printed` : 'Loading status'}
+    >
       <s-stack direction="block" gap="base">
         {notice && <s-banner tone={notice.tone}>{notice.message}</s-banner>}
 
@@ -136,26 +137,23 @@ function Extension() {
 
             <s-stack direction="inline" gap="base">
               <s-checkbox
+                label="Blanks ready"
                 checked={Boolean(draft.blanksStatus)}
                 disabled={saving}
                 onChange={(event) => update('blanksStatus', checkedValue(event) ? 1 : 0)}
-              >
-                Blanks ready
-              </s-checkbox>
+              />
               <s-checkbox
+                label="Prints ordered"
                 checked={Boolean(draft.printsOrdered)}
                 disabled={saving}
                 onChange={(event) => update('printsOrdered', checkedValue(event) ? 1 : 0)}
-              >
-                Prints ordered
-              </s-checkbox>
+              />
               <s-checkbox
+                label="Prints ready"
                 checked={Boolean(draft.printsStatus)}
                 disabled={saving}
                 onChange={(event) => update('printsStatus', checkedValue(event) ? 1 : 0)}
-              >
-                Prints ready
-              </s-checkbox>
+              />
             </s-stack>
 
             <s-stack direction="inline" gap="base">

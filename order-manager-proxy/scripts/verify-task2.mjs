@@ -16,8 +16,8 @@ const repoRoot = resolve(proxyRoot, '..');
 
 assert.deepEqual(
   STAGE_OPTIONS.map(({value}) => value),
-  ['received', 'to_order', 'blanks_cart', 'blanks_ordered', 'print'],
-  'Admin controls must expose only stages that can mirror to the legacy queue',
+  ['received', 'to_order', 'blanks_cart', 'blanks_ordered', 'print', 'completed'],
+  'Admin controls must expose every canonical Shopify production stage',
 );
 
 const baseline = normalizeProduction({
@@ -48,9 +48,14 @@ assert.match(extensionConfig, /api_version = "2026-07"/);
 assert.match(extensionConfig, /target = "admin\.order-details\.block\.render"/);
 assert.match(blockSource, /shopify\.data\?\.selected\?\.\[0\]\?\.id/);
 assert.match(blockSource, /expectedVersion: production\.version/);
+assert.match(blockSource, /collapsedSummary=/);
+assert.match(blockSource, /label="Blanks ready"/);
+assert.doesNotMatch(blockSource, /mirroredLegacy/);
 assert.match(webShim, /getProductionMetadata/);
 assert.match(webShim, /updateProductionMetadata/);
+assert.match(webShim, /isShopifyCandidateView/);
+assert.match(webShim, /\/order-manager\/v1\/batches\/commit/);
 assert.match(previewSource, /PrintMO production/);
-assert.match(previewSource, /Production controls sync through PrintMO metadata/);
+assert.match(previewSource, /Production controls use canonical Shopify metadata/);
 
-console.log('Task 2 Shopify production controls verification passed.');
+console.log('Shopify production controls and candidate-board verification passed.');

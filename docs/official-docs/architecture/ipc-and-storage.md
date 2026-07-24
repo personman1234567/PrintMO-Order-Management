@@ -58,7 +58,7 @@ Electron preserves the existing `window.api` IPC contract, but `main.js` now sen
 
 ## 3. Redis Data Schema (shopifyOrdersQueue)
 
-During Shopify-sync Phase 1 and Phase 2 shadow operation, this list remains the operational source of truth. Clients reach it only through the Worker, which calls the authenticated Render adapter. Phase 2 shadows the replacement hash/index schema in the same Redis Cloud database without changing the live queue contract.
+During candidate acceptance, this list remains the source for the explicitly labeled **Legacy Redis** view only. The **Shopify board** does not read, mirror, or mutate it; that view uses the app-owned Shopify production metafield plus D1/R2 as documented in `shopify-primary-data-plane.md`. Incoming paid-order ingestion may continue reaching the legacy list while `LEGACY_INGEST_ENABLED=1` so the old view remains usable before owner-approved cutover.
 
 The queue stores a JSON-serialized list under the key `shopifyOrdersQueue`:
 

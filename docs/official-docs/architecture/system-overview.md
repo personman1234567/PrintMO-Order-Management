@@ -26,10 +26,12 @@ flowchart TD
     RendererUI[Desktop Renderer UI renderer.js] -->|IPC Bridge preload.js| ElectronMain[Electron main.js]
     ElectronMain -->|OIDC bearer token| CFProxy
     WebClient[Web UI order-manager-web/] -->|Shopify bearer token| CFProxy
-    CFProxy -->|Authenticated HTTPS| RenderAdapter[Render data adapter]
-    RenderAdapter --> RedisQueue[(Redis Cloud)]
-    RenderAdapter --> SSAPI[S&S Activewear REST API]
+    CFProxy --> ShopifyState[Shopify commerce + PrintMO metafield]
+    CFProxy --> D1[(Cloudflare D1)]
     CFProxy --> R2[(Private Cloudflare R2)]
+    CFProxy -->|Validated aggregate lines| RenderAdapter[Stateless S&S gateway]
+    RenderAdapter --> SSAPI[S&S Activewear REST API]
+    CFProxy -. legacy-only routes before cutover .-> RedisQueue[(Redis Cloud)]
 ```
 
 ---
@@ -49,16 +51,16 @@ flowchart TD
 ### C. Cloudflare Proxy (`order-manager-proxy/`)
 - **Entry point**: `worker.js`.
 - **Target**: Cloudflare Workers serverless environment.
-- **Primary Responsibility**: Authenticates both clients, accesses Shopify, assembles stable DTOs, coordinates cache refreshes, verifies webhooks, and mediates R2. Redis/S&S operations are delegated to the authenticated Render adapter.
+- **Primary Responsibility**: Authenticates clients, accesses Shopify, owns the D1 projection/app state, coordinates refreshes, verifies webhooks, mediates private R2, and sends validated aggregate supplier lines to the stateless S&S gateway. Explicit legacy routes remain only while the old board is retained for acceptance.
 
 ---
 
 ## 3. Key System Invariants
 
-1. **Order Persistence**: During Phase 2 shadow mode, `shopifyOrdersQueue` remains operationally authoritative while Shopify commerce facts and the v1 Redis hash/index projection are synchronized in parallel.
-   The embedded web surface also offers a Shopify live preview backed by a bounded GraphQL list query plus an on-demand detail query. Shopify commerce fields remain read-only and the detail query itself never reads Redis. A separate PrintMO production panel reads and writes the v1 metadata hash; supported changes use compare-and-set and atomically mirror to the legacy queue during the transition. The Redis board remains the default after reload and its rendering/mutation path is unchanged. Customer PII is rendered only when Shopify returns approved protected fields.
-2. **Viewport Parity**: Both desktop and web platforms MUST maintain complete functional parity (viewing orders, batching blanks, adding attachments).
-3. **Secret Isolation**: Frontend code in `renderer.js` or `order-manager-web/` must never contain hardcoded API keys or database URLs.
+1. **Split acceptance boundary**: The legacy view still uses `shopifyOrdersQueue`. The Shopify board uses Shopify commerce, one app-owned production metafield, D1, and R2. Candidate edits never mirror to Redis. See `shopify-primary-data-plane.md`.
+2. **Canonical candidate writes**: Shopify `$app:printmo.production_state_v1` is the only writable per-order production record. D1 is a rebuildable projection plus authoritative app-only records; it is not a second order store.
+3. **Viewport Parity**: Both desktop and web platforms MUST maintain complete functional parity (viewing orders, batching blanks, adding attachments).
+4. **Secret Isolation**: Frontend code in `renderer.js` or `order-manager-web/` must never contain hardcoded API keys or database URLs.
 
 ---
 

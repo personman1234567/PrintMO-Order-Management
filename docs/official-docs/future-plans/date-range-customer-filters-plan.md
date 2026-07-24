@@ -7,13 +7,13 @@
 
 ## Summary & Intent
 
-Introduce date range filtering and customer search capabilities to the PrintMO Kanban dashboard. As order history in Redis expands over time, shop operators need to filter board views by custom date ranges (e.g. "Today", "This Week", "Custom Date Range") and filter cards by customer name, email, or shop tag.
+Introduce date range filtering and customer search capabilities to the PrintMO Kanban dashboard. As Shopify-backed order history expands over time, shop operators need to filter board views by custom date ranges (for example, "Today", "This Week", and "Custom Date Range") and filter cards by customer name, order number, SKU, or Shopify tag.
 
 ---
 
 ## Open Questions & Brainstorming
 
-1. **Client-Side vs Server-Side Filtering**: Should filtering occur entirely in client JS (`renderer.js`) across cached queue items, or via Redis range/search queries?
+1. **Client-Side vs Server-Side Filtering**: Which filters can use indexed D1 projection fields, and which protected customer searches require bounded Shopify queries?
 2. **Archived / Fulfillment History View**: Should orders older than 30 days automatically archive to a separate tab to keep the Kanban board high-performance?
 
 ---
@@ -27,9 +27,11 @@ Introduce date range filtering and customer search capabilities to the PrintMO K
 ### Phase 2: Date Filtering Logic
 - [ ] Parse `created_at` timestamps on order cards.
 - [ ] Add date presets ("Last 7 Days", "Last 30 Days", "All Time").
+- [ ] Implement cursor-safe server filtering through the Worker; do not load or search an entire order history in the browser.
 
 ---
 
 ## Progress Log
 
 - **2026-07-21**: Feature converted from legacy markdown plan into Stage 1 `[Draft / Idea]` in `future-plans/`.
+- **2026-07-23**: Removed the obsolete Redis filtering direction. This feature now depends on the Shopify/D1/R2 data plane defined by the Redis-free cutover plan.

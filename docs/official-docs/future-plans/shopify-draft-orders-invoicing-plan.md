@@ -34,7 +34,7 @@ To prevent over-privileged credential exposure ("all permissions on one key"), A
 │  • Can ONLY build draft orders & send invoices.                            │
 │                                                                             │
 │  [ ENDPOINT 3: /api/webhooks/ingest ] ──► Token C (read_orders ONLY)       │
-│  • Can ONLY ingest paid orders into Redis. Cannot create or edit anything!  │
+│  • Can ONLY invalidate/reconcile paid Shopify orders.                      │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -75,7 +75,7 @@ Following interactive design alignment, the following core design decisions and 
 - **Workflow**:
   - Clicking `Send Invoice` calls Shopify GraphQL mutation `draftOrderInvoiceSend` to send official branded email invoices.
   - Cards track payment aging metrics (`Draft Created` $\rightarrow$ `Invoice Sent: 4h ago` $\rightarrow$ `Awaiting Payment: 3d`).
-  - When payment is completed on Shopify, webhook ingestion automatically converts the draft into a paid order and pushes it directly into the `Payment Received` Kanban column.
+  - When payment is completed on Shopify, webhook ingestion initializes the app-owned PrintMO production metafield at `received` and refreshes the D1 board projection.
 
 ### 4. Customer Lookup & Quick Creation
 - **Decision**: **Customer Search + Quick Create Modal**.
@@ -118,10 +118,11 @@ Following interactive design alignment, the following core design decisions and 
 ### Phase 4: Invoice Dispatch, Aging Metrics & Webhook Transition
 - [ ] Implement `Send Invoice` action with custom shop message input modal and art proof attachment options.
 - [ ] Add aging badge renderer (`Awaiting Payment: Xd Yh`) and overdue warning alerts (`Overdue: 5d`) to draft order tiles.
-- [ ] Wire webhook/polling reconciler: when a draft transitions to `orders/paid`, auto-dequeue draft card and push normalized order to `shopifyOrdersQueue` in `Payment Received` column.
+- [ ] Wire webhook/polling reconciliation: when a draft transitions to `orders/paid`, idempotently initialize the canonical production metafield at `received` and refresh the D1 board projection.
 
 ---
 
 ## Progress Log
 
 - **2026-07-21**: Proposal expanded into Stage 1 locked spec with Micro-Scoped Token Security Architecture, Shopify Cloud Data Persistence (Zero Redis dependency for drafts), multi-device parity rules, size matrix quick-grid, B2B tax exemption toggles, and quote expiration safeguards in `future-plans/`.
+- **2026-07-23**: Removed the paid-order handoff to `shopifyOrdersQueue`; future implementation must use the Redis-free Shopify/D1/R2 data plane.

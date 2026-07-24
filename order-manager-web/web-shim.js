@@ -65,8 +65,117 @@ function buildQuery(params = {}) {
 window.api = window.api || {};
 window.api.transport = "http";
 
+const candidateOrdersByName = new Map();
+
+function isShopifyCandidateView() {
+  return document.body?.dataset.orderSource === "shopify";
+}
+
+function candidateStageToBoard(stage) {
+  if (stage === "to_order") return "toOrder";
+  if (stage === "blanks_cart" || stage === "blanks_ordered") return "blanks";
+  if (stage === "print") return "print";
+  return "received";
+}
+
+function boardStageToCandidate(status, current = {}) {
+  if (status === "toOrder") return "to_order";
+  if (status === "blanks") return Number(current.blanksOrdered) ? "blanks_ordered" : "blanks_cart";
+  if (status === "print") return "print";
+  return "received";
+}
+
+function candidateLineItem(item = {}) {
+  const properties = (item.customAttributes || []).reduce((result, attribute) => {
+    if (attribute?.key) result[attribute.key] = attribute.value;
+    return result;
+  }, {});
+  return {
+    id: item.id,
+    title: item.title || "",
+    variantTitle: item.variantTitle || "",
+    sku: item.sku || "",
+    qty: Number(item.currentQuantity ?? item.quantity ?? 0),
+    price: Number(item.unitPrice || 0),
+    properties,
+    assets: [],
+  };
+}
+
+function candidateOrderToBoard(order = {}) {
+  const production = order.production || {};
+  const customer = order.customer?.displayName || "Guest";
+  const displayName = order.displayName || order.id || "Shopify order";
+  const name = `${displayName} – ${customer}`;
+  const mapped = {
+    _candidate: true,
+    _gid: order.id,
+    _version: Number(production.version || 0),
+    name,
+    orderNumber: String(displayName).replace(/^#/, ""),
+    receivedAt: order.createdAt,
+    status: candidateStageToBoard(production.stage),
+    items: (order.commerce?.lineItems || []).map(candidateLineItem),
+    subtotal: Number(order.commerce?.subtotal || order.commerce?.total || 0),
+    notes: production.internalNotes || "",
+    bundle: production.bundleId || "",
+    progress: Number(production.printedCount || 0),
+    blanksStatus: Number(production.blanksStatus || 0),
+    printsStatus: Number(production.printsStatus || 0),
+    blanksOrdered: production.stage === "blanks_ordered" ? 1 : 0,
+    printsOrdered: Number(production.printsOrdered || 0),
+    shopify: order,
+    assets: production.assets || [],
+  };
+  candidateOrdersByName.set(name, mapped);
+  return mapped;
+}
+
+async function loadCandidateQueue() {
+  const records = [];
+  let cursor = "";
+  do {
+    const query = buildQuery({ limit: 50, cursor });
+    const page = await apiFetch(`/order-manager/v1/orders${query}`, { method: "GET" });
+    records.push(...(Array.isArray(page?.data) ? page.data : []));
+    cursor = page?.pageInfo?.nextCursor || "";
+  } while (cursor && records.length < 500);
+  candidateOrdersByName.clear();
+  return records.map(candidateOrderToBoard);
+}
+
+function candidateByName(name) {
+  const order = candidateOrdersByName.get(name);
+  if (!order) throw new Error("The Shopify order is no longer in the current board view. Refresh and try again.");
+  return order;
+}
+
+async function updateCandidateOrder(name, patch) {
+  const order = candidateByName(name);
+  if (!patch || Object.keys(patch).length === 0) return true;
+  const result = await window.api.updateProductionMetadata(order._gid, {
+    expectedVersion: order._version,
+    patch,
+    idempotencyKey: globalThis.crypto?.randomUUID
+      ? globalThis.crypto.randomUUID()
+      : `${order._gid}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+  });
+  const production = result?.production || {};
+  order._version = Number(production.version ?? order._version + 1);
+  if (production.stage) order.status = candidateStageToBoard(production.stage);
+  if ("bundleId" in production) order.bundle = production.bundleId || "";
+  if ("internalNotes" in production) order.notes = production.internalNotes || "";
+  if ("printedCount" in production) order.progress = Number(production.printedCount || 0);
+  if ("blanksStatus" in production) order.blanksStatus = Number(production.blanksStatus || 0);
+  if ("printsStatus" in production) order.printsStatus = Number(production.printsStatus || 0);
+  if ("printsOrdered" in production) order.printsOrdered = Number(production.printsOrdered || 0);
+  order.blanksOrdered = production.stage === "blanks_ordered" ? 1 : 0;
+  return result;
+}
+
 // 1) Populate dashboard
 window.api.getQueue = async () => {
+  if (isShopifyCandidateView()) return loadCandidateQueue();
   const data = await apiFetch("/order-manager/v1/legacy/queue", { method: "GET" });
   return Array.isArray(data) ? data : (data?.orders || []);
 };
@@ -114,6 +223,13 @@ window.api.updateProductionMetadata = async (orderId, payload = {}) => {
 
 // 2) Drag/drop persistence
 window.api.updateStatus = async (name, status) => {
+  if (isShopifyCandidateView()) {
+    const order = candidateByName(name);
+    if (status === "blanks" && order._batchConfirmedAt && Date.now() - order._batchConfirmedAt < 10000) {
+      return true;
+    }
+    return updateCandidateOrder(name, { stage: boardStageToCandidate(status, order) });
+  }
   await apiFetch("/order-manager/v1/legacy/queue/mutate", {
     method: "POST",
     body: JSON.stringify({ orderName: name, patch: { status } }),
@@ -123,6 +239,7 @@ window.api.updateStatus = async (name, status) => {
 
 window.api.updateNotes = async (a, b) => {
   const payload = (a && typeof a === "object") ? a : { name: a, notes: b };
+  if (isShopifyCandidateView()) return updateCandidateOrder(payload.name, { internal_notes: payload.notes || "" });
   return apiFetch("/order-manager/v1/legacy/queue/mutate", {
     method: "POST",
     body: JSON.stringify({ orderName: payload.name, patch: { notes: payload.notes } }),
@@ -133,6 +250,11 @@ window.api.setBundle = async (a, b) => {
   const payload = Array.isArray(a)
     ? { names: a, bundle: b }
     : ((a && typeof a === "object") ? a : { name: a, bundle: b });
+  if (isShopifyCandidateView()) {
+    return Promise.all((payload.names || [payload.name]).map((name) =>
+      updateCandidateOrder(name, { bundle_id: payload.bundle || null })
+    ));
+  }
   return apiFetch("/order-manager/v1/legacy/queue/mutate", {
     method: "POST",
     body: JSON.stringify({ orderNames: payload.names || [payload.name], patch: { bundle: payload.bundle } }),
@@ -162,6 +284,20 @@ window.api.updateReady = async (...args) => {
   }
 
   const { name, ...patch } = payload;
+  if (isShopifyCandidateView()) {
+    const candidate = candidateByName(name);
+    const metadataPatch = {};
+    if ("blanksStatus" in patch) metadataPatch.blanks_status = patch.blanksStatus;
+    if ("printsStatus" in patch) metadataPatch.prints_status = patch.printsStatus;
+    if ("printsOrdered" in patch) metadataPatch.prints_ordered = patch.printsOrdered;
+    if ("blanksOrdered" in patch && candidate.status === "blanks") {
+      const recentlyConfirmed = candidate._batchConfirmedAt && Date.now() - candidate._batchConfirmedAt < 10000;
+      if (!recentlyConfirmed || Number(patch.blanksOrdered)) {
+        metadataPatch.stage = Number(patch.blanksOrdered) ? "blanks_ordered" : "blanks_cart";
+      }
+    }
+    return updateCandidateOrder(name, metadataPatch);
+  }
   return apiFetch("/order-manager/v1/legacy/queue/mutate", {
     method: "POST",
     body: JSON.stringify({ orderName: name, patch }),
@@ -170,6 +306,7 @@ window.api.updateReady = async (...args) => {
 
 window.api.updateProgress = async (a, b) => {
   const payload = (a && typeof a === "object") ? a : { name: a, progress: b };
+  if (isShopifyCandidateView()) return updateCandidateOrder(payload.name, { printed_count: Number(payload.progress || 0) });
   return apiFetch("/order-manager/v1/legacy/queue/mutate", {
     method: "POST",
     body: JSON.stringify({ orderName: payload.name, patch: { progress: payload.progress } }),
@@ -178,6 +315,9 @@ window.api.updateProgress = async (a, b) => {
 
 window.api.updateName = async (a, b) => {
   const payload = (a && typeof a === "object") ? a : { name: a, newName: b };
+  if (isShopifyCandidateView()) {
+    throw new Error("Customer names come from Shopify and cannot be changed from the production board.");
+  }
   return apiFetch("/order-manager/v1/legacy/queue/mutate", {
     method: "POST",
     body: JSON.stringify({ orderName: payload.name, patch: { custName: payload.newName ?? payload.custName } }),
@@ -186,6 +326,10 @@ window.api.updateName = async (a, b) => {
 
 window.api.deleteOrder = async (a) => {
   const payload = (a && typeof a === "object") ? a : { name: a };
+  if (isShopifyCandidateView()) {
+    const now = new Date().toISOString();
+    return updateCandidateOrder(payload.name, { archived_at: now, archived_by: "shopify-admin" });
+  }
   return apiFetch("/order-manager/v1/legacy/queue/item", {
     method: "DELETE",
     body: JSON.stringify({ orderName: payload.name }),
@@ -197,6 +341,14 @@ window.api.updateBundleStatus = async (bundleName, status) => {
     ? bundleName
     : { bundle: bundleName, name: bundleName, status };
 
+  if (isShopifyCandidateView()) {
+    const names = [...candidateOrdersByName.values()]
+      .filter((order) => order.bundle === payload.bundle)
+      .map((order) => order.name);
+    return Promise.all(names.map((name) =>
+      updateCandidateOrder(name, { stage: boardStageToCandidate(payload.status, candidateByName(name)) })
+    ));
+  }
   return apiFetch("/order-manager/v1/legacy/queue/mutate", {
     method: "POST",
     body: JSON.stringify({ bundleName: payload.bundle, patch: { status: payload.status } }),
@@ -205,6 +357,26 @@ window.api.updateBundleStatus = async (bundleName, status) => {
 
 window.api.processBatch = async (orderIds) => {
   const names = Array.isArray(orderIds) ? orderIds : [];
+  if (isShopifyCandidateView()) {
+    const orders = names.map(candidateByName);
+    const result = await apiFetch("/order-manager/v1/batches/commit", {
+      method: "POST",
+      body: JSON.stringify({
+        orderIds: orders.map((order) => order._gid),
+        idempotencyKey: globalThis.crypto?.randomUUID
+          ? globalThis.crypto.randomUUID()
+          : `batch:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+      }),
+    });
+    const now = Date.now();
+    orders.forEach((order) => {
+      order.status = "blanks";
+      order.blanksOrdered = 1;
+      order._batchConfirmedAt = now;
+      if (result?.poNumber) order.blanksPo = [result.poNumber];
+    });
+    return result;
+  }
   return apiFetch("/order-manager/v1/legacy/ss/batch", {
     method: "POST",
     body: JSON.stringify({ orderIds: names }),

@@ -2,8 +2,40 @@ const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { DatabaseSync } = require('node:sqlite');
 
 if (!globalThis.crypto) globalThis.crypto = crypto.webcrypto;
+
+function createD1(schema) {
+  const sqlite = new DatabaseSync(':memory:');
+  sqlite.exec(schema);
+  const wrap = (sql, values = []) => ({
+    sql,
+    values,
+    bind(...next) { return wrap(sql, next); },
+    async run() {
+      const result = sqlite.prepare(sql).run(...values);
+      return { success: true, meta: { changes: Number(result.changes || 0), last_row_id: Number(result.lastInsertRowid || 0) } };
+    },
+    async first() { return sqlite.prepare(sql).get(...values) || null; },
+    async all() { return { success: true, results: sqlite.prepare(sql).all(...values) }; },
+  });
+  return {
+    prepare(sql) { return wrap(sql); },
+    async batch(statements) {
+      sqlite.exec('BEGIN');
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        sqlite.exec('COMMIT');
+        return results;
+      } catch (error) {
+        sqlite.exec('ROLLBACK');
+        throw error;
+      }
+    },
+  };
+}
 
 function jwt(secret, payload) {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
@@ -81,6 +113,7 @@ async function run() {
 
   const root = path.join(__dirname, '..');
   const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8');
+  const schema = fs.readFileSync(path.join(root, 'order-manager-proxy', 'migrations', '0001_redis_free.sql'), 'utf8');
   const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
   const worker = module.default;
   assert.equal(typeof module.OrderSyncCoordinator, 'function', 'Durable Object coordinator must be exported');
@@ -95,6 +128,8 @@ async function run() {
     SHOPIFY_API_KEY: 'phase2-client', SHOPIFY_API_SECRET: secret,
     SHOPIFY_SHOP_DOMAIN: 'printmo-test.myshopify.com', PARTNER_USER_IDS: 'partner-1',
     UPSTREAM_BASE: 'https://render.example.test', ORDER_MANAGER_ADMIN_KEY: 'render-admin-key',
+    MIGRATION_UPSTREAM_ENABLED: '1',
+    ORDER_DB: createD1(schema),
     R2_BUCKET: {
       async get(key) {
         if (key !== 'orders/60129381/assets/asset-1/art.png') return null;
@@ -106,12 +141,14 @@ async function run() {
     }
   };
   const headers = { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' };
-  const production = {
-    id: 'gid://shopify/Order/60129381', stage: 'received', version: 1,
-    createdAt: '2026-07-20T15:30:00Z', bundleId: null, blanksPo: [], printedCount: 0,
-    blanksStatus: 0, printsStatus: 0, printsOrdered: 0, internalNotes: '', assets: []
+  let productionState = {
+    schemaVersion: 1, revision: 1, lastMutationId: null, stage: 'received',
+    readiness: { blanksReady: false, printsOrdered: false, printsReady: false },
+    printedCount: 0, bundleId: null, batchRefs: [], internalNotes: '',
+    attention: { required: false, reasons: [], acknowledgedAt: null },
+    archivedAt: null, archivedBy: null, updatedAt: '2026-07-20T15:30:00Z', updatedBy: 'fixture'
   };
-  let storedSummary = null;
+  let productionDigest = 'digest-1';
   const calls = [];
   const nativeFetch = globalThis.fetch;
   globalThis.fetch = async (url, options = {}) => {
@@ -120,9 +157,47 @@ async function run() {
     if (target.endsWith('/admin/oauth/access_token')) {
       return Response.json({ access_token: 'runtime-token', expires_in: 86399 });
     }
-    if (target.endsWith('/webhooks/orders/paid')) return new Response('Queued', { status: 200 });
     if (target.includes('/graphql.json')) {
       const request = JSON.parse(options.body);
+      if (request.query.includes('PrintMOProductionState')) {
+        return Response.json({
+          data: {
+            order: {
+              id: shopifyNode().id,
+              name: shopifyNode().name,
+              createdAt: shopifyNode().createdAt,
+              updatedAt: shopifyNode().updatedAt,
+              metafield: {
+                id: 'gid://shopify/Metafield/1',
+                namespace: 'app--fixture--printmo',
+                key: 'production_state_v1',
+                value: JSON.stringify(productionState),
+                compareDigest: productionDigest,
+                updatedAt: productionState.updatedAt,
+              },
+            },
+          },
+        });
+      }
+      if (request.query.includes('PrintMOSetProductionState')) {
+        productionState = JSON.parse(request.variables.metafields[0].value);
+        productionDigest = `digest-${productionState.revision}`;
+        return Response.json({
+          data: {
+            metafieldsSet: {
+              metafields: [{
+                id: 'gid://shopify/Metafield/1',
+                namespace: 'app--fixture--printmo',
+                key: 'production_state_v1',
+                value: JSON.stringify(productionState),
+                compareDigest: productionDigest,
+                updatedAt: productionState.updatedAt,
+              }],
+              userErrors: [],
+            },
+          },
+        });
+      }
       if (request.query.includes('PrintMOShopifyPreviewOrderDetail')) {
         return new Response(JSON.stringify({ data: { order: shopifyDetailNode() } }), { status: 200, headers: { 'Content-Type': 'application/json', 'X-Shopify-API-Version': '2026-07' } });
       }
@@ -151,26 +226,30 @@ async function run() {
       }
       throw new Error(`Unexpected GraphQL operation: ${request.operationName}`);
     }
-    if (target.includes('/order-manager/v1/data/orders?')) {
-      return Response.json({ records: [{ gid: shopifyNode().id, production, summary: storedSummary }], total: 1, nextOffset: null });
+    if (target.endsWith('/order-manager/v1/supplier/ss/commit')) {
+      const request = JSON.parse(options.body);
+      assert.deepEqual(request.lines, [{ sku: 'B001', qty: 2 }]);
+      return Response.json({
+        ok: true,
+        orderNumber: 'SS-9001',
+        count: 1,
+        subtotal: 8.5,
+        skuCount: 1,
+        testOrder: true,
+      });
     }
-    if (target.includes('/order-manager/v1/data/orders/60129381?')) {
-      return Response.json({ gid: shopifyNode().id, production, summary: storedSummary, detail: null });
-    }
-    if (target.endsWith('/order-manager/v1/data/cache/summaries')) {
-      storedSummary = JSON.parse(options.body).summaries[0];
-      return Response.json({ ok: true, count: 1 });
-    }
-    if (target.endsWith('/order-manager/v1/data/webhooks/dedupe')) return Response.json({ accepted: true });
-    if (target.endsWith('/order-manager/v1/data/project') || target.endsWith('/order-manager/v1/data/mappings') || target.endsWith('/order-manager/v1/data/cache/dirty')) return Response.json({ ok: true });
-    if (target.includes('/order-manager/v1/data/orders/60129381/production')) return Response.json({ ok: true, version: 2, mirroredLegacy: true, production: { ...production, version: 2, stage: 'to_order' } });
-    if (target.includes('/order-manager/v1/data/assets/asset-1')) return Response.json({ assetId: 'asset-1', objectKey: 'orders/60129381/assets/asset-1/art.png' });
-    if (target.endsWith('/order-manager/v1/data/parity')) return Response.json({ checkedAt: new Date().toISOString(), unexplainedMismatchCount: 0, parityStatus: 'PASSED' });
     if (target.includes('/order-manager/v1/data/legacy?')) return Response.json({ records: [], total: 0, nextOffset: null });
     throw new Error(`Unexpected fetch: ${target}`);
   };
 
   try {
+    const uninitializedBoard = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/orders', { headers }),
+      env
+    );
+    assert.equal(uninitializedBoard.status, 503, 'an unmigrated empty projection must not look like an authoritative empty board');
+    assert.equal((await uninitializedBoard.json()).error.code, 'BOARD_NOT_INITIALIZED');
+
     const webhookBody = JSON.stringify({ id: '60129381', admin_graphql_api_id: shopifyNode().id, name: '#1001', order_number: 1001 });
     const hmac = crypto.createHmac('sha256', secret).update(webhookBody).digest('base64');
     let background = null;
@@ -185,7 +264,7 @@ async function run() {
     }), env, { waitUntil(promise) { background = promise; } });
     assert.equal(webhook.status, 200, 'valid webhook HMAC must be accepted without bearer auth');
     if (background) await background;
-    assert(calls.some(call => call.target.endsWith('/webhooks/orders/paid')), 'paid webhooks must preserve legacy queue ingestion during shadow mode');
+    assert(!calls.some(call => call.target.endsWith('/webhooks/orders/paid')), 'candidate webhooks must not write the legacy Redis queue');
 
     const invalidWebhook = await worker.fetch(new Request('https://worker.test/order-manager/v1/webhooks/shopify', {
       method: 'POST', headers: { 'X-Shopify-Hmac-Sha256': 'invalid', 'X-Shopify-Webhook-Id': 'delivery-2' }, body: webhookBody
@@ -235,9 +314,40 @@ async function run() {
     const mutation = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
       method: 'PATCH', headers, body: JSON.stringify({ expectedVersion: 1, patch: { stage: 'to_order' }, idempotencyKey: 'mutation-1' })
     }), env);
-    assert.equal(mutation.status, 200, 'versioned production mutation must use the Render CAS adapter');
-    assert.equal((await mutation.json()).mirroredLegacy, true, 'production mutations must confirm legacy queue mirroring');
+    assert.equal(mutation.status, 200, 'versioned production mutation must commit through Shopify and D1');
+    const mutationJson = await mutation.json();
+    assert.equal(mutationJson.canonicalSource, 'shopify-app-owned-metafield');
+    assert.equal(mutationJson.production.stage, 'to_order');
+    assert.equal(mutationJson.production.version, 2);
+    assert(!calls.some(call => call.target.includes('/data/orders/60129381/production')), 'candidate mutations must not use the Redis CAS adapter');
 
+    const batchResponse = await worker.fetch(new Request('https://worker.test/order-manager/v1/batches/commit', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ orderIds: [shopifyNode().id], idempotencyKey: 'batch-fixture-1' }),
+    }), env);
+    assert.equal(batchResponse.status, 200, 'confirmed supplier batch must commit');
+    const batchJson = await batchResponse.json();
+    assert.equal(batchJson.supplierOrderNumber, 'SS-9001');
+    assert.equal(batchJson.metadataRepairRequired.length, 0);
+    assert.equal(productionState.stage, 'blanks_ordered');
+    assert(productionState.batchRefs.includes(batchJson.poNumber));
+    const savedBatch = await env.ORDER_DB.prepare('SELECT state FROM batches WHERE id = ?')
+      .bind(batchJson.batchId).first();
+    assert.equal(savedBatch.state, 'confirmed');
+
+    const shopRow = await env.ORDER_DB.prepare('SELECT id FROM shops WHERE shop_domain = ?')
+      .bind('printmo-test.myshopify.com').first();
+    const assetNow = new Date().toISOString();
+    await env.ORDER_DB.prepare(`
+      INSERT INTO asset_manifests (
+        id, shop_id, order_gid, object_key, filename, content_type, byte_size,
+        sha256, state, source_key, created_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+    `).bind(
+      'asset-1', shopRow.id, shopifyNode().id, 'orders/60129381/assets/asset-1/art.png',
+      'art.png', 'image/png', 15, 'fixture-sha', 'legacy-art', 'fixture', assetNow, assetNow
+    ).run();
     const ticketResponse = await worker.fetch(new Request('https://worker.test/order-manager/v1/assets/asset-1/read-ticket', { method: 'POST', headers }), env);
     assert.equal(ticketResponse.status, 200, 'asset read ticket must be issued');
     const ticket = await ticketResponse.json();
@@ -248,7 +358,9 @@ async function run() {
 
     const parity = await worker.fetch(new Request('https://worker.test/order-manager/v1/parity/check', { method: 'POST', headers }), env);
     assert.equal(parity.status, 200);
-    assert.equal((await parity.json()).parityStatus, 'PASSED');
+    const parityJson = await parity.json();
+    assert.equal(parityJson.canonicalSource, 'shopify-app-owned-metafield');
+    assert.equal(parityJson.projectionSource, 'cloudflare-d1');
 
     const migration = await worker.fetch(new Request('https://worker.test/order-manager/v1/migration/run', {
       method: 'POST', headers, body: JSON.stringify({ execute: false, offset: 0, limit: 10 })

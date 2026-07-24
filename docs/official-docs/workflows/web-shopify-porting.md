@@ -28,8 +28,11 @@ flowchart LR
     IndexHTML --> WebShim[web-shim.js]
     WebShim --> StorageBrowser[storage-browser.js]
     StorageBrowser -->|Shopify bearer token + HTTPS| CFWorker[order-manager-proxy/worker.js]
-    CFWorker -->|Authenticated HTTPS| RenderAdapter[Render data adapter]
-    RenderAdapter -->|Private connection| RedisCloud[(Redis Cloud)]
+    CFWorker --> Shopify[Shopify GraphQL + production metafield]
+    CFWorker --> D1[(D1 board projection)]
+    CFWorker --> R2[(Private R2)]
+    CFWorker -. legacy view only .-> RenderAdapter[Render adapter]
+    RenderAdapter -. legacy view only .-> RedisCloud[(Redis Cloud)]
 ```
 
 ---
@@ -47,39 +50,36 @@ flowchart LR
 - **Deployment**: Deployed as a Cloudflare Worker.
 - **Responsibilities**:
   - Enforces allowed origins plus Shopify App Bridge bearer-token signature, shop, audience, expiry, and partner-user validation.
-  - Calls the authenticated Render adapter for atomic legacy/v1 Redis mutations and existing S&S operations; Redis and S&S credentials never reach clients or the Worker bundle.
-  - Owns Shopify Admin GraphQL access, cost-aware cache refresh, webhook verification/invalidation, and stable v1 DTO assembly.
-  - Requires authenticated fetches for R2 bytes; the browser renders returned blobs rather than public Worker object URLs.
+  - Owns Shopify Admin GraphQL access, compare-digest production mutations, D1 projections/app records, webhook deduplication, reconciliation, and stable DTO assembly.
+  - Requires authenticated short-lived tickets for private R2 bytes.
+  - Sends only validated aggregate garment lines to the stateless S&S gateway.
+  - Keeps Render/Redis calls behind explicitly named legacy or migration routes during acceptance.
   - Handled via `scripts/prepare-cloudflare-pages-upload.sh`.
 
 The prepared Cloudflare Pages artifact injects the public Shopify client ID into the App Bridge meta tag. Source HTML intentionally contains a placeholder and must not be deployed without `npm run prepare:cloudflare`.
 
-### Shopify live commerce preview and PrintMO production controls
+### Source-switched operational board
 
-The embedded web header exposes a **Redis board / Shopify live** data-view switch:
+The header exposes **Legacy Redis / Shopify board**. Both use the established Kanban renderer; `web-shim.js` selects the data adapter and mutation endpoints.
 
-- **Redis board** is the default after every page load and remains the only operational Kanban during Phase 2 shadow mode.
-- **Shopify live** calls authenticated `GET /order-manager/v1/shopify-preview/orders?limit=50`. The Worker issues one cost-bounded Shopify Admin GraphQL list query and keeps a 30-second in-isolate response cache.
-- Clicking an order calls authenticated `GET /order-manager/v1/shopify-preview/orders/:gid`. This Shopify-only, read-only detail fetch is deferred until the operator opens an order, uses a five-minute in-isolate cache, and paginates all line-item pages before reporting `lineItemsComplete: true`.
-- After commerce detail renders, the independent **PrintMO production** section calls `GET /order-manager/v1/orders/:gid/production`. It reads only the projected production hash and does not query Shopify or enumerate the legacy list.
-- The production section can change the mirrored v1 fields: stage, bundle, internal notes, printed count, blanks-ready, prints-ordered, and prints-ready. It submits only changed fields to `PATCH /order-manager/v1/orders/:gid/production` with `expectedVersion` and an idempotency key.
-- A successful supported patch updates the v1 hash/index and matching `shopifyOrdersQueue` item in one Redis Lua operation, then broadcasts `queue-changed`. A `409 VERSION_CONFLICT` refreshes the latest record rather than overwriting another operator's change.
-- The Admin order-block extension exposes the same controls on `admin.order-details.block.render`. It gets the current order GID from Shopify's selected-order API and authenticates cross-domain Worker requests with `shopify.auth.idToken()`.
-- Detail includes current totals, payment transactions, discounts, customer/contact fields when approved, shipping and billing destinations, shipping selection, Shopify delivery method/pickup classification, fulfillments and tracking, conversion attribution, and the 25 most recent Shopify timeline events.
-- Customer identity, contact, and address fields are protected customer data. The detail view labels missing values as not returned and explains that the cause can be guest checkout or missing protected-data approval; it does not invent a customer identity.
-- Shopify commerce remains read-only. The live view exposes no drag, batch, attachment, order-note, tag, customer, payment, fulfillment, or other Shopify mutation controls. Only the separate PrintMO production metadata section mutates the transition layer.
-- Returning to **Redis board** immediately restores the unchanged production workflow. This diagnostic preview is not the Phase 3 read-source feature flag and does not advance cutover.
-- Redis-board card rendering treats `item.assets` as legacy/untrusted input. Only arrays are enumerated; an object, scalar, or null container contributes no artwork and must not abort rendering of the remaining orders. This is display hardening only and does not rewrite Redis.
+- Legacy mode retains the existing queue URLs and payloads.
+- Shopify mode pages `GET /order-manager/v1/orders`, maps the stable DTO into the existing card contract, and routes drag/drop, notes, readiness, bundle, progress, archive, and batch actions to canonical endpoints.
+- A failed source switch restores the previous source and keeps its last rendered board. The Worker also rejects a false authoritative empty candidate until initial migration/reconciliation completes.
+- Shopify commerce fields remain read-only. Production fields are changed through `PATCH /order-manager/v1/orders/:gid/production` with expected revision and idempotency key.
+- Full detail comes from `GET /order-manager/v1/orders/:gid`; line-item connections are fully paginated.
+- The earlier Shopify diagnostic list/detail endpoints remain available for targeted comparison, but they are no longer the primary candidate surface.
+- Protected customer data is shown only when Shopify returns approved fields.
+- The Admin order block reads and edits the same metafield. Shopify may host-collapse content over 300px; `collapsedSummary` communicates stage/progress and controls use explicit labels.
 
 #### Current endpoint and data contract
 
 | Endpoint | Shopify operation | Returned data | Cache / boundary |
 |---|---|---|---|
-| `GET /order-manager/v1/shopify-preview/orders?limit=50` | `PrintMOShopifyPreviewOrders` | GID/name, created/updated timestamps, customer display name when returned, item quantity, subtotal/total, payment, fulfillment, and cancellation status | Maximum 50 orders; 30-second Worker-isolate cache; no Redis/Render request |
-| `GET /order-manager/v1/shopify-preview/orders/:gid` | `PrintMOShopifyPreviewOrderDetail` | Identity/timestamps, Shopify order note and tags, current totals, transactions, customer/contact fields, shipping/billing destinations, shipping lines, fulfillment orders/methods, fulfillments/tracking, conversion summary, discounts, line items, and 25 recent events | Fetched only when opened; five-minute Worker-isolate cache; no Redis/Render request |
-| Detail line-item continuation | `PrintMOShopifyPreviewOrderLineItems` | Every remaining Shopify line item page, including SKU, variant, original/current quantities, pricing, discounts, and custom attributes | Pages at 50 until `hasNextPage` is false; `lineItemsComplete` records completion |
-| `GET /order-manager/v1/orders/:gid/production` | None | Lightweight PrintMO stage, version, bundle, internal notes, printed count, readiness flags, and blanks PO references | Reads one projected v1 order hash; no Shopify call and no legacy-list enumeration |
-| `PATCH /order-manager/v1/orders/:gid/production` | None | Updated production record, new version, and `mirroredLegacy` result | Requires expected version plus idempotency key; compatible fields update v1 and the matching legacy item atomically |
+| `GET /order-manager/v1/orders` | Bounded stale refresh as needed | Cursor-paged board DTO with Shopify commerce and canonical production state | D1 enumeration; maximum 50; no Redis |
+| `GET /order-manager/v1/orders/:gid` | Rich order detail and line-item pagination | Shopify facts, production state, attention, and asset manifests | On demand; no Redis |
+| `GET /order-manager/v1/orders/:gid/production` | `PrintMOProductionState` | Canonical stage/revision/readiness/bundle/notes/progress/batch refs | Shopify metafield plus D1 asset manifests |
+| `PATCH /order-manager/v1/orders/:gid/production` | `metafieldsSet` with `compareDigest` | Committed production revision or conflict/sync-pending state | D1 idempotency/audit; no Redis |
+| `POST /order-manager/v1/batches/commit` | Production reads during validation/commit | Durable batch/S&S result and metadata repair list | D1 state machine; stateless supplier gateway |
 
 The detail response is grouped under these stable UI-facing properties:
 
@@ -90,18 +90,19 @@ The detail response is grouped under these stable UI-facing properties:
 - `data.discounts`, `data.lineItems`, and `data.timeline`: normalized order discounts, all line items, and recent Shopify order events.
 - `data.note` and `data.tags`: the Shopify order note and Shopify order tags. PrintMO `production.internalNotes` is loaded separately and is never confused with the Shopify order note.
 
-The controller is `order-manager-web/shopify-preview.js`; authenticated transport methods are `getShopifyPreviewOrders`, `getShopifyPreviewOrderDetail`, `getProductionMetadata`, and `updateProductionMetadata` in `web-shim.js`. GraphQL queries, caches, and Worker routing live in `order-manager-proxy/worker.js`; the Redis compare-and-set/mirror lives in the Render adapter's `phase2-data.js`. The Shopify Admin block is under `order-manager-proxy/extensions/printmo-production-status/`. The Pages build must include `shopify-preview.js` and `shopify-preview.css` through `scripts/prepare-cloudflare-pages-upload.sh`.
+The source adapter is `order-manager-web/web-shim.js`; source switching and diagnostic detail are in `shopify-preview.js`; canonical APIs live in `order-manager-proxy/worker.js`; the Admin block is under `order-manager-proxy/extensions/printmo-production-status/`.
 
-**Release state (2026-07-23):** the Task 1 transition adapter/routes and Task 2 operator surfaces have been released as a production canary. The Worker is on version `b62c072d-47da-4409-8768-28d14e141566`, Cloudflare Pages production is on deployment `e83efcfc-c6ed-4417-8acb-5f134702aaeb`, and Shopify app version `task2-canary-2026-07-23` is active. The remaining release check is one authenticated in-app save on a projected order followed by confirmation that the Redis board shows the same value.
+**Candidate release (2026-07-23):** Worker `ca3b2acd-1fd1-49e0-9961-b22fbdca7939`, Pages deployment `14e995f2`, Shopify app version `task3-shopify-primary-2026-07-23`, and supplier gateway commit `420ff72`. Production scope approval and migration/acceptance are still required before cutover.
 
 #### Shopify access requirements and current limitation
 
 - `read_orders` covers the base order, line items, transactions, fulfillments, conversion summary, discounts, and events for the normal Shopify order-access window.
 - `Order.fulfillmentOrders` returns `FulfillmentOrder` objects, which Shopify governs through fulfillment-order scopes. This order-management read requires at least `read_merchant_managed_fulfillment_orders`; include `read_third_party_fulfillment_orders` when the app must see orders assigned to third-party fulfillment services. See Shopify's [FulfillmentOrder access-scope contract](https://shopify.dev/docs/api/admin-graphql/latest/objects/FulfillmentOrder).
 - Name, address, phone, and email are separately governed protected customer fields. Request only the fields the operational UI needs through Shopify's [protected customer data process](https://shopify.dev/docs/apps/launch/protected-customer-data).
-- `read_all_orders` is separate and is needed only if the app must read orders older than Shopify's default order-access window.
+- `write_orders` is required for the app-owned production metafield.
+- `read_all_orders` keeps unfinished production work accessible beyond Shopify's default order window.
 
-**Deployed status (2026-07-23):** the required Shopify scopes were released and approved on the production `Print-MO` installation. Live rich detail is verified for payment, delivery, conversion, discounts, complete line items, and timeline data. Protected customer fields can still be absent when Shopify does not return them; the UI labels that state instead of inventing values.
+The earlier rich-detail read scopes are approved. The Redis-free candidate release adds `write_orders` and `read_all_orders`; the owner must approve that installation update before canonical migration writes.
 
 Changing Shopify scopes is a deployment and merchant-approval operation: update `order-manager-proxy/shopify.app.toml`, release a new Shopify app version, and approve the permission update on the production `Print-MO` installation. A Worker or Pages deploy alone does not grant Shopify scopes.
 
@@ -143,7 +144,7 @@ active queue, detail view, or workflow sheet owns vertical scrolling.
 | Symptom / Trap | Root Cause | Diagnosis & Recovery |
 |---|---|---|
 | CORS error in browser console when fetching orders | Missing origin headers in Cloudflare Worker proxy | Inspect `order-manager-proxy/worker.js` CORS header headers (`Access-Control-Allow-Origin`). |
-| Shopify live preview fails while Redis board works | Shopify token exchange, scope approval, GraphQL response, or throttling failure | Keep production work on Redis board and inspect the Worker request log for `PrintMOShopifyPreviewOrders`, `PrintMOShopifyPreviewOrderDetail`, or its line-item pagination operation. |
+| Shopify board fails while Legacy Redis works | Shopify token exchange, permission approval, D1 initialization, GraphQL response, or throttling failure | Keep production work on Legacy Redis. Inspect the structured Worker error and request ID; `BOARD_NOT_INITIALIZED` means migration/bootstrap has not established the candidate and must not be treated as an empty board. |
 | Shopify detail shows `404 - [object Object]` while the order exists | Current rich-detail query requests `fulfillmentOrders`, but the installed app has only `read_orders`; the Worker masks Shopify's `ACCESS_DENIED`/null-order response as not found | This is the known 2026-07-22 scope gate. Keep using Redis. Confirm the GraphQL error path is `order.fulfillmentOrders`; then either release/approve the minimum fulfillment-order read scopes or remove/fallback that enrichment in a future code change. |
 | Shopify detail shows customer fields as not returned | Guest checkout or protected customer data fields are not approved for the app | Confirm the order has customer data in Shopify Admin, then review the app's protected customer data API access request. Do not broaden scopes or expose credentials in the client. |
 | Data changes not saved in browser | `storage-browser.js` falling back to read-only state | Check browser local storage permissions and network logs. |

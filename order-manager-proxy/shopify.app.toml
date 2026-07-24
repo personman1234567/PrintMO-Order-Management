@@ -8,7 +8,13 @@ embedded = true
 redirect_urls = [ "https://print-mo-order-manager.pages.dev/auth/callback" ]
 
 [access_scopes]
-scopes = "read_orders,read_merchant_managed_fulfillment_orders,read_third_party_fulfillment_orders"
+scopes = "read_orders,write_orders,read_all_orders,read_merchant_managed_fulfillment_orders,read_third_party_fulfillment_orders"
+
+[order.metafields.printmo.production_state_v1]
+name = "PrintMO production state"
+description = "Canonical PrintMO workflow state managed by the Print-MO Order Manager."
+type = "json"
+access.admin = "merchant_read"
 
 [webhooks]
 api_version = "2026-07"

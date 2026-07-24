@@ -20,7 +20,7 @@
 
 1. **Node.js**: Requires Node.js 18.x or later.
 2. **Render data adapter**: The sibling `E:\PrintMO\shopify-ss-integration` service owns the Redis Cloud connection. Its server environment requires `REDIS_URL` and `ORDER_MANAGER_ADMIN_KEY`; do not copy either into this repository or Cloudflare Pages.
-3. **Cloudflare Worker configuration**: Configure `UPSTREAM_BASE`, `ORDER_MANAGER_ADMIN_KEY`, `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, and `SHOPIFY_SHOP_DOMAIN` as Worker variables/secrets. Provision the R2/DO bindings declared in `order-manager-proxy/wrangler.jsonc` before Phase 2 deployment.
+3. **Cloudflare Worker configuration**: Configure the Shopify client credentials/shop, identity allowlists, legacy bridge variables, and authenticated upstream gateway variables. Provision `ORDER_DB`, both R2 bindings, and the Durable Object declared in `order-manager-proxy/wrangler.jsonc`. Keep `SS_TEST_ORDER=1` during candidate acceptance; see `shopify-candidate-cutover.md`.
 4. **Desktop public configuration**: Generate the public Worker/OIDC config with the existing build script. Electron packages must not contain Redis, Shopify Admin API, R2, or S&S secrets.
 
 For local development of the Render adapter only, use an ignored `.env` in that sibling repository:

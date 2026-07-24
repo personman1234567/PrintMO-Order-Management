@@ -23,12 +23,15 @@
 
 Shopify sends real-time HTTP POST notifications when an order is paid:
 
-- **Webhook Event**: `orders/paid`
+- **Webhook Events**: `orders/paid` plus configured update/cancel/refund lifecycle topics.
 - **Security Invariant**: Webhooks MUST be validated using HMAC SHA256 signature verification against `SHOPIFY_WEBHOOK_SECRET`.
 - **Payload Processing**:
   1. Verify HMAC signature.
   2. Parse order details (order number, line items, variants, customer info, quantities).
-  3. Push normalized order object into Redis `shopifyOrdersQueue`.
+  3. Deduplicate the delivery in D1.
+  4. Enroll/dirty the Shopify-primary projection and schedule refresh.
+
+Before candidate cutover, `orders/paid` can also be forwarded to the old queue only when `LEGACY_INGEST_ENABLED=1`. Candidate reads and production edits never use that legacy write.
 
 ---
 
@@ -42,7 +45,7 @@ S&S Activewear is our primary distributor for blank apparel (Gildan, Anvil, Next
 |---|---|---|
 | **Product & Pricing Lookup** (`GET /v2/products/{sku}`) | REST / JSON | Fetches wholesale piece price, dozen price, case price, product specs, and weights for target SKUs. Used in batch pre-calculation. |
 | **Warehouse Inventory** (`GET /v2/inventory`) | REST / JSON | Queries live stock quantities across all S&S regional distribution centers (Bolingbrook IL, Olathe KS, Reno NV, etc.). |
-| **Electronic Order Posting** (`POST /v2/orders`) | REST / JSON | Submits consolidated purchase orders with line items, delivery address, warehouse auto-selection, and test order flags (`process-batch`). |
+| **Electronic Order Posting** (`POST /v2/orders`) | REST / JSON | The Worker persists a D1 batch state machine, then sends validated aggregate lines through the authenticated stateless gateway. Ambiguous results become `unknown` and are not blindly retried. |
 | **Order Status & Shipment Tracking** (`GET /v2/orders/{poNumber}` or `GET /v2/shipments`) | REST / JSON | Retrieves PO processing state (`Submitted`, `In Process`, `Shipped`), package tracking numbers (UPS, FedEx, Spee-Dee), and delivery timestamps. |
 
 ### B. Shipment Arrival Monitoring & Auto-Status Updates
@@ -74,10 +77,10 @@ SanMar supports both proprietary SOAP Web Services and industry-standard **Promo
 
 | Variable Name | Description | Scope |
 |---|---|---|
-| `REDIS_URL` | Redis connection URL | Main Process / Worker Proxy |
+| `REDIS_URL` | Legacy queue only; prohibited from the final candidate runtime | Temporary Render legacy service |
 | `SHOPIFY_WEBHOOK_SECRET` | HMAC signature verification key | Webhook Listener |
-| `SS_API_KEY` | S&S Activewear REST API Key | Main Process / Worker Proxy |
-| `SS_ACCOUNT_NUMBER` | S&S Activewear Account Number | Main Process / Worker Proxy |
+| `SS_API_KEY` | S&S Activewear REST API key | Stateless Render supplier gateway |
+| `SS_ACCOUNT_NUMBER` | S&S Activewear account number | Stateless Render supplier gateway |
 | `SANMAR_CUSTOMER_NUMBER` | SanMar Customer Account Number | Main Process / Worker Proxy (Future) |
 | `SANMAR_USERNAME` | SanMar Web Services / PromoStandards Username | Main Process / Worker Proxy (Future) |
 | `SANMAR_PASSWORD` | SanMar Web Services / PromoStandards Password | Main Process / Worker Proxy (Future) |

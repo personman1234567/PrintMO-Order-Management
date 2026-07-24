@@ -5,6 +5,12 @@
   "keep_vars": true,
   "preview_urls": false,
   "observability": { "enabled": true },
+  "vars": {
+    "LEGACY_INGEST_ENABLED": "1",
+    "MIGRATION_UPSTREAM_ENABLED": "1",
+    "MIGRATION_QUARANTINE_ORDER_NUMBERS": "1000",
+    "SS_TEST_ORDER": "1"
+  },
   "durable_objects": {
     "bindings": [
       {
@@ -22,6 +28,14 @@
   "triggers": {
     "crons": ["*/5 * * * *", "0 2 * * *"]
   },
+  "d1_databases": [
+    {
+      "binding": "ORDER_DB",
+      "database_name": "printmo-order-manager",
+      "database_id": "7fce58d5-d3f3-4f42-b084-6f3715cc48cc",
+      "migrations_dir": "migrations"
+    }
+  ],
   "r2_buckets": [
     {
       "binding": "PREVIEWS",

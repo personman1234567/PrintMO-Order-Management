@@ -300,6 +300,10 @@ export default {
             return handleV1OrderDetailGet(request, env, allowOrigin || origin || "*");
         }
 
+        if (url.pathname === "/order-manager/v1/batches/commit" && request.method === "POST") {
+            return handleV1BatchCommit(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
+        }
+
         if (url.pathname.startsWith("/order-manager/v1/assets/") && url.pathname.endsWith("/read-ticket") && request.method === "POST") {
             return handleV1AssetReadTicket(request, env, allowOrigin || origin || "*", reqAllowHeaders);
         }
@@ -1985,9 +1989,11 @@ async function handleLegacySSBatch(request, env, allowOrigin, reqAllowHeaders) {
     }
 }
 // -----------------------------
-// PHASE 2 SHADOW DATA PLANE
-// Redis remains private behind the authenticated Render adapter. Shopify access,
-// rate coordination, cache refreshes, webhook intake, and R2 reads live here.
+// SHOPIFY-PRIMARY DATA PLANE
+// Shopify owns commerce and the canonical app-owned production metafield.
+// D1 owns the rebuildable board projection and app-only durable records.
+// Redis remains reachable only through the explicitly named legacy routes until
+// the final cutover flag is switched; candidate routes below never use it.
 // -----------------------------
 const shopifyAccessTokenCache = new Map();
 const shopifyPreviewCache = new Map();
@@ -2174,6 +2180,344 @@ const UPDATED_ORDERS_QUERY = `query PrintMOUpdatedOrders($query: String!, $after
     pageInfo { hasNextPage endCursor }
   }
 }`;
+
+const PRODUCTION_METAFIELD_NAMESPACE = '$app:printmo';
+const PRODUCTION_METAFIELD_KEY = 'production_state_v1';
+const PRODUCTION_STAGES = new Set(['received', 'to_order', 'blanks_cart', 'blanks_ordered', 'print', 'completed']);
+const PRODUCTION_STATE_QUERY = `query PrintMOProductionState($id: ID!) {
+  order(id: $id) {
+    id name createdAt updatedAt
+    metafield(namespace: "${PRODUCTION_METAFIELD_NAMESPACE}", key: "${PRODUCTION_METAFIELD_KEY}") {
+      id namespace key type value compareDigest createdAt updatedAt
+    }
+  }
+}`;
+const PRODUCTION_STATE_MUTATION = `mutation PrintMOSetProductionState($metafields: [MetafieldsSetInput!]!) {
+  metafieldsSet(metafields: $metafields) {
+    metafields { id namespace key type value compareDigest createdAt updatedAt }
+    userErrors { field message code }
+  }
+}`;
+
+function requireOrderDb(env) {
+    if (!env.ORDER_DB) {
+        throw Object.assign(new Error('The Redis-free order database is not configured.'), {
+            code: 'ORDER_DB_NOT_CONFIGURED',
+            status: 503
+        });
+    }
+    return env.ORDER_DB;
+}
+
+function isoNow() {
+    return new Date().toISOString();
+}
+
+async function d1Shop(env, { allowUninstalled = false } = {}) {
+    const db = requireOrderDb(env);
+    const shop = shopDomain(env);
+    const now = isoNow();
+    await db.prepare(`
+      INSERT INTO shops (shop_domain, installed_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(shop_domain) DO UPDATE SET updated_at = excluded.updated_at
+    `).bind(shop, now, now, now).run();
+    const row = await db.prepare('SELECT id, shop_domain, uninstalled_at FROM shops WHERE shop_domain = ?')
+        .bind(shop).first();
+    if (!row) throw Object.assign(new Error('Unable to initialize the shop database record.'), { code: 'SHOP_DB_INIT_FAILED', status: 503 });
+    if (row.uninstalled_at && !allowUninstalled) {
+        throw Object.assign(new Error('This Shopify installation is disabled.'), { code: 'SHOP_UNINSTALLED', status: 403 });
+    }
+    return row;
+}
+
+function defaultProductionState(actor = 'system') {
+    const now = isoNow();
+    return {
+        schemaVersion: 1,
+        revision: 0,
+        lastMutationId: null,
+        stage: 'received',
+        readiness: { blanksReady: false, printsOrdered: false, printsReady: false },
+        printedCount: 0,
+        bundleId: null,
+        batchRefs: [],
+        internalNotes: '',
+        attention: { required: false, reasons: [], acknowledgedAt: null },
+        archivedAt: null,
+        archivedBy: null,
+        updatedAt: now,
+        updatedBy: actor
+    };
+}
+
+function normalizeProductionState(value, actor = 'system') {
+    const base = defaultProductionState(actor);
+    const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const readiness = input.readiness && typeof input.readiness === 'object' ? input.readiness : {};
+    const attention = input.attention && typeof input.attention === 'object' ? input.attention : {};
+    return {
+        ...base,
+        schemaVersion: 1,
+        revision: Math.max(0, Number.isInteger(Number(input.revision)) ? Number(input.revision) : 0),
+        lastMutationId: input.lastMutationId ? String(input.lastMutationId).slice(0, 160) : null,
+        stage: PRODUCTION_STAGES.has(input.stage) ? input.stage : 'received',
+        readiness: {
+            blanksReady: Boolean(readiness.blanksReady),
+            printsOrdered: Boolean(readiness.printsOrdered),
+            printsReady: Boolean(readiness.printsReady)
+        },
+        printedCount: Math.min(Math.max(Number(input.printedCount) || 0, 0), 1000000),
+        bundleId: input.bundleId ? String(input.bundleId).slice(0, 160) : null,
+        batchRefs: Array.isArray(input.batchRefs) ? [...new Set(input.batchRefs.map(String))].slice(0, 100) : [],
+        internalNotes: String(input.internalNotes || '').slice(0, 5000),
+        attention: {
+            required: Boolean(attention.required),
+            reasons: Array.isArray(attention.reasons) ? [...new Set(attention.reasons.map(String))].slice(0, 25) : [],
+            acknowledgedAt: attention.acknowledgedAt || null
+        },
+        archivedAt: input.archivedAt || null,
+        archivedBy: input.archivedBy || null,
+        updatedAt: input.updatedAt || base.updatedAt,
+        updatedBy: input.updatedBy || actor
+    };
+}
+
+function parseProductionMetafield(metafield, actor = 'system') {
+    if (!metafield?.value) return { state: defaultProductionState(actor), compareDigest: null, exists: false };
+    try {
+        return {
+            state: normalizeProductionState(JSON.parse(metafield.value), actor),
+            compareDigest: metafield.compareDigest || null,
+            exists: true
+        };
+    } catch (_) {
+        throw Object.assign(new Error('The Shopify production metafield contains invalid JSON.'), {
+            code: 'INVALID_PRODUCTION_METAFIELD',
+            status: 409
+        });
+    }
+}
+
+function productionForClient(gid, state, compareDigest, assets = []) {
+    return {
+        id: gid,
+        stage: state.stage,
+        version: state.revision,
+        revision: state.revision,
+        compareDigest: compareDigest || null,
+        bundleId: state.bundleId || '',
+        blanksPo: state.batchRefs || [],
+        printedCount: state.printedCount,
+        blanksStatus: state.readiness.blanksReady ? 1 : 0,
+        printsStatus: state.readiness.printsReady ? 1 : 0,
+        printsOrdered: state.readiness.printsOrdered ? 1 : 0,
+        internalNotes: state.internalNotes,
+        attention: state.attention,
+        archivedAt: state.archivedAt,
+        updatedAt: state.updatedAt,
+        updatedBy: state.updatedBy,
+        assets
+    };
+}
+
+async function readProductionMetafield(env, gid, actor = 'system', graphQL = coordinatorGraphQL) {
+    const result = await graphQL(env, PRODUCTION_STATE_QUERY, { id: gid }, 'PrintMOProductionState');
+    const data = requireShopifyData(result, 'PrintMOProductionState');
+    if (!data.order) throw Object.assign(new Error('Shopify order not found.'), { code: 'ORDER_NOT_FOUND', status: 404 });
+    const parsed = parseProductionMetafield(data.order.metafield, actor);
+    return { gid, order: data.order, ...parsed };
+}
+
+function normalizeProductionPatch(patch) {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+        throw Object.assign(new Error('Production patch must be an object.'), { code: 'INVALID_PATCH', status: 400 });
+    }
+    const aliases = {
+        stage: 'stage',
+        bundleId: 'bundleId',
+        bundle_id: 'bundleId',
+        internalNotes: 'internalNotes',
+        internal_notes: 'internalNotes',
+        printedCount: 'printedCount',
+        printed_count: 'printedCount',
+        blanksStatus: 'blanksStatus',
+        blanks_status: 'blanksStatus',
+        printsStatus: 'printsStatus',
+        prints_status: 'printsStatus',
+        printsOrdered: 'printsOrdered',
+        prints_ordered: 'printsOrdered',
+        attention: 'attention',
+        archivedAt: 'archivedAt',
+        archived_at: 'archivedAt',
+        archivedBy: 'archivedBy',
+        archived_by: 'archivedBy'
+    };
+    const normalized = {};
+    for (const [key, value] of Object.entries(patch)) {
+        const target = aliases[key];
+        if (!target) throw Object.assign(new Error(`Production field "${key}" is not mutable.`), { code: 'INVALID_PATCH_FIELD', status: 400 });
+        normalized[target] = value;
+    }
+    if ('stage' in normalized && !PRODUCTION_STAGES.has(normalized.stage)) {
+        throw Object.assign(new Error('Production stage is invalid.'), { code: 'INVALID_STAGE', status: 400 });
+    }
+    if ('bundleId' in normalized && normalized.bundleId !== null && String(normalized.bundleId).length > 160) {
+        throw Object.assign(new Error('Bundle is too long.'), { code: 'INVALID_BUNDLE', status: 400 });
+    }
+    if ('internalNotes' in normalized && String(normalized.internalNotes || '').length > 5000) {
+        throw Object.assign(new Error('Internal notes exceed 5,000 characters.'), { code: 'INVALID_NOTES', status: 400 });
+    }
+    if ('printedCount' in normalized) {
+        const count = Number(normalized.printedCount);
+        if (!Number.isInteger(count) || count < 0 || count > 1000000) {
+            throw Object.assign(new Error('Printed count must be a non-negative integer.'), { code: 'INVALID_PRINTED_COUNT', status: 400 });
+        }
+    }
+    for (const flag of ['blanksStatus', 'printsStatus', 'printsOrdered']) {
+        if (flag in normalized && ![0, 1, false, true].includes(normalized[flag])) {
+            throw Object.assign(new Error(`${flag} must be boolean or 0/1.`), { code: 'INVALID_READINESS', status: 400 });
+        }
+    }
+    return normalized;
+}
+
+function applyProductionPatch(current, patch, actor, mutationId) {
+    const next = normalizeProductionState(current, actor);
+    if ('stage' in patch) next.stage = patch.stage;
+    if ('bundleId' in patch) next.bundleId = patch.bundleId ? String(patch.bundleId) : null;
+    if ('internalNotes' in patch) next.internalNotes = String(patch.internalNotes || '');
+    if ('printedCount' in patch) next.printedCount = Number(patch.printedCount);
+    if ('blanksStatus' in patch) next.readiness.blanksReady = Boolean(Number(patch.blanksStatus));
+    if ('printsStatus' in patch) next.readiness.printsReady = Boolean(Number(patch.printsStatus));
+    if ('printsOrdered' in patch) next.readiness.printsOrdered = Boolean(Number(patch.printsOrdered));
+    if ('attention' in patch) next.attention = normalizeProductionState({ attention: patch.attention }, actor).attention;
+    if ('archivedAt' in patch) next.archivedAt = patch.archivedAt || null;
+    if ('archivedBy' in patch) next.archivedBy = patch.archivedBy || null;
+    next.revision = current.revision + 1;
+    next.lastMutationId = mutationId;
+    next.updatedAt = isoNow();
+    next.updatedBy = actor;
+    return next;
+}
+
+async function setProductionMetafield(env, gid, state, compareDigest, graphQL = performShopifyGraphQL) {
+    const result = await graphQL(env, PRODUCTION_STATE_MUTATION, {
+        metafields: [{
+            ownerId: gid,
+            namespace: PRODUCTION_METAFIELD_NAMESPACE,
+            key: PRODUCTION_METAFIELD_KEY,
+            type: 'json',
+            value: JSON.stringify(state),
+            compareDigest: compareDigest === undefined ? null : compareDigest
+        }]
+    }, 'PrintMOSetProductionState');
+    const data = requireShopifyData(result, 'PrintMOSetProductionState');
+    const payload = data.metafieldsSet;
+    const userError = payload?.userErrors?.[0];
+    if (userError) {
+        const conflict = /digest|stale|compare/i.test(`${userError.code || ''} ${userError.message || ''}`);
+        throw Object.assign(new Error(userError.message || 'Shopify rejected the production update.'), {
+            code: conflict ? 'VERSION_CONFLICT' : (userError.code || 'SHOPIFY_MUTATION_ERROR'),
+            status: conflict ? 409 : 422,
+            details: payload.userErrors
+        });
+    }
+    const metafield = payload?.metafields?.[0];
+    if (!metafield) throw Object.assign(new Error('Shopify did not return the saved production metafield.'), { code: 'SHOPIFY_MUTATION_EMPTY', status: 502 });
+    return parseProductionMetafield(metafield, state.updatedBy);
+}
+
+async function ensureCandidateOrder(env, gid, actor = 'system', graphQL = coordinatorGraphQL) {
+    const shop = await d1Shop(env);
+    let current = await readProductionMetafield(env, gid, actor, graphQL);
+    if (!current.exists) {
+        try {
+            const saved = await setProductionMetafield(env, gid, current.state, null, graphQL);
+            current = { ...current, ...saved };
+        } catch (error) {
+            if (error.code !== 'VERSION_CONFLICT') throw error;
+            current = await readProductionMetafield(env, gid, actor, graphQL);
+        }
+    }
+    await d1ProjectionUpsert(env, shop.id, gid, current.state, current.compareDigest, undefined, current.order);
+    return current;
+}
+
+async function d1AssetsForOrder(env, shopId, gid) {
+    const result = await requireOrderDb(env).prepare(`
+      SELECT id, object_key, filename, content_type, byte_size, sha256, state, created_at
+      FROM asset_manifests
+      WHERE shop_id = ? AND order_gid = ? AND state = 'active'
+      ORDER BY created_at, id
+    `).bind(shopId, gid).all();
+    return (result.results || []).map(row => ({
+        assetId: row.id,
+        objectKey: row.object_key,
+        name: row.filename,
+        contentType: row.content_type,
+        byteSize: row.byte_size,
+        sha256: row.sha256
+    }));
+}
+
+async function d1ProjectionUpsert(env, shopId, gid, state, compareDigest, summary = undefined, order = {}) {
+    const db = requireOrderDb(env);
+    const now = isoNow();
+    const active = !state.archivedAt && state.stage !== 'completed' ? 1 : 0;
+    await db.prepare(`
+      INSERT INTO order_projection (
+        shop_id, order_gid, display_name, stage, active, production_revision,
+        production_digest, production_json, commerce_json, shopify_updated_at,
+        fetched_at, stale_at, last_error, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+      ON CONFLICT(shop_id, order_gid) DO UPDATE SET
+        display_name = COALESCE(excluded.display_name, order_projection.display_name),
+        stage = excluded.stage,
+        active = excluded.active,
+        production_revision = excluded.production_revision,
+        production_digest = excluded.production_digest,
+        production_json = excluded.production_json,
+        commerce_json = COALESCE(excluded.commerce_json, order_projection.commerce_json),
+        shopify_updated_at = COALESCE(excluded.shopify_updated_at, order_projection.shopify_updated_at),
+        fetched_at = COALESCE(excluded.fetched_at, order_projection.fetched_at),
+        stale_at = CASE WHEN excluded.commerce_json IS NULL THEN order_projection.stale_at ELSE NULL END,
+        last_error = CASE WHEN excluded.commerce_json IS NULL THEN order_projection.last_error ELSE NULL END,
+        updated_at = excluded.updated_at
+    `).bind(
+        shopId,
+        gid,
+        summary?.displayName || order.name || null,
+        state.stage,
+        active,
+        state.revision,
+        compareDigest || null,
+        JSON.stringify(state),
+        summary === undefined ? null : JSON.stringify(summary),
+        summary?.shopifyUpdatedAt || order.updatedAt || null,
+        summary?.sync?.fetchedAt || null,
+        order.createdAt || summary?.createdAt || now,
+        now
+    ).run();
+}
+
+function d1ProjectionRecord(row) {
+    let production = defaultProductionState();
+    let summary = null;
+    try { production = normalizeProductionState(JSON.parse(row.production_json || '{}')); } catch (_) {}
+    try { summary = row.commerce_json ? JSON.parse(row.commerce_json) : null; } catch (_) {}
+    if (summary?.sync) {
+        const stale = Boolean(row.stale_at) || !summary.sync.freshUntil || Date.parse(summary.sync.freshUntil) <= Date.now();
+        summary.sync = { ...summary.sync, stale };
+    }
+    return {
+        gid: row.order_gid,
+        production: productionForClient(row.order_gid, production, row.production_digest),
+        summary,
+        staleAt: row.stale_at,
+        lastError: row.last_error
+    };
+}
 
 function v1Error(error, allowOrigin, reqAllowHeaders, status = 500, details) {
     const requestId = crypto.randomUUID();
@@ -2398,9 +2742,20 @@ async function normalizeShopifySummary(env, node, resultErrors = [], graphQL = c
 
 async function storeSummaries(env, summaries) {
     if (!summaries.length) return;
-    await upstreamDataRequest(env, '/order-manager/v1/data/cache/summaries', {
-        method: 'POST', body: JSON.stringify({ shop: shopDomain(env), summaries })
-    });
+    const shop = await d1Shop(env);
+    const db = requireOrderDb(env);
+    for (const summary of summaries) {
+        const row = await db.prepare(`
+          SELECT production_json, production_digest
+          FROM order_projection
+          WHERE shop_id = ? AND order_gid = ?
+        `).bind(shop.id, summary.id).first();
+        if (!row) continue;
+        let state;
+        try { state = normalizeProductionState(JSON.parse(row.production_json)); }
+        catch (_) { state = defaultProductionState(); }
+        await d1ProjectionUpsert(env, shop.id, summary.id, state, row.production_digest, summary);
+    }
 }
 
 async function refreshSummaries(env, gids, graphQL = coordinatorGraphQL) {
@@ -2803,9 +3158,31 @@ function boardDto(record) {
 }
 
 async function loadDataPage(env, stage, limit, offset) {
-    const query = new URLSearchParams({ shop: shopDomain(env), limit: String(limit), offset: String(offset) });
-    if (stage) query.set('stage', stage);
-    return upstreamDataRequest(env, `/order-manager/v1/data/orders?${query}`);
+    const shop = await d1Shop(env);
+    const db = requireOrderDb(env);
+    const where = ['shop_id = ?', 'active = 1'];
+    const values = [shop.id];
+    if (stage) {
+        if (!PRODUCTION_STAGES.has(stage)) throw Object.assign(new Error('Stage filter is invalid.'), { code: 'INVALID_STAGE', status: 400 });
+        where.push('stage = ?');
+        values.push(stage);
+    }
+    const clause = where.join(' AND ');
+    const rows = await db.prepare(`
+      SELECT *
+      FROM order_projection
+      WHERE ${clause}
+      ORDER BY created_at ASC, order_gid ASC
+      LIMIT ? OFFSET ?
+    `).bind(...values, limit, offset).all();
+    const count = await db.prepare(`SELECT COUNT(*) AS count FROM order_projection WHERE ${clause}`)
+        .bind(...values).first();
+    const total = Number(count?.count || 0);
+    return {
+        records: (rows.results || []).map(d1ProjectionRecord),
+        total,
+        nextOffset: offset + limit < total ? offset + limit : null
+    };
 }
 
 async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders) {
@@ -2816,6 +3193,21 @@ async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders) {
         const filter = JSON.stringify({ stage, limit });
         const offset = await decodeSignedCursor(url.searchParams.get('cursor'), filter, env);
         let page = await loadDataPage(env, stage, limit, offset);
+        if (page.total === 0 && offset === 0) {
+            const shop = await d1Shop(env);
+            const initialized = await requireOrderDb(env).prepare(`
+              SELECT 1 AS ready
+              FROM reconciliation_checkpoints
+              WHERE shop_id = ? AND name IN ('migration', 'bootstrap')
+              LIMIT 1
+            `).bind(shop.id).first();
+            if (!initialized) {
+                return v1Error({
+                    code: 'BOARD_NOT_INITIALIZED',
+                    message: 'The Shopify board has not completed its first migration or reconciliation.'
+                }, allowOrigin, reqAllowHeaders, 503);
+            }
+        }
         const staleGids = (page.records || []).filter(record => {
             const summary = record.summary;
             return !summary || summary.sync?.stale || !summary.sync?.freshUntil || Date.parse(summary.sync.freshUntil) <= Date.now();
@@ -2864,9 +3256,6 @@ async function fetchOrderDetail(env, gid) {
         partial: !lines.complete || (result.errors || []).length > 0,
         errors: result.errors || []
     };
-    await upstreamDataRequest(env, '/order-manager/v1/data/cache/details', {
-        method: 'POST', body: JSON.stringify({ shop: shopDomain(env), detail })
-    });
     return detail;
 }
 
@@ -2874,17 +3263,19 @@ async function handleV1OrderDetailGet(request, env, allowOrigin, reqAllowHeaders
     try {
         const gid = orderIdFromV1Path(new URL(request.url).pathname);
         if (!gid) return v1Error({ code: 'INVALID_ORDER_ID', message: 'Invalid Shopify order GID' }, allowOrigin, reqAllowHeaders, 400);
-        const id = numericIdFromGid(gid);
-        let record = await upstreamDataRequest(env, `/order-manager/v1/data/orders/${id}?shop=${encodeURIComponent(shopDomain(env))}`);
-        let detail = record.detail;
-        if (!detail || !detail.freshUntil || Date.parse(detail.freshUntil) <= Date.now()) {
-            try { detail = await fetchOrderDetail(env, gid); } catch (error) {
-                if (!detail || !detail.hardExpiresAt || Date.parse(detail.hardExpiresAt) <= Date.now()) throw error;
-                detail = { ...detail, stale: true, errors: [...(detail.errors || []), { message: error.message, code: 'STALE_FALLBACK' }] };
-            }
-            record = await upstreamDataRequest(env, `/order-manager/v1/data/orders/${id}?shop=${encodeURIComponent(shopDomain(env))}`);
-        }
-        return jsonResponse({ ...boardDto(record), detail: detail || record.detail }, allowOrigin, reqAllowHeaders);
+        const [detail, productionRead] = await Promise.all([
+            fetchOrderDetail(env, gid),
+            readProductionMetafield(env, gid)
+        ]);
+        const shop = await d1Shop(env);
+        const assets = await d1AssetsForOrder(env, shop.id, gid);
+        await d1ProjectionUpsert(env, shop.id, gid, productionRead.state, productionRead.compareDigest, detail.summary, productionRead.order);
+        return jsonResponse({
+            ...detail.summary,
+            production: productionForClient(gid, productionRead.state, productionRead.compareDigest, assets),
+            attention: productionRead.state.attention,
+            detail
+        }, allowOrigin, reqAllowHeaders);
     } catch (error) {
         return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500, error.body);
     }
@@ -2894,26 +3285,345 @@ async function handleV1ProductionGet(request, env, allowOrigin, reqAllowHeaders)
     try {
         const gid = orderIdFromV1Path(new URL(request.url).pathname);
         if (!gid) return v1Error({ code: 'INVALID_ORDER_ID', message: 'Invalid Shopify order GID' }, allowOrigin, reqAllowHeaders, 400);
-        const record = await upstreamDataRequest(
-            env,
-            `/order-manager/v1/data/orders/${numericIdFromGid(gid)}?shop=${encodeURIComponent(shopDomain(env))}`
-        );
-        return jsonResponse({ gid, production: record.production }, allowOrigin, reqAllowHeaders);
+        const productionRead = await readProductionMetafield(env, gid);
+        const shop = await d1Shop(env);
+        const assets = await d1AssetsForOrder(env, shop.id, gid);
+        await d1ProjectionUpsert(env, shop.id, gid, productionRead.state, productionRead.compareDigest, undefined, productionRead.order);
+        return jsonResponse({
+            gid,
+            canonicalSource: 'shopify-app-owned-metafield',
+            production: productionForClient(gid, productionRead.state, productionRead.compareDigest, assets)
+        }, allowOrigin, reqAllowHeaders);
     } catch (error) {
         return v1Error(error.body?.error || error, allowOrigin, reqAllowHeaders, error.status || 500, error.body);
     }
+}
+
+async function d1FinalizeProductionMutation(env, shopId, requestRow, gid, state, compareDigest, production, changedFields, order) {
+    const db = requireOrderDb(env);
+    const now = isoNow();
+    const active = !state.archivedAt && state.stage !== 'completed' ? 1 : 0;
+    const resultJson = JSON.stringify({
+        ok: true,
+        canonicalSource: 'shopify-app-owned-metafield',
+        syncPending: false,
+        production
+    });
+    const projection = db.prepare(`
+      INSERT INTO order_projection (
+        shop_id, order_gid, display_name, stage, active, production_revision,
+        production_digest, production_json, commerce_json, shopify_updated_at,
+        fetched_at, stale_at, last_error, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, NULL, ?, ?)
+      ON CONFLICT(shop_id, order_gid) DO UPDATE SET
+        display_name = COALESCE(excluded.display_name, order_projection.display_name),
+        stage = excluded.stage,
+        active = excluded.active,
+        production_revision = excluded.production_revision,
+        production_digest = excluded.production_digest,
+        production_json = excluded.production_json,
+        shopify_updated_at = COALESCE(excluded.shopify_updated_at, order_projection.shopify_updated_at),
+        stale_at = COALESCE(order_projection.stale_at, excluded.stale_at),
+        last_error = NULL,
+        updated_at = excluded.updated_at
+    `).bind(
+        shopId, gid, order?.name || null, state.stage, active, state.revision,
+        compareDigest || null, JSON.stringify(state), order?.updatedAt || null,
+        now, order?.createdAt || now, now
+    );
+    const event = db.prepare(`
+      INSERT OR IGNORE INTO production_events (
+        id, shop_id, order_gid, mutation_request_id, actor_id, action,
+        old_revision, new_revision, changed_fields_json, outcome, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'production.patch', ?, ?, ?, 'committed', ?)
+    `).bind(
+        `event:${requestRow.id}`, shopId, gid, requestRow.id, requestRow.actor_id,
+        Number(requestRow.expected_revision || 0), state.revision, JSON.stringify(changedFields), now
+    );
+    const complete = db.prepare(`
+      UPDATE mutation_requests
+      SET state = 'complete', result_json = ?, error_code = NULL, updated_at = ?
+      WHERE id = ?
+    `).bind(resultJson, now, requestRow.id);
+    await db.batch([projection, event, complete]);
+    return JSON.parse(resultJson);
 }
 
 async function handleV1ProductionPatch(request, env, allowOrigin, reqAllowHeaders, identity) {
     try {
         const gid = orderIdFromV1Path(new URL(request.url).pathname);
         if (!gid) return v1Error({ code: 'INVALID_ORDER_ID', message: 'Invalid Shopify order GID' }, allowOrigin, reqAllowHeaders, 400);
-        const body = await request.json();
-        const result = await upstreamDataRequest(env, `/order-manager/v1/data/orders/${numericIdFromGid(gid)}/production`, {
-            method: 'PATCH',
-            body: JSON.stringify({ ...body, shop: shopDomain(env), actor: identity?.subject || 'unknown' })
-        });
-        return jsonResponse(result, allowOrigin, reqAllowHeaders);
+        const body = await request.json().catch(() => ({}));
+        const expectedVersion = Number(body.expectedVersion);
+        if (!Number.isInteger(expectedVersion) || expectedVersion < 0) {
+            return v1Error({ code: 'EXPECTED_VERSION_REQUIRED', message: 'A non-negative expectedVersion is required.' }, allowOrigin, reqAllowHeaders, 400);
+        }
+        const idempotencyKey = String(body.idempotencyKey || '').trim();
+        if (!/^[A-Za-z0-9._:-]{8,200}$/.test(idempotencyKey)) {
+            return v1Error({ code: 'IDEMPOTENCY_KEY_REQUIRED', message: 'A valid idempotency key is required.' }, allowOrigin, reqAllowHeaders, 400);
+        }
+        const patch = normalizeProductionPatch(body.patch);
+        if (!Object.keys(patch).length) {
+            return v1Error({ code: 'EMPTY_PATCH', message: 'At least one production field must change.' }, allowOrigin, reqAllowHeaders, 400);
+        }
+        const actor = `${identity?.kind || 'unknown'}:${identity?.subject || 'unknown'}`;
+        const shop = await d1Shop(env);
+        const db = requireOrderDb(env);
+        const requestId = crypto.randomUUID();
+        const now = isoNow();
+        const patchJson = JSON.stringify(patch);
+        await db.prepare(`
+          INSERT INTO mutation_requests (
+            id, shop_id, actor_id, idempotency_key, order_gid, state,
+            requested_patch_json, expected_revision, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+          ON CONFLICT(shop_id, actor_id, idempotency_key) DO NOTHING
+        `).bind(requestId, shop.id, actor, idempotencyKey, gid, patchJson, expectedVersion, now, now).run();
+        const requestRow = await db.prepare(`
+          SELECT * FROM mutation_requests
+          WHERE shop_id = ? AND actor_id = ? AND idempotency_key = ?
+        `).bind(shop.id, actor, idempotencyKey).first();
+        if (!requestRow) throw Object.assign(new Error('Unable to persist the mutation request.'), { code: 'MUTATION_REQUEST_FAILED', status: 503 });
+        if (requestRow.order_gid !== gid || requestRow.requested_patch_json !== patchJson || Number(requestRow.expected_revision) !== expectedVersion) {
+            return v1Error({ code: 'IDEMPOTENCY_KEY_REUSE', message: 'This idempotency key was already used for a different request.' }, allowOrigin, reqAllowHeaders, 409);
+        }
+        if (requestRow.state === 'complete' && requestRow.result_json) {
+            return jsonResponse(JSON.parse(requestRow.result_json), allowOrigin, reqAllowHeaders);
+        }
+
+        const current = await readProductionMetafield(env, gid, actor);
+        if (current.state.lastMutationId === requestRow.id) {
+            const assets = await d1AssetsForOrder(env, shop.id, gid);
+            const production = productionForClient(gid, current.state, current.compareDigest, assets);
+            const repaired = await d1FinalizeProductionMutation(
+                env, shop.id, requestRow, gid, current.state, current.compareDigest,
+                production, Object.keys(patch), current.order
+            );
+            return jsonResponse(repaired, allowOrigin, reqAllowHeaders);
+        }
+        if (current.state.revision !== expectedVersion) {
+            return v1Error({
+                code: 'VERSION_CONFLICT',
+                message: 'Production metadata changed on another client.',
+                currentVersion: current.state.revision,
+                current: productionForClient(gid, current.state, current.compareDigest)
+            }, allowOrigin, reqAllowHeaders, 409);
+        }
+
+        const nextState = applyProductionPatch(current.state, patch, actor, requestRow.id);
+        const saved = await setProductionMetafield(env, gid, nextState, current.compareDigest);
+        const assets = await d1AssetsForOrder(env, shop.id, gid);
+        const production = productionForClient(gid, saved.state, saved.compareDigest, assets);
+        try {
+            const result = await d1FinalizeProductionMutation(
+                env, shop.id, requestRow, gid, saved.state, saved.compareDigest,
+                production, Object.keys(patch), current.order
+            );
+            return jsonResponse(result, allowOrigin, reqAllowHeaders);
+        } catch (error) {
+            console.error('D1 finalization failed after Shopify production commit:', error.message);
+            return jsonResponse({
+                ok: true,
+                canonicalSource: 'shopify-app-owned-metafield',
+                syncPending: true,
+                production,
+                warning: { code: 'SYNC_PENDING', message: 'Shopify saved the change; PrintMO is repairing its board projection.' }
+            }, allowOrigin, reqAllowHeaders, 202);
+        }
+    } catch (error) {
+        return v1Error(error.body?.error || error, allowOrigin, reqAllowHeaders, error.status || 500, error.body);
+    }
+}
+
+function supplierLinesFromProjectionRows(rows) {
+    const aggregate = new Map();
+    for (const row of rows) {
+        let summary;
+        try { summary = JSON.parse(row.commerce_json || '{}'); } catch (_) { summary = {}; }
+        for (const item of summary?.commerce?.lineItems || []) {
+            if (PRINT_TITLES.has(item?.title)) continue;
+            const sku = String(item?.sku || '').trim();
+            const qty = Number(item?.currentQuantity ?? item?.quantity ?? 0);
+            if (!sku || !Number.isInteger(qty) || qty <= 0) continue;
+            aggregate.set(sku, (aggregate.get(sku) || 0) + qty);
+        }
+    }
+    return [...aggregate.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([sku, qty]) => ({ sku, qty }));
+}
+
+async function confirmedBatchProductionUpdate(env, shop, row, batchId, poNumber, actor, graphQL = coordinatorGraphQL) {
+    const current = await readProductionMetafield(env, row.order_gid, actor, graphQL);
+    if (current.state.batchRefs.includes(poNumber) && current.state.stage === 'blanks_ordered') {
+        await d1ProjectionUpsert(env, shop.id, row.order_gid, current.state, current.compareDigest);
+        return { repaired: false, revision: current.state.revision };
+    }
+    const next = normalizeProductionState(current.state, actor);
+    next.stage = 'blanks_ordered';
+    next.batchRefs = [...new Set([...next.batchRefs, poNumber])].slice(0, 100);
+    next.revision = current.state.revision + 1;
+    next.lastMutationId = `batch:${batchId}`;
+    next.updatedAt = isoNow();
+    next.updatedBy = actor;
+    const saved = await setProductionMetafield(env, row.order_gid, next, current.compareDigest, graphQL);
+    await d1ProjectionUpsert(env, shop.id, row.order_gid, saved.state, saved.compareDigest);
+    return { repaired: true, revision: saved.state.revision };
+}
+
+async function handleV1BatchCommit(request, env, allowOrigin, reqAllowHeaders, identity) {
+    try {
+        const body = await request.json().catch(() => ({}));
+        const gids = [...new Set((body.orderIds || []).map(canonicalOrderGid).filter(Boolean))];
+        if (!gids.length || gids.length > 50) {
+            return v1Error({
+                code: 'INVALID_BATCH_ORDERS',
+                message: 'Select between 1 and 50 Shopify orders.'
+            }, allowOrigin, reqAllowHeaders, 400);
+        }
+        const idempotencyKey = String(body.idempotencyKey || '').trim();
+        if (!/^[A-Za-z0-9._:-]{8,200}$/.test(idempotencyKey)) {
+            return v1Error({
+                code: 'IDEMPOTENCY_KEY_REQUIRED',
+                message: 'A valid idempotency key is required.'
+            }, allowOrigin, reqAllowHeaders, 400);
+        }
+        const actor = `${identity?.kind || 'unknown'}:${identity?.subject || 'unknown'}`;
+        const shop = await d1Shop(env);
+        const db = requireOrderDb(env);
+        const placeholders = gids.map(() => '?').join(',');
+        const query = await db.prepare(`
+          SELECT order_gid, production_revision, production_json, commerce_json
+          FROM order_projection
+          WHERE shop_id = ? AND active = 1 AND order_gid IN (${placeholders})
+        `).bind(shop.id, ...gids).all();
+        const rows = query.results || [];
+        if (rows.length !== gids.length) {
+            return v1Error({
+                code: 'BATCH_ORDER_MISSING',
+                message: 'One or more selected orders are not available in the Shopify board.'
+            }, allowOrigin, reqAllowHeaders, 409);
+        }
+        for (const row of rows) {
+            const production = normalizeProductionState(JSON.parse(row.production_json || '{}'), actor);
+            if (!['to_order', 'blanks_cart'].includes(production.stage)) {
+                return v1Error({
+                    code: 'INVALID_BATCH_STAGE',
+                    message: 'Every selected order must be in Create blanks order or Blanks cart.'
+                }, allowOrigin, reqAllowHeaders, 409);
+            }
+        }
+        const lines = supplierLinesFromProjectionRows(rows);
+        if (!lines.length) {
+            return v1Error({
+                code: 'BATCH_HAS_NO_SUPPLIER_SKUS',
+                message: 'The selected orders do not contain purchasable garment SKUs.'
+            }, allowOrigin, reqAllowHeaders, 400);
+        }
+        const lineHash = bytesToHex(await crypto.subtle.digest(
+            'SHA-256',
+            new TextEncoder().encode(JSON.stringify(lines))
+        ));
+        const batchId = `ssb-${await stableAssetId(`${shop.shop_domain}:${actor}:${idempotencyKey}`)}`;
+        const poNumber = `PM-${batchId.slice(-12).toUpperCase()}`;
+        const now = isoNow();
+        const requestJson = JSON.stringify({ orderIds: gids, lines, orderCount: gids.length });
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+        await db.prepare(`
+          INSERT INTO batches (
+            id, shop_id, po_number, state, line_hash, request_json, expires_at,
+            created_by, created_at, updated_at
+          ) VALUES (?, ?, ?, 'prepared', ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO NOTHING
+        `).bind(batchId, shop.id, poNumber, lineHash, requestJson, expiresAt, actor, now, now).run();
+        const batch = await db.prepare('SELECT * FROM batches WHERE id = ? AND shop_id = ?')
+            .bind(batchId, shop.id).first();
+        if (!batch || batch.line_hash !== lineHash || batch.request_json !== requestJson) {
+            return v1Error({
+                code: 'BATCH_IDEMPOTENCY_CONFLICT',
+                message: 'This batch key was already used for different orders.'
+            }, allowOrigin, reqAllowHeaders, 409);
+        }
+        if (batch.state === 'confirmed') {
+            return jsonResponse(JSON.parse(batch.response_json || '{"ok":true}'), allowOrigin, reqAllowHeaders);
+        }
+        if (['submitting', 'unknown'].includes(batch.state)) {
+            return v1Error({
+                code: 'BATCH_RECONCILIATION_REQUIRED',
+                message: 'This batch may already have reached S&S and must be reconciled before retrying.'
+            }, allowOrigin, reqAllowHeaders, 409);
+        }
+        await db.batch([
+            ...rows.map(row => db.prepare(`
+              INSERT OR IGNORE INTO batch_orders (batch_id, order_gid, production_revision, quantity_hash)
+              VALUES (?, ?, ?, ?)
+            `).bind(batchId, row.order_gid, Number(row.production_revision || 0), lineHash)),
+            db.prepare(`UPDATE batches SET state = 'submitting', updated_at = ? WHERE id = ?`)
+                .bind(isoNow(), batchId)
+        ]);
+
+        let supplier;
+        try {
+            supplier = await upstreamDataRequest(env, '/order-manager/v1/supplier/ss/commit', {
+                method: 'POST',
+                body: JSON.stringify({
+                    batchId,
+                    poNumber,
+                    lineHash,
+                    lines,
+                    orderCount: gids.length,
+                    testOrder: env.SS_TEST_ORDER !== '0'
+                })
+            });
+        } catch (error) {
+            await db.batch([
+                db.prepare(`UPDATE batches SET state = 'unknown', response_json = ?, updated_at = ? WHERE id = ?`)
+                    .bind(JSON.stringify({ error: error.message }), isoNow(), batchId),
+                db.prepare(`
+                  INSERT INTO supplier_attempts (
+                    id, batch_id, attempt_type, outcome, http_status, response_json, created_at
+                  ) VALUES (?, ?, 'commit', 'unknown', ?, ?, ?)
+                `).bind(crypto.randomUUID(), batchId, Number(error.status || 0) || null, JSON.stringify({ error: error.message }), isoNow())
+            ]);
+            return v1Error({
+                code: 'SUPPLIER_RESULT_UNKNOWN',
+                message: 'S&S did not return a confirmed result. Do not retry until this batch is reconciled.',
+                batchId
+            }, allowOrigin, reqAllowHeaders, 502);
+        }
+
+        const response = {
+            ok: true,
+            batchId,
+            poNumber,
+            supplierOrderNumber: supplier.orderNumber,
+            lineHash,
+            count: gids.length,
+            subtotal: supplier.subtotal,
+            skuCount: supplier.skuCount,
+            testOrder: Boolean(supplier.testOrder),
+            metadataRepairRequired: []
+        };
+        await db.batch([
+            db.prepare(`UPDATE batches SET state = 'confirmed', response_json = ?, updated_at = ? WHERE id = ?`)
+                .bind(JSON.stringify(response), isoNow(), batchId),
+            db.prepare(`
+              INSERT INTO supplier_attempts (
+                id, batch_id, attempt_type, outcome, http_status, response_json, created_at
+              ) VALUES (?, ?, 'commit', 'confirmed', 200, ?, ?)
+            `).bind(crypto.randomUUID(), batchId, JSON.stringify(supplier), isoNow())
+        ]);
+        for (const row of rows) {
+            try {
+                await confirmedBatchProductionUpdate(env, shop, row, batchId, poNumber, actor);
+            } catch (error) {
+                console.error(`Confirmed batch metadata repair required for ${row.order_gid}:`, error.message);
+                response.metadataRepairRequired.push(row.order_gid);
+            }
+        }
+        await db.prepare(`UPDATE batches SET response_json = ?, updated_at = ? WHERE id = ?`)
+            .bind(JSON.stringify(response), isoNow(), batchId).run();
+        return jsonResponse(response, allowOrigin, reqAllowHeaders, response.metadataRepairRequired.length ? 202 : 200);
     } catch (error) {
         return v1Error(error.body?.error || error, allowOrigin, reqAllowHeaders, error.status || 500, error.body);
     }
@@ -2938,8 +3648,16 @@ async function verifyAssetTicket(ticket, env) {
 async function handleV1AssetReadTicket(request, env, allowOrigin, reqAllowHeaders) {
     try {
         const assetId = assetIdFromPath(new URL(request.url).pathname);
-        const asset = await upstreamDataRequest(env, `/order-manager/v1/data/assets/${encodeURIComponent(assetId)}?shop=${encodeURIComponent(shopDomain(env))}`);
-        const ticket = await signAssetTicket({ assetId, key: asset.objectKey, exp: Math.floor(Date.now() / 1000) + 60 }, env);
+        const shop = await d1Shop(env);
+        const asset = await requireOrderDb(env).prepare(`
+          SELECT id, object_key
+          FROM asset_manifests
+          WHERE id = ? AND shop_id = ? AND state = 'active'
+        `).bind(assetId, shop.id).first();
+        if (!asset) {
+            return v1Error({ code: 'ASSET_NOT_FOUND', message: 'Asset manifest was not found.' }, allowOrigin, reqAllowHeaders, 404);
+        }
+        const ticket = await signAssetTicket({ assetId, key: asset.object_key, exp: Math.floor(Date.now() / 1000) + 60 }, env);
         return jsonResponse({ assetId, url: `/order-manager/v1/assets/${encodeURIComponent(assetId)}/read?ticket=${encodeURIComponent(ticket)}`, expiresIn: 60 }, allowOrigin, reqAllowHeaders);
     } catch (error) {
         return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
@@ -3001,33 +3719,55 @@ async function handleShopifyWebhook(request, env, allowOrigin, reqAllowHeaders, 
         if (!webhookId) return v1Error({ code: 'MISSING_WEBHOOK_ID', message: 'Webhook delivery ID is required' }, allowOrigin, reqAllowHeaders, 400);
         const payload = JSON.parse(new TextDecoder().decode(rawBytes));
         const topic = request.headers.get('X-Shopify-Topic') || '';
-        if (topic === 'orders/paid') {
-            // Phase 2 remains shadow-only: preserve the authoritative legacy ingestion path.
-            // The Render endpoint is idempotent, so retries and any overlapping old subscription are safe.
+        if (topic === 'orders/paid' && env.LEGACY_INGEST_ENABLED === '1') {
+            // Explicit rollback bridge only. Candidate mode never reads this legacy write.
             await forwardPaidWebhookToLegacyQueue(request, rawBytes, env);
         }
-        const dedupe = await upstreamDataRequest(env, '/order-manager/v1/data/webhooks/dedupe', {
-            method: 'POST', body: JSON.stringify({ shop: shopDomain(env), webhookId })
-        });
-        if (!dedupe.accepted) return jsonResponse({ ok: true, duplicate: true }, allowOrigin, reqAllowHeaders);
+        const shop = await d1Shop(env, { allowUninstalled: topic === 'app/uninstalled' });
+        const now = isoNow();
         const gid = canonicalOrderGid(payload.admin_graphql_api_id || payload.order_id || payload.id);
-        if (gid && topic === 'orders/paid') {
-            const legacy = { status: 'received', name: payload.name || `#${payload.order_number || payload.id}`, orderNumber: String(payload.order_number || '').replace('#', ''), receivedAt: payload.created_at };
-            await upstreamDataRequest(env, '/order-manager/v1/data/project', {
-                method: 'POST', body: JSON.stringify({ shop: shopDomain(env), gid, legacy, preserveExistingStage: true })
-            });
-            for (const key of [legacy.name, legacy.orderNumber].filter(Boolean)) {
-                await upstreamDataRequest(env, '/order-manager/v1/data/mappings', {
-                    method: 'POST', body: JSON.stringify({ shop: shopDomain(env), legacyKey: key, gid, ledger: { matchResult: 'webhook' } })
-                });
-            }
+        const receipt = await requireOrderDb(env).prepare(`
+          INSERT OR IGNORE INTO webhook_receipts (
+            webhook_id, shop_id, topic, order_gid, state, triggered_at, received_at, updated_at
+          ) VALUES (?, ?, ?, ?, 'received', ?, ?, ?)
+        `).bind(webhookId, shop.id, topic, gid, payload.updated_at || payload.created_at || null, now, now).run();
+        if (!receipt.meta?.changes) return jsonResponse({ ok: true, duplicate: true }, allowOrigin, reqAllowHeaders);
+        if (topic === 'app/uninstalled') {
+            await requireOrderDb(env).batch([
+                requireOrderDb(env).prepare(`
+                  UPDATE shops SET uninstalled_at = ?, updated_at = ? WHERE id = ?
+                `).bind(now, now, shop.id),
+                requireOrderDb(env).prepare(`
+                  UPDATE webhook_receipts SET state = 'processed', updated_at = ? WHERE webhook_id = ?
+                `).bind(now, webhookId)
+            ]);
+            return jsonResponse({ ok: true }, allowOrigin, reqAllowHeaders);
         }
         if (gid) {
-            await upstreamDataRequest(env, '/order-manager/v1/data/cache/dirty', {
-                method: 'POST', body: JSON.stringify({ shop: shopDomain(env), gids: [gid] })
-            });
-            const refresh = refreshThroughCoordinator(env, [gid]).catch(error => console.error('Webhook refresh failed:', error.message));
+            if (topic === 'orders/paid') await ensureCandidateOrder(env, gid, 'shopify-webhook');
+            await requireOrderDb(env).prepare(`
+              UPDATE order_projection
+              SET stale_at = ?, updated_at = ?
+              WHERE shop_id = ? AND order_gid = ?
+            `).bind(now, now, shop.id, gid).run();
+            const refresh = refreshThroughCoordinator(env, [gid])
+                .then(() => requireOrderDb(env).prepare(`
+                  UPDATE webhook_receipts SET state = 'processed', updated_at = ? WHERE webhook_id = ?
+                `).bind(isoNow(), webhookId).run())
+                .catch(async error => {
+                    console.error('Webhook refresh failed:', error.message);
+                    await requireOrderDb(env).prepare(`
+                      UPDATE webhook_receipts
+                      SET state = 'failed', error_code = ?, updated_at = ?
+                      WHERE webhook_id = ?
+                    `).bind(String(error.code || 'REFRESH_FAILED'), isoNow(), webhookId).run();
+                });
             if (ctx?.waitUntil) ctx.waitUntil(refresh);
+            else await refresh;
+        } else {
+            await requireOrderDb(env).prepare(`
+              UPDATE webhook_receipts SET state = 'processed', updated_at = ? WHERE webhook_id = ?
+            `).bind(isoNow(), webhookId).run();
         }
         return jsonResponse({ ok: true }, allowOrigin, reqAllowHeaders);
     } catch (error) {
@@ -3038,17 +3778,30 @@ async function handleShopifyWebhook(request, env, allowOrigin, reqAllowHeaders, 
 
 async function handleV1ParityCheck(request, env, allowOrigin, reqAllowHeaders) {
     try {
-        const report = await upstreamDataRequest(env, '/order-manager/v1/data/parity', {
-            method: 'POST', body: JSON.stringify({ shop: shopDomain(env) })
-        });
+        const shop = await d1Shop(env);
+        const rows = await requireOrderDb(env).prepare(`
+          SELECT
+            COUNT(*) AS projected,
+            SUM(CASE WHEN stale_at IS NOT NULL THEN 1 ELSE 0 END) AS stale,
+            SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) AS errors
+          FROM order_projection WHERE shop_id = ? AND active = 1
+        `).bind(shop.id).first();
+        const report = {
+            ok: Number(rows?.errors || 0) === 0,
+            canonicalSource: 'shopify-app-owned-metafield',
+            projectionSource: 'cloudflare-d1',
+            projected: Number(rows?.projected || 0),
+            stale: Number(rows?.stale || 0),
+            errors: Number(rows?.errors || 0),
+            checkedAt: isoNow()
+        };
         return jsonResponse(report, allowOrigin, reqAllowHeaders);
     } catch (error) { return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500); }
 }
 
 async function handleV1ParityReport(request, env, allowOrigin, reqAllowHeaders) {
     try {
-        const report = await upstreamDataRequest(env, `/order-manager/v1/data/parity/reports?shop=${encodeURIComponent(shopDomain(env))}`);
-        return jsonResponse(report, allowOrigin, reqAllowHeaders);
+        return handleV1ParityCheck(request, env, allowOrigin, reqAllowHeaders);
     } catch (error) { return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500); }
 }
 
@@ -3079,7 +3832,7 @@ async function stableAssetId(value) {
     return bytesToHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value)))).slice(0, 24);
 }
 
-async function migrateLegacyAssets(env, gid, legacy, execute) {
+async function migrateLegacyAssets(env, shopId, gid, legacy, execute) {
     const orderId = numericIdFromGid(gid);
     const manifests = [];
     for (const item of Array.isArray(legacy.items) ? legacy.items : []) {
@@ -3103,6 +3856,11 @@ async function migrateLegacyAssets(env, gid, legacy, execute) {
                     httpMetadata: { contentType: source.headers.get('Content-Type') || asset.contentType || 'application/octet-stream' },
                     customMetadata: { sha256, legacyKey: asset.key }
                 });
+                const stored = await env.R2_BUCKET.get(objectKey);
+                if (!stored) throw new Error(`R2 verification could not read ${name}`);
+                const storedBytes = new Uint8Array(await stored.arrayBuffer());
+                const storedDigest = bytesToHex(await crypto.subtle.digest('SHA-256', storedBytes));
+                if (storedDigest !== sha256) throw new Error(`R2 checksum verification failed for ${name}`);
             }
             manifests.push({
                 assetId,
@@ -3111,6 +3869,7 @@ async function migrateLegacyAssets(env, gid, legacy, execute) {
                 contentType: asset.contentType || (asset.ext ? `image/${asset.ext === 'jpg' ? 'jpeg' : asset.ext}` : null),
                 byteSize,
                 sha256,
+                sourceKey: asset.key,
                 migrationState: execute ? 'verified' : 'planned'
             });
         }
@@ -3128,14 +3887,92 @@ async function migrateLegacyAssets(env, gid, legacy, execute) {
         if (execute) {
             if (!env.R2_BUCKET) throw new Error('R2_BUCKET is required to migrate Base64 attachments');
             await env.R2_BUCKET.put(objectKey, bytes, { httpMetadata: { contentType: attachment.type || attachment.contentType || 'application/octet-stream' }, customMetadata: { sha256 } });
+            const stored = await env.R2_BUCKET.get(objectKey);
+            if (!stored) throw new Error(`R2 verification could not read ${name}`);
+            const storedBytes = new Uint8Array(await stored.arrayBuffer());
+            const storedDigest = bytesToHex(await crypto.subtle.digest('SHA-256', storedBytes));
+            if (storedDigest !== sha256) throw new Error(`R2 checksum verification failed for ${name}`);
         }
-        manifests.push({ assetId, objectKey, name, contentType: attachment.type || attachment.contentType || null, byteSize: bytes.byteLength, sha256, migrationState: execute ? 'verified' : 'planned' });
+        manifests.push({ assetId, objectKey, name, contentType: attachment.type || attachment.contentType || null, byteSize: bytes.byteLength, sha256, sourceKey: attachment.name || attachment.filename || name, migrationState: execute ? 'verified' : 'planned' });
+    }
+    if (execute && manifests.length) {
+        const now = isoNow();
+        const db = requireOrderDb(env);
+        await db.batch(manifests.map(asset => db.prepare(`
+          INSERT INTO asset_manifests (
+            id, shop_id, order_gid, object_key, filename, content_type, byte_size,
+            sha256, state, source_key, created_by, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 'redis-migration', ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            object_key = excluded.object_key,
+            filename = excluded.filename,
+            content_type = excluded.content_type,
+            byte_size = excluded.byte_size,
+            sha256 = excluded.sha256,
+            state = 'active',
+            updated_at = excluded.updated_at
+        `).bind(
+            asset.assetId, shopId, gid, asset.objectKey, asset.name,
+            asset.contentType || 'application/octet-stream', asset.byteSize,
+            asset.sha256, asset.sourceKey || asset.objectKey, now, now
+        )));
     }
     return manifests;
 }
 
+function legacyProductionState(legacy, current, actor) {
+    const state = normalizeProductionState(current, actor);
+    const legacyStatus = String(legacy?.status || 'received');
+    state.stage = legacyStatus === 'toOrder'
+        ? 'to_order'
+        : legacyStatus === 'blanks'
+            ? (Number(legacy?.blanksOrdered || 0) ? 'blanks_ordered' : 'blanks_cart')
+            : legacyStatus === 'print'
+                ? 'print'
+                : 'received';
+    state.readiness = {
+        blanksReady: Boolean(Number(legacy?.blanksStatus || 0)),
+        printsOrdered: Boolean(Number(legacy?.printsOrdered || 0)),
+        printsReady: Boolean(Number(legacy?.printsStatus || 0))
+    };
+    state.printedCount = Math.max(0, Number(legacy?.progress || 0));
+    state.bundleId = legacy?.bundle ? String(legacy.bundle).slice(0, 160) : null;
+    state.internalNotes = String(legacy?.notes || '').slice(0, 5000);
+    state.updatedAt = isoNow();
+    state.updatedBy = actor;
+    return state;
+}
+
+async function writeMigrationLedger(env, shopId, values) {
+    const now = isoNow();
+    const id = await stableAssetId(`${values.sourceType}:${values.sourceKey}:${values.sourceDigest}`);
+    await requireOrderDb(env).prepare(`
+      INSERT INTO migration_ledger (
+        id, shop_id, source_type, source_key, source_sha256, order_gid,
+        destination_key, state, reason, result_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(shop_id, source_type, source_key, source_sha256) DO UPDATE SET
+        order_gid = excluded.order_gid,
+        destination_key = excluded.destination_key,
+        state = excluded.state,
+        reason = excluded.reason,
+        result_json = excluded.result_json,
+        updated_at = excluded.updated_at
+    `).bind(
+        id, shopId, values.sourceType, values.sourceKey, values.sourceDigest,
+        values.gid || null, values.destinationKey || null, values.state,
+        values.reason || null, JSON.stringify(values.result || {}), now, now
+    ).run();
+}
+
 async function handleV1MigrationRun(request, env, allowOrigin, reqAllowHeaders) {
     try {
+        if (env.MIGRATION_UPSTREAM_ENABLED !== '1') {
+            return v1Error({
+                code: 'MIGRATION_BRIDGE_DISABLED',
+                message: 'The one-time Redis migration bridge is disabled.'
+            }, allowOrigin, reqAllowHeaders, 503);
+        }
         const body = await request.json().catch(() => ({}));
         const execute = body.execute === true;
         const includeAssets = body.includeAssets === true;
@@ -3145,6 +3982,7 @@ async function handleV1MigrationRun(request, env, allowOrigin, reqAllowHeaders) 
         const limit = Math.min(Math.max(Number(body.limit || 1), 1), 5);
         const offset = Math.max(Number(body.offset || 0), 0);
         const page = await upstreamDataRequest(env, `/order-manager/v1/data/legacy?offset=${offset}&limit=${limit}`);
+        const shop = await d1Shop(env);
         const report = {
             execute,
             includeAssets,
@@ -3157,41 +3995,109 @@ async function handleV1MigrationRun(request, env, allowOrigin, reqAllowHeaders) 
             errors: [],
             nextOffset: page.nextOffset
         };
+        const ownerQuarantine = new Set(
+            String(env.MIGRATION_QUARANTINE_ORDER_NUMBERS || '1000')
+                .split(',')
+                .map(value => value.trim().replace(/^#/, ''))
+                .filter(Boolean)
+        );
         for (const legacy of page.records || []) {
             const source = JSON.stringify(legacy);
             const sourceDigest = bytesToHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source)));
             const identifier = legacy.orderNumber || String(legacy.name || '').split(/[–-]/)[0].trim();
             try {
+                const orderNumber = legacyOrderNumber(legacy);
+                if (orderNumber && ownerQuarantine.has(orderNumber)) {
+                    report.quarantined++;
+                    if (execute) await writeMigrationLedger(env, shop.id, {
+                        sourceType: 'redis-order',
+                        sourceKey: identifier || `#${orderNumber}`,
+                        sourceDigest,
+                        state: 'quarantined',
+                        reason: 'owner_approved_quarantine'
+                    });
+                    continue;
+                }
                 const match = await matchLegacyOrder(env, legacy);
                 if (!match.gid) {
                     report.quarantined++;
-                    if (execute) await upstreamDataRequest(env, '/order-manager/v1/data/quarantine', {
-                        method: 'POST', body: JSON.stringify({ shop: shopDomain(env), sourceDigest, legacyIdentifier: identifier, reason: match.matchResult })
+                    if (execute) await writeMigrationLedger(env, shop.id, {
+                        sourceType: 'redis-order',
+                        sourceKey: identifier || `offset:${offset}`,
+                        sourceDigest,
+                        state: 'quarantined',
+                        reason: match.matchResult
                     });
                     continue;
                 }
                 report.matched++;
                 if (!execute) continue;
-                const summaries = await refreshThroughCoordinator(env, [match.gid]);
-                const assets = includeAssets ? await migrateLegacyAssets(env, match.gid, legacy, true) : [];
-                const keys = [...new Set([identifier, legacy.orderNumber, legacy.name, `source:${sourceDigest}`].filter(Boolean))];
-                for (const key of keys) await upstreamDataRequest(env, '/order-manager/v1/data/mappings', {
-                    method: 'POST',
-                    body: JSON.stringify({ shop: shopDomain(env), legacyKey: key, gid: match.gid, ledger: { matchResult: match.matchResult, assetCount: assets.length, assetChecksums: assets.map(asset => asset.sha256).filter(Boolean) } })
-                });
-                await upstreamDataRequest(env, '/order-manager/v1/data/project', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        shop: shopDomain(env),
+                const current = await ensureCandidateOrder(env, match.gid, 'redis-migration');
+                if (current.state.revision > 0 && body.overwriteChangedOrders !== true) {
+                    await writeMigrationLedger(env, shop.id, {
+                        sourceType: 'redis-order',
+                        sourceKey: identifier || match.gid,
+                        sourceDigest,
                         gid: match.gid,
-                        legacy: includeAssets ? { ...legacy, v1Assets: assets } : legacy,
-                        commerce: summaries[0] || null
-                    })
+                        state: 'quarantined',
+                        reason: 'candidate_state_already_changed'
+                    });
+                    report.quarantined++;
+                    continue;
+                }
+                const migratedState = legacyProductionState(legacy, current.state, 'redis-migration');
+                migratedState.revision = current.state.revision + 1;
+                migratedState.lastMutationId = `migration:${sourceDigest}`;
+                const saved = await setProductionMetafield(env, match.gid, migratedState, current.compareDigest);
+                const summaries = await refreshThroughCoordinator(env, [match.gid]);
+                const assets = includeAssets ? await migrateLegacyAssets(env, shop.id, match.gid, legacy, true) : [];
+                await d1ProjectionUpsert(env, shop.id, match.gid, saved.state, saved.compareDigest, summaries[0]);
+                for (const asset of assets) {
+                    await writeMigrationLedger(env, shop.id, {
+                        sourceType: 'redis-asset',
+                        sourceKey: asset.sourceKey || asset.name,
+                        sourceDigest: asset.sha256,
+                        gid: match.gid,
+                        destinationKey: asset.objectKey,
+                        state: 'verified',
+                        result: {
+                            byteSize: asset.byteSize,
+                            contentType: asset.contentType,
+                            assetId: asset.assetId
+                        }
+                    });
+                }
+                await writeMigrationLedger(env, shop.id, {
+                    sourceType: 'redis-order',
+                    sourceKey: identifier || match.gid,
+                    sourceDigest,
+                    gid: match.gid,
+                    destinationKey: `${PRODUCTION_METAFIELD_NAMESPACE}.${PRODUCTION_METAFIELD_KEY}`,
+                    state: 'verified',
+                    result: {
+                        matchResult: match.matchResult,
+                        revision: saved.state.revision,
+                        assetCount: assets.length,
+                        assetChecksums: assets.map(asset => asset.sha256).filter(Boolean)
+                    }
                 });
                 report.migrated++;
             } catch (error) {
                 report.errors.push({ orderIdentifier: identifier || 'unknown', code: 'MIGRATION_ERROR', message: error.message });
             }
+        }
+        if (execute && page.nextOffset === null && report.errors.length === 0) {
+            const now = isoNow();
+            await requireOrderDb(env).prepare(`
+              INSERT INTO reconciliation_checkpoints (
+                shop_id, name, checkpoint, last_started_at, last_completed_at, last_result_json
+              ) VALUES (?, 'migration', ?, ?, ?, ?)
+              ON CONFLICT(shop_id, name) DO UPDATE SET
+                checkpoint = excluded.checkpoint,
+                last_started_at = excluded.last_started_at,
+                last_completed_at = excluded.last_completed_at,
+                last_result_json = excluded.last_result_json
+            `).bind(shop.id, now, now, now, JSON.stringify(report)).run();
         }
         return jsonResponse(report, allowOrigin, reqAllowHeaders);
     } catch (error) { return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500); }
@@ -3249,8 +4155,13 @@ export class OrderSyncCoordinator {
     }
 
     async reconcileIncremental() {
-        const checkpointResult = await upstreamDataRequest(this.env, `/order-manager/v1/data/checkpoint?shop=${encodeURIComponent(shopDomain(this.env))}`);
-        const checkpoint = checkpointResult.checkpoint ? Date.parse(checkpointResult.checkpoint) : Date.now() - 300000;
+        const shop = await d1Shop(this.env);
+        const db = requireOrderDb(this.env);
+        const checkpointResult = await db.prepare(`
+          SELECT checkpoint FROM reconciliation_checkpoints WHERE shop_id = ? AND name = 'incremental'
+        `).bind(shop.id).first();
+        const startedAt = isoNow();
+        const checkpoint = checkpointResult?.checkpoint ? Date.parse(checkpointResult.checkpoint) : Date.now() - 300000;
         const overlap = new Date(checkpoint - 120000).toISOString();
         let after = null;
         let newest = checkpoint;
@@ -3263,33 +4174,94 @@ export class OrderSyncCoordinator {
                 gids.push(order.id);
                 newest = Math.max(newest, Date.parse(order.updatedAt) || newest);
                 if (order.displayFinancialStatus === 'PAID') {
-                    await upstreamDataRequest(this.env, '/order-manager/v1/data/project', {
-                        method: 'POST', body: JSON.stringify({
-                            shop: shopDomain(this.env),
-                            gid: order.id,
-                            legacy: { status: 'received', name: order.name, receivedAt: order.createdAt },
-                            preserveExistingStage: true
-                        })
-                    });
+                    await ensureCandidateOrder(
+                        this.env,
+                        order.id,
+                        'reconciliation',
+                        (_env, query, variables, operationName) => this.graphql(query, variables, operationName)
+                    );
                 }
             }
             after = connection.pageInfo?.hasNextPage ? connection.pageInfo.endCursor : null;
         } while (after);
         if (gids.length) await this.refresh(gids);
-        await upstreamDataRequest(this.env, '/order-manager/v1/data/checkpoint', {
-            method: 'POST', body: JSON.stringify({ shop: shopDomain(this.env), checkpoint: new Date(newest).toISOString() })
-        });
-        return { ok: true, refreshed: gids.length, checkpoint: new Date(newest).toISOString() };
+        const completedAt = isoNow();
+        const nextCheckpoint = new Date(newest).toISOString();
+        const result = { ok: true, refreshed: gids.length, checkpoint: nextCheckpoint };
+        await db.prepare(`
+          INSERT INTO reconciliation_checkpoints (
+            shop_id, name, checkpoint, last_started_at, last_completed_at, last_result_json
+          ) VALUES (?, 'incremental', ?, ?, ?, ?)
+          ON CONFLICT(shop_id, name) DO UPDATE SET
+            checkpoint = excluded.checkpoint,
+            last_started_at = excluded.last_started_at,
+            last_completed_at = excluded.last_completed_at,
+            last_result_json = excluded.last_result_json
+        `).bind(shop.id, nextCheckpoint, startedAt, completedAt, JSON.stringify(result)).run();
+        return result;
     }
 
     async reconcileIntegrity() {
-        const integrity = await upstreamDataRequest(this.env, '/order-manager/v1/data/integrity', {
-            method: 'POST', body: JSON.stringify({ shop: shopDomain(this.env) })
-        });
-        const parity = await upstreamDataRequest(this.env, '/order-manager/v1/data/parity', {
-            method: 'POST', body: JSON.stringify({ shop: shopDomain(this.env) })
-        });
-        return { ok: true, integrity, parity };
+        const shop = await d1Shop(this.env);
+        const db = requireOrderDb(this.env);
+        const startedAt = isoNow();
+        const counts = await db.prepare(`
+          SELECT
+            COUNT(*) AS projected,
+            SUM(CASE WHEN stale_at IS NOT NULL THEN 1 ELSE 0 END) AS stale,
+            SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) AS errors
+          FROM order_projection WHERE shop_id = ? AND active = 1
+        `).bind(shop.id).first();
+        const pending = await db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM mutation_requests
+          WHERE shop_id = ? AND state = 'pending' AND updated_at < ?
+        `).bind(shop.id, new Date(Date.now() - 300000).toISOString()).first();
+        const confirmedOrders = await db.prepare(`
+          SELECT bo.order_gid, b.id AS batch_id, b.po_number
+          FROM batch_orders bo
+          JOIN batches b ON b.id = bo.batch_id
+          WHERE b.shop_id = ? AND b.state = 'confirmed'
+          ORDER BY b.updated_at DESC
+          LIMIT 100
+        `).bind(shop.id).all();
+        const repairedBatchOrders = [];
+        const batchRepairErrors = [];
+        const directGraphQL = (_env, query, variables, operationName) =>
+            this.graphql(query, variables, operationName);
+        for (const row of confirmedOrders.results || []) {
+            try {
+                const repair = await confirmedBatchProductionUpdate(
+                    this.env, shop, row, row.batch_id, row.po_number,
+                    'integrity-reconciliation', directGraphQL
+                );
+                if (repair.repaired) repairedBatchOrders.push(row.order_gid);
+            } catch (error) {
+                batchRepairErrors.push({ gid: row.order_gid, message: error.message });
+            }
+        }
+        const result = {
+            ok: Number(counts?.errors || 0) === 0
+                && Number(pending?.count || 0) === 0
+                && batchRepairErrors.length === 0,
+            projected: Number(counts?.projected || 0),
+            stale: Number(counts?.stale || 0),
+            projectionErrors: Number(counts?.errors || 0),
+            stuckMutations: Number(pending?.count || 0),
+            repairedBatchOrders,
+            batchRepairErrors,
+            checkedAt: isoNow()
+        };
+        await db.prepare(`
+          INSERT INTO reconciliation_checkpoints (
+            shop_id, name, checkpoint, last_started_at, last_completed_at, last_result_json
+          ) VALUES (?, 'integrity', NULL, ?, ?, ?)
+          ON CONFLICT(shop_id, name) DO UPDATE SET
+            last_started_at = excluded.last_started_at,
+            last_completed_at = excluded.last_completed_at,
+            last_result_json = excluded.last_result_json
+        `).bind(shop.id, startedAt, isoNow(), JSON.stringify(result)).run();
+        return result;
     }
 
     async fetch(request) {

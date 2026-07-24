@@ -33,9 +33,9 @@
 |---|---|
 | [index.html](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/index.html) | Standalone web / Shopify Admin iframe container |
 | [renderer.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/renderer.js) | Web-specific renderer logic adapted for browser DOM |
-| [web-shim.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/web-shim.js) | Shim replacing Electron `window.api` with web-safe authenticated queue, Shopify preview, and production-metadata handlers |
-| [shopify-preview.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/shopify-preview.js) | Redis/Shopify data-view switch, bounded Shopify list/detail rendering, and conflict-safe PrintMO production controls |
-| [shopify-preview.css](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/shopify-preview.css) | Shopify live list/detail and production editor dialog, status, responsive, focus, and reduced-motion styles |
+| [web-shim.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/web-shim.js) | Source-aware `window.api`: untouched legacy Redis routes or Shopify/D1 candidate DTO/mutations/batches |
+| [shopify-preview.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/shopify-preview.js) | Legacy/Shopify source switch, failure rollback, diagnostic rich detail, and canonical production controls |
+| [shopify-preview.css](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/shopify-preview.css) | Shopify board source switch, rich-detail dialog, status, responsive, focus, and reduced-motion styles |
 | [storage-browser.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/storage-browser.js) | LocalStorage & remote endpoint storage adapter |
 | [blanks-batches.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/blanks-batches.js) | Batch ordering and blank-apparel aggregation module |
 | [detail-overlay-enhancements.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-web/detail-overlay-enhancements.js) | Enhanced order detail modal & variant breakdown views |
@@ -51,11 +51,13 @@
 
 | File / Component | Primary Responsibilities |
 |---|---|
-| `extensions/printmo-production-status/` | Shopify Admin order-details block for reading and editing transition-safe PrintMO production metadata |
+| `extensions/printmo-production-status/` | Shopify Admin order-details block for reading and editing canonical Shopify production metadata |
 | `extensions/printmo-production-status/src/production-client.mjs` | Shared Admin-block normalization, minimal-patch, endpoint, authentication, and error helpers |
-| `scripts/verify-task2.mjs` | Task 2 contract checks for target/API version, mirrored stage set, compare-and-set payload, and web transport wiring |
-| [worker.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-proxy/worker.js) | Authenticated BFF for Shopify GraphQL/webhooks, cost coordination and preview/detail caches, R2 access, S&S proxying, CORS, and authenticated Render/Redis bridging |
-| [shopify.app.toml](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-proxy/shopify.app.toml) | Shopify app identity, embedded URL, requested scopes, API version, and webhook subscriptions; changes require app-version release and installation approval |
+| `scripts/verify-task2.mjs` | Admin-block labels/stages/source-switch transport contract |
+| `migrations/0001_redis_free.sql` | D1 projection, mutation, audit, webhook, reconciliation, batch, asset, and migration schema |
+| [worker.js](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-proxy/worker.js) | Authenticated BFF for Shopify canonical state/commerce, D1, R2, webhooks, reconciliation, migration, and supplier batch state; explicit legacy routes remain isolated |
+| [shopify.app.toml](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-proxy/shopify.app.toml) | Shopify app identity, app-owned metafield, requested scopes, API version, and webhook subscriptions |
+| [wrangler.jsonc](file:///e:/PrintMO/PrintMO-Order-Management/order-manager-proxy/wrangler.jsonc) | Worker, Durable Object, D1, R2, cron, and pre-cutover flag bindings |
 
 ---
 

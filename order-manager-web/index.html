@@ -27,10 +27,10 @@
     <div class="order-source-switch" role="group" aria-label="Order data view">
       <span class="order-source-label">Data view</span>
       <button id="order-source-redis" class="order-source-option active" type="button" data-order-source-target="redis" aria-pressed="true">
-        Redis board
+        Legacy Redis
       </button>
       <button id="order-source-shopify" class="order-source-option" type="button" data-order-source-target="shopify" aria-pressed="false">
-        Shopify live
+        Shopify board
       </button>
     </div>
     <nav class="app-nav" aria-label="Primary navigation">
@@ -71,8 +71,8 @@
       </button>
     </nav>
     <div class="mobile-order-source-switch" role="group" aria-label="Order data view">
-      <button class="order-source-option active" type="button" data-order-source-target="redis" aria-pressed="true">Redis board</button>
-      <button class="order-source-option" type="button" data-order-source-target="shopify" aria-pressed="false">Shopify live</button>
+      <button class="order-source-option active" type="button" data-order-source-target="redis" aria-pressed="true">Legacy Redis</button>
+      <button class="order-source-option" type="button" data-order-source-target="shopify" aria-pressed="false">Shopify board</button>
     </div>
     <nav id="mobile-blanks-subnav" class="mobile-blanks-subnav" aria-label="Blanks workflow" hidden>
       <button type="button" data-mobile-blanks-target="to-order" aria-pressed="true">To order</button>
@@ -88,7 +88,7 @@
         <div>
           <p class="shopify-preview-eyebrow">Shopify Admin GraphQL</p>
           <h1>Live order preview</h1>
-          <p id="shopify-preview-description">Commerce facts come only from Shopify. The Redis production board remains unchanged.</p>
+          <p id="shopify-preview-description">Commerce facts come from Shopify; production state comes from the app-owned Shopify metafield.</p>
         </div>
         <span class="shopify-preview-readonly">Commerce read only</span>
       </header>

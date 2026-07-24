@@ -1,0 +1,88 @@
+# Shopify Candidate Verification and Cutover Runbook
+
+## Use This When
+
+- Deploying or verifying the Redis-free Shopify board.
+- Migrating legacy production state/assets.
+- Deciding whether the legacy Redis board can be retired.
+
+## 1. Build and Contract Checks
+
+Run:
+
+```text
+node --check order-manager-proxy/worker.js
+node --check order-manager-web/web-shim.js
+node --check order-manager-web/shopify-preview.js
+npm run verify:phase2
+cd order-manager-proxy && npm test && npm run build
+npx wrangler deploy --dry-run
+```
+
+The Render repository must also pass `npm test`.
+
+## 2. Infrastructure Checks
+
+1. Confirm `ORDER_DB` resolves to the production D1 database.
+2. Apply all remote migrations.
+3. Record the current D1 Time Travel bookmark.
+4. Confirm `R2_BUCKET` resolves to the private artwork bucket.
+5. Keep `SS_TEST_ORDER=1`.
+6. Confirm the stateless supplier gateway deployment contains `/order-manager/v1/supplier/ss/commit`.
+
+## 3. Shopify Release Gate
+
+Release `shopify.app.toml` and approve the permission update on the real **Print-MO** store. Required candidate scopes include `write_orders` and `read_all_orders` in addition to the already justified read scopes.
+
+Do not run canonical migration writes before the installed app has the new scopes and app-owned metafield definition.
+
+## 4. Migration
+
+1. Preserve the existing Redis export and checksums.
+2. Enable `MIGRATION_UPSTREAM_ENABLED=1`.
+3. Dry-run in small pages.
+4. Execute approved pages with exact `confirmShop`.
+5. Confirm every approved order is `verified` in `migration_ledger`.
+6. Keep order `#1000` quarantined unless the owner changes that decision.
+7. For assets, require matching source/R2 SHA-256 and an active `asset_manifests` row.
+8. Disable the migration bridge after the final delta.
+
+Never use `overwriteChangedOrders` unless the owner explicitly approves replacing candidate edits made after migration began.
+
+## 5. Acceptance
+
+Verify:
+
+- the Shopify board displays the expected non-empty set;
+- the Redis board is unchanged when candidate stage/notes/readiness/bundle/progress change;
+- the Admin block and Shopify board converge on the same revision;
+- simultaneous edits yield one success and one `409`;
+- a repeated idempotency key returns the stored result;
+- a confirmed S&S test batch creates one supplier order and advances selected orders;
+- an ambiguous S&S result is `unknown` and cannot be resent;
+- invalid/missing D1 does not render an authoritative empty board;
+- private artwork requires a valid short-lived ticket.
+
+## 6. Cutover
+
+Cutover requires owner go/no-go.
+
+1. Pause legacy edits briefly.
+2. Capture and verify the final Redis delta.
+3. Make the Shopify board the default.
+4. Set `LEGACY_INGEST_ENABLED=0`.
+5. Set `MIGRATION_UPSTREAM_ENABLED=0`.
+6. Smoke-test board, block, detail, assets, and S&S test mode.
+7. Prove candidate operation with Redis unavailable.
+8. Retain the dated Redis export only for the approved retention period.
+
+Do not delete Redis or enable live S&S ordering as part of the same unobserved change.
+
+## Recovery
+
+- D1 failure before a mutation: keep the UI read-only.
+- Shopify commit with D1 pending: retry the same idempotency key or run reconciliation.
+- Projection loss: rebuild from Shopify metafields and commerce reads.
+- Confirmed supplier order with metadata repair list: do not resubmit; run integrity reconciliation.
+- D1 corruption: use Time Travel/export, then rebuild projections from Shopify.
+

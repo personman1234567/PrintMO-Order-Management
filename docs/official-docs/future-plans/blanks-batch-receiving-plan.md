@@ -22,8 +22,8 @@ Provide a receiving workflow for incoming blank-apparel shipments from S&S Activ
 ## Technical Specification & Task Checklist
 
 ### Phase 1: Data Model & Schema Extension
-- [ ] Add `received_items` array to order object structure in Redis queue.
-- [ ] Define new IPC channels (`update-receiving-status`, `record-shipment-checkin`).
+- [ ] Add normalized shipment and received-item tables in D1, linked to the canonical Shopify order GID and confirmed batch records.
+- [ ] Add authenticated Worker endpoints with idempotency and audit events; clients must not write receiving state directly.
 
 ### Phase 2: UI UI Receiving Overlay
 - [ ] Add receiving modal to `Blanks Ordered` column cards.
@@ -35,3 +35,4 @@ Provide a receiving workflow for incoming blank-apparel shipments from S&S Activ
 ## Progress Log
 
 - **2026-07-21**: Feature converted from legacy markdown plan into Stage 1 `[Draft / Idea]` in `future-plans/`.
+- **2026-07-23**: Replaced the obsolete Redis queue/IPC direction with the Shopify/D1 Worker data plane required after Redis-free cutover.

@@ -6,6 +6,7 @@ export const STAGE_OPTIONS = [
   {value: 'blanks_cart', label: 'Blanks cart'},
   {value: 'blanks_ordered', label: 'Blanks ordered'},
   {value: 'print', label: 'Ready to print'},
+  {value: 'completed', label: 'Completed'},
 ];
 
 const MUTABLE_FIELDS = [

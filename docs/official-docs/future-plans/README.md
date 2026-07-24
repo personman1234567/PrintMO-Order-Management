@@ -25,7 +25,7 @@ This subsystem manages the lifecycle of future plans, unbuilt ideas, feature spe
 | Multi-Supplier Routing & Threshold-Optimized Batching | `[Draft / Idea]` | v1.4 Backlog | `workflows/multi-supplier-batching.md` | [multi-supplier-routing-and-batching-plan.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/multi-supplier-routing-and-batching-plan.md) |
 | Quality of Life & Print Shop Workflow Efficiency | `[Draft / Idea]` | v1.5 Backlog | `workflows/qol-shop-efficiency.md` | [qol-workflow-and-shop-efficiency-plan.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/qol-workflow-and-shop-efficiency-plan.md) |
 | Shopify Draft Orders & Invoicing Engine | `[Draft / Idea]` | v1.5 Backlog | `workflows/draft-orders-invoicing.md` | [shopify-draft-orders-invoicing-plan.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/shopify-draft-orders-invoicing-plan.md) |
-| Shopify Live API Sync & Admin Blocks Integration | `[In Progress]` | v1.4 Backlog | `workflows/shopify-live-sync-admin-blocks.md` | [shopify-live-api-sync-admin-blocks-plan.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/shopify-live-api-sync-admin-blocks-plan.md) |
+| Shopify Live API Sync, Admin Blocks & Redis-Free Cutover | `[Implemented Candidate — Acceptance/Cutover Pending]` | v1.4 | `architecture/shopify-primary-data-plane.md` | [shopify-live-api-sync-admin-blocks-plan.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/shopify-live-api-sync-admin-blocks-plan.md) |
 | In-House Blank Inventory Tracking & Digital Whiteboard | `[Spec Ready]` | v1.5 Backlog | `features/in-house-inventory.md` | [in-house-inventory-blanks-tracking-plan.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/in-house-inventory-blanks-tracking-plan.md) |
 | Web UI Storage & Decoupling | `[Graduated]` | v1.3 | `workflows/web-shopify-porting.md` | Archived in `legacy/` |
 
@@ -53,3 +53,17 @@ Every feature plan file in this folder MUST begin with this header:
 ## Progress Log
 - Timestamps and completion notes.
 ```
+
+---
+
+## 4. Active Data-Plane Dependency Rule
+
+The in-progress [Shopify Live API Sync, Admin Blocks & Redis-Free Cutover plan](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/shopify-live-api-sync-admin-blocks-plan.md) is the required architecture dependency for later feature plans:
+
+- New plans must not introduce Redis schemas, `shopifyOrdersQueue` mutations, direct datastore IPC, or browser-held infrastructure credentials.
+- Shopify owns commerce facts and the canonical app-owned per-order production metafield.
+- D1 is used for rebuildable board projections and app-only relational records.
+- R2 owns large file bytes.
+- The Worker remains the authenticated public boundary.
+
+The implemented candidate contract is documented in `architecture/shopify-primary-data-plane.md`. The legacy Redis view remains current only as the pre-cutover fallback; future plans must target the Shopify/D1/R2 data plane.
