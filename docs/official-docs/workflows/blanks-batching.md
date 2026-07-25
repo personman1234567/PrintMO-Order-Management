@@ -39,7 +39,7 @@ sequenceDiagram
     Worker->>D1: Store confirmed batch and attempt
     Worker->>Worker: CAS Shopify production metafields
     Worker-->>UI: Return PO and committed/repair state
-    UI->>UI: Move Cards to "Blanks Ordered" Column
+    UI->>UI: Move Cards to "In S&S Cart"
 ```
 
 ---
@@ -62,11 +62,11 @@ When orders are dragged into the batch zone:
 1. The Worker inserts an idempotent D1 batch and allows only one transition to `submitting`.
 2. The Render gateway validates the already-aggregated lines, adds server-held credentials/payment/shipping configuration, performs pricing lookups, and posts to S&S without reading Redis.
 3. A confirmed S&S response is stored before Shopify metadata is advanced.
-4. Each selected order receives the PO in `batchRefs` and advances to `blanks_ordered` through compare-digest mutation.
+4. Each selected order receives the PO in `batchRefs` and advances to `blanks_cart` through compare-digest mutation.
 5. If the supplier confirms but metadata is incomplete, the response lists repair-required GIDs and nightly integrity reconciliation repairs them. The supplier order is never resent.
 6. A timeout or ambiguous gateway result is stored as `unknown` and requires reconciliation.
 
-Confirmed batches also set `readiness.blanksOrdered`. Operators may change that readiness checkbox manually without moving an order between board stages; while an order is in the Blanks column, the same edit continues to select the In S&S Cart versus Ordered view.
+Confirmed batches leave `readiness.blanksOrdered` false so newly submitted cards appear in **In S&S Cart**. Operators later mark them Ordered manually; reconciliation preserves that later stage and readiness instead of moving the card backward.
 
 Legacy Redis mode continues using its existing process-batch route until final cutover; candidate mode never calls it.
 

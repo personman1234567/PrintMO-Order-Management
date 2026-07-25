@@ -3889,15 +3889,14 @@ async function confirmedBatchProductionUpdate(env, shop, row, batchId, poNumber,
     const current = await readProductionMetafield(env, row.order_gid, actor, graphQL);
     if (
         current.state.batchRefs.includes(poNumber)
-        && current.state.stage === 'blanks_ordered'
-        && current.state.readiness.blanksOrdered
+        && ['blanks_cart', 'blanks_ordered', 'print', 'completed'].includes(current.state.stage)
     ) {
         await d1ProjectionUpsert(env, shop.id, row.order_gid, current.state, current.compareDigest);
         return { repaired: false, revision: current.state.revision };
     }
     const next = normalizeProductionState(current.state, actor);
-    next.stage = 'blanks_ordered';
-    next.readiness.blanksOrdered = true;
+    next.stage = 'blanks_cart';
+    next.readiness.blanksOrdered = false;
     next.batchRefs = [...new Set([...next.batchRefs, poNumber])].slice(0, 100);
     next.revision = current.state.revision + 1;
     next.lastMutationId = `batch:${batchId}`;

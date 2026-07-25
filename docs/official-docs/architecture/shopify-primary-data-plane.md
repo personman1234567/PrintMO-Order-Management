@@ -14,8 +14,8 @@
 
 Candidate deployment on 2026-07-25:
 
-- Worker version: `3c4d0231-75a3-462c-adbc-6194bd1c0b6b`
-- Pages deployment: `047618f1.print-mo-order-manager.pages.dev`
+- Worker version: `bbcaa359-2cc9-4115-b612-c58f950c0cf6`
+- Pages deployment: `08df1f4e.print-mo-order-manager.pages.dev`
 - Shopify app version: `designer-assets-idempotency-2026-07-23`
 - Stateless supplier gateway commit: `420ff72`
 

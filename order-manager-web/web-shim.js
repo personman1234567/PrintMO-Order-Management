@@ -572,7 +572,7 @@ window.api.processBatch = async (orderIds) => {
     const now = Date.now();
     orders.forEach((order) => {
       order.status = "blanks";
-      order.blanksOrdered = 1;
+      order.blanksOrdered = 0;
       order._batchConfirmedAt = now;
       if (result?.poNumber) order.blanksPo = [result.poNumber];
     });
