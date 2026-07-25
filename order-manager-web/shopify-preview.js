@@ -803,7 +803,7 @@
     els.storageView?.setAttribute('aria-hidden', 'true');
   }
 
-  function setPreviewActive(active, { preserveActiveView = false } = {}) {
+  function setPreviewActive(active, { preserveActiveView = false, render = true } = {}) {
     const previousSource = document.body.dataset.orderSource || 'redis';
     state.active = Boolean(active);
     document.body.dataset.orderSource = state.active ? 'shopify' : 'redis';
@@ -817,7 +817,7 @@
     if (!state.active) closeOrderDetail();
     if (!preserveActiveView) setPrimaryOrderNav();
     setRefreshBusy(false);
-    if (typeof window.renderBoard === 'function') {
+    if (render && typeof window.renderBoard === 'function') {
       window.renderBoard().catch(async (error) => {
         const failedSource = state.active ? 'Shopify board' : 'Legacy Redis';
         console.error(`${failedSource} could not load`, error);
@@ -876,6 +876,8 @@
     els.detail?.addEventListener('click', (event) => {
       if (event.target === els.detail) closeOrderDetail();
     });
-    setPreviewActive(false);
+    // renderer.js owns the initial board load. Do not start a duplicate Redis
+    // request while the DOMContentLoaded render is already in flight.
+    setPreviewActive(false, { render: false });
   });
 })();

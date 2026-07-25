@@ -38,6 +38,7 @@
   const orderAccountingByName = new Map();
   let accountingHydratePromise = null;
   let detailAccountingOrderName = '';
+  let activeBlanksView = 'cart';
 
   function currentOrders() {
     try {
@@ -47,6 +48,136 @@
     }
     return [];
   }
+
+  function isShopifyBoard() {
+    return document.body?.dataset.orderSource === 'shopify';
+  }
+
+  function syncBlanksViewUi() {
+    if (!isShopifyBoard()) return;
+    const blanksOrders = currentOrders().filter(order => (order.status || 'received') === 'blanks');
+    const cartCount = blanksOrders.filter(order => !isOrdered(order)).length;
+    const orderedCount = blanksOrders.length - cartCount;
+    const section = document.getElementById('blanks-section');
+    if (section) section.dataset.blanksView = activeBlanksView;
+    [
+      ['blanks-view-cart', 'cart'],
+      ['blanks-view-ordered', 'ordered']
+    ].forEach(([id, view]) => {
+      const button = document.getElementById(id);
+      const selected = view === activeBlanksView;
+      button?.classList.toggle('active', selected);
+      button?.setAttribute('aria-selected', selected ? 'true' : 'false');
+      button?.setAttribute('tabindex', selected ? '0' : '-1');
+    });
+    const cart = document.getElementById('blanks-cart-count');
+    const ordered = document.getElementById('blanks-ordered-count');
+    const total = document.getElementById('count-blanks');
+    if (cart) cart.textContent = String(cartCount);
+    if (ordered) ordered.textContent = String(orderedCount);
+    if (total) total.textContent = String(blanksOrders.length);
+  }
+
+  window.setActiveBlanksView = function setActiveBlanksView(view, { render = true } = {}) {
+    if (!isShopifyBoard()) return;
+    activeBlanksView = view === 'ordered' ? 'ordered' : 'cart';
+    syncBlanksViewUi();
+    if (render && typeof renderStatusColumn === 'function') renderStatusColumn('blanks');
+  };
+
+  window.blanksOrderedValueForActiveView = function blanksOrderedValueForActiveView() {
+    return isShopifyBoard() && activeBlanksView === 'ordered' ? 1 : 0;
+  };
+
+  function patchBlanksColumnView() {
+    try {
+      if (typeof renderStatusColumn !== 'function' || renderStatusColumn.__shopifyBlanksViewPatched) return true;
+      const original = renderStatusColumn;
+      renderStatusColumn = function renderFilteredBlanksColumn(status) {
+        if (!isShopifyBoard() || status !== 'blanks') return original(status);
+        const fullOrders = allOrders;
+        allOrders = fullOrders.filter(order => {
+          if ((order.status || 'received') !== 'blanks') return true;
+          return activeBlanksView === 'ordered' ? isOrdered(order) : !isOrdered(order);
+        });
+        try {
+          return original(status);
+        } finally {
+          allOrders = fullOrders;
+          syncBlanksViewUi();
+        }
+      };
+      renderStatusColumn.__shopifyBlanksViewPatched = true;
+      return true;
+    } catch (error) {
+      console.warn('Unable to install Shopify blanks view filter', error);
+      return false;
+    }
+  }
+
+  function showMoveNotice(message, tone = 'error') {
+    let notice = document.getElementById('order-move-toast');
+    if (!notice) {
+      notice = document.createElement('div');
+      notice.id = 'order-move-toast';
+      notice.className = 'order-move-toast';
+      notice.setAttribute('role', 'status');
+      notice.setAttribute('aria-live', 'polite');
+      document.body.appendChild(notice);
+    }
+    notice.textContent = message;
+    notice.dataset.tone = tone;
+    notice.classList.add('visible');
+    window.clearTimeout(showMoveNotice.timer);
+    showMoveNotice.timer = window.setTimeout(() => notice.classList.remove('visible'), 4200);
+  }
+
+  window.applyOptimisticOrderUpdate = async function applyOptimisticOrderUpdate(
+    orderNames,
+    patch,
+    persist,
+    failureLabel = 'Could not save order change'
+  ) {
+    if (!isShopifyBoard()) {
+      await persist(orderNames);
+      if (typeof renderBoard === 'function') await renderBoard();
+      return true;
+    }
+    const names = new Set(orderNames || []);
+    const snapshots = new Map(currentOrders()
+      .filter(order => names.has(order.name))
+      .map(order => [order.name, {
+        status: order.status,
+        blanksOrdered: order.blanksOrdered,
+        blanksStatus: order.blanksStatus,
+        printsStatus: order.printsStatus,
+        printsOrdered: order.printsOrdered
+      }]));
+    const touched = typeof patchLocalOrders === 'function'
+      ? patchLocalOrders(orderNames, patch)
+      : new Set(['received', 'toOrder', 'blanks', 'print']);
+    if (typeof renderBoardFromLocalState === 'function') {
+      await renderBoardFromLocalState(touched);
+    } else if (typeof renderBoard === 'function') {
+      await renderBoard();
+    }
+    try {
+      await persist(orderNames);
+      showMoveNotice('Order updated', 'success');
+      return true;
+    } catch (error) {
+      if (typeof patchLocalOrders === 'function') {
+        patchLocalOrders(orderNames, order => snapshots.get(order.name) || {});
+      }
+      if (typeof renderBoardFromLocalState === 'function') {
+        await renderBoardFromLocalState(touched);
+      } else if (typeof renderBoard === 'function') {
+        await renderBoard();
+      }
+      showMoveNotice(`${failureLabel}. The card was restored. ${error?.message || error}`);
+      throw error;
+    }
+  };
 
   function isOrdered(order) {
     try {
@@ -567,6 +698,12 @@
   }
 
   async function persistOrderMove(orderNames, status, patch) {
+    if (isShopifyBoard() && typeof window.api.updateBoardMove === 'function') {
+      await Promise.all(orderNames.map(orderName => {
+        return window.api.updateBoardMove(orderName, { ...patch, status });
+      }));
+      return;
+    }
     await Promise.all(orderNames.map(orderName => window.api.updateStatus(orderName, status)));
     if (Object.prototype.hasOwnProperty.call(patch, 'blanksOrdered')) {
       if (typeof updateBlanksOrderedForOrders === 'function') {
@@ -696,7 +833,8 @@
             await handleBatchAwareDrop(dragId, status);
           } catch (error) {
             console.error('Unable to move order', error);
-            alert(`Could not move order: ${error?.message || error}`);
+            if (isShopifyBoard()) showMoveNotice(`Could not move order. ${error?.message || error}`);
+            else alert(`Could not move order: ${error?.message || error}`);
           }
         });
       };
@@ -716,6 +854,14 @@
       const button = document.getElementById(target.id);
       if (!button || button.dataset.batchDropReady === '1') return;
       button.dataset.batchDropReady = '1';
+      button.addEventListener('click', () => window.setActiveBlanksView(target.view));
+      button.addEventListener('keydown', event => {
+        if (!isShopifyBoard() || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+        event.preventDefault();
+        const next = target.view === 'cart' ? 'ordered' : 'cart';
+        window.setActiveBlanksView(next);
+        document.getElementById(next === 'cart' ? 'blanks-view-cart' : 'blanks-view-ordered')?.focus();
+      });
       button.addEventListener('dragover', event => {
         event.preventDefault();
         event.dataTransfer.dropEffect = 'move';
@@ -737,7 +883,8 @@
           });
         } catch (error) {
           console.error('Unable to move order to blanks view', error);
-          alert(`Could not move order: ${error?.message || error}`);
+          if (isShopifyBoard()) showMoveNotice(`Could not move order. ${error?.message || error}`);
+          else alert(`Could not move order: ${error?.message || error}`);
         }
       });
     });
@@ -1297,14 +1444,17 @@
   patchRenderBoardForAccounting();
   patchOpenDetailForAccounting();
   patchDropZonesForBatchCorrections();
+  patchBlanksColumnView();
 
   document.addEventListener('DOMContentLoaded', () => {
     ensureReceiveButton();
     ensureReceiveOverlay();
     setupBlanksTabDropTargets();
+    syncBlanksViewUi();
     patchRenderBoardForAccounting();
     patchOpenDetailForAccounting();
     patchDropZonesForBatchCorrections();
+    patchBlanksColumnView();
     hydrateAccountingForCurrentOrders().catch(error => {
       console.warn('Unable to hydrate blanks accounting on load', error);
     });

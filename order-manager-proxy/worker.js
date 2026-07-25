@@ -382,7 +382,11 @@ export default {
             const id = env.ORDER_SYNC_COORDINATOR.idFromName(shop);
             const coordinator = env.ORDER_SYNC_COORDINATOR.get(id);
             if (event.cron === "*/5 * * * *") {
-                ctx.waitUntil(coordinator.fetch(new Request("https://internal/reconcile-incremental")).catch(err => console.error("Cron incremental error:", err)));
+                ctx.waitUntil(
+                    restoreLegacySnapshotPositions(env)
+                        .then(() => coordinator.fetch(new Request("https://internal/reconcile-incremental")))
+                        .catch(err => console.error("Legacy position catch-up or incremental reconciliation error:", err))
+                );
                 ctx.waitUntil(backfillDesignerStudioAssets(env).catch(err => console.error("Designer Studio asset backfill error:", err)));
             } else if (event.cron === "0 2 * * *") {
                 ctx.waitUntil(coordinator.fetch(new Request("https://internal/reconcile-integrity")).catch(err => console.error("Cron integrity error:", err)));
@@ -2008,8 +2012,11 @@ const SHOPIFY_PREVIEW_ORDERS_QUERY = `query PrintMOShopifyPreviewOrders($first: 
       id name createdAt updatedAt displayFinancialStatus displayFulfillmentStatus cancelledAt currencyCode
       currentSubtotalLineItemsQuantity
       currentSubtotalPriceSet { shopMoney { amount currencyCode } }
+      currentTotalDiscountsSet { shopMoney { amount currencyCode } }
       currentTotalPriceSet { shopMoney { amount currencyCode } }
-      customer { displayName }
+      customer { firstName lastName displayName }
+      shippingAddress { name }
+      billingAddress { name }
     }
     pageInfo { hasNextPage endCursor }
   }
@@ -2019,7 +2026,7 @@ const SHOPIFY_PREVIEW_ORDER_DETAIL_QUERY = `query PrintMOShopifyPreviewOrderDeta
   order(id: $id) {
     id name createdAt processedAt updatedAt cancelledAt closedAt cancelReason note tags test sourceName
     email phone customerLocale
-    customer { id displayName email phone }
+    customer { id firstName lastName displayName email phone }
     shippingAddress { name company address1 address2 city province provinceCode zip country countryCodeV2 phone }
     billingAddress { name company address1 address2 city province provinceCode zip country countryCodeV2 phone }
     displayFinancialStatus displayFulfillmentStatus fullyPaid unpaid currencyCode
@@ -2123,8 +2130,11 @@ const ORDER_SUMMARIES_QUERY = `query PrintMOOrderSummaries($ids: [ID!]!) {
       id name createdAt updatedAt displayFinancialStatus displayFulfillmentStatus cancelledAt currencyCode
       currentSubtotalLineItemsQuantity
       currentSubtotalPriceSet { shopMoney { amount currencyCode } }
+      currentTotalDiscountsSet { shopMoney { amount currencyCode } }
       currentTotalPriceSet { shopMoney { amount currencyCode } }
-      customer { displayName }
+      customer { firstName lastName displayName }
+      shippingAddress { name }
+      billingAddress { name }
       lineItems(first: 25) {
         nodes {
           id sku title variantTitle quantity currentQuantity customAttributes { key value }
@@ -2155,9 +2165,11 @@ const ORDER_DETAIL_QUERY = `query PrintMOOrderDetail($id: ID!, $after: String) {
     id name createdAt updatedAt note cancelledAt displayFinancialStatus displayFulfillmentStatus currencyCode
     currentSubtotalLineItemsQuantity
     currentSubtotalPriceSet { shopMoney { amount currencyCode } }
+    currentTotalDiscountsSet { shopMoney { amount currencyCode } }
     currentTotalPriceSet { shopMoney { amount currencyCode } }
-    customer { displayName }
+    customer { firstName lastName displayName }
     shippingAddress { name address1 address2 city provinceCode zip countryCodeV2 }
+    billingAddress { name address1 address2 city provinceCode zip countryCodeV2 }
     fulfillments { id status createdAt updatedAt trackingInfo { number url company } }
     lineItems(first: 25, after: $after) {
       nodes {
@@ -2753,6 +2765,20 @@ async function completeLineItems(env, orderId, connection, graphQL = coordinator
     return { items, complete: true, errors: [] };
 }
 
+function selectOperationalCustomerName(node) {
+    if (!node) return null;
+    const first = String(node.customer?.firstName || '').trim();
+    const last = String(node.customer?.lastName || '').trim();
+    if (first && last) return `${first} ${last}`;
+    if (first) return first;
+    if (last) return last;
+    const shipping = String(node.shippingAddress?.name || '').trim();
+    if (shipping) return shipping;
+    const billing = String(node.billingAddress?.name || '').trim();
+    if (billing) return billing;
+    return null;
+}
+
 async function normalizeShopifySummary(env, node, resultErrors = [], graphQL = coordinatorGraphQL) {
     const now = new Date();
     const lines = await completeLineItems(env, node.id, node.lineItems, graphQL);
@@ -2763,13 +2789,16 @@ async function normalizeShopifySummary(env, node, resultErrors = [], graphQL = c
         displayName: node.name,
         createdAt: node.createdAt,
         shopifyUpdatedAt: node.updatedAt,
-        customer: { displayName: node.customer?.displayName || null },
+        customer: {
+            displayName: selectOperationalCustomerName(node)
+        },
         commerce: {
             financialStatus: node.displayFinancialStatus || null,
             fulfillmentStatus: node.displayFulfillmentStatus || null,
             cancelledAt: node.cancelledAt || null,
             currencyCode: currency,
             subtotal: moneyValue(node.currentSubtotalPriceSet, currency)?.amount || null,
+            discount: moneyValue(node.currentTotalDiscountsSet, currency)?.amount || null,
             total: moneyValue(node.currentTotalPriceSet, currency)?.amount || null,
             currentLineItemQuantity: Number(node.currentSubtotalLineItemsQuantity || 0),
             lineItemsComplete: lines.complete,
@@ -3195,13 +3224,16 @@ async function handleShopifyPreviewOrdersGet(request, env, allowOrigin, reqAllow
             displayName: node.name,
             createdAt: node.createdAt,
             shopifyUpdatedAt: node.updatedAt,
-            customer: { displayName: node.customer?.displayName || null },
+            customer: {
+                displayName: selectOperationalCustomerName(node)
+            },
             commerce: {
                 financialStatus: node.displayFinancialStatus || null,
                 fulfillmentStatus: node.displayFulfillmentStatus || null,
                 cancelledAt: node.cancelledAt || null,
                 currencyCode: node.currencyCode || node.currentTotalPriceSet?.shopMoney?.currencyCode || null,
                 subtotal: node.currentSubtotalPriceSet?.shopMoney?.amount || null,
+                discount: node.currentTotalDiscountsSet?.shopMoney?.amount || null,
                 total: node.currentTotalPriceSet?.shopMoney?.amount || null,
                 currentLineItemQuantity: Number(node.currentSubtotalLineItemsQuantity || 0)
             }
@@ -3358,8 +3390,8 @@ async function handleShopifyPreviewOrderDetailGet(request, env, allowOrigin, req
         const lineItems = await completePreviewLineItems(env, gid, order.lineItems, currency);
         const rawErrors = [...(result.errors || []), ...lineItems.errors];
         const identityReturned = Boolean(
-            order.customer?.displayName || order.customer?.email || order.customer?.phone ||
-            order.email || order.phone || order.shippingAddress?.name || order.billingAddress?.name
+            selectOperationalCustomerName(order) || order.customer?.email || order.customer?.phone ||
+            order.email || order.phone
         );
         const protectedDataError = rawErrors.some(error => {
             const message = String(error?.message || '').toLowerCase();
@@ -3389,7 +3421,7 @@ async function handleShopifyPreviewOrderDetailGet(request, env, allowOrigin, req
                 sourceName: order.sourceName || null,
                 customer: {
                     id: order.customer?.id || null,
-                    displayName: order.customer?.displayName || null,
+                    displayName: selectOperationalCustomerName(order),
                     email: order.customer?.email || order.email || null,
                     phone: order.customer?.phone || order.phone || null,
                     locale: order.customerLocale || null
@@ -3562,6 +3594,7 @@ async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders, ctx
     try {
         const url = new URL(request.url);
         const stage = url.searchParams.get('stage') || '';
+        const forceRefresh = url.searchParams.get('refresh') === '1';
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 50), 1), 50);
         const filter = JSON.stringify({ stage, limit });
         const offset = await decodeSignedCursor(url.searchParams.get('cursor'), filter, env);
@@ -3588,15 +3621,22 @@ async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders, ctx
             }
         }
         const staleGids = (page.records || []).filter(record => {
+            if (forceRefresh) return true;
             const summary = record.summary;
             return !summary || summary.sync?.stale || !summary.sync?.freshUntil || Date.parse(summary.sync.freshUntil) <= Date.now();
         }).map(record => record.gid);
         if (staleGids.length) {
-            try {
-                await refreshThroughCoordinator(env, staleGids);
-                page = await loadDataPage(env, stage, limit, offset);
-            } catch (error) {
-                console.error('Shopify summary refresh failed:', error.message);
+            if (forceRefresh || !ctx?.waitUntil) {
+                try {
+                    await refreshThroughCoordinator(env, staleGids);
+                    page = await loadDataPage(env, stage, limit, offset);
+                } catch (error) {
+                    console.error('Shopify summary refresh failed:', error.message);
+                }
+            } else {
+                ctx.waitUntil(refreshThroughCoordinator(env, staleGids).catch(error => {
+                    console.error('Background Shopify summary refresh failed:', error.message);
+                }));
             }
         }
         if (ctx?.waitUntil) {
@@ -3788,10 +3828,11 @@ async function handleV1ProductionPatch(request, env, allowOrigin, reqAllowHeader
         if (current.state.revision !== expectedVersion) {
             return v1Error({
                 code: 'VERSION_CONFLICT',
-                message: 'Production metadata changed on another client.',
+                message: 'Production metadata changed on another client.'
+            }, allowOrigin, reqAllowHeaders, 409, {
                 currentVersion: current.state.revision,
                 current: productionForClient(gid, current.state, current.compareDigest)
-            }, allowOrigin, reqAllowHeaders, 409);
+            });
         }
 
         const nextState = applyProductionPatch(current.state, patch, actor, requestRow.id);
@@ -4193,6 +4234,157 @@ function legacyOrderNumber(order) {
     const value = String(order?.orderNumber || order?.name || '').trim();
     const match = /#?(\d+)/.exec(value);
     return match ? match[1] : null;
+}
+
+const LEGACY_POSITION_CATCHUP_CHECKPOINT = 'redis-position-catchup-2026-07-22T15-51-42-430Z';
+const LEGACY_POSITION_CATCHUP_SHA256 = '22f099ad077d6a66f2aabf0ccf08ff18aa97faa764787cdb79368e0b77c3aaea';
+const LEGACY_POSITION_CATCHUP_RECORDS = Object.freeze([
+    { orderNumber: '1556', stage: 'received', blanksReady: false, printsOrdered: false, printsReady: false, printedCount: 0 },
+    { orderNumber: '1548', stage: 'print', blanksReady: true, printsOrdered: true, printsReady: true, printedCount: 23 },
+    { orderNumber: '1554', stage: 'print', blanksReady: true, printsOrdered: true, printsReady: true, printedCount: 1 },
+    { orderNumber: '1555', stage: 'print', blanksReady: true, printsOrdered: true, printsReady: true, printedCount: 5 },
+    { orderNumber: '1557', stage: 'print', blanksReady: true, printsOrdered: true, printsReady: true, printedCount: 24 },
+    { orderNumber: '1558', stage: 'received', blanksReady: false, printsOrdered: false, printsReady: false, printedCount: 0 },
+    { orderNumber: '1559', stage: 'print', blanksReady: true, printsOrdered: true, printsReady: true, printedCount: 1 },
+    { orderNumber: '1560', stage: 'print', blanksReady: true, printsOrdered: true, printsReady: true, printedCount: 1 },
+    { orderNumber: '1561', stage: 'print', blanksReady: false, printsOrdered: true, printsReady: true, printedCount: 3 },
+    { orderNumber: '1562', stage: 'blanks_ordered', blanksReady: false, printsOrdered: false, printsReady: false, printedCount: 0 },
+    { orderNumber: '1563', stage: 'print', blanksReady: true, printsOrdered: true, printsReady: true, printedCount: 2 },
+    { orderNumber: '1564', stage: 'blanks_ordered', blanksReady: false, printsOrdered: false, printsReady: false, printedCount: 0 },
+    { orderNumber: '1566', stage: 'blanks_ordered', blanksReady: false, printsOrdered: false, printsReady: false, printedCount: 0 },
+    { orderNumber: '1567', stage: 'blanks_ordered', blanksReady: false, printsOrdered: false, printsReady: false, printedCount: 0 },
+    { orderNumber: '1568', stage: 'blanks_ordered', blanksReady: false, printsOrdered: false, printsReady: false, printedCount: 0 },
+    { orderNumber: '1569', stage: 'blanks_ordered', blanksReady: false, printsOrdered: false, printsReady: false, printedCount: 0 },
+    { orderNumber: '1570', stage: 'blanks_ordered', blanksReady: false, printsOrdered: false, printsReady: false, printedCount: 0 },
+    { orderNumber: '1571', stage: 'blanks_cart', blanksReady: false, printsOrdered: false, printsReady: false, printedCount: 0 },
+    { orderNumber: '1572', stage: 'blanks_cart', blanksReady: false, printsOrdered: false, printsReady: false, printedCount: 0 }
+]);
+
+function productionMatchesLegacyPosition(state, record) {
+    return state.stage === record.stage
+        && state.readiness.blanksReady === record.blanksReady
+        && state.readiness.printsOrdered === record.printsOrdered
+        && state.readiness.printsReady === record.printsReady
+        && state.printedCount === record.printedCount;
+}
+
+async function restoreLegacySnapshotPositions(env) {
+    const shop = await d1Shop(env);
+    const db = requireOrderDb(env);
+    const existing = await db.prepare(`
+      SELECT last_completed_at, last_result_json
+      FROM reconciliation_checkpoints
+      WHERE shop_id = ? AND name = ?
+    `).bind(shop.id, LEGACY_POSITION_CATCHUP_CHECKPOINT).first();
+    if (existing?.last_completed_at) {
+        let previous = {};
+        try { previous = JSON.parse(existing.last_result_json || '{}'); } catch (_) {}
+        return { ok: true, alreadyCompleted: true, ...previous };
+    }
+
+    const startedAt = isoNow();
+    const report = {
+        sourceBackup: 'shopifyOrdersQueue-backup-2026-07-22T15-51-42-430Z.json',
+        sourceSha256: LEGACY_POSITION_CATCHUP_SHA256,
+        expected: LEGACY_POSITION_CATCHUP_RECORDS.length,
+        matched: 0,
+        changed: 0,
+        unchanged: 0,
+        quarantined: 0,
+        errors: []
+    };
+    await db.prepare(`
+      INSERT INTO reconciliation_checkpoints (
+        shop_id, name, checkpoint, last_started_at, last_completed_at, last_result_json
+      ) VALUES (?, ?, NULL, ?, NULL, ?)
+      ON CONFLICT(shop_id, name) DO UPDATE SET
+        last_started_at = excluded.last_started_at,
+        last_result_json = excluded.last_result_json
+    `).bind(shop.id, LEGACY_POSITION_CATCHUP_CHECKPOINT, startedAt, JSON.stringify(report)).run();
+
+    const refreshedGids = [];
+    for (const record of LEGACY_POSITION_CATCHUP_RECORDS) {
+        const sourceKey = `#${record.orderNumber}`;
+        try {
+            const match = await matchLegacyOrder(env, record);
+            if (!match.gid) {
+                report.quarantined++;
+                await writeMigrationLedger(env, shop.id, {
+                    sourceType: 'redis-position-catchup',
+                    sourceKey,
+                    sourceDigest: LEGACY_POSITION_CATCHUP_SHA256,
+                    state: 'quarantined',
+                    reason: match.matchResult
+                });
+                continue;
+            }
+
+            report.matched++;
+            let current = await ensureCandidateOrder(env, match.gid, 'redis-position-catchup');
+            if (!productionMatchesLegacyPosition(current.state, record)) {
+                const next = normalizeProductionState(current.state, 'redis-position-catchup');
+                next.stage = record.stage;
+                next.readiness = {
+                    blanksReady: record.blanksReady,
+                    printsOrdered: record.printsOrdered,
+                    printsReady: record.printsReady
+                };
+                next.printedCount = record.printedCount;
+                next.revision = current.state.revision + 1;
+                next.lastMutationId = `redis-position-catchup:${record.orderNumber}:${LEGACY_POSITION_CATCHUP_SHA256.slice(0, 16)}`;
+                next.updatedAt = isoNow();
+                next.updatedBy = 'redis-position-catchup';
+                const saved = await setProductionMetafield(env, match.gid, next, current.compareDigest, coordinatorGraphQL);
+                current = { ...current, ...saved };
+                report.changed++;
+            } else {
+                report.unchanged++;
+            }
+
+            refreshedGids.push(match.gid);
+            await d1ProjectionUpsert(env, shop.id, match.gid, current.state, current.compareDigest, undefined, current.order);
+            await writeMigrationLedger(env, shop.id, {
+                sourceType: 'redis-position-catchup',
+                sourceKey,
+                sourceDigest: LEGACY_POSITION_CATCHUP_SHA256,
+                gid: match.gid,
+                destinationKey: `${PRODUCTION_METAFIELD_NAMESPACE}.${PRODUCTION_METAFIELD_KEY}`,
+                state: 'verified',
+                result: {
+                    matchResult: match.matchResult,
+                    stage: current.state.stage,
+                    revision: current.state.revision
+                }
+            });
+        } catch (error) {
+            report.errors.push({
+                orderNumber: record.orderNumber,
+                code: error.code || 'POSITION_CATCHUP_ERROR',
+                message: error.message
+            });
+        }
+    }
+
+    if (refreshedGids.length) await refreshThroughCoordinator(env, refreshedGids);
+    report.completedAt = isoNow();
+    if (report.errors.length) {
+        await db.prepare(`
+          UPDATE reconciliation_checkpoints
+          SET last_result_json = ?
+          WHERE shop_id = ? AND name = ?
+        `).bind(JSON.stringify(report), shop.id, LEGACY_POSITION_CATCHUP_CHECKPOINT).run();
+        throw Object.assign(new Error(`Legacy position catch-up left ${report.errors.length} error(s); it will retry.`), {
+            code: 'LEGACY_POSITION_CATCHUP_INCOMPLETE',
+            report
+        });
+    }
+
+    await db.prepare(`
+      UPDATE reconciliation_checkpoints
+      SET checkpoint = ?, last_completed_at = ?, last_result_json = ?
+      WHERE shop_id = ? AND name = ?
+    `).bind(LEGACY_POSITION_CATCHUP_SHA256, report.completedAt, JSON.stringify(report), shop.id, LEGACY_POSITION_CATCHUP_CHECKPOINT).run();
+    return { ok: true, ...report };
 }
 
 async function matchLegacyOrder(env, legacy) {
@@ -4680,3 +4872,4 @@ export class OrderSyncCoordinator {
         }
     }
 }
+export { selectOperationalCustomerName };

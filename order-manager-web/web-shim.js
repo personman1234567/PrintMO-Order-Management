@@ -35,25 +35,28 @@ async function apiFetch(path, opts = {}) {
   const parseErrorBody = async () => {
     try {
       const text = await res.text();
-      if (!text) return "";
+      if (!text) return { message: "", payload: null };
       try {
         const data = JSON.parse(text);
         const msg = data?.error || data?.message || data?.msg;
-        if (msg) return apiErrorMessage(msg);
+        if (msg) return { message: apiErrorMessage(msg), payload: data };
       } catch (_) {
         // not JSON, fall through
       }
-      return text;
+      return { message: text, payload: null };
     } catch (_) {
-      return "";
+      return { message: "", payload: null };
     }
   };
 
   if (!res.ok) {
-    const msg = await parseErrorBody();
+    const parsed = await parseErrorBody();
     const base = `${res.status} ${res.statusText}`.trim();
-    const error = new Error([base, msg].filter(Boolean).join(" - "));
+    const error = new Error([base, parsed.message].filter(Boolean).join(" - "));
     error.status = res.status;
+    error.payload = parsed.payload;
+    error.code = parsed.payload?.error?.code || null;
+    error.details = parsed.payload?.error?.details || null;
     throw error;
   }
 
@@ -92,6 +95,10 @@ window.api.transport = "http";
 
 const candidateOrdersByName = new Map();
 const candidateAssetObjectUrls = new Map();
+const candidateMutationChains = new Map();
+let candidateForceRefreshOnce = false;
+let candidateAssetHydrationRun = 0;
+let candidateQueueLoadGeneration = 0;
 
 function isShopifyCandidateView() {
   return document.body?.dataset.orderSource === "shopify";
@@ -111,6 +118,23 @@ function boardStageToCandidate(status, current = {}) {
   return "received";
 }
 
+function selectOperationalCustomerName(order = {}) {
+  const first = String(order.customer?.firstName || "").trim();
+  const last = String(order.customer?.lastName || "").trim();
+  if (first && last) return `${first} ${last}`;
+  if (first) return first;
+  if (last) return last;
+  const shipping = String(order.shippingAddress?.name || "").trim();
+  if (shipping) return shipping;
+  const billing = String(order.billingAddress?.name || "").trim();
+  if (billing) return billing;
+  const display = String(order.customer?.displayName || "").trim();
+  if (display && order.customer && !("firstName" in order.customer) && !("lastName" in order.customer)) {
+    return display;
+  }
+  return null;
+}
+
 function candidateLineItem(item = {}, assets = []) {
   const properties = (item.customAttributes || []).reduce((result, attribute) => {
     if (attribute?.key) result[attribute.key] = attribute.value;
@@ -123,16 +147,17 @@ function candidateLineItem(item = {}, assets = []) {
     sku: item.sku || "",
     qty: Number(item.currentQuantity ?? item.quantity ?? 0),
     price: Number(item.unitPrice || 0),
+    unitPrice: Number(item.unitPrice || 0),
     properties,
     assets,
   };
 }
 
-function candidateOrderToBoard(order = {}) {
+function candidateOrderToBoard(order = {}, { register = true } = {}) {
   const production = order.production || {};
-  const customer = order.customer?.displayName || "Guest";
+  const customer = selectOperationalCustomerName(order) || "Name unavailable";
   const displayName = order.displayName || order.id || "Shopify order";
-  const name = `${displayName} – ${customer}`;
+  const name = `${displayName} \u2013 ${customer}`;
   const orderAssets = Array.isArray(production.assets) ? production.assets : [];
   const assetsByLine = new Map();
   const unassignedAssets = [];
@@ -158,7 +183,9 @@ function candidateOrderToBoard(order = {}) {
     receivedAt: order.createdAt,
     status: candidateStageToBoard(production.stage),
     items: lineItems,
-    subtotal: Number(order.commerce?.subtotal || order.commerce?.total || 0),
+    subtotal: Number(order.commerce?.subtotal || 0),
+    discount: Number(order.commerce?.discount || 0),
+    total: Number(order.commerce?.total || 0),
     notes: production.internalNotes || "",
     bundle: production.bundleId || "",
     progress: Number(production.printedCount || 0),
@@ -169,7 +196,7 @@ function candidateOrderToBoard(order = {}) {
     shopify: order,
     assets: production.assets || [],
   };
-  candidateOrdersByName.set(name, mapped);
+  if (register) candidateOrdersByName.set(name, mapped);
   return mapped;
 }
 
@@ -190,29 +217,72 @@ async function candidateAssetObjectUrl(asset) {
 async function hydrateCandidateAssets(records) {
   const assets = [];
   records.forEach((order) => {
-    (order?.production?.assets || []).forEach((asset) => assets.push(asset));
+    (order?.production?.assets || []).forEach((asset) => assets.push({ asset, orderId: order.id }));
   });
-  await Promise.all(assets.map(async (asset) => {
+  const changedOrderIds = new Set();
+  await Promise.all(assets.map(async ({ asset, orderId }) => {
     try {
-      asset.url = await candidateAssetObjectUrl(asset);
+      const previousUrl = asset.url || "";
+      const nextUrl = await candidateAssetObjectUrl(asset);
+      asset.url = nextUrl;
+      if (nextUrl && nextUrl !== previousUrl) changedOrderIds.add(orderId);
     } catch (error) {
       console.warn("Unable to hydrate private Designer Studio asset", asset?.assetId, error);
     }
   }));
+  return changedOrderIds;
 }
 
-async function loadCandidateQueue() {
+function applyCandidateCachedAssetUrls(records) {
+  records.forEach((order) => {
+    (order?.production?.assets || []).forEach((asset) => {
+      const cached = asset?.assetId ? candidateAssetObjectUrls.get(asset.assetId) : "";
+      if (cached) asset.url = cached;
+    });
+  });
+}
+
+async function loadCandidateQueue({ refresh = false } = {}) {
+  const loadGeneration = ++candidateQueueLoadGeneration;
   const records = [];
   let cursor = "";
   do {
-    const query = buildQuery({ limit: 50, cursor });
+    const query = buildQuery({ limit: 50, cursor, refresh: refresh ? 1 : undefined });
     const page = await apiFetch(`/order-manager/v1/orders${query}`, { method: "GET" });
     records.push(...(Array.isArray(page?.data) ? page.data : []));
     cursor = page?.pageInfo?.nextCursor || "";
   } while (cursor && records.length < 500);
+  applyCandidateCachedAssetUrls(records);
+  const mapped = records.map(record => candidateOrderToBoard(record, { register: false }));
+  if (loadGeneration !== candidateQueueLoadGeneration) return mapped;
   candidateOrdersByName.clear();
-  await hydrateCandidateAssets(records);
-  return records.map(candidateOrderToBoard);
+  mapped.forEach(order => candidateOrdersByName.set(order.name, order));
+
+  // Private Designer Studio previews are useful but must not hold the board
+  // hostage. Hydrate them after commerce + production metadata has rendered.
+  const hydrationRun = ++candidateAssetHydrationRun;
+  void hydrateCandidateAssets(records).then((changedOrderIds) => {
+    if (hydrationRun !== candidateAssetHydrationRun || !isShopifyCandidateView()) return;
+    const changedStatuses = new Set();
+    records.forEach((record) => {
+      if (!changedOrderIds.has(record.id)) return;
+      const displayName = record.displayName || record.id || "Shopify order";
+      const customer = selectOperationalCustomerName(record) || "Name unavailable";
+      const key = `${displayName} \u2013 ${customer}`;
+      const current = candidateOrdersByName.get(key);
+      if (!current) return;
+      changedStatuses.add(current.status || "received");
+    });
+    if (!changedStatuses.size) return;
+    if (typeof window.renderBoardFromLocalState === "function") {
+      void window.renderBoardFromLocalState(changedStatuses);
+    } else if (typeof window.renderStatusColumn === "function") {
+      changedStatuses.forEach((status) => window.renderStatusColumn(status));
+    }
+  }).catch((error) => {
+    console.warn("Unable to hydrate Shopify board previews", error);
+  });
+  return mapped;
 }
 
 function candidateByName(name) {
@@ -221,16 +291,8 @@ function candidateByName(name) {
   return order;
 }
 
-async function updateCandidateOrder(name, patch) {
-  const order = candidateByName(name);
-  if (!patch || Object.keys(patch).length === 0) return true;
-  const result = await window.api.updateProductionMetadata(order._gid, {
-    expectedVersion: order._version,
-    patch,
-    idempotencyKey: newIdempotencyKey("board"),
-  });
-  const production = result?.production || {};
-  order._version = Number(production.version ?? order._version + 1);
+function applyCandidateProduction(order, production = {}) {
+  order._version = Number(production.version ?? production.revision ?? order._version + 1);
   if (production.stage) order.status = candidateStageToBoard(production.stage);
   if ("bundleId" in production) order.bundle = production.bundleId || "";
   if ("internalNotes" in production) order.notes = production.internalNotes || "";
@@ -239,14 +301,85 @@ async function updateCandidateOrder(name, patch) {
   if ("printsStatus" in production) order.printsStatus = Number(production.printsStatus || 0);
   if ("printsOrdered" in production) order.printsOrdered = Number(production.printsOrdered || 0);
   order.blanksOrdered = production.stage === "blanks_ordered" ? 1 : 0;
-  return result;
+}
+
+function candidateProductionMatchesPatch(production = {}, patch = {}) {
+  const fields = {
+    stage: "stage",
+    bundle_id: "bundleId",
+    internal_notes: "internalNotes",
+    printed_count: "printedCount",
+    blanks_status: "blanksStatus",
+    prints_status: "printsStatus",
+    prints_ordered: "printsOrdered",
+  };
+  return Object.entries(patch).every(([patchKey, expected]) => {
+    const productionKey = fields[patchKey];
+    if (!productionKey) return false;
+    const actual = production[productionKey];
+    if (typeof expected === "number") return Number(actual || 0) === Number(expected);
+    return String(actual ?? "") === String(expected ?? "");
+  });
+}
+
+async function performCandidateOrderUpdate(name, patch) {
+  const order = candidateByName(name);
+  if (!patch || Object.keys(patch).length === 0) return true;
+  const send = () => window.api.updateProductionMetadata(order._gid, {
+    expectedVersion: order._version,
+    patch,
+    idempotencyKey: newIdempotencyKey("board"),
+  });
+  try {
+    const result = await send();
+    applyCandidateProduction(order, result?.production || {});
+    return result;
+  } catch (error) {
+    if (error?.status !== 409 || error?.code !== "VERSION_CONFLICT") throw error;
+    const conflictProduction = error.details?.current;
+    if (conflictProduction) applyCandidateProduction(order, conflictProduction);
+    const currentResult = conflictProduction
+      ? { production: conflictProduction }
+      : await window.api.getProductionMetadata(order._gid);
+    const current = currentResult?.production || currentResult || {};
+    applyCandidateProduction(order, current);
+    if (candidateProductionMatchesPatch(current, patch)) return { ok: true, production: current };
+    const retry = await send();
+    applyCandidateProduction(order, retry?.production || {});
+    return retry;
+  }
+}
+
+function updateCandidateOrder(name, patch) {
+  const previous = candidateMutationChains.get(name) || Promise.resolve();
+  const next = previous.catch(() => {}).then(() => performCandidateOrderUpdate(name, patch));
+  const settled = next.catch(() => {}).finally(() => {
+    if (candidateMutationChains.get(name) === settled) candidateMutationChains.delete(name);
+  });
+  candidateMutationChains.set(name, settled);
+  return next;
 }
 
 // 1) Populate dashboard
 window.api.getQueue = async () => {
-  if (isShopifyCandidateView()) return loadCandidateQueue();
+  if (isShopifyCandidateView()) {
+    const refresh = candidateForceRefreshOnce;
+    candidateForceRefreshOnce = false;
+    return loadCandidateQueue({ refresh });
+  }
   const data = await apiFetch("/order-manager/v1/legacy/queue", { method: "GET" });
   return Array.isArray(data) ? data : (data?.orders || []);
+};
+
+window.api.invalidateQueueLoads = () => {
+  candidateQueueLoadGeneration += 1;
+  candidateAssetHydrationRun += 1;
+};
+
+window.refreshOrderManagerNow = async () => {
+  if (isShopifyCandidateView()) candidateForceRefreshOnce = true;
+  if (typeof window.renderBoard === "function") return window.renderBoard();
+  return null;
 };
 
 // Read-only Shopify commerce preview. This endpoint never enumerates or mutates
@@ -522,6 +655,27 @@ window.api.getStorageObjectUrl = async (key) => {
   return url;
 };
 
+window.api.updateBoardMove = async (name, patch = {}) => {
+  if (!isShopifyCandidateView()) {
+    await window.api.updateStatus(name, patch.status);
+    if (Object.prototype.hasOwnProperty.call(patch, "blanksOrdered")) {
+      await window.api.updateReady({ name, blanksOrdered: Number(patch.blanksOrdered) ? 1 : 0 });
+    }
+    return true;
+  }
+  const order = candidateByName(name);
+  const status = patch.status || order.status;
+  const currentBlanksOrdered = Object.prototype.hasOwnProperty.call(patch, "blanksOrdered")
+    ? Number(patch.blanksOrdered)
+    : Number(order.blanksOrdered);
+  const metadataPatch = {
+    stage: status === "blanks"
+      ? (currentBlanksOrdered ? "blanks_ordered" : "blanks_cart")
+      : boardStageToCandidate(status, order),
+  };
+  return updateCandidateOrder(name, metadataPatch);
+};
+
 async function hydrateAssetUrls(result) {
   const manifests = result?.orders && typeof result.orders === "object"
     ? Object.values(result.orders)
@@ -639,6 +793,8 @@ window.api.downloadAsset = async (url, filename) => {
 
 window.api.subscribeQueueChanges = (onEvent) => {
   // Phase 1 uses authenticated polling; Phase 2 replaces this with one-use WS tickets.
-  const timer = setInterval(() => onEvent({ type: "queue_changed" }), 30000);
+  const timer = setInterval(() => {
+    if (!document.hidden) onEvent({ type: "queue_changed" });
+  }, 30000);
   return () => clearInterval(timer);
 };

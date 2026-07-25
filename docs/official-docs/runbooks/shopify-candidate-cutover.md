@@ -50,6 +50,39 @@ Do not run canonical migration writes before the installed app has the new scope
 
 Never use `overwriteChangedOrders` unless the owner explicitly approves replacing candidate edits made after migration began.
 
+### 2026-07-24 one-time position catch-up
+
+The owner approved a one-time canonical position catch-up from
+`backups/shopifyOrdersQueue-backup-2026-07-22T15-51-42-430Z.json`
+(SHA-256 `22f099ad077d6a66f2aabf0ccf08ff18aa97faa764787cdb79368e0b77c3aaea`).
+Only the 19 explicitly projected order numbers are eligible. The job restores stage,
+readiness, and printed count while preserving current Shopify-only bundle, notes,
+batch references, attention, archive, commerce, and asset data. Orders absent from the
+approved projection—including newer orders—are untouched; owner-quarantined `#1000`
+and unmatched legacy `#1174` are not in the projection.
+
+The Worker checkpoint is
+`redis-position-catchup-2026-07-22T15-51-42-430Z`. The scheduled job is idempotent:
+it retries incomplete work, records each match in `migration_ledger` under
+`redis-position-catchup`, writes the source checksum on completion, and becomes a
+no-op after `last_completed_at` is present. It never writes the Redis queue.
+
+Expected canonical result for the 19 approved records:
+
+- 2 `received`
+- 7 `blanks_ordered`
+- 2 `blanks_cart`
+- 8 `print`
+
+Verification is read-only:
+
+```powershell
+npx wrangler d1 execute printmo-order-manager --remote --command "SELECT checkpoint, last_completed_at, last_result_json FROM reconciliation_checkpoints WHERE name = 'redis-position-catchup-2026-07-22T15-51-42-430Z';"
+```
+
+Require the recorded checksum, `matched: 19`, `quarantined: 0`, and an empty
+`errors` array before treating the catch-up as verified.
+
 ## 5. Acceptance
 
 Verify:

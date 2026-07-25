@@ -12,10 +12,10 @@
 
 ## Current Release Boundary
 
-Candidate deployment on 2026-07-23:
+Candidate deployment on 2026-07-25:
 
-- Worker version: `f9fee090-bffc-4316-b8c6-4156aa249192`
-- Pages deployment: `3da86eec.print-mo-order-manager.pages.dev`
+- Worker version: `957dd4b3-f628-406a-b570-27341eff3eea`
+- Pages deployment: `7adca12c.print-mo-order-manager.pages.dev`
 - Shopify app version: `designer-assets-idempotency-2026-07-23`
 - Stateless supplier gateway commit: `420ff72`
 
@@ -85,11 +85,15 @@ The Worker binding is `ORDER_DB`. The production database is `printmo-order-mana
 
 ## Board Reads
 
-`GET /order-manager/v1/orders` enumerates D1 projection rows in pages of at most 50. On a new or rebuilt database, the per-shop Durable Object performs one bounded read-only bootstrap of up to 50 recent paid/open Shopify orders, reads any existing canonical metafields, refreshes summaries in `nodes` chunks, and records a `bootstrap` checkpoint. Until that Shopify read succeeds, the endpoint returns `BOARD_NOT_INITIALIZED` instead of presenting an authoritative empty board. Stale commerce summaries then refresh through the same coordinator.
+`GET /order-manager/v1/orders` enumerates D1 projection rows in pages of at most 50. On a new or rebuilt database, the per-shop Durable Object performs one bounded read-only bootstrap of up to 50 recent paid/open Shopify orders, reads any existing canonical metafields, refreshes summaries in `nodes` chunks, and records a `bootstrap` checkpoint. Until that Shopify read succeeds, the endpoint returns `BOARD_NOT_INITIALIZED` instead of presenting an authoritative empty board. Once initialized, ordinary board reads return the existing D1 projection immediately and schedule stale commerce-summary refreshes through the coordinator in the request background. An explicit `refresh=1` request still waits for the refresh and returns the newly reprojected page.
 
 `GET /order-manager/v1/orders/:gid` loads rich Shopify detail on demand and merges it with the canonical production metafield and D1 asset manifests.
 
-`order-manager-web/web-shim.js` maps the candidate DTO into the existing board renderer. Source-aware mutation methods route only the Shopify view to canonical endpoints; the legacy branch retains its existing URLs and payloads.
+`order-manager-web/web-shim.js` maps the candidate DTO into the existing board renderer. Source-aware mutation methods route only the Shopify view to canonical endpoints; the legacy branch retains its existing URLs and payloads. Candidate queue loads are generation-guarded, cached private preview URLs are preserved between polls, and the shared renderer discards superseded responses and repaints only columns whose render-relevant order data changed.
+
+Summary identity uses explicit customer first/last name, then shipping name, then billing name, falling back to `Name unavailable` when none of those fields are returned. Candidate detail commerce includes exact Shopify subtotal, discount, and total values from `currentSubtotalPriceSet`, `currentTotalDiscountsSet`, and `currentTotalPriceSet`. A manual **Refresh Shopify** request bypasses the 60-second summary TTL for the currently paged projection so newly returned identity fields can be reprojected immediately.
+
+Candidate mutations are serialized per order in the browser. A board move sends one canonical patch containing the resulting stage (including `blanks_cart` versus `blanks_ordered`), rather than separate status/readiness requests. The UI applies the move optimistically, then rolls it back only if the canonical write fails. On `409 VERSION_CONFLICT`, the Worker returns the current revision and production state under `error.details`; the client adopts that state, treats an already-satisfied patch as success, or retries once with the current revision. It never retries indefinitely or overwrites a newer edit blindly.
 
 ## Webhooks and Reconciliation
 
@@ -129,7 +133,7 @@ The first release runs a bounded active-order backfill of at most 50 orders and 
 
 Production backfill evidence on 2026-07-23: 12 active orders scanned, 12 candidates resolved, 12 active `designer-studio-sync` manifests, zero failures, checkpoint `2026-07-24T03:28:53.220Z` (UTC).
 
-Board DTOs include manifest metadata but never private object keys. `web-shim.js` exchanges each manifest ID for a signed 60-second ticket, fetches the bytes with the current authenticated session, and gives the renderer a browser object URL. Asset role, side, line-item ID, and filename—not a public URL shape—drive mockup/design placement.
+Board DTOs include manifest metadata but never private object keys. `web-shim.js` renders commerce/production cards first, then exchanges manifest IDs for signed 60-second tickets in the background and repaints affected columns when private previews are ready. Artwork latency therefore cannot block the operational board. Asset role, side, line-item ID, and filename—not a public URL shape—drive mockup/design placement.
 
 ## Environment Flags
 

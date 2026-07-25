@@ -54,7 +54,13 @@
       const touch = event.touches[0];
       touchStartX = touch.clientX;
       touchStartY = touch.clientY;
-      verticalTouchOwner = scrollOwnerFor(event.target, 'y');
+      const detailContent = event.target instanceof Element
+        ? event.target.closest('#detail-overlay.mobile-fullscreen-detail')?.querySelector('#detail-content')
+        : null;
+      verticalTouchOwner = detailContent instanceof Element
+        && detailContent.scrollHeight > detailContent.clientHeight + 1
+        ? detailContent
+        : scrollOwnerFor(event.target, 'y');
       horizontalTouchOwner = scrollOwnerFor(event.target, 'x');
     }, { passive: true, capture: true });
 

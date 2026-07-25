@@ -179,6 +179,13 @@
   function decorateCard(card, order, style) {
     if (!card || !order) return card;
     const triage = evaluateOrder(order);
+    const shopifyBoard = document.body?.dataset.orderSource === 'shopify';
+    const status = order.status || 'received';
+    if (shopifyBoard) {
+      card.classList.add('shopify-board-card');
+      if (status === 'received') card.classList.add('pipeline-main-card');
+      if (status === 'blanks' || status === 'print') card.classList.add('production-card');
+    }
     setCardDatasets(card, order, triage);
     card.classList.add('dashboard-triaged', `dashboard-tone-${triage.tone}`);
     card.classList.toggle('dashboard-needs-attention', triage.tags.includes('attention'));
@@ -189,7 +196,7 @@
 
     // Keep filtering and sorting data available everywhere. The denser card
     // decoration remains desktop-only so mobile cards retain their compact anatomy.
-    if (!desktopQuery.matches || style !== 'pipeline') return card;
+    if (!desktopQuery.matches || style !== 'pipeline' || (shopifyBoard && status !== 'received')) return card;
 
     const body = card.querySelector('.card-body');
     const footer = card.querySelector('.card-footer');
@@ -250,6 +257,12 @@
   function decorateBundle(card, orders) {
     if (!card) return card;
     const triage = aggregateBundleTriage(orders);
+    if (document.body?.dataset.orderSource === 'shopify') {
+      const status = orders?.[0]?.status || 'received';
+      card.classList.add('shopify-board-card');
+      if (status === 'received') card.classList.add('pipeline-main-card');
+      if (status === 'blanks' || status === 'print') card.classList.add('production-card');
+    }
     card.classList.add('dashboard-triaged', 'dashboard-bundle-card');
     card.classList.toggle('dashboard-needs-attention', triage.tags.includes('attention'));
     card.classList.toggle('dashboard-ready', triage.tags.includes('ready') && !triage.tags.includes('attention'));
@@ -278,6 +291,7 @@
       if (state.sort === 'value') return rightValue - leftValue || leftTime - rightTime;
       return rightScore - leftScore || leftTime - rightTime;
     });
+    if (sorted.every((card, index) => card === container.children[index])) return;
     sorted.forEach(card => container.appendChild(card));
   }
 
@@ -376,7 +390,7 @@
       const originalRenderBoard = renderBoard;
       renderBoard = async function dashboardTriageRenderBoard(...args) {
         const result = await originalRenderBoard.apply(this, args);
-        requestAnimationFrame(applyDashboardTriage);
+        if (result?.rendered !== false) applyDashboardTriage();
         return result;
       };
       renderBoard.__dashboardTriagePatched = true;

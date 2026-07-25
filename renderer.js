@@ -2,6 +2,8 @@
 
 let allOrders = [];
 let renderTimer = null;
+let boardFetchGeneration = 0;
+let boardHasRendered = false;
 function scheduleRender() {
   if (renderTimer) return;
   renderTimer = setTimeout(async () => {
@@ -181,6 +183,92 @@ function normalizeBoardStatuses(statuses) {
   if (!statuses) return BOARD_STATUSES.slice();
   const list = typeof statuses === 'string' ? [statuses] : Array.from(statuses);
   return Array.from(new Set(list)).filter(status => STATUS_COLUMN_CONFIG[status]);
+}
+
+function candidateAssetRenderFingerprint(asset) {
+  if (typeof asset === 'string') return asset;
+  if (!asset || typeof asset !== 'object') return '';
+  return {
+    assetId: asset.assetId || '',
+    contentType: asset.contentType || '',
+    filename: asset.filename || asset.name || '',
+    lineItemId: asset.lineItemId || '',
+    role: asset.role || '',
+    side: asset.side || '',
+    state: asset.state || '',
+    url: asset.url || ''
+  };
+}
+
+function candidateOrderRenderFingerprint(order) {
+  return JSON.stringify({
+    id: order._gid || order.name || '',
+    name: order.name || '',
+    receivedAt: order.receivedAt || '',
+    status: order.status || 'received',
+    items: (order.items || []).map(item => ({
+      id: item.id || '',
+      title: item.title || '',
+      variantTitle: item.variantTitle || '',
+      sku: item.sku || '',
+      qty: Number(item.qty || 0),
+      price: Number(item.unitPrice ?? item.price ?? 0),
+      properties: item.properties || {},
+      assets: (item.assets || []).map(candidateAssetRenderFingerprint)
+    })),
+    subtotal: Number(order.subtotal || 0),
+    discount: Number(order.discount || 0),
+    total: Number(order.total || 0),
+    notes: order.notes || '',
+    bundle: order.bundle || '',
+    progress: Number(order.progress || 0),
+    blanksStatus: Number(order.blanksStatus || 0),
+    printsStatus: Number(order.printsStatus || 0),
+    blanksOrdered: Number(order.blanksOrdered || 0),
+    printsOrdered: Number(order.printsOrdered || 0),
+    assets: (order.assets || []).map(candidateAssetRenderFingerprint)
+  });
+}
+
+function changedCandidateBoardStatuses(previousOrders, nextOrders) {
+  if (!boardHasRendered) return new Set(BOARD_STATUSES);
+  if (
+    previousOrders.some(order => !order?._candidate)
+    || nextOrders.some(order => !order?._candidate)
+  ) {
+    return new Set(BOARD_STATUSES);
+  }
+
+  const keyed = orders => new Map(orders.map((order, index) => [
+    order._gid || order.name || `candidate-${index}`,
+    order
+  ]));
+  const previous = keyed(previousOrders);
+  const next = keyed(nextOrders);
+  const changed = new Set();
+  new Set([...previous.keys(), ...next.keys()]).forEach(key => {
+    const before = previous.get(key);
+    const after = next.get(key);
+    if (
+      before
+      && after
+      && candidateOrderRenderFingerprint(before) === candidateOrderRenderFingerprint(after)
+    ) {
+      return;
+    }
+    if (before) changed.add(before.status || 'received');
+    if (after) changed.add(after.status || 'received');
+  });
+  return changed;
+}
+
+function refreshVisibleRelativeTimes() {
+  const ordersByName = new Map(allOrders.map(order => [order.name, order]));
+  document.querySelectorAll('.card[data-order-id] .time-ago-pill').forEach(pill => {
+    const orderName = pill.closest('.card')?.dataset.orderId;
+    const order = ordersByName.get(orderName);
+    if (order?.receivedAt) pill.textContent = timeAgo(order.receivedAt);
+  });
 }
 
 /**
@@ -1440,12 +1528,33 @@ window.addEventListener('blur', () => finishCardDrag());
  */
 async function renderBoard(options = {}) {
   const { useLocalOrders = false, statuses = null } = options;
-  if (!useLocalOrders) {
-    allOrders = await window.api.getQueue();
+  let statusesToRender = normalizeBoardStatuses(statuses);
+  if (useLocalOrders) {
+    // A local mutation or asset hydration is newer than any queue read that
+    // started before it. Prevent that older response from repainting stale data.
+    boardFetchGeneration += 1;
+    if (typeof window.api.invalidateQueueLoads === 'function') {
+      window.api.invalidateQueueLoads();
+    }
+  } else {
+    const fetchGeneration = ++boardFetchGeneration;
+    const nextOrders = await window.api.getQueue();
+    if (fetchGeneration !== boardFetchGeneration) {
+      return { rendered: false, stale: true, statuses: [] };
+    }
+    const changedStatuses = changedCandidateBoardStatuses(allOrders, nextOrders);
+    allOrders = nextOrders;
+    if (!statuses) statusesToRender = normalizeBoardStatuses(changedStatuses);
+    if (boardHasRendered && statusesToRender.length === 0) {
+      refreshVisibleRelativeTimes();
+      return { rendered: false, stale: false, statuses: [] };
+    }
   }
 
-  normalizeBoardStatuses(statuses).forEach(renderStatusColumn);
+  statusesToRender.forEach(renderStatusColumn);
+  boardHasRendered = true;
   refreshOpenBundleModal();
+  return { rendered: true, stale: false, statuses: statusesToRender };
 }
 
 // recalc summary from “toOrder” items

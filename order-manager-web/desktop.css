@@ -8,7 +8,8 @@
       height: 100%;
       font-family: sans-serif;
       overflow: hidden;
-    }
+  }
+
     body {
       display: flex;
       flex-direction: column;
@@ -5476,3 +5477,77 @@
         font-size: 0.72rem;
       }
     }
+
+/* Shopify board repair layer.
+   These final rules intentionally do not affect the Legacy Redis board. */
+body[data-order-source="shopify"] .fulfillment .sub-section .cards {
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  align-content: start;
+  gap: 12px;
+}
+
+body[data-order-source="shopify"] .fulfillment .sub-section .cards .production-card {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  min-height: 142px;
+}
+
+body[data-order-source="shopify"] .production-card .compact-body,
+body[data-order-source="shopify"] .bundle-card.production-card .card-body {
+  min-height: 78px;
+  padding: 12px;
+}
+
+body[data-order-source="shopify"] .pipeline-main-card.dashboard-counts-in-footer .card-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+body[data-order-source="shopify"] .pipeline-main-card .dashboard-footer-counts {
+  max-width: none;
+  overflow: visible;
+}
+
+body[data-order-source="shopify"] .pipeline-main-card.dashboard-counts-in-footer .footer-value {
+  max-width: 92px;
+}
+
+body[data-order-source="shopify"] .blanks-segment,
+body[data-order-source="shopify"] .section-actions button,
+body[data-order-source="shopify"] .panel-header button {
+  min-height: 40px;
+}
+
+.order-move-toast {
+  position: fixed;
+  z-index: 1800;
+  top: 18px;
+  left: 50%;
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 10px 14px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fff7f7;
+  color: #991b1b;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.14);
+  font-size: 0.84rem;
+  font-weight: 750;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -8px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.order-move-toast[data-tone="success"] {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.order-move-toast.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}

@@ -2,6 +2,7 @@ const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 const { DatabaseSync } = require('node:sqlite');
 
 if (!globalThis.crypto) globalThis.crypto = crypto.webcrypto;
@@ -57,7 +58,9 @@ function shopifyNode() {
     currentSubtotalLineItemsQuantity: 2,
     currentSubtotalPriceSet: { shopMoney: { amount: '20.00', currencyCode: 'USD' } },
     currentTotalPriceSet: { shopMoney: { amount: '21.60', currencyCode: 'USD' } },
-    customer: { displayName: 'Fixture Customer' },
+    customer: null,
+    shippingAddress: { name: 'Fixture Guest Checkout' },
+    billingAddress: { name: 'Fixture Billing Name' },
     lineItems: {
       nodes: [{
         id: 'gid://shopify/LineItem/101', sku: 'B001', title: 'Fixture Shirt', variantTitle: 'Black / M',
@@ -181,6 +184,8 @@ async function run() {
   };
   let productionDigest = 'digest-1';
   let failBootstrap = false;
+  let holdSummaryRefresh = false;
+  let heldSummaryRefresh = Promise.resolve();
   const calls = [];
   const nativeFetch = globalThis.fetch;
   globalThis.fetch = async (url, options = {}) => {
@@ -279,6 +284,7 @@ async function run() {
         }), { status: 200, headers: { 'Content-Type': 'application/json', 'X-Shopify-API-Version': '2026-07' } });
       }
       if (request.query.includes('PrintMOOrderSummaries')) {
+        if (holdSummaryRefresh) await heldSummaryRefresh;
         return new Response(JSON.stringify({
           data: { nodes: [shopifyNode()] },
           extensions: { cost: { requestedQueryCost: 21, actualQueryCost: 12, throttleStatus: { maximumAvailable: 1000, currentlyAvailable: 988, restoreRate: 50 } } }
@@ -326,6 +332,33 @@ async function run() {
     ).first();
     assert(bootstrapCheckpoint?.checkpoint, 'successful initial Shopify read must record a bootstrap checkpoint');
 
+    await env.ORDER_DB.prepare(`
+      UPDATE order_projection
+      SET stale_at = ?
+      WHERE order_gid = ?
+    `).bind(new Date().toISOString(), shopifyNode().id).run();
+    let releaseHeldSummaryRefresh;
+    heldSummaryRefresh = new Promise(resolve => { releaseHeldSummaryRefresh = resolve; });
+    holdSummaryRefresh = true;
+    const staleRefreshTasks = [];
+    const fastStaleBoard = await Promise.race([
+      worker.fetch(
+        new Request('https://worker.test/order-manager/v1/orders', { headers }),
+        env,
+        { waitUntil(promise) { staleRefreshTasks.push(promise); } }
+      ),
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error('ordinary stale board read waited for Shopify instead of returning D1')),
+        1000
+      )),
+    ]);
+    assert.equal(fastStaleBoard.status, 200, 'an initialized stale board must return its D1 projection immediately');
+    assert.equal((await fastStaleBoard.json()).data[0].sync.stale, true, 'the immediate projection must honestly report stale commerce');
+    assert(staleRefreshTasks.length > 0, 'stale commerce refresh must be registered as background work');
+    holdSummaryRefresh = false;
+    releaseHeldSummaryRefresh();
+    await Promise.all(staleRefreshTasks);
+
     const webhookBody = JSON.stringify({ id: '60129381', admin_graphql_api_id: shopifyNode().id, name: '#1001', order_number: 1001 });
     const hmac = crypto.createHmac('sha256', secret).update(webhookBody).digest('base64');
     let background = null;
@@ -364,6 +397,7 @@ async function run() {
     assert.equal(boardJson.data[0].production.assets[0].lineItemId, 'gid://shopify/LineItem/101');
     assert(!JSON.stringify(boardJson.data[0].production.assets).includes('orders/60129381/assets/'), 'board DTO must not expose private R2 object keys');
     assert.equal(boardJson.data[0].sync.stale, false);
+    assert.equal(boardJson.data[0].customer.displayName, 'Fixture Guest Checkout', 'guest checkout must fall back to the Shopify shipping name');
     if (assetBackfill) await assetBackfill;
     const assetCheckpoint = await env.ORDER_DB.prepare(
       `SELECT checkpoint FROM reconciliation_checkpoints WHERE name = 'designer-studio-assets-v1'`
@@ -411,6 +445,15 @@ async function run() {
     assert.equal(mutationJson.production.stage, 'to_order');
     assert.equal(mutationJson.production.version, 2);
     assert(!calls.some(call => call.target.includes('/data/orders/60129381/production')), 'candidate mutations must not use the Redis CAS adapter');
+
+    const conflict = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
+      method: 'PATCH', headers, body: JSON.stringify({ expectedVersion: 1, patch: { stage: 'received' }, idempotencyKey: 'mutation-conflict-1' })
+    }), env);
+    assert.equal(conflict.status, 409, 'stale production revision must be rejected');
+    const conflictJson = await conflict.json();
+    assert.equal(conflictJson.error.code, 'VERSION_CONFLICT');
+    assert.equal(conflictJson.error.details.currentVersion, 2, 'conflict response must expose the current revision for safe client reconciliation');
+    assert.equal(conflictJson.error.details.current.stage, 'to_order', 'conflict response must expose current canonical production state');
 
     const batchResponse = await worker.fetch(new Request('https://worker.test/order-manager/v1/batches/commit', {
       method: 'POST',
@@ -486,12 +529,37 @@ async function run() {
   assert(previewHtml.includes('shopify-preview-detail'), 'web UI must include the Shopify-only order detail dialog');
   const previewController = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-preview.js'), 'utf8');
   assert(previewController.includes('getShopifyPreviewOrderDetail'), 'preview controller must load details only when an order is opened');
+  assert(
+    previewController.includes('setPreviewActive(false, { render: false })'),
+    'source-controller initialization must not duplicate the renderer-owned initial queue request'
+  );
   const webShim = fs.readFileSync(path.join(root, 'order-manager-web', 'web-shim.js'), 'utf8');
   assert(webShim.includes('apiErrorMessage'), 'web errors must render structured Worker errors instead of [object Object]');
   assert(webShim.includes('candidateAssetObjectUrl'), 'Shopify board must hydrate private Designer Studio manifests through authenticated asset tickets');
+  assert(webShim.includes('candidateMutationChains'), 'Shopify production mutations must serialize per order');
+  assert(webShim.includes('updateBoardMove'), 'Shopify board moves must persist stage and blanks state atomically');
+  assert(webShim.includes('VERSION_CONFLICT'), 'Shopify board must reconcile and retry a genuine version conflict once');
+  assert(
+    /query PrintMOOrderSummaries[\s\S]*?shippingAddress \{ name \}[\s\S]*?billingAddress \{ name \}[\s\S]*?lineItems/.test(source),
+    'Shopify board summaries must project guest checkout shipping and billing names'
+  );
+  assert(source.includes("const forceRefresh = url.searchParams.get('refresh') === '1'"), 'manual Shopify refresh must bypass the short summary TTL');
+  assert(
+    source.includes('if (forceRefresh || !ctx?.waitUntil)')
+      && source.includes("ctx.waitUntil(refreshThroughCoordinator(env, staleGids).catch"),
+    'ordinary Shopify board reads must return the D1 projection while stale summaries refresh in the background'
+  );
   assert(source.includes('customAttributes { key value }'), 'Shopify board summaries must retain Designer Studio line-item properties');
   assert(source.includes('designer-studio-sync'), 'Shopify summary reconciliation must import Designer Studio assets into private R2');
   assert(source.includes('designer-studio-assets-v1'), 'active-order Designer Studio backfill must have an idempotent checkpoint');
+  assert(
+    source.includes('redis-position-catchup-2026-07-22T15-51-42-430Z')
+      && source.includes('22f099ad077d6a66f2aabf0ccf08ff18aa97faa764787cdb79368e0b77c3aaea'),
+    'the approved one-time position catch-up must be checksum-guarded'
+  );
+  const catchupSource = source.match(/const LEGACY_POSITION_CATCHUP_RECORDS[\s\S]*?\n\]\);/)?.[0] || '';
+  assert.equal((catchupSource.match(/orderNumber:/g) || []).length, 19, 'position catch-up must contain exactly 19 approved records');
+  assert(!catchupSource.includes("'1573'") && !catchupSource.includes("'1574'"), 'new orders must remain outside the position catch-up');
   const webRenderer = fs.readFileSync(path.join(root, 'order-manager-web', 'renderer.js'), 'utf8');
   assert(webRenderer.includes('assetId'), 'shared web renderer must recognize private manifest assets without public /orders/ URLs');
   const sharedRenderer = fs.readFileSync(path.join(root, 'renderer.js'), 'utf8');
@@ -499,11 +567,114 @@ async function run() {
     sharedRenderer.includes('if (detailFilesBtn)'),
     'shared detail renderer must tolerate the Shopify layout omitting the legacy aggregate Files button'
   );
+  assert(
+    sharedRenderer.includes('boardFetchGeneration')
+      && sharedRenderer.includes('changedCandidateBoardStatuses')
+      && sharedRenderer.includes('fetchGeneration !== boardFetchGeneration'),
+    'shared board rendering must discard superseded fetches and skip unchanged Shopify column repaints'
+  );
   const previewCss = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-preview.css'), 'utf8');
   assert(
     !/body\\[data-order-source=["']shopify["']\\]\\s+#orders-view\\s*\\{[^}]*display:\\s*none/im.test(previewCss),
     'Shopify source must keep the shared operational board visible'
   );
+  const blanksFoundation = fs.readFileSync(path.join(root, 'order-manager-web', 'blanks-batches.js'), 'utf8');
+  assert(blanksFoundation.includes('setActiveBlanksView'), 'In-cart and Ordered controls must be functioning Shopify board tabs');
+  assert(
+    blanksFoundation.includes('blanksOrderedValueForActiveView'),
+    'drops into the Shopify blanks column must persist the selected In S&S Cart or Ordered view'
+  );
+  assert(blanksFoundation.includes('applyOptimisticOrderUpdate'), 'Shopify moves must render optimistically and roll back on failure');
+  const desktopCss = fs.readFileSync(path.join(root, 'order-manager-web', 'desktop.css'), 'utf8');
+  assert(
+    desktopCss.includes('repeat(auto-fill, minmax(190px, 1fr))'),
+    'a single Shopify production card must retain the normal two-column card width'
+  );
+  const triageController = fs.readFileSync(path.join(root, 'order-manager-web', 'dashboard-triage-enhancements.js'), 'utf8');
+  assert(triageController.includes("card.classList.add('production-card')"), 'fulfillment cards must receive the production layout contract');
+  assert(triageController.includes("card.classList.add('pipeline-main-card')"), 'pipeline cards must receive the dashboard footer layout contract');
+  assert(
+    triageController.includes('sorted.every((card, index) => card === container.children[index])')
+      && triageController.includes('if (result?.rendered !== false) applyDashboardTriage();'),
+    'dashboard triage must not defer or repeat unchanged card reordering'
+  );
+  const embeddedMobile = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-embedded-mobile.js'), 'utf8');
+  assert(embeddedMobile.includes("closest('#detail-overlay.mobile-fullscreen-detail')"), 'mobile detail touch containment must preserve its internal scroll owner');
+
+  // Behavioral verification of web-shim adapter and worker normalization contract
+  const webShimCode = fs.readFileSync(path.join(root, 'order-manager-web', 'web-shim.js'), 'utf8');
+  assert(
+    webShimCode.includes('candidateQueueLoadGeneration')
+      && webShimCode.includes('applyCandidateCachedAssetUrls')
+      && webShimCode.includes('window.api.invalidateQueueLoads')
+      && webShimCode.includes('renderBoardFromLocalState(changedStatuses)'),
+    'candidate polling and preview hydration must preserve cached assets and repaint only affected columns'
+  );
+  const shimContext = vm.createContext({
+    document: { body: {} },
+    window: {},
+    console, Map, Set, Number, String, Array, Object, URL
+  });
+  vm.runInContext(webShimCode, shimContext);
+  const { candidateLineItem, candidateOrderToBoard } = shimContext;
+
+  // 1. Price mapping
+  const testLineItem = candidateLineItem({ unitPrice: '12.50', currentQuantity: 3 });
+  assert.equal(testLineItem.unitPrice, 12.5, 'candidateLineItem must map unitPrice to finite number 12.5');
+  assert.equal(testLineItem.price, 12.5, 'candidateLineItem must preserve price compatibility alias 12.5');
+
+  // 2. Totals mapping
+  const testBoardOrder = candidateOrderToBoard({
+    id: 'gid://shopify/Order/999',
+    displayName: '#999',
+    commerce: { subtotal: '50.00', discount: '5.00', total: '48.25' }
+  });
+  assert.equal(testBoardOrder.subtotal, 50, 'subtotal must map to 50');
+  assert.equal(testBoardOrder.discount, 5, 'discount must map to 5');
+  assert.equal(testBoardOrder.total, 48.25, 'total must map to 48.25');
+
+  // 3. Email-derived display name rejection
+  const fixture3Node = {
+    customer: { firstName: null, lastName: null, displayName: 'zsasz naberrie' },
+    shippingAddress: { name: 'Actual Recipient' }
+  };
+  assert.equal(module.selectOperationalCustomerName(fixture3Node), 'Actual Recipient');
+  const board3 = candidateOrderToBoard(fixture3Node);
+  assert.equal(board3.name, 'Shopify order – Actual Recipient');
+  assert(!board3.name.includes('zsasz naberrie'), 'must reject email-derived display name fallback');
+
+  // 4. Explicit customer name precedence
+  const fixture4Node = {
+    customer: { firstName: 'Jane', lastName: 'Doe' },
+    shippingAddress: { name: 'Warehouse Recipient' }
+  };
+  assert.equal(module.selectOperationalCustomerName(fixture4Node), 'Jane Doe');
+  const board4 = candidateOrderToBoard(fixture4Node);
+  assert.equal(board4.name, 'Shopify order – Jane Doe');
+
+  // 5. Guest checkout
+  const fixture5Node = {
+    customer: null,
+    shippingAddress: { name: 'Guest Recipient' }
+  };
+  assert.equal(module.selectOperationalCustomerName(fixture5Node), 'Guest Recipient');
+  const board5 = candidateOrderToBoard(fixture5Node);
+  assert.equal(board5.name, 'Shopify order – Guest Recipient');
+
+  // 6. Final fallback
+  const fixture6Node = {
+    customer: null,
+    shippingAddress: null,
+    billingAddress: null
+  };
+  assert.equal(module.selectOperationalCustomerName(fixture6Node), null);
+  const board6 = candidateOrderToBoard(fixture6Node);
+  assert.equal(board6.name, 'Shopify order – Name unavailable');
+
+  // 7. Discount source in worker contract
+  assert(source.includes('currentTotalDiscountsSet'), 'Worker query must fetch currentTotalDiscountsSet');
+  assert(source.includes('discount: moneyValue(node.currentTotalDiscountsSet'), 'Worker summary normalization must map commerce.discount from currentTotalDiscountsSet');
+
   console.log('Phase 2 shadow data plane verification passed.');
 }
 

@@ -6144,3 +6144,87 @@ body.mobile-mode.embedded-short-viewport .mobile-refresh-btn {
     transition: none;
   }
 }
+
+/* Shopify board repair layer. Legacy Redis keeps its established mobile layout. */
+body.mobile-mode[data-order-source="shopify"] .fulfillment .sub-section .cards {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+body.mobile-mode[data-order-source="shopify"] .fulfillment .sub-section .cards .production-card {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  min-height: 132px !important;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card .compact-body,
+body.mobile-mode[data-order-source="shopify"] .bundle-card.production-card .card-body {
+  min-height: 76px;
+  padding: 10px;
+}
+
+body.mobile-mode[data-order-source="shopify"] .blanks-segment,
+body.mobile-mode[data-order-source="shopify"] .section-actions button,
+body.mobile-mode[data-order-source="shopify"] .mobile-stage-tab,
+body.mobile-mode[data-order-source="shopify"] .mobile-blanks-subnav button {
+  min-height: 44px;
+}
+
+body.mobile-mode #detail-overlay.mobile-fullscreen-detail #detail-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.mobile-mode #detail-overlay.mobile-fullscreen-detail #detail-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+body.mobile-mode .order-move-toast {
+  position: fixed;
+  z-index: 1800;
+  left: 50%;
+  top: auto;
+  bottom: calc(66px + env(safe-area-inset-bottom, 0px));
+  width: calc(100vw - 28px);
+  max-width: 440px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fff7f7;
+  color: #991b1b;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.14);
+  font-size: 0.82rem;
+  font-weight: 750;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 8px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+body.mobile-mode .order-move-toast[data-tone="success"] {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+body.mobile-mode .order-move-toast.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+@media (min-width: 560px) and (max-width: 900px) {
+  body.mobile-mode[data-order-source="shopify"] .fulfillment .sub-section .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
