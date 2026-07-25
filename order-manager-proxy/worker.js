@@ -2262,7 +2262,7 @@ function defaultProductionState(actor = 'system') {
         revision: 0,
         lastMutationId: null,
         stage: 'received',
-        readiness: { blanksReady: false, printsOrdered: false, printsReady: false },
+        readiness: { blanksOrdered: false, blanksReady: false, printsOrdered: false, printsReady: false },
         printedCount: 0,
         bundleId: null,
         batchRefs: [],
@@ -2287,6 +2287,9 @@ function normalizeProductionState(value, actor = 'system') {
         lastMutationId: input.lastMutationId ? String(input.lastMutationId).slice(0, 160) : null,
         stage: PRODUCTION_STAGES.has(input.stage) ? input.stage : 'received',
         readiness: {
+            blanksOrdered: 'blanksOrdered' in readiness
+                ? Boolean(readiness.blanksOrdered)
+                : ['blanks_ordered', 'print', 'completed'].includes(input.stage),
             blanksReady: Boolean(readiness.blanksReady),
             printsOrdered: Boolean(readiness.printsOrdered),
             printsReady: Boolean(readiness.printsReady)
@@ -2333,6 +2336,7 @@ function productionForClient(gid, state, compareDigest, assets = []) {
         bundleId: state.bundleId || '',
         blanksPo: state.batchRefs || [],
         printedCount: state.printedCount,
+        blanksOrdered: state.readiness.blanksOrdered ? 1 : 0,
         blanksStatus: state.readiness.blanksReady ? 1 : 0,
         printsStatus: state.readiness.printsReady ? 1 : 0,
         printsOrdered: state.readiness.printsOrdered ? 1 : 0,
@@ -2367,6 +2371,8 @@ function normalizeProductionPatch(patch) {
         printed_count: 'printedCount',
         blanksStatus: 'blanksStatus',
         blanks_status: 'blanksStatus',
+        blanksOrdered: 'blanksOrdered',
+        blanks_ordered: 'blanksOrdered',
         printsStatus: 'printsStatus',
         prints_status: 'printsStatus',
         printsOrdered: 'printsOrdered',
@@ -2398,7 +2404,7 @@ function normalizeProductionPatch(patch) {
             throw Object.assign(new Error('Printed count must be a non-negative integer.'), { code: 'INVALID_PRINTED_COUNT', status: 400 });
         }
     }
-    for (const flag of ['blanksStatus', 'printsStatus', 'printsOrdered']) {
+    for (const flag of ['blanksStatus', 'blanksOrdered', 'printsStatus', 'printsOrdered']) {
         if (flag in normalized && ![0, 1, false, true].includes(normalized[flag])) {
             throw Object.assign(new Error(`${flag} must be boolean or 0/1.`), { code: 'INVALID_READINESS', status: 400 });
         }
@@ -2413,6 +2419,7 @@ function applyProductionPatch(current, patch, actor, mutationId) {
     if ('internalNotes' in patch) next.internalNotes = String(patch.internalNotes || '');
     if ('printedCount' in patch) next.printedCount = Number(patch.printedCount);
     if ('blanksStatus' in patch) next.readiness.blanksReady = Boolean(Number(patch.blanksStatus));
+    if ('blanksOrdered' in patch) next.readiness.blanksOrdered = Boolean(Number(patch.blanksOrdered));
     if ('printsStatus' in patch) next.readiness.printsReady = Boolean(Number(patch.printsStatus));
     if ('printsOrdered' in patch) next.readiness.printsOrdered = Boolean(Number(patch.printsOrdered));
     if ('attention' in patch) next.attention = normalizeProductionState({ attention: patch.attention }, actor).attention;
@@ -2767,15 +2774,15 @@ async function completeLineItems(env, orderId, connection, graphQL = coordinator
 
 function selectOperationalCustomerName(node) {
     if (!node) return null;
+    const shipping = String(node.shippingAddress?.name || '').trim();
+    if (shipping) return shipping;
+    const billing = String(node.billingAddress?.name || '').trim();
+    if (billing) return billing;
     const first = String(node.customer?.firstName || '').trim();
     const last = String(node.customer?.lastName || '').trim();
     if (first && last) return `${first} ${last}`;
     if (first) return first;
     if (last) return last;
-    const shipping = String(node.shippingAddress?.name || '').trim();
-    if (shipping) return shipping;
-    const billing = String(node.billingAddress?.name || '').trim();
-    if (billing) return billing;
     return null;
 }
 
@@ -3880,12 +3887,17 @@ function supplierLinesFromProjectionRows(rows) {
 
 async function confirmedBatchProductionUpdate(env, shop, row, batchId, poNumber, actor, graphQL = coordinatorGraphQL) {
     const current = await readProductionMetafield(env, row.order_gid, actor, graphQL);
-    if (current.state.batchRefs.includes(poNumber) && current.state.stage === 'blanks_ordered') {
+    if (
+        current.state.batchRefs.includes(poNumber)
+        && current.state.stage === 'blanks_ordered'
+        && current.state.readiness.blanksOrdered
+    ) {
         await d1ProjectionUpsert(env, shop.id, row.order_gid, current.state, current.compareDigest);
         return { repaired: false, revision: current.state.revision };
     }
     const next = normalizeProductionState(current.state, actor);
     next.stage = 'blanks_ordered';
+    next.readiness.blanksOrdered = true;
     next.batchRefs = [...new Set([...next.batchRefs, poNumber])].slice(0, 100);
     next.revision = current.state.revision + 1;
     next.lastMutationId = `batch:${batchId}`;
@@ -4325,6 +4337,7 @@ async function restoreLegacySnapshotPositions(env) {
                 const next = normalizeProductionState(current.state, 'redis-position-catchup');
                 next.stage = record.stage;
                 next.readiness = {
+                    blanksOrdered: ['blanks_ordered', 'print', 'completed'].includes(record.stage),
                     blanksReady: record.blanksReady,
                     printsOrdered: record.printsOrdered,
                     printsReady: record.printsReady
@@ -4507,6 +4520,7 @@ function legacyProductionState(legacy, current, actor) {
                 ? 'print'
                 : 'received';
     state.readiness = {
+        blanksOrdered: Boolean(Number(legacy?.blanksOrdered || 0)),
         blanksReady: Boolean(Number(legacy?.blanksStatus || 0)),
         printsOrdered: Boolean(Number(legacy?.printsOrdered || 0)),
         printsReady: Boolean(Number(legacy?.printsStatus || 0))

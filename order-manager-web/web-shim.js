@@ -119,15 +119,15 @@ function boardStageToCandidate(status, current = {}) {
 }
 
 function selectOperationalCustomerName(order = {}) {
+  const shipping = String(order.shippingAddress?.name || "").trim();
+  if (shipping) return shipping;
+  const billing = String(order.billingAddress?.name || "").trim();
+  if (billing) return billing;
   const first = String(order.customer?.firstName || "").trim();
   const last = String(order.customer?.lastName || "").trim();
   if (first && last) return `${first} ${last}`;
   if (first) return first;
   if (last) return last;
-  const shipping = String(order.shippingAddress?.name || "").trim();
-  if (shipping) return shipping;
-  const billing = String(order.billingAddress?.name || "").trim();
-  if (billing) return billing;
   const display = String(order.customer?.displayName || "").trim();
   if (display && order.customer && !("firstName" in order.customer) && !("lastName" in order.customer)) {
     return display;
@@ -191,7 +191,7 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
     progress: Number(production.printedCount || 0),
     blanksStatus: Number(production.blanksStatus || 0),
     printsStatus: Number(production.printsStatus || 0),
-    blanksOrdered: production.stage === "blanks_ordered" ? 1 : 0,
+    blanksOrdered: Number(production.blanksOrdered ?? (production.stage === "blanks_ordered" ? 1 : 0)),
     printsOrdered: Number(production.printsOrdered || 0),
     shopify: order,
     assets: production.assets || [],
@@ -300,7 +300,7 @@ function applyCandidateProduction(order, production = {}) {
   if ("blanksStatus" in production) order.blanksStatus = Number(production.blanksStatus || 0);
   if ("printsStatus" in production) order.printsStatus = Number(production.printsStatus || 0);
   if ("printsOrdered" in production) order.printsOrdered = Number(production.printsOrdered || 0);
-  order.blanksOrdered = production.stage === "blanks_ordered" ? 1 : 0;
+  order.blanksOrdered = Number(production.blanksOrdered ?? (production.stage === "blanks_ordered" ? 1 : 0));
 }
 
 function candidateProductionMatchesPatch(production = {}, patch = {}) {
@@ -490,6 +490,7 @@ window.api.updateReady = async (...args) => {
     const candidate = candidateByName(name);
     const metadataPatch = {};
     if ("blanksStatus" in patch) metadataPatch.blanks_status = patch.blanksStatus;
+    if ("blanksOrdered" in patch) metadataPatch.blanks_ordered = patch.blanksOrdered;
     if ("printsStatus" in patch) metadataPatch.prints_status = patch.printsStatus;
     if ("printsOrdered" in patch) metadataPatch.prints_ordered = patch.printsOrdered;
     if ("blanksOrdered" in patch && candidate.status === "blanks") {

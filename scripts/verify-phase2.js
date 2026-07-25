@@ -643,14 +643,14 @@ async function run() {
   assert.equal(board3.name, 'Shopify order – Actual Recipient');
   assert(!board3.name.includes('zsasz naberrie'), 'must reject email-derived display name fallback');
 
-  // 4. Explicit customer name precedence
+  // 4. Fulfillment recipient precedence over email-derived customer fields
   const fixture4Node = {
     customer: { firstName: 'Jane', lastName: 'Doe' },
     shippingAddress: { name: 'Warehouse Recipient' }
   };
-  assert.equal(module.selectOperationalCustomerName(fixture4Node), 'Jane Doe');
+  assert.equal(module.selectOperationalCustomerName(fixture4Node), 'Warehouse Recipient');
   const board4 = candidateOrderToBoard(fixture4Node);
-  assert.equal(board4.name, 'Shopify order – Jane Doe');
+  assert.equal(board4.name, 'Shopify order – Warehouse Recipient');
 
   // 5. Guest checkout
   const fixture5Node = {

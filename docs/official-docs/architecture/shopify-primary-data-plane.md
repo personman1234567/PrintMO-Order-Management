@@ -14,8 +14,8 @@
 
 Candidate deployment on 2026-07-25:
 
-- Worker version: `957dd4b3-f628-406a-b570-27341eff3eea`
-- Pages deployment: `7adca12c.print-mo-order-manager.pages.dev`
+- Worker version: `3c4d0231-75a3-462c-adbc-6194bd1c0b6b`
+- Pages deployment: `047618f1.print-mo-order-manager.pages.dev`
 - Shopify app version: `designer-assets-idempotency-2026-07-23`
 - Stateless supplier gateway commit: `420ff72`
 
@@ -55,7 +55,7 @@ The JSON metafield contains:
 
 - `schemaVersion`, monotonic `revision`, and `lastMutationId`;
 - `stage`;
-- `readiness.blanksReady`, `readiness.printsOrdered`, and `readiness.printsReady`;
+- `readiness.blanksOrdered`, `readiness.blanksReady`, `readiness.printsOrdered`, and `readiness.printsReady`;
 - `printedCount`, `bundleId`, `batchRefs`, and `internalNotes`;
 - attention/archive fields and actor/timestamps.
 

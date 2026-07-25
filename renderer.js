@@ -18,6 +18,8 @@ const selectedFiles = new Set();
 let notesResizeHandler = null;
 let detailAssetRenderToken = 0;
 const detailAssetBlobUrls = new Set();
+const manualMockupsByOrderNumber = new Map();
+let manualMockupHydrationRun = 0;
 let activeCardDrag = null;
 
 const APPAREL_ICON = typeof window.getAssetPath === 'function'
@@ -825,6 +827,67 @@ function designLabelFromAsset(assetEntry, idx) {
   return assetLabelFromUrl(url, idx);
 }
 
+function orderNumberFromOrder(order) {
+  const explicit = String(order?.orderNumber || '').replace(/^#/, '').trim();
+  if (explicit) return explicit;
+  const match = String(order?.name || '').match(/^#?(\d+)/);
+  return match ? match[1] : '';
+}
+
+function normalizeManualMockupAsset(asset) {
+  if (!asset || typeof asset !== 'object' || typeof asset.url !== 'string' || !asset.url) return null;
+  return { ...asset, isManual: true, isSvg: false };
+}
+
+function manualMockupSignature(assets) {
+  return (assets || []).map(asset => [
+    asset.id || '',
+    asset.key || '',
+    asset.uploadedAt || '',
+    asset.filename || ''
+  ].join(':')).join('|');
+}
+
+function setManualMockups(orderNumber, assets) {
+  const next = (Array.isArray(assets) ? assets : []).map(normalizeManualMockupAsset).filter(Boolean);
+  const changed = manualMockupSignature(manualMockupsByOrderNumber.get(orderNumber)) !== manualMockupSignature(next);
+  manualMockupsByOrderNumber.set(orderNumber, next);
+  return changed;
+}
+
+function getManualMockupsForOrder(order) {
+  return manualMockupsByOrderNumber.get(orderNumberFromOrder(order)) || [];
+}
+
+async function refreshManualMockupsForOrder(order) {
+  const orderNumber = orderNumberFromOrder(order);
+  if (!orderNumber || typeof window.api?.listManualMockups !== 'function') return false;
+  manualMockupHydrationRun += 1;
+  const manifest = await window.api.listManualMockups(orderNumber);
+  return setManualMockups(orderNumber, manifest?.assets || []);
+}
+
+async function hydrateManualMockupsForOrders(orders) {
+  if (typeof window.api?.bulkListManualMockups !== 'function') return;
+  const orderNumbers = Array.from(new Set((orders || []).map(orderNumberFromOrder).filter(Boolean)));
+  if (!orderNumbers.length) return;
+  const run = ++manualMockupHydrationRun;
+  try {
+    const result = await window.api.bulkListManualMockups(orderNumbers);
+    if (run !== manualMockupHydrationRun) return;
+    const changedStatuses = new Set();
+    (orders || []).forEach(order => {
+      const orderNumber = orderNumberFromOrder(order);
+      if (setManualMockups(orderNumber, result?.orders?.[orderNumber]?.assets || [])) {
+        changedStatuses.add(order.status || 'received');
+      }
+    });
+    if (changedStatuses.size) await renderBoardFromLocalState(changedStatuses);
+  } catch (err) {
+    console.warn('Unable to load manual mockups', err);
+  }
+}
+
 function splitOrderAssets(order) {
   const seen = new Set();
   const buckets = { mockups: [], front: [], back: [], extras: [] };
@@ -868,6 +931,8 @@ function splitOrderAssets(order) {
 }
 
 function getFirstMockupUrl(order) {
+  const manual = getManualMockupsForOrder(order)[0];
+  if (manual?.url) return manual.url;
   const assets = splitOrderAssets(order);
   const entry = assets.mockups[0];
   return entry ? getAssetUrlValue(entry) : '';
@@ -992,18 +1057,23 @@ function renderOrderAssets(order) {
   Object.values(groups).forEach(g => g.classList.remove('hidden'));
 
   const assets = splitOrderAssets(order);
+  const mockups = [
+    ...getManualMockupsForOrder(order),
+    ...assets.mockups.map(asset => ({ ...asset, isManual: false }))
+  ];
 
-  if (!assets.mockups.length) {
+  if (!mockups.length) {
     mockupTrack.classList.remove('left-align', 'center-align');
     mockupPlaceholder.classList.remove('hidden');
   } else {
     mockupPlaceholder.classList.add('hidden');
     mockupTrack.classList.remove('left-align', 'center-align');
-    mockupTrack.classList.add(assets.mockups.length >= 4 ? 'left-align' : 'center-align');
-    assets.mockups.forEach(({ url, isSvg }, idx) => {
+    mockupTrack.classList.add(mockups.length >= 4 ? 'left-align' : 'center-align');
+    mockups.forEach((asset, idx) => {
+      const { url, isSvg, isManual } = asset;
       if (token !== detailAssetRenderToken) return;
       const thumb = document.createElement('div');
-      thumb.className = 'mockup-thumb';
+      thumb.className = `mockup-thumb${isManual ? ' manual-mockup-thumb' : ''}`;
 
       const img = document.createElement('img');
       img.alt = `Mockup ${idx + 1}`;
@@ -1011,6 +1081,27 @@ function renderOrderAssets(order) {
       thumb.appendChild(img);
 
       thumb.addEventListener('click', () => openAssetViewer(img.src || url));
+      if (isManual) {
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'manual-mockup-delete';
+        remove.dataset.assetId = asset.id || '';
+        remove.textContent = 'Remove';
+        remove.addEventListener('click', async event => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!confirm(`Remove "${asset.filename || 'this mockup'}"?`)) return;
+          try {
+            await window.api.deleteManualMockup(orderNumberFromOrder(order), asset.id);
+            await refreshManualMockupsForOrder(order);
+            renderOrderAssets(order);
+            await renderBoardFromLocalState([order.status || 'received']);
+          } catch (err) {
+            alert(`Delete failed: ${err?.message || err}`);
+          }
+        });
+        thumb.appendChild(remove);
+      }
 
       const showUnavailable = () => {
         if (!thumb.querySelector('.detail-asset-status')) {
@@ -1128,9 +1219,64 @@ function renderOrderAssets(order) {
   renderDesignGroup(lists.extras, groups.extras, assets.extras);
 }
 
+async function uploadManualMockupFiles(files) {
+  const order = detailOrder;
+  const orderNumber = orderNumberFromOrder(order);
+  const accepted = Array.from(files || []).filter(file =>
+    ['image/png', 'image/jpeg', 'image/webp'].includes(String(file?.type || '').toLowerCase())
+  );
+  if (!order || !orderNumber || !accepted.length) {
+    if (files?.length) alert('Only PNG, JPG, and WebP mockups can be uploaded.');
+    return;
+  }
+  const upload = document.getElementById('manual-mockup-upload-btn');
+  const original = upload?.textContent || 'Upload mockup';
+  if (upload) upload.textContent = 'Uploading...';
+  try {
+    for (const file of accepted) await window.api.uploadManualMockup(orderNumber, file);
+    await refreshManualMockupsForOrder(order);
+    renderOrderAssets(order);
+    await renderBoardFromLocalState([order.status || 'received']);
+  } catch (err) {
+    alert(`Upload failed: ${err?.message || err}`);
+  } finally {
+    if (upload) upload.textContent = original;
+    const input = document.getElementById('manual-mockup-file-input');
+    if (input) input.value = '';
+  }
+}
+
+async function pasteManualMockupFromClipboard() {
+  try {
+    const clipboardItems = await navigator.clipboard.read();
+    const files = [];
+    for (const item of clipboardItems) {
+      const imageType = item.types.find(type => type.startsWith('image/'));
+      if (imageType) {
+        const blob = await item.getType(imageType);
+        files.push(new File([blob], `pasted-mockup.${imageType.split('/')[1] || 'png'}`, { type: imageType }));
+      }
+    }
+    if (!files.length) return alert('No image was found in the clipboard.');
+    await uploadManualMockupFiles(files);
+  } catch (err) {
+    alert('Could not read an image from the clipboard. Use Upload mockup instead.');
+  }
+}
+
+function setupManualMockupControls() {
+  const input = document.getElementById('manual-mockup-file-input');
+  const paste = document.getElementById('manual-mockup-paste-btn');
+  if (input) input.addEventListener('change', () => uploadManualMockupFiles(input.files));
+  if (paste) paste.addEventListener('click', pasteManualMockupFromClipboard);
+}
+
 function openDetail(o) {
   detailOrder = o;
   renderOrderAssets(o);
+  refreshManualMockupsForOrder(o).then(changed => {
+    if (changed && detailOrder === o) renderOrderAssets(o);
+  }).catch(err => console.warn('Unable to refresh manual mockups', err));
   // fill header
   document.getElementById('detail-timestamp').textContent = new Date(o.receivedAt).toLocaleString();
 
@@ -1554,6 +1700,7 @@ async function renderBoard(options = {}) {
   statusesToRender.forEach(renderStatusColumn);
   boardHasRendered = true;
   refreshOpenBundleModal();
+  if (!useLocalOrders) void hydrateManualMockupsForOrders(allOrders);
   return { rendered: true, stale: false, statuses: statusesToRender };
 }
 
@@ -1740,6 +1887,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   initMobileTabs();
+  setupManualMockupControls();
 
   // wire up the four zones
 
