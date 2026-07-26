@@ -1277,17 +1277,33 @@ function openDetail(o) {
   refreshManualMockupsForOrder(o).then(changed => {
     if (changed && detailOrder === o) renderOrderAssets(o);
   }).catch(err => console.warn('Unable to refresh manual mockups', err));
-  // fill header
-  document.getElementById('detail-timestamp').textContent = new Date(o.receivedAt).toLocaleString();
+  // fill header & badges
+  document.getElementById('detail-timestamp').textContent = new Date(o.receivedAt || o.createdAt).toLocaleString();
+  const finBadge = document.getElementById('badge-financial');
+  if (finBadge) finBadge.textContent = o.displayFinancialStatus || 'PAID';
+  const fulBadge = document.getElementById('badge-fulfillment');
+  if (fulBadge) fulBadge.textContent = o.displayFulfillmentStatus || 'UNFULFILLED';
 
   // customer & notes
   const [orderNum, custName = ''] = (o.name || '').split(' – ');
-  document.getElementById('detail-order-id').textContent   = `Order ${orderNum}`;
-  document.getElementById('detail-cust-name').textContent = custName;
+  document.getElementById('detail-order-id').textContent = `Order ${orderNum}`;
+  const headerCust = document.getElementById('detail-header-customer');
+  if (headerCust) headerCust.textContent = custName;
+  document.getElementById('detail-cust-name').textContent = custName || 'No customer name';
   document.getElementById('detail-notes').textContent = o.notes || 'No special instructions';
   document.getElementById('detail-edit-name-btn').onclick = () => openNameModal(o);
   document.getElementById('detail-edit-notes-btn').onclick = () => openNotesModal(o);
   document.getElementById('detail-view-notes-btn').onclick = () => openViewNotesModal(o);
+
+  // Customer Checkout Note Banner
+  const custNoteBanner = document.getElementById('customer-checkout-note-banner');
+  const custNoteText = document.getElementById('customer-checkout-note-text');
+  if (o.shopifyNote && custNoteBanner && custNoteText) {
+    custNoteText.textContent = o.shopifyNote;
+    custNoteBanner.classList.remove('hidden');
+  } else if (custNoteBanner) {
+    custNoteBanner.classList.add('hidden');
+  }
 
   // progress
   const totalApparel = (o.items || []).reduce((sum, it) => sum + (isPrintItem(it) ? 0 : it.qty), 0);
@@ -1311,18 +1327,29 @@ function openDetail(o) {
   };
   document.getElementById('progress-custom').onclick = () => openProgressModal(o, updateProgressUI);
 
-  // line items
+  // tab badge items count
+  const badgeItems = document.getElementById('tab-badge-items');
+  if (badgeItems) badgeItems.textContent = (o.items || []).length;
+
+  // line items with custom attributes sub-rows
   const tbody = document.querySelector('#detail-items tbody');
   tbody.innerHTML = (o.items || []).map(i => {
     const p = Number(i.unitPrice) || 0;
     const lineTotal = (p * i.qty).toFixed(2) || 0;
+    const skuLabel = i.sku ? `<br><small style="color:#64748b;">SKU: ${i.sku}</small>` : '';
+    let attrsHtml = '';
+    if (Array.isArray(i.customAttributes) && i.customAttributes.length > 0) {
+      const chips = i.customAttributes.map(a => `<span class="attribute-chip"><strong>${a.key}:</strong> ${a.value}</span>`).join('');
+      attrsHtml = `<tr><td colspan="4" class="line-item-attributes">${chips}</td></tr>`;
+    }
     return `
       <tr>
-        <td style="padding:4px 8px;">${i.qty}</td>
-        <td style="padding:4px 8px;">${i.title}</td>
-        <td style="padding:4px 8px;">${i.variantTitle || '–'}</td>  <!-- new -->
-        <td style="padding:4px 8px; text-align:right;">$${lineTotal}</td>
-      </tr>`;
+        <td style="padding:8px;">${i.qty}</td>
+        <td style="padding:8px;"><strong>${i.title}</strong>${skuLabel}</td>
+        <td style="padding:8px;">${i.variantTitle || '–'}</td>
+        <td style="padding:8px; text-align:right;">$${lineTotal}</td>
+      </tr>
+      ${attrsHtml}`;
   }).join('');
 
   // discount & total
@@ -1331,6 +1358,34 @@ function openDetail(o) {
   
   document.getElementById('detail-discount').textContent = `-$${disc.toFixed(2)}`;
   document.getElementById('detail-total').textContent    = `$${tot.toFixed(2)}`;
+
+  // Logistics & Customer Tabs Population
+  const addrText = document.getElementById('logistics-address-text');
+  if (addrText) {
+    addrText.replaceChildren();
+    if (o.shippingAddress) {
+      const a = o.shippingAddress;
+      [
+        { tag: 'strong', text: a.name || custName },
+        { tag: 'span', text: [a.address1, a.address2].filter(Boolean).join(' ') },
+        { tag: 'span', text: [a.city, a.provinceCode, a.zip].filter(Boolean).join(', ') }
+      ].filter(line => line.text).forEach(line => {
+        const element = document.createElement(line.tag);
+        element.textContent = line.text;
+        addrText.appendChild(element);
+      });
+    } else {
+      const unavailable = document.createElement('span');
+      unavailable.className = 'redacted-info-badge';
+      unavailable.textContent = 'Customer data unavailable or redacted by Shopify';
+      addrText.appendChild(unavailable);
+    }
+  }
+
+  const emailVal = document.getElementById('customer-email-val');
+  if (emailVal) emailVal.textContent = o.email || '🔒 Redacted by Shopify';
+  const phoneVal = document.getElementById('customer-phone-val');
+  if (phoneVal) phoneVal.textContent = o.phone || '🔒 Redacted by Shopify';
 
   const chkBlanks = document.getElementById('chk-blanks');
   const chkPrints = document.getElementById('chk-prints');
@@ -1402,6 +1457,7 @@ function openDetail(o) {
 function closeDetail() {
   const overlay = document.getElementById('detail-overlay');
   overlay.classList.replace('visible', 'hidden');
+  overlay.setAttribute('aria-hidden', 'true');
   document.body.classList.remove('detail-open');
   cleanupDetailAssetPreviews();
   const mockupTrack = document.getElementById('detail-mockups-track');
@@ -1654,6 +1710,9 @@ function openProgressModal(order, updateFn) {
 
 // close handlers
 document.getElementById('detail-close').addEventListener('click', closeDetail);
+const closeSplitBtn = document.getElementById('detail-close-btn');
+if (closeSplitBtn) closeSplitBtn.addEventListener('click', closeDetail);
+
 document.getElementById('detail-overlay')
   .addEventListener('click', e => {
     if (e.target.id === 'detail-overlay') {

@@ -13,6 +13,7 @@
     base-uri 'self';
   ">
   <title>PrintMO Order Management</title>
+  <link rel="stylesheet" href="order-detail-split.css" />
   <style>
     /* Global & Layout */
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1461,99 +1462,298 @@
   </div>
 
   <!-- order detail modal -->
-<div id="detail-overlay" class="hidden">
-  <div id="detail-card">
-    <button id="detail-close">&times;</button>
-    <div id="detail-header">
-      <h2 id="detail-order-id"></h2>
-      <time id="detail-timestamp"></time>
-    </div>
-    <div id="detail-mockups-strip">
-      <div id="detail-mockups-track"></div>
-      <p id="detail-mockups-placeholder" class="detail-assets-empty">No mockup previews available</p>
-    </div>
-    <div id="detail-content">
-      <div id="detail-main-column">
-        <div id="detail-name-row">
-          <h3 id="detail-cust-name"></h3>
-          <button id="detail-edit-name-btn" class="fullscreen-btn">Edit</button>
-        </div>
-        <div class="detail-notes-actions">
-          <button id="detail-view-notes-btn" class="fullscreen-btn">See Notes</button>
-          <button id="detail-edit-notes-btn" class="fullscreen-btn">Edit Notes</button>
-        </div>
-        <div id="detail-notes-wrapper">
-          <p id="detail-notes"><em>No special instructions</em></p>
-        </div>
-        <div id="progress-section">
-          <div id="progress-text"></div>
-          <div id="progress-row">
-            <div id="progress-bar-container">
-              <div id="progress-bar"></div>
+  <div id="detail-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="detail-order-id" aria-hidden="true">
+    <div id="detail-card" tabindex="-1">
+      <header id="detail-header">
+        <div id="detail-header-bar">
+          <div class="detail-header-title-group">
+            <div class="detail-title-block">
+              <h2 id="detail-order-id"></h2>
+              <span id="detail-header-customer" class="detail-header-customer"></span>
             </div>
-            <button id="progress-plus1" class="fullscreen-btn">+1</button>
-            <button id="progress-custom" class="fullscreen-btn">Custom Amount</button>
+            <div id="detail-status-badges" class="detail-status-badges" aria-label="Shopify order status">
+              <span id="badge-financial" class="status-badge">Payment status</span>
+              <span id="badge-fulfillment" class="status-badge">Fulfillment status</span>
+            </div>
           </div>
+          <div class="detail-header-summary" aria-label="Order summary">
+            <div class="detail-summary-metric">
+              <span class="detail-summary-label">Received</span>
+              <time id="detail-timestamp"></time>
+            </div>
+            <div class="detail-summary-metric">
+              <span class="detail-summary-label">Items</span>
+              <span id="detail-header-pieces">0 pieces</span>
+            </div>
+            <div class="detail-summary-metric">
+              <span class="detail-summary-label">Total</span>
+              <span id="detail-header-total">$0.00</span>
+            </div>
+            <div id="detail-header-ready-summary" class="detail-ready-summary" aria-live="polite">Not ready</div>
+          </div>
+          <button id="detail-close" type="button" aria-label="Close order details">&times;</button>
         </div>
-        <div id="detail-items-wrapper">
-          <table id="detail-items">
-            <thead>
-              <tr>
-                <th>Qty</th>
-                <th>Description</th>
-                <th>Variant</th>
-                <th>Price</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <table id="detail-summary">
-          <tbody>
-            <tr>
-              <td colspan="2">Discount</td>
-              <td id="detail-discount"></td>
-            </tr>
-            <tr>
-              <td colspan="2"><strong>Total</strong></td>
-              <td id="detail-total"></td>
-            </tr>
-          </tbody>
-        </table>
-        <div style="text-align:right; padding:0 16px 8px;">
-          <button id="detail-files-btn">Files</button>
-        </div>
-        <div id="ready-controls">
-          <label><input type="checkbox" id="chk-blanks"> Blanks Ready</label>
-          <label><input type="checkbox" id="chk-prints"> Prints Ready</label>
-          <label><input type="checkbox" id="chk-blanks-ordered"> Blanks Ordered</label>
-          <label><input type="checkbox" id="chk-prints-ordered"> Prints Ordered</label>
-          <button id="ready-apply" class="hidden">Apply</button>
+      </header>
+
+      <div id="detail-content">
+        <div id="detail-main-column">
+          <div id="detail-split-canvas">
+            <aside id="detail-left-pane" aria-label="Always-visible production controls">
+              <div id="detail-main-stack">
+                <section id="detail-mockups-strip" class="detail-section artwork-preview-card" tabindex="0" aria-labelledby="detail-mockups-title">
+                  <div class="detail-section-header">
+                    <div>
+                      <h3 id="detail-mockups-title">Order artwork</h3>
+                      <span id="detail-mockup-count">0 mockups</span>
+                    </div>
+                    <div class="manual-mockup-actions">
+                      <label id="manual-mockup-upload-btn" class="fullscreen-btn" for="manual-mockup-file-input">Upload</label>
+                      <button id="manual-mockup-paste-btn" class="fullscreen-btn" type="button">Paste</button>
+                      <input id="manual-mockup-file-input" class="manual-mockup-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" multiple>
+                    </div>
+                  </div>
+                  <div id="detail-mockups-browser" class="detail-mockups-browser">
+                    <div id="detail-mockup-feature" class="detail-mockup-feature hidden">
+                      <button id="detail-mockup-main" class="detail-mockup-main" type="button" aria-label="Open selected mockup preview">
+                        <span id="detail-mockup-main-content" class="detail-mockup-main-content">Select a mockup preview</span>
+                      </button>
+                      <div class="detail-mockup-meta">
+                        <span id="detail-mockup-hint">Select a thumbnail to change the preview</span>
+                      </div>
+                    </div>
+                    <div id="detail-mockups-track" aria-label="Mockup thumbnails"></div>
+                  </div>
+                  <p id="detail-mockups-placeholder" class="detail-assets-empty">No mockup previews available</p>
+                </section>
+
+                <section id="detail-production-card" class="detail-section print-station-card">
+                  <div class="production-section-header">
+                    <div>
+                      <h3>Production progress</h3>
+                      <span id="production-status-pill" class="production-status-pill" aria-live="polite">Not ready</span>
+                    </div>
+                    <span id="progress-text">0 / 0 pieces printed</span>
+                  </div>
+                  <div id="progress-section" class="production-progress-panel">
+                    <div id="progress-bar-container" class="print-progress-bar-bg" aria-hidden="true">
+                      <div id="progress-bar" class="print-progress-bar-fill"></div>
+                    </div>
+                    <div class="print-action-buttons" id="progress-row">
+                      <button id="progress-plus1" class="btn-primary-action" type="button">+1 Print</button>
+                      <button id="progress-custom" class="btn-secondary-action" type="button">Custom amount</button>
+                    </div>
+                    <span id="progress-save-status" class="detail-save-status" role="status" aria-live="polite"></span>
+                  </div>
+
+                  <div id="ready-controls" class="readiness-sequences" aria-label="Production readiness">
+                    <fieldset class="readiness-sequence" data-readiness-sequence="blanks">
+                      <legend>Blanks</legend>
+                      <label class="production-step" data-step="blanks-ordered">
+                        <input type="checkbox" id="chk-blanks-ordered">
+                        <span class="production-step-marker" aria-hidden="true"></span>
+                        <span class="production-step-copy">
+                          <span class="production-step-title">Ordered</span>
+                          <span class="production-step-state">Not ordered</span>
+                        </span>
+                      </label>
+                      <span class="readiness-sequence-arrow" aria-hidden="true">→</span>
+                      <label class="production-step" data-step="blanks-ready">
+                        <input type="checkbox" id="chk-blanks">
+                        <span class="production-step-marker" aria-hidden="true"></span>
+                        <span class="production-step-copy">
+                          <span class="production-step-title">Ready</span>
+                          <span class="production-step-state">Order first</span>
+                        </span>
+                      </label>
+                    </fieldset>
+                    <fieldset class="readiness-sequence" data-readiness-sequence="prints">
+                      <legend>Prints</legend>
+                      <label class="production-step" data-step="prints-ordered">
+                        <input type="checkbox" id="chk-prints-ordered">
+                        <span class="production-step-marker" aria-hidden="true"></span>
+                        <span class="production-step-copy">
+                          <span class="production-step-title">Ordered</span>
+                          <span class="production-step-state">Not ordered</span>
+                        </span>
+                      </label>
+                      <span class="readiness-sequence-arrow" aria-hidden="true">→</span>
+                      <label class="production-step" data-step="prints-ready">
+                        <input type="checkbox" id="chk-prints">
+                        <span class="production-step-marker" aria-hidden="true"></span>
+                        <span class="production-step-copy">
+                          <span class="production-step-title">Ready</span>
+                          <span class="production-step-state">Order first</span>
+                        </span>
+                      </label>
+                    </fieldset>
+                    <div class="readiness-save-row">
+                      <span id="detail-save-status" class="detail-save-status" role="status" aria-live="polite"></span>
+                      <button id="ready-apply" class="hidden production-apply" type="button">Save status changes</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section id="detail-notes-wrapper" class="detail-section detail-instructions-card">
+                  <div id="detail-name-row" class="detail-name-row">
+                    <div>
+                      <span class="detail-section-label">Customer</span>
+                      <h3 id="detail-cust-name"></h3>
+                    </div>
+                    <button id="detail-edit-name-btn" class="fullscreen-btn" type="button">Edit name</button>
+                  </div>
+                  <div class="detail-notes-header">
+                    <div>
+                      <h4>Shop instructions</h4>
+                      <span id="detail-notes-summary" class="detail-notes-summary">No notes</span>
+                    </div>
+                    <div class="detail-notes-actions">
+                      <button id="detail-view-notes-btn" class="fullscreen-btn" type="button">View</button>
+                      <button id="detail-edit-notes-btn" class="fullscreen-btn" type="button">Edit</button>
+                    </div>
+                  </div>
+                  <div class="detail-notes-preview">
+                    <p id="detail-notes"><em>No special instructions</em></p>
+                  </div>
+                  <div class="detail-notes-editor">
+                    <textarea id="detail-notes-input" class="hidden" aria-label="Shop instructions"></textarea>
+                    <div class="detail-notes-editor-footer">
+                      <span id="detail-notes-edit-status" role="status" aria-live="polite">No changes</span>
+                      <div class="detail-notes-editor-actions">
+                        <button id="detail-notes-cancel-btn" class="fullscreen-btn" type="button">Cancel</button>
+                        <button id="detail-notes-save-btn" class="fullscreen-btn" type="button">Save notes</button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </aside>
+
+            <main id="detail-right-pane">
+              <div id="detail-tabs-header" role="tablist" aria-label="Order details">
+                <button id="detail-tab-production" class="detail-tab-item active" data-tab="tab-production" type="button" role="tab" aria-selected="true" aria-controls="tab-production" tabindex="0">Production</button>
+                <button id="detail-tab-items" class="detail-tab-item" data-tab="tab-items" type="button" role="tab" aria-selected="false" aria-controls="tab-items" tabindex="-1">Items &amp; financials <span class="detail-tab-badge" id="tab-badge-items">0</span></button>
+                <button id="detail-tab-logistics" class="detail-tab-item" data-tab="tab-logistics" type="button" role="tab" aria-selected="false" aria-controls="tab-logistics" tabindex="-1">Fulfillment</button>
+                <button id="detail-tab-customer" class="detail-tab-item" data-tab="tab-customer" type="button" role="tab" aria-selected="false" aria-controls="tab-customer" tabindex="-1">Customer &amp; history</button>
+              </div>
+
+              <div id="detail-tab-panels">
+                <section id="tab-production" class="detail-tab-panel active" role="tabpanel" aria-labelledby="detail-tab-production">
+                  <div id="customer-checkout-note-banner" class="customer-checkout-note-banner hidden">
+                    <strong>Customer checkout note</strong>
+                    <span id="customer-checkout-note-text"></span>
+                  </div>
+                  <section id="detail-design-panel" class="vector-files-card" aria-labelledby="detail-design-title">
+                    <div class="design-panel-header">
+                      <div>
+                        <h3 id="detail-design-title">Design files</h3>
+                        <p>Print-ready artwork grouped by placement.</p>
+                      </div>
+                      <span id="design-files-count" class="design-files-count">0 files</span>
+                    </div>
+                    <div class="design-panel-body">
+                      <div class="design-group" id="design-group-front">
+                        <button class="design-group-title" type="button" aria-expanded="true">
+                          <span>Front prints</span>
+                          <span class="design-group-count">0</span>
+                        </button>
+                        <div class="design-tiles" id="design-front-list"></div>
+                      </div>
+                      <div class="design-group" id="design-group-back">
+                        <button class="design-group-title" type="button" aria-expanded="true">
+                          <span>Back prints</span>
+                          <span class="design-group-count">0</span>
+                        </button>
+                        <div class="design-tiles" id="design-back-list"></div>
+                      </div>
+                      <div class="design-group" id="design-group-extras">
+                        <button class="design-group-title" type="button" aria-expanded="true">
+                          <span>Extras</span>
+                          <span class="design-group-count">0</span>
+                        </button>
+                        <div class="design-tiles" id="design-extras-list"></div>
+                      </div>
+                      <p id="detail-designs-placeholder" class="detail-assets-empty">No design files found</p>
+                    </div>
+                  </section>
+                </section>
+
+                <section id="tab-items" class="detail-tab-panel" role="tabpanel" aria-labelledby="detail-tab-items" hidden>
+                  <section id="detail-items-section" class="detail-section">
+                    <div class="detail-items-header-row">
+                      <h3>Items in order</h3>
+                      <span id="detail-items-count" class="detail-items-count">0 lines</span>
+                    </div>
+                    <div id="detail-items-wrapper">
+                      <table id="detail-items" class="detail-table">
+                        <thead>
+                          <tr>
+                            <th scope="col">Qty</th>
+                            <th scope="col">Description / SKU</th>
+                            <th scope="col">Variant</th>
+                            <th scope="col">Price</th>
+                          </tr>
+                        </thead>
+                        <tbody></tbody>
+                      </table>
+                    </div>
+                    <table id="detail-summary">
+                      <tbody>
+                        <tr>
+                          <td>Discount</td>
+                          <td id="detail-discount">$0.00</td>
+                        </tr>
+                        <tr>
+                          <td><strong>Total</strong></td>
+                          <td id="detail-total">$0.00</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <div class="detail-attachments-action">
+                      <button id="detail-files-btn" class="fullscreen-btn" type="button">Attachments</button>
+                    </div>
+                  </section>
+                </section>
+
+                <section id="tab-logistics" class="detail-tab-panel" role="tabpanel" aria-labelledby="detail-tab-logistics" hidden>
+                  <section id="logistics-shipping-card" class="detail-section detail-info-section">
+                    <h3>Shipping &amp; fulfillment</h3>
+                    <div id="logistics-address-block">
+                      <span class="detail-info-label">Ship to</span>
+                      <span id="logistics-address-text">No address loaded</span>
+                    </div>
+                    <div id="logistics-tracking-block">
+                      <span class="detail-info-label">Tracking</span>
+                      <span id="logistics-tracking-link">No tracking number</span>
+                    </div>
+                  </section>
+                </section>
+
+                <section id="tab-customer" class="detail-tab-panel" role="tabpanel" aria-labelledby="detail-tab-customer" hidden>
+                  <section id="customer-profile-card" class="detail-section detail-info-section">
+                    <h3>Customer</h3>
+                    <div id="customer-info-block">
+                      <div><span class="detail-info-label">Email</span><span id="customer-email-val">Not available</span></div>
+                      <div><span class="detail-info-label">Phone</span><span id="customer-phone-val">Not available</span></div>
+                    </div>
+                  </section>
+                  <section class="timeline-section detail-section">
+                    <h3>Order history</h3>
+                    <div id="timeline-stream-container" class="timeline-stream">
+                      <div class="timeline-item">
+                        <div class="timeline-icon-dot" aria-hidden="true"></div>
+                        <strong>Order synced to PrintMO</strong>
+                        <span>Production details are available in this workspace.</span>
+                      </div>
+                    </div>
+                  </section>
+                </section>
+              </div>
+            </main>
+          </div>
         </div>
       </div>
-      <aside id="detail-design-panel">
-        <div class="design-panel-header">
-          <h4>Design Files</h4>
-        </div>
-        <div class="design-panel-body">
-          <div class="design-group" id="design-group-front">
-            <div class="design-group-title">Front Prints</div>
-            <div class="design-tiles" id="design-front-list"></div>
-          </div>
-          <div class="design-group" id="design-group-back">
-            <div class="design-group-title">Back Prints</div>
-            <div class="design-tiles" id="design-back-list"></div>
-          </div>
-          <div class="design-group" id="design-group-extras">
-            <div class="design-group-title">Extras</div>
-            <div class="design-tiles" id="design-extras-list"></div>
-          </div>
-          <p id="detail-designs-placeholder" class="detail-assets-empty">No design files found</p>
-        </div>
-      </aside>
     </div>
   </div>
-</div>
 
 <div id="bundle-overlay" class="hidden">
   <div id="bundle-modal">
@@ -1623,10 +1823,11 @@
     </div>
   </div>
 
-  <div id="asset-viewer" class="hidden">
+  <div id="asset-viewer" class="hidden" role="dialog" aria-modal="true" aria-label="Asset preview" aria-hidden="true">
     <div class="viewer-content">
-      <button id="asset-viewer-close">&times;</button>
+      <button id="asset-viewer-close" type="button" aria-label="Close asset preview">&times;</button>
       <img id="asset-viewer-img" alt="Asset preview" />
+      <div id="asset-viewer-caption" class="asset-viewer-caption"></div>
     </div>
   </div>
 
@@ -1643,5 +1844,6 @@
   <!-- existing renderer logic -->
   <script src="./web-shim.js"></script>
   <script src="./renderer.js"></script>
+  <script src="./order-manager-web/detail-overlay-enhancements.js"></script>
 </body>
 </html>

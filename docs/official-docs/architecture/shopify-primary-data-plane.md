@@ -26,10 +26,10 @@
 
 ## Current Release Boundary
 
-Candidate deployment on 2026-07-25:
+Candidate deployment on 2026-07-26:
 
 - Worker version: `bbcaa359-2cc9-4115-b612-c58f950c0cf6`
-- Pages deployment: `177d9bb7.print-mo-order-manager.pages.dev`
+- Pages deployment: `8aa312c1.print-mo-order-manager.pages.dev`
 - Shopify app version: `designer-assets-idempotency-2026-07-23`
 - Stateless supplier gateway commit: `420ff72`
 

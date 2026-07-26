@@ -11,6 +11,7 @@
 ## Section Map
 - [Diagnostic Symptom Matrix](#diagnostic-symptom-matrix)
 - [Detailed Troubleshooting & Recovery Procedures](#detailed-troubleshooting--recovery-procedures)
+- [Codex Desktop Browser GPU Crash and Persistent Cache Recovery](#i-codex-desktop-browser-gpu-crash-and-persistent-cache-recovery)
 - [Common Failure Modes & Recovery](#common-failure-modes--recovery)
 
 ---
@@ -38,6 +39,7 @@
 | Production cards render as tiny slivers, a lone card stretches across the section, or pipeline footer values clip | CSS expects semantic `production-card`/`pipeline-main-card` classes that the generated card did not receive, compounded by inherited one-third width or an `auto-fit` grid that expands a lone card | `dashboard-triage-enhancements.js:decorateCard`, `desktop.css`, `mobile.css` | Confirm Shopify cards receive the semantic class before changing grid math. Candidate production grids use `auto-fill` at desktop widths so one card retains the normal two-column width; phone production cards use one column. Do not un-scope the repair onto Legacy Redis. |
 | Mobile detail opens but cannot scroll | Fixed-shell touch containment selects no inner vertical scroll owner | `shopify-embedded-mobile.js:installEmbeddedTouchContainment`, `mobile.css` detail repair layer | Preserve `#detail-content` as the touch owner and scrollable flex child; suppress page bounce only at its boundaries. |
 | Packaged desktop app fails before loading orders | Public OIDC config, sign-in, or authenticated Worker connectivity failed | `main.js:loadRuntimeConfig`, `DesktopOidcAuth`, `main.js:workerFetch` | Verify public runtime config and identity/Worker reachability. Never copy `.env` or infrastructure secrets into the package. |
+| Codex Desktop closes, hangs, or must be reinstalled after an agent starts Browser or Chrome; its log ends with `Recoverable Chromium child process gone ... processType=GPU reason=crashed` followed by `reason=launch-failed` | Codex Desktop's Chromium GPU process and persistent browser/shader caches, not the PrintMO Electron runtime | `%LOCALAPPDATA%\Codex\Logs`; `%APPDATA%\Codex\web\Codex` | Stop browser retries and follow Procedure I. A normal app reinstall preserves this roaming browser profile. Move only the listed transient caches to a timestamped backup while Codex is fully closed, then verify a fresh in-app Browser load and Chrome connection. |
 | S&S batch submission returns 401 Unauthorized | Supplier-gateway credentials or Worker-to-gateway authentication failed | Worker batch route and stateless supplier gateway | Inspect server-side gateway configuration and request IDs. No S&S credential belongs in Electron or the browser. |
 
 ---
@@ -130,6 +132,127 @@ The board intentionally does not await all asset tickets before rendering. Comme
 - Repeated conflict is a real concurrent-edit failure. Do not loop, suppress it, or overwrite the newer canonical state.
 - Verification: move one order while its Admin block is also open, then refresh both surfaces. They must converge on one canonical revision, the Shopify board must remain responsive, and the Legacy Redis value must remain unchanged.
 
+### I. Codex Desktop Browser GPU Crash and Persistent Cache Recovery
+
+This procedure repairs the OpenAI Codex Desktop tool host used during development. It does not modify the PrintMO Electron application, repository data, Chrome profile, or production infrastructure.
+
+#### Confirm the fault boundary
+
+Use the exact Codex Desktop log signature before touching caches. A browser tab or webview may appear briefly, the app may exit without a Windows crash dump, and reinstalling the app may appear to help only until Browser is used again.
+
+```powershell
+$logRoot = Join-Path $env:LOCALAPPDATA 'Codex\Logs'
+$recentLogs = Get-ChildItem -LiteralPath $logRoot -File -Recurse |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 20
+
+Select-String -Path $recentLogs.FullName -CaseSensitive:$false -Pattern @(
+  'Recoverable Chromium child process gone.*processType=GPU.*reason=crashed',
+  'Recoverable Chromium child process gone.*processType=GPU.*reason=launch-failed'
+)
+```
+
+The high-confidence sequence is one `reason=crashed` GPU event followed immediately by `reason=launch-failed`, with the affected desktop log ending at or soon after those events. Browser route or picture-in-picture warnings without the GPU sequence are not sufficient evidence for this repair. Likewise, a Chrome native-host or extension connection error without the GPU signature belongs to Chrome plugin troubleshooting, not cache recovery.
+
+#### Recover without destroying browser state
+
+1. Quit Codex Desktop completely and confirm no `ChatGPT.exe` process remains.
+2. Run the PowerShell block below. It moves only transient graphics, code, and HTTP caches into a timestamped backup. It does not touch cookies, authentication, local storage, browser history, `Preferences`, sessions, or the user's Chrome profile.
+3. Reopen Codex Desktop. Chromium recreates the missing cache directories on demand.
+
+```powershell
+if (Get-Process -Name ChatGPT -ErrorAction SilentlyContinue) {
+  throw 'Quit Codex Desktop completely before moving its browser caches.'
+}
+
+$profileRoot = [IO.Path]::GetFullPath(
+  (Join-Path $env:APPDATA 'Codex\web\Codex')
+)
+$backupRoot = [IO.Path]::GetFullPath(
+  (Join-Path $env:LOCALAPPDATA (
+    'OpenAI\Codex\repair-backups\browser-cache-' +
+    (Get-Date -Format 'yyyyMMdd-HHmmss')
+  ))
+)
+$relativePaths = @(
+  'GrShaderCache',
+  'ShaderCache',
+  'GraphiteDawnCache',
+  'GPUPersistentCache',
+  'Default\GPUCache',
+  'Default\DawnGraphiteCache',
+  'Default\DawnWebGPUCache',
+  'Default\Partitions\codex-browser-app\GPUCache',
+  'Default\Partitions\codex-browser-app\DawnGraphiteCache',
+  'Default\Partitions\codex-browser-app\DawnWebGPUCache',
+  'codex-browser-app\Cache',
+  'codex-browser-app\Code Cache',
+  'Default\Partitions\codex-browser-app\Cache',
+  'Default\Partitions\codex-browser-app\Code Cache'
+)
+
+$sourcePrefix = $profileRoot.TrimEnd('\') + '\'
+$backupPrefix = $backupRoot.TrimEnd('\') + '\'
+
+foreach ($relativePath in $relativePaths) {
+  $source = [IO.Path]::GetFullPath(
+    (Join-Path $profileRoot $relativePath)
+  )
+  $destination = [IO.Path]::GetFullPath(
+    (Join-Path $backupRoot $relativePath)
+  )
+
+  if (-not $source.StartsWith(
+    $sourcePrefix,
+    [StringComparison]::OrdinalIgnoreCase
+  )) {
+    throw "Unsafe cache source: $source"
+  }
+  if (-not $destination.StartsWith(
+    $backupPrefix,
+    [StringComparison]::OrdinalIgnoreCase
+  )) {
+    throw "Unsafe cache destination: $destination"
+  }
+  if (Test-Path -LiteralPath $source) {
+    New-Item -ItemType Directory -Force -Path (
+      Split-Path -Parent $destination
+    ) | Out-Null
+    Move-Item -LiteralPath $source -Destination $destination
+  }
+}
+
+"Moved transient Codex browser caches to: $backupRoot"
+```
+
+Do not replace this recoverable move with recursive deletion, and do not move the entire `Codex\web\Codex` profile. Retain the backup until several Browser/Chrome tasks complete successfully; then it may be deleted to reclaim space.
+
+#### Verify the repair
+
+1. Confirm Codex rebuilt fresh cache directories and has a live GPU process:
+
+   ```powershell
+   Get-CimInstance Win32_Process |
+     Where-Object {
+       $_.Name -eq 'ChatGPT.exe' -and
+       $_.CommandLine -match '--type=gpu-process'
+     } |
+     Select-Object ProcessId, ParentProcessId
+   ```
+
+2. Use the Browser skill for one bounded health check: open a disposable in-app tab, load `https://example.com/` or the intended localhost route, verify its title/DOM, and finalize the tab.
+3. If Chrome is part of the workflow, connect through the Chrome skill and perform a lightweight session/tab-list call without claiming or reading unrelated user tabs.
+4. Search only the new desktop-session logs for the two GPU events. Both must be absent after the health checks.
+
+#### Prevent recurrence and limit blast radius
+
+- Use a purpose-built connector, API, or CLI when the task needs semantic data rather than visual or interactive browser state. This avoids initializing a local browser for work that does not require one.
+- During real browser work, reuse the established browser binding, avoid duplicate tabs, and finalize disposable tabs when the task ends. This limits stale route state and unnecessary profile churn; it is not a substitute for a graphics-driver fix.
+- At the first unexpected Codex exit after Browser/Chrome initialization, inspect the log signature before retrying. Once the GPU crash/launch-failure pair is present, stop repeated browser attempts and perform one cache recovery after closing the app.
+- Cache size alone is not a failure signal. Do not schedule routine cache deletion or clear cookies, local storage, sessions, `Preferences`, or the full browser profile.
+- Keep Codex Desktop and the Chrome plugin current. If Chrome alone cannot connect and the GPU signature is absent, follow the Chrome plugin setup/reinstall flow rather than this cache procedure.
+- If the same GPU sequence returns immediately with newly rebuilt caches, preserve the new logs and backup, submit `/feedback` with the task ID, and investigate GPU driver, virtual-display, or hardware-acceleration compatibility. Do not loop cache resets or reinstall the app again.
+
 ---
 
 ## Common Failure Modes & Recovery
@@ -138,3 +261,4 @@ The board intentionally does not await all asset tickets before rendering. Comme
 |---|---|
 | Bypassing `contextBridge` | Never set `nodeIntegration: true` in `main.js`. Keep main and renderer processes strictly isolated. |
 | Hardcoding local API endpoints | Use `order-manager-proxy` environment configuration for production web deployments. |
+| Reinstalling Codex repeatedly after Browser-triggered exits | Confirm the GPU crash/launch-failure log pair first. Reinstall preserves the roaming browser profile; move only the documented transient caches to a recoverable backup while Codex is closed. |

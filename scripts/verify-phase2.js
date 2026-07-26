@@ -531,6 +531,53 @@ async function run() {
   assert(previewHtml.includes('data-order-source-target="shopify"'), 'web UI must expose the Shopify preview toggle');
   assert(previewHtml.includes('shopify-preview.js'), 'web UI must load the read-only preview controller');
   assert(previewHtml.includes('shopify-preview-detail'), 'web UI must include the Shopify-only order detail dialog');
+  [
+    'detail-header',
+    'detail-content',
+    'detail-split-canvas',
+    'detail-mockup-feature',
+    'detail-mockup-main',
+    'detail-mockups-track',
+    'detail-production-card',
+    'detail-tabs-header',
+    'detail-design-panel'
+  ].forEach(id => {
+    assert(previewHtml.includes(`id="${id}"`), `Shopify order detail must preserve the #${id} DOM/controller contract`);
+  });
+  assert.equal(
+    (previewHtml.match(/class="production-step"/g) || []).length,
+    4,
+    'Shopify order detail must expose both ordered → ready readiness sequences'
+  );
+  assert(
+    previewHtml.includes('role="tablist"')
+      && previewHtml.includes('role="tab"')
+      && previewHtml.includes('role="tabpanel"')
+      && previewHtml.includes('aria-controls="tab-production"'),
+    'Shopify order detail tabs must retain their accessible tab contract'
+  );
+  assert(
+    previewHtml.indexOf('renderer.js') < previewHtml.indexOf('detail-overlay-enhancements.js'),
+    'the detail controller must load after the shared renderer it enhances'
+  );
+  const detailEnhancements = fs.readFileSync(path.join(root, 'order-manager-web', 'detail-overlay-enhancements.js'), 'utf8');
+  assert(
+    detailEnhancements.includes('function wireDetailTabs()')
+      && detailEnhancements.includes('function activateDetailTab('),
+    'the Shopify detail controller must own functional tab navigation'
+  );
+  assert(
+    detailEnhancements.includes("orderedId: 'chk-blanks-ordered'")
+      && detailEnhancements.includes("readyId: 'chk-blanks'")
+      && detailEnhancements.includes("orderedId: 'chk-prints-ordered'")
+      && detailEnhancements.includes("readyId: 'chk-prints'"),
+    'readiness must remain two independent ordered → ready sequences'
+  );
+  const detailCss = fs.readFileSync(path.join(root, 'order-manager-web', 'order-detail-split.css'), 'utf8');
+  assert(
+    /@media \(max-width: 900px\)[\s\S]*?#detail-content[\s\S]*?overflow-y:\s*auto/.test(detailCss),
+    'mobile order detail must keep #detail-content as its explicit vertical scroll owner'
+  );
   const previewController = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-preview.js'), 'utf8');
   assert(previewController.includes('getShopifyPreviewOrderDetail'), 'preview controller must load details only when an order is opened');
   assert(

@@ -1,0 +1,2 @@
+/* Electron consumes the canonical web detail workbench styles. */
+@import url("./order-manager-web/order-detail-split.css");

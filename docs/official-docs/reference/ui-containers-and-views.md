@@ -96,17 +96,22 @@ An **Order Card** (`.pipeline-card`, `.card`) is the fundamental visual unit dis
 Below is the complete inventory of all 10 modal overlays and secondary screens embedded in `index.html`.
 
 ### 1. Order Detail Modal (`#detail-overlay`, `#detail-card`)
-- **Purpose**: Comprehensive inspection and management screen for a single order.
-- **Displayed Data**:
-  - **Header**: Order Name (`#detail-order-id`), Created ISO Date/Time (`#detail-timestamp`).
-  - **Artwork Mockups Strip** (`#detail-mockups-strip`): Horizontal scrolling thumbnail carousel of generated artwork mockups (`#detail-mockups-track`).
-  - **Customer & Notes**: Editable Customer Name (`#detail-cust-name`, `#detail-edit-name-btn`), Special Instructions/Notes box (`#detail-notes`, `#detail-view-notes-btn`, `#detail-edit-notes-btn`).
-  - **Production Progress**: Dynamic progress bar (`#progress-bar`) displaying completed items vs total (`#progress-text`), with `+1` (`#progress-plus1`) and `Custom Amount` (`#progress-custom`) increment buttons.
-  - **Line Items Table** (`#detail-items`): Tabular breakdown listing `Qty`, `Description` (product title), `Variant` (size/color), and `Price` (unit cost).
-  - **Financial Summary** (`#detail-summary`): Line item discount totals (`#detail-discount`) and Order Grand Total (`#detail-total`).
-  - **Checklist Controls** (`#ready-controls`): Status toggle checkboxes (`chk-blanks`, `chk-prints`, `chk-blanks-ordered`, `chk-prints-ordered`) and `Apply` button (`#ready-apply`).
-  - **Design Files Side Panel** (`#detail-design-panel`): Dedicated print file sidebar categorized by `Front Prints` (`#design-front-list`), `Back Prints` (`#design-back-list`), and `Extras` (`#design-extras-list`), with file download triggers.
-  - **Surface-specific file access**: The desktop detail retains the legacy aggregate `#detail-files-btn` and attachments modal. The Shopify web detail intentionally omits that button because mockups and design files render inline. Shared renderer code must treat `#detail-files-btn` as optional; an unconditional listener assignment prevents the web overlay from opening.
+- **Purpose**: Responsive order workbench for production decisions and Shopify commerce inspection. Desktop uses a split canvas; mobile adapts it into one continuous full-screen workflow.
+- **Displayed Data & Topology**:
+  - **Header Bar** (`#detail-header`, `#detail-header-bar`): Order identifier (`#detail-order-id`), customer name (`#detail-header-customer`), financial and fulfillment badges (`#badge-financial`, `#badge-fulfillment`), received timestamp (`#detail-timestamp`), item and total summaries, readiness summary, and the canonical close control (`#detail-close`).
+  - **Always-visible Production Pane (~39% desktop)** (`#detail-left-pane`):
+    - **Order Artwork** (`#detail-mockups-strip`): Large selected preview (`#detail-mockup-feature`, `#detail-mockup-main`) above a horizontal thumbnail track (`#detail-mockups-track`), with upload and paste controls. Selecting a thumbnail updates the large preview; the large preview opens the asset viewer.
+    - **Production Progress** (`#detail-production-card`): Progress bar and printed-piece count, `+1 Print`, custom quantity, and visible save feedback.
+    - **Readiness** (`#ready-controls`): Two independent two-step sequences: `Blanks ordered` → `Blanks ready` and `Prints ordered` → `Prints ready`. Ready controls are blocked until their corresponding ordered milestone is set, and changed values are explicitly saved with `#ready-apply`.
+    - **Customer & Shop Instructions** (`#detail-notes-wrapper`): Customer name, compact instructions preview, inline desktop editor, and the expanded notes viewer. This production-critical context remains visible while other tabs change.
+  - **Tabbed Workspace (~61% desktop)** (`#detail-right-pane`):
+    - **Accessible Tabs** (`#detail-tabs-header`): Action Blue active line, click navigation, arrow-key navigation, and synchronized `tab`/`tabpanel` ARIA state.
+      1. `Production` (`#tab-production`): Customer checkout note banner and the full-width Design Files workspace (`#detail-design-panel`), grouped into `Front prints`, `Back prints`, and `Extras`.
+      2. `Items & financials` (`#tab-items`): Line items, custom attributes, discount, and order total.
+      3. `Fulfillment` (`#tab-logistics`): Shipping address and tracking.
+      4. `Customer & history` (`#tab-customer`): Customer email/phone with protected-data fallback states and the order event timeline.
+  - **Mobile adaptation**: `#detail-content` is the sole vertical scroll owner. Both panes become intrinsic-height blocks, tabs scroll horizontally and remain sticky within the workbench, design groups collapse to one column, controls retain at least 44px touch targets, and safe-area padding is honored.
+  - **Surface-specific file access**: The desktop detail retains the legacy aggregate `#detail-files-btn` and attachments modal. The Shopify web detail intentionally omits that button because mockups and design files render inline. Shared renderer code treats `#detail-files-btn` as optional.
 
 ### 2. Batch Order Summary Drawer (`.summary`)
 - **Purpose**: Displays pre-submission totals for blank apparel orders staged in `#col-toOrder`.

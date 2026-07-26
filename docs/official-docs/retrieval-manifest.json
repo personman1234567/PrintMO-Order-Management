@@ -276,6 +276,36 @@
       "stop": ["Releasing extension JavaScript requires a Shopify app release; Worker deployment alone is insufficient."]
     },
     {
+      "id": "codex-browser-gpu-crash",
+      "description": "Codex Desktop Browser or Chrome startup exits caused by a Chromium GPU crash and persistent transient browser caches",
+      "taskTypes": ["diagnosis", "recovery", "tooling"],
+      "keywords": ["codex desktop", "browser skill", "chrome skill", "in-app browser", "gpu process", "shader cache", "browser cache", "reinstall codex", "browser crash"],
+      "paths": ["docs/official-docs/runbooks/troubleshooting.md"],
+      "symbols": [],
+      "errors": [
+        "Recoverable Chromium child process gone",
+        "processType=GPU reason=crashed",
+        "processType=GPU reason=launch-failed"
+      ],
+      "read": [
+        {
+          "path": "docs/official-docs/runbooks/troubleshooting.md",
+          "anchor": "i-codex-desktop-browser-gpu-crash-and-persistent-cache-recovery"
+        }
+      ],
+      "inspect": [],
+      "tools": ["route", "docs-check"],
+      "verify": [
+        "Confirm fresh Codex session logs contain no GPU crash/launch-failure pair",
+        "Complete one bounded in-app Browser load and one lightweight Chrome connection check",
+        "npm run docs:check"
+      ],
+      "stop": [
+        "Stop before deleting the full Codex browser profile, cookies, authentication, sessions, Preferences, or the user's Chrome profile.",
+        "If fresh caches immediately reproduce the GPU failure, preserve logs and escalate GPU driver, virtual-display, or hardware-acceleration investigation instead of repeating cache resets."
+      ]
+    },
+    {
       "id": "troubleshooting",
       "description": "Known symptoms, misleading clues, safe diagnostic checks, and confirmed recovery",
       "taskTypes": ["diagnosis"],
