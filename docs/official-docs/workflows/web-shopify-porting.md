@@ -102,7 +102,7 @@ The source adapter is `order-manager-web/web-shim.js`; source switching and diag
 
 **Candidate release (2026-07-24):** Worker `d245b26a-da1a-4d7a-a96b-7737595f2f16`, Pages deployment `7e52d2e2`, Shopify app version `designer-assets-idempotency-2026-07-23`, and supplier gateway commit `420ff72`. The Pages/Worker release adds guest-name projection, atomic optimistic moves with bounded conflict recovery, a selected-view-aware Ordered destination, non-blocking private preview hydration, stable-width candidate card layouts, and mobile detail scroll ownership. The Worker also carries the checksum-guarded one-time position catch-up described in the cutover runbook; it is inert after its completion checkpoint is written. Final acceptance and owner-approved cutover remain separate gates.
 
-**Task 2 release (2026-07-25):** Worker `bbcaa359-2cc9-4115-b612-c58f950c0cf6`, Pages deployment `08df1f4e`, and supplier gateway commit `420ff72`. This release restores manual R2 mockups, persists the independent Blanks Ordered readiness flag, prioritizes fulfillment-recipient names, deploys the previously committed Redis-free S&S route, and keeps newly submitted cards in In S&S Cart until the operator marks them Ordered. Workflow acceptance remains owner-tested.
+**Task 2 release (2026-07-25):** Worker `bbcaa359-2cc9-4115-b612-c58f950c0cf6`, Pages deployment `177d9bb7`, and supplier gateway commit `420ff72`. This release restores manual R2 mockups, persists the independent Blanks Ordered readiness flag, prioritizes fulfillment-recipient names, deploys the previously committed Redis-free S&S route, keeps newly submitted cards in In S&S Cart until the operator marks them Ordered, and restores vertical-only scrolling throughout the embedded mobile order detail. Workflow acceptance remains owner-tested.
 
 #### Shopify access requirements and current limitation
 
@@ -147,8 +147,10 @@ active queue, detail view, or workflow sheet owns vertical scrolling.
   wider embedded widths; never combine a multi-column grid with a one-third
   inherited card width.
 - `#detail-content` is the explicit vertical scroll owner for the mobile detail
-  overlay. Touch containment preserves that owner before suppressing page-shell
-  rubber-banding.
+  overlay. Its inner detail columns must remain intrinsic-height
+  (`flex: 0 0 auto; height: auto; overflow: visible`) so their complete height
+  contributes to that scroller. The scroll owner locks gestures to `pan-y`,
+  clips horizontal overflow, and suppresses page-shell rubber-banding.
 - Regression checks must include working stage-navigation taps, order/bundle
   opening, card `draggable=false`, a fixed root shell, and scroll containment at
   both `320px` and `393px` widths.
@@ -166,6 +168,6 @@ active queue, detail view, or workflow sheet owns vertical scrolling.
 | Shopify board shows `Name unavailable` for a guest checkout that has a recipient name | Summary projection predates the shipping/billing fallback or the protected field was not returned | Press **Refresh Shopify** once. The forced refresh bypasses the short TTL and projects customer → shipping → billing name without reading Redis. |
 | Ordered tab cannot be selected or both tabs show the same cards | The control was styled as a tab but no `setActiveBlanksView`/filtered render contract was installed | Verify `blanks-batches.js` wires click/arrow-key activation and filters `blanks` cards by `blanksOrdered`; do not implement the tabs as status mutations. |
 | A Shopify card move pauses, reports 409, then appears only after refresh | Status and readiness were split across requests, or concurrent clients advanced the revision | Use `updateBoardMove` for one stage patch. Keep optimistic repaint/rollback, per-order serialization, and the single conflict reconciliation retry. |
-| Mobile detail opens but cannot scroll | Document touch containment did not preserve the detail's inner scroll owner | Keep the root shell fixed, but make `#detail-content` a flex child with `overflow-y:auto`, `min-height:0`, `touch-action:pan-y`, and select it on detail touchstart. |
+| Mobile detail opens but cannot scroll | The inner detail column retained `flex:1; overflow:hidden`, so `#detail-content` had no measurable overflow even though content was clipped | Keep `#detail-content` as the vertical-only scroll owner and reset its inner columns to intrinsic height with visible internal overflow. |
 | Data changes not saved in browser | `storage-browser.js` falling back to read-only state | Check browser local storage permissions and network logs. |
 | Layout broken inside Shopify Admin iframe | Mobile CSS media query override missing | Verify `mobile.css` breakpoint rules and container width limits. |
