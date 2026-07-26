@@ -32,6 +32,8 @@
   let selectedMockupIndex = 0;
   let assetViewerCloseTimer = null;
   let detailTabControllerWired = false;
+  let detailHydrationGeneration = 0;
+  let detailHydrationController = null;
 
   function normalizedStatusClass(value) {
     return `is-${String(value || 'unknown')
@@ -48,13 +50,725 @@
     element.className = `status-badge ${normalizedStatusClass(label)}`;
   }
 
-  function money(value) {
-    return (Number(value) || 0).toLocaleString(undefined, {
+  function money(value, currencyCode = 'USD') {
+    const amount = value && typeof value === 'object' ? value.amount : value;
+    const currency = (value && typeof value === 'object' && value.currencyCode)
+      || currencyCode
+      || 'USD';
+    return (Number(amount) || 0).toLocaleString(undefined, {
       style: 'currency',
-      currency: 'USD',
+      currency,
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
     });
+  }
+
+  function setText(id, value, fallback = '—') {
+    const element = document.getElementById(id);
+    if (element) element.textContent = value === undefined || value === null || value === '' ? fallback : String(value);
+  }
+
+  function formatDetailDate(value, fallback = '—') {
+    const date = new Date(value);
+    if (!value || Number.isNaN(date.getTime())) return fallback;
+    return date.toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  }
+
+  function normalizedStageLabel(value) {
+    const stage = String(value || '').trim();
+    if (!stage) return 'Received';
+    return stage
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, character => character.toUpperCase());
+  }
+
+  function detailResponseData(result) {
+    return result?.data || result?.detail?.data || null;
+  }
+
+  function canonicalLineItems(result) {
+    const detailItems = result?.detail?.lineItems;
+    if (Array.isArray(detailItems)) return detailItems;
+    const richItems = detailResponseData(result)?.lineItems;
+    if (Array.isArray(richItems)) return richItems;
+    const summaryItems = result?.commerce?.lineItems;
+    return Array.isArray(summaryItems) ? summaryItems : [];
+  }
+
+  function isInternalItemAttribute(attribute) {
+    const key = String(attribute?.key || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    return key === 'group_id' || key === 'batch_id' || key === 'role';
+  }
+
+  function isOptionalPermissionError(error) {
+    const code = String(error?.code || error?.extensions?.code || '').toUpperCase();
+    const message = String(error?.message || error || '').toUpperCase();
+    return code === 'ACCESS_DENIED' || message.includes('ACCESS_DENIED');
+  }
+
+  function dedupeDetailErrors(errors) {
+    const seen = new Set();
+    return errors.filter(error => {
+      const key = `${error?.code || error?.extensions?.code || ''}|${error?.message || String(error)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function mergeCanonicalDetail(order, result) {
+    if (!order || !result) return order;
+    const detail = result.detail || {};
+    const rich = detailResponseData(result) || {};
+    const commerce = rich.commerce || result.commerce || {};
+    const delivery = rich.delivery || {};
+    const production = result.production || {};
+    const customer = rich.customer || detail.customer || result.customer || {};
+    const existingItems = new Map((order.items || []).map(item => [item.id, item]));
+    const lineItems = canonicalLineItems(result);
+
+    order.displayFinancialStatus = commerce.financialStatus || result.commerce?.financialStatus || order.displayFinancialStatus;
+    order.displayFulfillmentStatus = commerce.fulfillmentStatus || result.commerce?.fulfillmentStatus || order.displayFulfillmentStatus;
+    order.financialStatus = order.displayFinancialStatus;
+    order.fulfillmentStatus = order.displayFulfillmentStatus;
+    order.currencyCode = commerce.currencyCode || result.commerce?.currencyCode || order.currencyCode || 'USD';
+    order.subtotal = commerce.subtotal?.amount ?? commerce.subtotal ?? result.commerce?.subtotal ?? order.subtotal;
+    order.discount = commerce.discounts?.amount ?? commerce.discount ?? result.commerce?.discount ?? order.discount;
+    order.total = commerce.total?.amount ?? commerce.total ?? result.commerce?.total ?? order.total;
+    order.shopifyUpdatedAt = rich.shopifyUpdatedAt || result.shopifyUpdatedAt || order.shopifyUpdatedAt;
+    order.shopifyNote = rich.note ?? detail.orderNote ?? order.shopifyNote ?? '';
+    order.shippingAddress = delivery.shippingAddress || detail.shippingAddress || order.shippingAddress || null;
+    order.billingAddress = delivery.billingAddress || detail.billingAddress || order.billingAddress || null;
+    order.fulfillments = delivery.fulfillments || detail.fulfillments || order.fulfillments || [];
+    order.email = customer.email || order.email || '';
+    order.phone = customer.phone || order.phone || '';
+    order.customer = customer;
+    order.attention = result.attention || production.attention || order.attention || { required: false, reasons: [] };
+    order.sync = result.sync || order.sync || {};
+    order.canonicalDetail = result;
+
+    if (lineItems.length) {
+      order.items = lineItems.map(item => {
+        const existing = existingItems.get(item.id) || {};
+        const unitPrice = item.unitPrice?.amount ?? item.unitPrice ?? existing.unitPrice ?? existing.price ?? 0;
+        const customAttributes = Array.isArray(item.customAttributes)
+          ? item.customAttributes
+          : existing.customAttributes || [];
+        return {
+          ...existing,
+          id: item.id || existing.id,
+          title: item.title || existing.title || '',
+          variantTitle: item.variantTitle || existing.variantTitle || '',
+          sku: item.sku || existing.sku || '',
+          qty: Number(item.currentQuantity ?? item.quantity ?? existing.qty ?? 0),
+          price: Number(unitPrice) || 0,
+          unitPrice: Number(unitPrice) || 0,
+          customAttributes,
+          discountAllocations: item.discountAllocations || [],
+          originalQuantity: Number(item.quantity ?? existing.originalQuantity ?? 0),
+          currentQuantity: Number(item.currentQuantity ?? item.quantity ?? existing.qty ?? 0),
+          originalTotal: item.originalTotal || null,
+          currentTotal: item.currentTotal || null,
+          totalDiscount: item.totalDiscount || null,
+          vendor: item.vendor || null,
+          unfulfilledQuantity: Number(item.unfulfilledQuantity || 0),
+          requiresShipping: Boolean(item.requiresShipping)
+        };
+      });
+    }
+
+    const firstTracking = (order.fulfillments || [])
+      .flatMap(fulfillment => fulfillment.tracking || fulfillment.trackingInfo || [])
+      .find(tracking => tracking?.number || tracking?.url);
+    if (firstTracking) {
+      order.tracking = firstTracking;
+      order.trackingNumber = firstTracking.number || '';
+      order.trackingUrl = firstTracking.url || '';
+    }
+    return order;
+  }
+
+  function appendAddressLines(container, address, fallbackName) {
+    if (!container) return;
+    container.replaceChildren();
+    const lines = addressLines(address, fallbackName);
+    if (lines.length) {
+      lines.forEach((line, index) => {
+        const element = document.createElement(index === 0 ? 'strong' : 'span');
+        element.textContent = line;
+        container.appendChild(element);
+      });
+      return;
+    }
+    const unavailable = document.createElement('span');
+    unavailable.className = 'redacted-info-badge';
+    unavailable.textContent = 'Unavailable or restricted';
+    container.appendChild(unavailable);
+  }
+
+  function createRichListItem(title, details = [], options = {}) {
+    const item = document.createElement('article');
+    item.className = `detail-rich-list-item${options.warning ? ' is-warning' : ''}`;
+    const heading = document.createElement('strong');
+    heading.textContent = title;
+    item.appendChild(heading);
+    const usableDetails = details.filter(Boolean);
+    if (usableDetails.length) {
+      const meta = document.createElement('div');
+      meta.className = 'detail-rich-list-meta';
+      usableDetails.forEach(value => {
+        const span = document.createElement('span');
+        span.textContent = value;
+        meta.appendChild(span);
+      });
+      item.appendChild(meta);
+    }
+    return item;
+  }
+
+  function setDetailDataState(state, message = '', options = {}) {
+    const container = document.getElementById('detail-data-status');
+    const copy = document.getElementById('detail-data-status-copy');
+    const retry = document.getElementById('detail-data-retry');
+    if (!container || !copy || !retry) return;
+    container.classList.remove('is-loading', 'is-warning', 'is-error', 'is-success');
+    container.classList.toggle('hidden', state === 'ready' && !message);
+    if (state !== 'ready') container.classList.add(`is-${state}`);
+    copy.textContent = message;
+    retry.classList.toggle('hidden', !options.retry);
+    retry.disabled = Boolean(options.loading);
+  }
+
+  function renderCanonicalItems(order, result) {
+    const lineItems = canonicalLineItems(result);
+    const tbody = document.querySelector('#detail-items tbody');
+    if (!tbody || !lineItems.length) return;
+    const detailData = detailResponseData(result) || {};
+    const commerce = detailData.commerce || result?.commerce || {};
+    const delivery = detailData.delivery || result?.delivery || {};
+    const currency = commerce.currencyCode || order.currencyCode || 'USD';
+    const moneyOrUnavailable = value => value == null || (typeof value === 'object' && value.amount == null)
+      ? 'Not returned'
+      : money(value, currency);
+    const fragment = document.createDocumentFragment();
+
+    lineItems.forEach(item => {
+      const row = document.createElement('tr');
+      const quantity = Number(item.currentQuantity ?? item.quantity ?? 0);
+      const unitPrice = item.unitPrice?.amount ?? item.unitPrice ?? 0;
+      const allocatedDiscount = (item.discountAllocations || []).reduce((total, allocation) => {
+        const allocationMoney = allocation?.allocatedAmountSet?.shopMoney || allocation;
+        return total + (Number(allocationMoney?.amount) || 0);
+      }, 0);
+      const currentTotal = item.currentTotal?.amount
+        ?? Math.max(0, (Number(unitPrice) * quantity) - allocatedDiscount);
+      [
+        String(quantity),
+        item.title || 'Untitled item',
+        item.sku || '—',
+        item.variantTitle || '—',
+        money(currentTotal, item.currentTotal?.currencyCode || currency)
+      ].forEach((value, index) => {
+        const cell = document.createElement('td');
+        cell.textContent = value;
+        cell.dataset.label = ['Qty', 'Item', 'SKU', 'Variant', 'Current total'][index];
+        if (index === 4) cell.className = 'detail-money-cell';
+        row.appendChild(cell);
+      });
+      fragment.appendChild(row);
+
+    });
+    tbody.replaceChildren(fragment);
+
+    const shippingLine = Array.isArray(delivery.shippingLines) ? delivery.shippingLines[0] : null;
+    const fulfillmentOrder = Array.isArray(delivery.fulfillmentOrders) ? delivery.fulfillmentOrders[0] : null;
+    const shippingName = shippingLine?.title || fulfillmentOrder?.method?.presentedName || '';
+    const deliveryType = String(shippingLine?.deliveryCategory || fulfillmentOrder?.method?.type || '').toUpperCase();
+    const isPickup = /PICK|LOCAL/.test(deliveryType) || /PICKUP|LOCAL PICKUP/i.test(shippingName);
+    const shippingLabel = isPickup
+      ? `Local pickup · ${moneyOrUnavailable(commerce.shipping)}`
+      : shippingName ? `${shippingName} · ${moneyOrUnavailable(commerce.shipping)}` : moneyOrUnavailable(commerce.shipping);
+    const discount = commerce.discounts ?? commerce.discount ?? order.discount;
+    const discountAmount = Number(discount?.amount ?? discount ?? 0);
+
+    setText('detail-subtotal', moneyOrUnavailable(commerce.subtotal), money(order.subtotal, currency));
+    setText('detail-shipping', shippingLabel, 'Not returned');
+    setText('detail-discount', `-${money(discount, currency)}`, `-${money(order.discount, currency)}`);
+    setText('detail-tax', moneyOrUnavailable(commerce.tax), 'Not returned');
+    setText('detail-total', moneyOrUnavailable(commerce.total), money(order.total, currency));
+    document.getElementById('detail-discount-row')?.classList.toggle('hidden', discountAmount === 0);
+
+    const discountSection = document.getElementById('detail-item-discounts');
+    const discountList = document.getElementById('detail-item-discounts-list');
+    const discounts = Array.isArray(detailData.discounts) ? detailData.discounts : [];
+    discountSection?.classList.toggle('hidden', discounts.length === 0);
+    setText('detail-item-discounts-count', discounts.length, '0');
+    if (discountList) {
+      const items = discounts.map(discount => {
+        const value = discount?.value?.type === 'percentage'
+          ? `${Math.abs(Number(discount.value.percentage || 0))}% off`
+          : discount?.value ? `${money(discount.value, currency)} off` : null;
+        return createRichListItem(
+          discount.label || discount.code || 'Discount',
+          [value, normalizedStageLabel(discount.type), discount.description].filter(Boolean)
+        );
+      });
+      discountList.replaceChildren(...items);
+    }
+
+    const taxSection = document.getElementById('detail-tax-details');
+    const taxList = document.getElementById('detail-tax-details-list');
+    const taxLines = lineItems.flatMap(item => item.taxLines || []);
+    const taxGroups = Array.from(taxLines.reduce((groups, taxLine) => {
+      const rate = Number(taxLine.rate || 0);
+      const key = `${taxLine.title || 'Tax'}|${rate}`;
+      const current = groups.get(key) || { title: taxLine.title || 'Tax', rate, amount: 0 };
+      current.amount += Number(taxLine.amount?.amount ?? taxLine.amount ?? 0);
+      groups.set(key, current);
+      return groups;
+    }, new Map()).values());
+    taxSection?.classList.toggle('hidden', taxGroups.length === 0);
+    setText('detail-tax-details-count', taxGroups.length, '0');
+    if (taxList) taxList.replaceChildren(...taxGroups.map(taxLine =>
+      createRichListItem(taxLine.title, [
+        taxLine.rate ? `${(Number(taxLine.rate) * 100).toLocaleString(undefined, { maximumFractionDigits: 3 })}%` : null,
+        money(taxLine.amount, currency)
+      ].filter(Boolean))
+    ));
+  }
+
+  function renderProductionContext(result) {
+    const production = result?.production || {};
+    const attention = result?.attention || production.attention || {};
+    setText('production-stage-val', normalizedStageLabel(production.stage), 'Received');
+    setText('production-bundle-val', production.bundleId || 'None', 'None');
+    setText('production-revision-val', production.revision ?? production.version, '—');
+    setText('production-updated-val', formatDetailDate(production.updatedAt), '—');
+    const attentionBadge = document.getElementById('production-attention-badge');
+    attentionBadge?.classList.toggle('hidden', !attention.required);
+  }
+
+  function canonicalDesignAssets(result) {
+    const assets = Array.isArray(result?.production?.assets) ? result.production.assets : [];
+    return assets.filter(asset => asset?.role !== 'mockup');
+  }
+
+  function applyCanonicalDesignMetadata(result) {
+    const lineItemSizes = new Map(canonicalLineItems(result).map(item => {
+      const size = (item.customAttributes || []).find(attribute => String(attribute?.key || '').trim().toLowerCase() === 'size_inches')?.value;
+      return [item.id, String(size || '').trim()];
+    }));
+    const bySide = {
+      front: canonicalDesignAssets(result).filter(asset => asset.side === 'front'),
+      back: canonicalDesignAssets(result).filter(asset => asset.side === 'back'),
+      extras: canonicalDesignAssets(result).filter(asset => !['front', 'back'].includes(asset.side))
+    };
+    [
+      ['front', 'design-front-list', 'Front'],
+      ['back', 'design-back-list', 'Back'],
+      ['extras', 'design-extras-list', 'Extra']
+    ].forEach(([side, listId, fallback]) => {
+      const rows = Array.from(document.getElementById(listId)?.querySelectorAll('.design-tile, .design-file-row') || []);
+      rows.forEach((row, index) => {
+        const asset = bySide[side][index];
+        if (!asset) return;
+        const filename = String(asset.name || `${fallback} design ${index + 1}`).trim();
+        const label = row.querySelector('.design-label');
+        if (label) {
+          label.textContent = filename;
+          label.title = filename;
+        }
+        let meta = row.querySelector('.design-file-meta');
+        if (!meta) {
+          meta = document.createElement('div');
+          meta.className = 'design-file-meta';
+          row.appendChild(meta);
+        }
+        const dimensions = lineItemSizes.get(asset.lineItemId)
+          || asset.dimensionsIn
+          || asset.metadata?.dimensionsIn
+          || asset.meta?.dimensionsIn
+          || '';
+        meta.textContent = [fallback, dimensions].filter(Boolean).join(' · ');
+        meta.title = meta.textContent;
+      });
+    });
+  }
+
+  function fulfillmentTracking(fulfillment) {
+    return fulfillment?.tracking || fulfillment?.trackingInfo || [];
+  }
+
+  function renderFulfillmentDetail(order, result) {
+    const rich = detailResponseData(result) || {};
+    const delivery = rich.delivery || {};
+    const detail = result?.detail || {};
+    const customerName = result?.customer?.displayName || orderContextParts(order.name).customer;
+    appendAddressLines(
+      document.getElementById('logistics-address-text'),
+      delivery.shippingAddress || detail.shippingAddress || order.shippingAddress,
+      customerName
+    );
+    appendAddressLines(
+      document.getElementById('logistics-billing-text'),
+      delivery.billingAddress || detail.billingAddress || order.billingAddress,
+      customerName
+    );
+
+    const fulfillments = delivery.fulfillments || detail.fulfillments || [];
+    const trackingContainer = document.getElementById('logistics-tracking-link');
+    if (trackingContainer) {
+      trackingContainer.replaceChildren();
+      const tracking = fulfillments.flatMap(fulfillment => fulfillmentTracking(fulfillment));
+      if (!tracking.length) {
+        trackingContainer.textContent = 'No tracking number';
+      } else {
+        tracking.forEach((entry, index) => {
+          const label = [entry.company, entry.number].filter(Boolean).join(' · ') || `Tracking ${index + 1}`;
+          if (entry.url && /^https?:\/\//i.test(entry.url)) {
+            const link = document.createElement('a');
+            link.href = entry.url;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.textContent = label;
+            trackingContainer.appendChild(link);
+          } else {
+            const text = document.createElement('span');
+            text.textContent = label;
+            trackingContainer.appendChild(text);
+          }
+        });
+      }
+    }
+
+    const list = document.getElementById('logistics-fulfillments-list');
+    setText('logistics-fulfillments-count', fulfillments.length, '0');
+    if (list) {
+      if (!fulfillments.length) {
+        const empty = document.createElement('p');
+        empty.className = 'detail-inline-empty';
+        empty.textContent = 'No fulfillments have been created.';
+        list.replaceChildren(empty);
+      } else {
+        list.replaceChildren(...fulfillments.map((fulfillment, index) => {
+          const trackingCount = fulfillmentTracking(fulfillment).length;
+          return createRichListItem(
+            fulfillment.name || `Fulfillment ${index + 1}`,
+            [
+              normalizedStageLabel(fulfillment.displayStatus || fulfillment.status),
+              trackingCount ? `${trackingCount} tracking ${trackingCount === 1 ? 'entry' : 'entries'}` : 'No tracking',
+              fulfillment.updatedAt ? `Updated ${formatDetailDate(fulfillment.updatedAt)}` : null
+            ]
+          );
+        }));
+      }
+    }
+
+    const serviceList = document.getElementById('logistics-service-list');
+    if (serviceList) {
+      const services = [
+        ...(delivery.fulfillmentOrders || []).map(fulfillmentOrder => {
+          const method = fulfillmentOrder.method || {};
+          const window = method.maxDeliveryAt
+            ? `Deliver by ${formatDetailDate(method.maxDeliveryAt)}`
+            : method.minDeliveryAt ? `Delivery starts ${formatDetailDate(method.minDeliveryAt)}` : null;
+          return createRichListItem(
+            method.presentedName || normalizedStageLabel(method.type) || 'Delivery method',
+            [method.serviceCode, normalizedStageLabel(method.type), window].filter(Boolean)
+          );
+        }),
+        ...(delivery.shippingLines || []).map(line =>
+          createRichListItem(
+            line.title || 'Checkout shipping service',
+            [line.code, normalizedStageLabel(line.deliveryCategory), line.currentPrice ? money(line.currentPrice) : null].filter(Boolean)
+          )
+        )
+      ];
+      if (!services.length) {
+        const empty = document.createElement('p');
+        empty.className = 'detail-inline-empty';
+        empty.textContent = 'No shipping service was returned.';
+        serviceList.replaceChildren(empty);
+      } else {
+        serviceList.replaceChildren(...services);
+      }
+    }
+  }
+
+  function renderCustomerAndOrder(order, result) {
+    const rich = detailResponseData(result) || {};
+    const customer = rich.customer || result?.detail?.customer || result?.customer || {};
+    const detail = result?.detail || {};
+    setText('customer-name-val', operationalDetailCustomerName(order), 'Unavailable');
+    setText('customer-email-val', customer.email || order.email, 'Unavailable or restricted');
+    setText('customer-phone-val', customer.phone || order.phone, 'Unavailable or restricted');
+    setText('customer-locale-val', customer.locale, 'Not available');
+    setText('customer-order-created-val', formatDetailDate(rich.createdAt || result?.createdAt || order.receivedAt), '—');
+    setText('customer-order-updated-val', formatDetailDate(rich.shopifyUpdatedAt || result?.shopifyUpdatedAt), '—');
+    setText('customer-order-note-val', rich.note ?? detail.orderNote, 'No customer checkout note');
+    const conversion = rich.conversion;
+    const conversionContainer = document.getElementById('customer-conversion-summary');
+    if (conversionContainer) {
+      if (!conversion) {
+        const empty = document.createElement('p');
+        empty.className = 'detail-inline-empty';
+        empty.textContent = 'No conversion summary was returned for this order.';
+        conversionContainer.replaceChildren(empty);
+      } else {
+        const visitDetails = visit => visit
+          ? [
+              visit.sourceDescription || visit.source,
+              visit.sourceType ? normalizedStageLabel(visit.sourceType) : null,
+              visit.occurredAt ? formatDetailDate(visit.occurredAt) : null
+            ].filter(Boolean).join(' · ')
+          : 'Not returned';
+        conversionContainer.replaceChildren(
+          createRichListItem('Conversion', [
+            conversion.ready ? 'Attribution ready' : 'Attribution still processing',
+            conversion.customerOrderIndex ? `Customer order #${conversion.customerOrderIndex}` : null,
+            conversion.daysToConversion !== null && conversion.daysToConversion !== undefined ? `${conversion.daysToConversion} days to conversion` : null
+          ].filter(Boolean)),
+          createRichListItem('First attributed visit', [visitDetails(conversion.firstVisit)]),
+          createRichListItem('Last attributed visit', [visitDetails(conversion.lastVisit)])
+        );
+      }
+    }
+  }
+
+  function renderActivityAndExceptions(order, result) {
+    const attention = result?.attention || result?.production?.attention || {};
+    const sync = result?.sync || {};
+    const detail = result?.detail || {};
+    const reasons = Array.isArray(attention.reasons) ? attention.reasons.filter(Boolean) : [];
+    const errors = dedupeDetailErrors([
+      ...(Array.isArray(sync.errors) ? sync.errors : []),
+      ...(Array.isArray(detail.errors) ? detail.errors : [])
+    ]);
+    const actionableErrors = errors.filter(error => !isOptionalPermissionError(error));
+    const cancelledAt = result?.commerce?.cancelledAt || null;
+    const attentionCount = reasons.length + actionableErrors.length + (cancelledAt ? 1 : 0);
+    const badge = document.getElementById('tab-badge-attention');
+    if (badge) {
+      badge.textContent = String(attentionCount);
+      badge.classList.toggle('hidden', attentionCount === 0);
+    }
+    const attentionState = document.getElementById('detail-attention-state');
+    if (attentionState) {
+      attentionState.textContent = attentionCount ? `${attentionCount} open` : 'Clear';
+      attentionState.dataset.state = attentionCount ? 'attention' : 'clear';
+    }
+
+    const list = document.getElementById('detail-attention-list');
+    if (list) {
+      const entries = [
+        ...(cancelledAt
+          ? [createRichListItem(
+              'Shopify order canceled',
+              [`Canceled ${formatDetailDate(cancelledAt)}`],
+              { warning: true }
+            )]
+          : []),
+        ...reasons.map(reason => createRichListItem('Production attention', [reason], { warning: true })),
+        ...actionableErrors.map(error => createRichListItem(
+          error.code || 'Shopify detail warning',
+          [error.message || String(error)],
+          { warning: true }
+        ))
+      ];
+      if (!entries.length) {
+        const empty = document.createElement('p');
+        empty.className = 'detail-inline-empty';
+        empty.textContent = 'No production exceptions require attention.';
+        list.replaceChildren(empty);
+      } else {
+        list.replaceChildren(...entries);
+      }
+    }
+
+    const timeline = document.getElementById('timeline-stream-container');
+    if (timeline) {
+      const events = [
+        {
+          title: 'Canonical detail loaded',
+          meta: detail.fetchedAt || sync.fetchedAt,
+          description: detail.partial || sync.partial
+            ? 'Available order data loaded with partial Shopify results.'
+            : 'Current Shopify commerce and PrintMO production data loaded.'
+        },
+        {
+          title: 'Shopify order updated',
+          meta: result?.shopifyUpdatedAt,
+          description: 'Latest Shopify order modification time.'
+        },
+        {
+          title: 'Production state updated',
+          meta: result?.production?.updatedAt,
+          description: result?.production?.updatedBy
+            ? `Last changed by ${result.production.updatedBy}.`
+            : 'Latest PrintMO production state.'
+        }
+      ].filter(event => event.meta);
+      timeline.replaceChildren(...events.map(event => {
+        const item = document.createElement('div');
+        item.className = 'timeline-item';
+        const dot = document.createElement('div');
+        dot.className = 'timeline-icon-dot';
+        dot.setAttribute('aria-hidden', 'true');
+        const title = document.createElement('strong');
+        title.textContent = event.title;
+        const description = document.createElement('span');
+        description.textContent = `${formatDetailDate(event.meta)} · ${event.description}`;
+        item.append(dot, title, description);
+        return item;
+      }));
+    }
+    const liveTimeline = document.getElementById('timeline-stream-container');
+    const shopifyEvents = Array.isArray(detailResponseData(result)?.timeline) ? detailResponseData(result).timeline : [];
+    if (liveTimeline) {
+      if (!shopifyEvents.length) {
+        const empty = document.createElement('p');
+        empty.className = 'detail-inline-empty';
+        empty.textContent = 'No Shopify timeline events were returned.';
+        liveTimeline.replaceChildren(empty);
+      } else liveTimeline.replaceChildren(...shopifyEvents.map(event => {
+        const item = document.createElement('div');
+        item.className = 'timeline-item';
+        const dot = document.createElement('div');
+        dot.className = 'timeline-icon-dot';
+        dot.setAttribute('aria-hidden', 'true');
+        const title = document.createElement('strong');
+        title.textContent = String(event.message || event.action || event.type || 'Shopify order event').replace(/<[^>]+>/g, '').trim();
+        const description = document.createElement('span');
+        description.textContent = [
+          formatDetailDate(event.createdAt),
+          event.author || event.appTitle,
+          event.secondaryMessage ? String(event.secondaryMessage).replace(/<[^>]+>/g, '').trim() : null
+        ].filter(Boolean).join(' · ');
+        item.append(dot, title, description);
+        return item;
+      }));
+    }
+
+    const productionTimeline = document.getElementById('production-history-container');
+    const productionEvents = Array.isArray(result?.productionEvents) ? result.productionEvents : [];
+    if (productionTimeline) {
+      if (!productionEvents.length) {
+        const empty = document.createElement('p');
+        empty.className = 'detail-inline-empty';
+        empty.textContent = 'No PrintMO production changes have been recorded.';
+        productionTimeline.replaceChildren(empty);
+      } else productionTimeline.replaceChildren(...productionEvents.map(event => {
+        const item = document.createElement('div');
+        item.className = 'timeline-item';
+        const dot = document.createElement('div');
+        dot.className = 'timeline-icon-dot';
+        dot.setAttribute('aria-hidden', 'true');
+        const title = document.createElement('strong');
+        title.textContent = 'Production status updated';
+        const description = document.createElement('span');
+        description.textContent = [
+          formatDetailDate(event.createdAt),
+          event.fields?.length ? `Changed ${event.fields.join(', ')}` : null,
+          event.actor ? `by ${event.actor}` : null
+        ].filter(Boolean).join(' · ');
+        item.append(dot, title, description);
+        return item;
+      }));
+    }
+
+    setText(
+      'detail-sync-state',
+      detail.partial || sync.partial ? 'Partial' : sync.stale ? 'Stale' : 'Current',
+      'Current'
+    );
+  }
+
+  function renderCanonicalDetail(order, result) {
+    mergeCanonicalDetail(order, result);
+    syncDetailHeader(order);
+    syncCommerceDetail(order);
+    renderCanonicalItems(order, result);
+    renderProductionContext(result);
+    applyCanonicalDesignMetadata(result);
+    renderFulfillmentDetail(order, result);
+    renderCustomerAndOrder(order, result);
+    renderActivityAndExceptions(order, result);
+    enhanceItemsTable(order);
+    enhanceDesignFilesPanel();
+    const partial = Boolean(result?.detail?.partial || result?.sync?.partial);
+    const hasOptionalPermissionGap = dedupeDetailErrors([
+      ...(Array.isArray(result?.sync?.errors) ? result.sync.errors : []),
+      ...(Array.isArray(result?.detail?.errors) ? result.detail.errors : [])
+    ]).some(isOptionalPermissionError);
+    if (partial) {
+      setDetailDataState(
+        'warning',
+        hasOptionalPermissionGap
+          ? 'Some optional Shopify details are unavailable. Available order and production data are shown.'
+          : 'Some Shopify fields could not be loaded. Available order data is still shown.'
+      );
+    } else {
+      setDetailDataState('ready');
+    }
+  }
+
+  function canonicalDetailStillActive(order, generation) {
+    const overlay = document.getElementById('detail-overlay');
+    return generation === detailHydrationGeneration
+      && Boolean(overlay?.classList.contains('visible'))
+      && document.body?.dataset.orderSource === 'shopify'
+      && currentDetailOrder === order
+      && order?._gid
+      && currentDetailOrder?._gid === order._gid;
+  }
+
+  async function hydrateCanonicalDetail(order, options = {}) {
+    detailHydrationController?.abort();
+    detailHydrationController = null;
+    const generation = ++detailHydrationGeneration;
+    const eligible = order?._candidate === true
+      && order?._gid
+      && typeof window.api?.getOrderDetail === 'function';
+
+    if (!eligible) {
+      setDetailDataState('ready');
+      renderProductionContext({ production: {
+        stage: order?.status,
+        version: order?._version,
+        bundleId: order?.bundle
+      } });
+      return;
+    }
+
+    const controller = new AbortController();
+    detailHydrationController = controller;
+    setDetailDataState(
+      'loading',
+      options.retry ? 'Retrying current Shopify order detail…' : 'Loading current Shopify order detail…',
+      { loading: true }
+    );
+    try {
+      const result = await window.api.getOrderDetail(order._gid, { signal: controller.signal });
+      if (!canonicalDetailStillActive(order, generation)) return;
+      renderCanonicalDetail(order, result);
+    } catch (error) {
+      if (error?.name === 'AbortError' || !canonicalDetailStillActive(order, generation)) return;
+      setDetailDataState(
+        'error',
+        `Current Shopify detail could not load: ${error?.message || error}`,
+        { retry: true }
+      );
+      const retry = document.getElementById('detail-data-retry');
+      if (retry) retry.onclick = () => hydrateCanonicalDetail(order, { retry: true });
+    } finally {
+      if (generation === detailHydrationGeneration) detailHydrationController = null;
+    }
   }
 
   function itemCounts(order) {
@@ -81,6 +795,16 @@
       number: match ? match[1] : rawName || '-',
       customer: match ? match[2] : ''
     };
+  }
+
+  function operationalDetailCustomerName(order) {
+    return String(
+      order?.shippingAddress?.name
+      || order?.billingAddress?.name
+      || order?.customer?.displayName
+      || orderContextParts(order?.name).customer
+      || ''
+    ).trim();
   }
 
   function formatContextDate(value) {
@@ -315,18 +1039,13 @@
 
   function readyStateFromInputs() {
     const checked = checkboxIds.filter(id => document.getElementById(id)?.checked).length;
-    if (checked === checkboxIds.length) return { label: 'Ready', state: 'ready' };
-    if (checked > 0) return { label: `${checked}/4 milestones`, state: 'partial' };
-    return { label: 'Not ready', state: 'missing' };
+    if (checked === checkboxIds.length) return { label: 'Production ready', state: 'ready' };
+    if (checked > 0) return { label: `${checked} of 4 milestones`, state: 'partial' };
+    return { label: 'Not started', state: 'missing' };
   }
 
   function syncReadySummary() {
-    const summary = document.getElementById('detail-header-ready-summary');
     const state = readyStateFromInputs();
-    if (summary) {
-      summary.textContent = state.label;
-      summary.dataset.state = state.state;
-    }
     syncProductionTimeline(state);
   }
 
@@ -541,20 +1260,20 @@
 
   function syncDetailHeader(order) {
     if (!order) return;
-    const [, customerName = ''] = typeof splitOrderName === 'function'
-      ? splitOrderName(order.name)
-      : String(order.name || '').split(' - ');
     const counts = itemCounts(order);
     const customer = document.getElementById('detail-header-customer');
     const pieces = document.getElementById('detail-header-pieces');
     const total = document.getElementById('detail-header-total');
 
+    const customerName = operationalDetailCustomerName(order);
     if (customer) customer.textContent = customerName || 'No customer name';
+    const recipient = document.getElementById('detail-cust-name');
+    if (recipient && customerName) recipient.textContent = customerName;
     if (pieces) {
       pieces.textContent = `${counts.apparel} apparel / ${counts.prints} prints`;
       pieces.title = `${counts.all} total line-item quantity`;
     }
-    if (total) total.textContent = money(order.total);
+    if (total) total.textContent = money(order.total, order.currencyCode);
     setStatusBadge(
       document.getElementById('badge-financial'),
       order.displayFinancialStatus || order.financialStatus,
@@ -672,6 +1391,11 @@
       panel.classList.toggle('active', active);
       panel.hidden = !active;
       panel.setAttribute('aria-hidden', String(!active));
+    });
+    targetTab.scrollIntoView?.({
+      block: 'nearest',
+      inline: 'nearest',
+      behavior: options.focus ? 'smooth' : 'auto'
     });
     if (options.focus) targetTab.focus();
   }
@@ -834,7 +1558,7 @@
     if (!extBadge) {
       extBadge = document.createElement('span');
       extBadge.className = 'design-file-extension';
-      row.querySelector('.design-file-info')?.appendChild(extBadge);
+      (row.querySelector('.design-file-info') || meta || labelButton)?.appendChild(extBadge);
     }
     extBadge.textContent = parts.extension;
     extBadge.title = `${parts.extension} file`;
@@ -1066,26 +1790,35 @@
     if (!table || !body) return;
 
     const rows = Array.from(body.rows);
+    const itemRows = rows.filter(row => row.cells.length >= 4);
     const quantity = order?.items
       ? order.items.reduce((total, item) => total + (Number(item.qty) || 0), 0)
-      : rows.reduce((total, row) => total + (Number(cellText(row.cells[0])) || 0), 0);
+      : itemRows.reduce((total, row) => total + (Number(cellText(row.cells[0])) || 0), 0);
 
     if (count) {
-      const lineLabel = rows.length === 1 ? 'line' : 'lines';
+      const lineLabel = itemRows.length === 1 ? 'line' : 'lines';
       const pieceLabel = quantity === 1 ? 'piece' : 'pieces';
-      count.textContent = `${rows.length} ${lineLabel} / ${quantity} ${pieceLabel}`;
+      count.textContent = `${itemRows.length} ${lineLabel} / ${quantity} ${pieceLabel}`;
       count.title = 'Line items and total quantity in this order';
     }
 
-    wrapper?.classList.toggle('has-many-items', rows.length > 12);
-    table.dataset.lineCount = String(rows.length);
+    wrapper?.classList.toggle('has-many-items', itemRows.length > 12);
+    table.dataset.lineCount = String(itemRows.length);
 
     rows.forEach((row, index) => {
       const cells = row.cells;
+      if (cells.length < 4) {
+        row.classList.add('detail-item-attributes-row');
+        return;
+      }
       row.classList.add('detail-item-row');
       row.dataset.rowNumber = String(index + 1);
+      ['Qty', 'Item', 'SKU', 'Variant', 'Current total'].forEach((label, cellIndex) => {
+        if (cells[cellIndex]) cells[cellIndex].dataset.label = label;
+      });
       wrapCellText(cells[1], 'detail-item-description-cell');
-      wrapCellText(cells[2], 'detail-item-variant-cell');
+      wrapCellText(cells[2], 'detail-item-sku-cell');
+      wrapCellText(cells[3], 'detail-item-variant-cell');
 
       const description = cellText(cells[1]);
       const isPrint = typeof isPrintItem === 'function'
@@ -1095,7 +1828,7 @@
       row.classList.toggle('is-apparel-item', !isPrint);
 
       if (cells[0]) cells[0].title = `Quantity ${cellText(cells[0]) || '0'}`;
-      if (cells[3]) cells[3].title = cellText(cells[3]);
+      if (cells[4]) cells[4].title = cellText(cells[4]);
     });
   }
 
@@ -1165,6 +1898,38 @@
     window.closeAssetViewer = animatedCloseAssetViewer;
   }
 
+  function invalidateCanonicalDetailLoad() {
+    detailHydrationGeneration += 1;
+    detailHydrationController?.abort();
+    detailHydrationController = null;
+  }
+
+  function wireCanonicalDetailLifecycle() {
+    const overlay = document.getElementById('detail-overlay');
+    if (overlay && !overlay.dataset.canonicalLifecycleWired) {
+      overlay.dataset.canonicalLifecycleWired = 'true';
+      const observer = new MutationObserver(() => {
+        const closed = !overlay.classList.contains('visible')
+          || overlay.getAttribute('aria-hidden') === 'true';
+        if (closed) invalidateCanonicalDetailLoad();
+      });
+      observer.observe(overlay, {
+        attributes: true,
+        attributeFilter: ['class', 'aria-hidden']
+      });
+    }
+    if (document.body && !document.body.dataset.canonicalSourceLifecycleWired) {
+      document.body.dataset.canonicalSourceLifecycleWired = 'true';
+      const sourceObserver = new MutationObserver(() => {
+        if (document.body.dataset.orderSource !== 'shopify') invalidateCanonicalDetailLoad();
+      });
+      sourceObserver.observe(document.body, {
+        attributes: true,
+        attributeFilter: ['data-order-source']
+      });
+    }
+  }
+
   function patchDetailOpen() {
     const currentOpenDetail = typeof openDetail === 'function' ? openDetail : window.openDetail;
     if (typeof currentOpenDetail !== 'function' || currentOpenDetail.__detailSummaryPatched) return;
@@ -1186,11 +1951,13 @@
       patchAssetViewerClose();
       wireItemsTable(order);
       wireDesignFilesPanel();
+      wireCanonicalDetailLifecycle();
       requestAnimationFrame(wireMockupBrowser);
       requestAnimationFrame(() => enhanceItemsTable(order));
       requestAnimationFrame(scheduleDesignFilesEnhancement);
       setTimeout(scheduleDesignFilesEnhancement, 250);
       setTimeout(scheduleDesignFilesEnhancement, 1000);
+      hydrateCanonicalDetail(order);
       return result;
     };
     enhancedOpenDetail.__detailSummaryPatched = true;
@@ -1205,6 +1972,7 @@
     wireReadyInputs();
     wireAssetViewerCaptions();
     patchAssetViewerClose();
+    wireCanonicalDetailLifecycle();
     wireMockupBrowser();
     wireItemsTable();
     wireDesignFilesPanel();
@@ -1215,6 +1983,7 @@
   wireCustomerNotesControls();
   wireAssetViewerCaptions();
   patchAssetViewerClose();
+  wireCanonicalDetailLifecycle();
   wireItemsTable();
   wireDesignFilesPanel();
 })();

@@ -401,6 +401,21 @@ window.api.getShopifyPreviewOrderDetail = async (orderId, { refresh = false } = 
   );
 };
 
+// Canonical on-demand detail for the operational Shopify workbench. The
+// bounded board payload remains responsible for first paint; this request
+// hydrates commerce, delivery, attention, production, and private asset
+// metadata only after an operator opens an order.
+window.api.getOrderDetail = async (orderId, { signal } = {}) => {
+  if (!orderId) throw new Error("A Shopify order ID is required");
+  return apiFetch(
+    `/order-manager/v1/orders/${encodeURIComponent(orderId)}`,
+    {
+      method: "GET",
+      ...(signal ? { signal } : {}),
+    }
+  );
+};
+
 // Production metadata is separate from the Shopify commerce response. These
 // endpoints update the v1 order hash and atomically mirror supported fields to
 // the legacy Redis queue while that board remains in production.

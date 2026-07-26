@@ -269,7 +269,6 @@
               <span class="detail-summary-label">Total</span>
               <span id="detail-header-total">$0.00</span>
             </div>
-            <div id="detail-header-ready-summary" class="detail-ready-summary" aria-live="polite">Not ready</div>
           </div>
           <button id="detail-close" type="button" aria-label="Close order details">&times;</button>
         </div>
@@ -289,7 +288,7 @@
                     <div class="manual-mockup-actions">
                       <label id="manual-mockup-upload-btn" class="fullscreen-btn" for="manual-mockup-file-input">Upload</label>
                       <button id="manual-mockup-paste-btn" class="fullscreen-btn" type="button">Paste</button>
-                      <input id="manual-mockup-file-input" class="manual-mockup-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" multiple>
+                      <input id="manual-mockup-file-input" class="manual-mockup-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple>
                     </div>
                   </div>
                   <div id="detail-mockups-browser" class="detail-mockups-browser">
@@ -306,11 +305,44 @@
                   <p id="detail-mockups-placeholder" class="detail-assets-empty">No mockup previews available</p>
                 </section>
 
+                <section id="detail-notes-wrapper" class="detail-section detail-instructions-card">
+                  <div id="detail-name-row" class="detail-name-row">
+                    <div>
+                      <span class="detail-section-label">Customer</span>
+                      <h3 id="detail-cust-name"></h3>
+                    </div>
+                    <button id="detail-edit-name-btn" class="fullscreen-btn" type="button">Edit name</button>
+                  </div>
+                  <div class="detail-notes-header">
+                    <div>
+                      <h4>Shop instructions</h4>
+                      <span id="detail-notes-summary" class="detail-notes-summary">No notes</span>
+                    </div>
+                    <div class="detail-notes-actions">
+                      <button id="detail-view-notes-btn" class="fullscreen-btn" type="button">View</button>
+                      <button id="detail-edit-notes-btn" class="fullscreen-btn" type="button">Edit</button>
+                    </div>
+                  </div>
+                  <div class="detail-notes-preview">
+                    <p id="detail-notes"><em>No special instructions</em></p>
+                  </div>
+                  <div class="detail-notes-editor">
+                    <textarea id="detail-notes-input" class="hidden" aria-label="Shop instructions"></textarea>
+                    <div class="detail-notes-editor-footer">
+                      <span id="detail-notes-edit-status" role="status" aria-live="polite">No changes</span>
+                      <div class="detail-notes-editor-actions">
+                        <button id="detail-notes-cancel-btn" class="fullscreen-btn" type="button">Cancel</button>
+                        <button id="detail-notes-save-btn" class="fullscreen-btn" type="button">Save notes</button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
                 <section id="detail-production-card" class="detail-section print-station-card">
                   <div class="production-section-header">
                     <div>
                       <h3>Production progress</h3>
-                      <span id="production-status-pill" class="production-status-pill" aria-live="polite">Not ready</span>
+                      <span id="production-status-pill" class="production-status-pill" aria-live="polite">Not started</span>
                     </div>
                     <span id="progress-text">0 / 0 pieces printed</span>
                   </div>
@@ -373,47 +405,21 @@
                   </div>
                 </section>
 
-                <section id="detail-notes-wrapper" class="detail-section detail-instructions-card">
-                  <div id="detail-name-row" class="detail-name-row">
-                    <div>
-                      <span class="detail-section-label">Customer</span>
-                      <h3 id="detail-cust-name"></h3>
-                    </div>
-                    <button id="detail-edit-name-btn" class="fullscreen-btn" type="button">Edit name</button>
-                  </div>
-                  <div class="detail-notes-header">
-                    <div>
-                      <h4>Shop instructions</h4>
-                      <span id="detail-notes-summary" class="detail-notes-summary">No notes</span>
-                    </div>
-                    <div class="detail-notes-actions">
-                      <button id="detail-view-notes-btn" class="fullscreen-btn" type="button">View</button>
-                      <button id="detail-edit-notes-btn" class="fullscreen-btn" type="button">Edit</button>
-                    </div>
-                  </div>
-                  <div class="detail-notes-preview">
-                    <p id="detail-notes"><em>No special instructions</em></p>
-                  </div>
-                  <div class="detail-notes-editor">
-                    <textarea id="detail-notes-input" class="hidden" aria-label="Shop instructions"></textarea>
-                    <div class="detail-notes-editor-footer">
-                      <span id="detail-notes-edit-status" role="status" aria-live="polite">No changes</span>
-                      <div class="detail-notes-editor-actions">
-                        <button id="detail-notes-cancel-btn" class="fullscreen-btn" type="button">Cancel</button>
-                        <button id="detail-notes-save-btn" class="fullscreen-btn" type="button">Save notes</button>
-                      </div>
-                    </div>
-                  </div>
-                </section>
               </div>
             </aside>
 
             <main id="detail-right-pane">
               <div id="detail-tabs-header" role="tablist" aria-label="Order details">
                 <button id="detail-tab-production" class="detail-tab-item active" data-tab="tab-production" type="button" role="tab" aria-selected="true" aria-controls="tab-production" tabindex="0">Production</button>
-                <button id="detail-tab-items" class="detail-tab-item" data-tab="tab-items" type="button" role="tab" aria-selected="false" aria-controls="tab-items" tabindex="-1">Items &amp; financials <span class="detail-tab-badge" id="tab-badge-items">0</span></button>
+                <button id="detail-tab-items" class="detail-tab-item" data-tab="tab-items" type="button" role="tab" aria-selected="false" aria-controls="tab-items" tabindex="-1"><span class="detail-tab-label-full">Items &amp; financials</span><span class="detail-tab-label-short">Items &amp; money</span> <span class="detail-tab-badge" id="tab-badge-items">0</span></button>
                 <button id="detail-tab-logistics" class="detail-tab-item" data-tab="tab-logistics" type="button" role="tab" aria-selected="false" aria-controls="tab-logistics" tabindex="-1">Fulfillment</button>
-                <button id="detail-tab-customer" class="detail-tab-item" data-tab="tab-customer" type="button" role="tab" aria-selected="false" aria-controls="tab-customer" tabindex="-1">Customer &amp; history</button>
+                <button id="detail-tab-customer" class="detail-tab-item" data-tab="tab-customer" type="button" role="tab" aria-selected="false" aria-controls="tab-customer" tabindex="-1"><span class="detail-tab-label-full">Customer &amp; order</span><span class="detail-tab-label-short">Customer</span></button>
+                <button id="detail-tab-activity" class="detail-tab-item" data-tab="tab-activity" type="button" role="tab" aria-selected="false" aria-controls="tab-activity" tabindex="-1"><span class="detail-tab-label-full">Activity &amp; exceptions</span><span class="detail-tab-label-short">Activity</span> <span class="detail-tab-badge hidden" id="tab-badge-attention">0</span></button>
+              </div>
+
+              <div id="detail-data-status" class="detail-data-status hidden" role="status" aria-live="polite">
+                <span id="detail-data-status-copy"></span>
+                <button id="detail-data-retry" class="fullscreen-btn hidden" type="button">Retry</button>
               </div>
 
               <div id="detail-tab-panels">
@@ -422,6 +428,21 @@
                     <strong>Customer checkout note</strong>
                     <span id="customer-checkout-note-text"></span>
                   </div>
+                  <section id="production-order-context" class="detail-section detail-context-section" aria-labelledby="production-order-context-title">
+                    <div class="detail-section-heading">
+                      <div>
+                        <h3 id="production-order-context-title">Production context</h3>
+                        <p>PrintMO workflow metadata connected to this Shopify order.</p>
+                      </div>
+                      <span id="production-attention-badge" class="detail-context-badge hidden">Needs attention</span>
+                    </div>
+                    <dl class="detail-fact-grid">
+                      <div><dt>Stage</dt><dd id="production-stage-val">Loading</dd></div>
+                      <div><dt>Bundle</dt><dd id="production-bundle-val">None</dd></div>
+                      <div><dt>Revision</dt><dd id="production-revision-val">—</dd></div>
+                      <div><dt>Last production update</dt><dd id="production-updated-val">—</dd></div>
+                    </dl>
+                  </section>
                   <section id="detail-design-panel" class="vector-files-card" aria-labelledby="detail-design-title">
                     <div class="design-panel-header">
                       <div>
@@ -468,7 +489,8 @@
                         <thead>
                           <tr>
                             <th scope="col">Qty</th>
-                            <th scope="col">Description / SKU</th>
+                            <th scope="col">Description</th>
+                            <th scope="col">SKU</th>
                             <th scope="col">Variant</th>
                             <th scope="col">Price</th>
                           </tr>
@@ -479,8 +501,20 @@
                     <table id="detail-summary">
                       <tbody>
                         <tr>
+                          <td>Subtotal</td>
+                          <td id="detail-subtotal">$0.00</td>
+                        </tr>
+                        <tr>
+                          <td>Shipping</td>
+                          <td id="detail-shipping">$0.00</td>
+                        </tr>
+                        <tr id="detail-discount-row">
                           <td>Discount</td>
                           <td id="detail-discount">$0.00</td>
+                        </tr>
+                        <tr>
+                          <td>Tax</td>
+                          <td id="detail-tax">$0.00</td>
                         </tr>
                         <tr>
                           <td><strong>Total</strong></td>
@@ -489,19 +523,53 @@
                       </tbody>
                     </table>
                   </section>
+                  <section id="detail-item-discounts" class="detail-section detail-rich-list-section hidden" aria-labelledby="detail-item-discounts-title">
+                    <div class="detail-section-heading">
+                      <h3 id="detail-item-discounts-title">Line-item discounts</h3>
+                      <span id="detail-item-discounts-count" class="detail-context-badge">0</span>
+                    </div>
+                    <div id="detail-item-discounts-list" class="detail-rich-list"></div>
+                  </section>
+                  <section id="detail-tax-details" class="detail-section detail-tax-details hidden" aria-labelledby="detail-tax-details-title">
+                    <details>
+                      <summary id="detail-tax-details-title">Tax details <span id="detail-tax-details-count" class="detail-context-badge">0</span></summary>
+                      <div id="detail-tax-details-list" class="detail-rich-list"></div>
+                    </details>
+                  </section>
                 </section>
 
                 <section id="tab-logistics" class="detail-tab-panel" role="tabpanel" aria-labelledby="detail-tab-logistics" hidden>
                   <section id="logistics-shipping-card" class="detail-section detail-info-section">
                     <h3>Shipping &amp; fulfillment</h3>
-                    <div id="logistics-address-block">
-                      <span class="detail-info-label">Ship to</span>
-                      <span id="logistics-address-text">No address loaded</span>
+                    <div class="detail-address-grid">
+                      <div id="logistics-address-block">
+                        <span class="detail-info-label">Ship to</span>
+                        <span id="logistics-address-text">No address loaded</span>
+                      </div>
+                      <div id="logistics-billing-block">
+                        <span class="detail-info-label">Bill to</span>
+                        <span id="logistics-billing-text">No billing address loaded</span>
+                      </div>
                     </div>
                     <div id="logistics-tracking-block">
                       <span class="detail-info-label">Tracking</span>
                       <span id="logistics-tracking-link">No tracking number</span>
                     </div>
+                  </section>
+                  <section id="logistics-fulfillments-card" class="detail-section detail-rich-list-section" aria-labelledby="logistics-fulfillments-title">
+                    <div class="detail-section-heading">
+                      <h3 id="logistics-fulfillments-title">Fulfillment records</h3>
+                      <span id="logistics-fulfillments-count" class="detail-context-badge">0</span>
+                    </div>
+                    <div id="logistics-fulfillments-list" class="detail-rich-list">
+                      <p class="detail-inline-empty">No fulfillments have been created.</p>
+                    </div>
+                  </section>
+                  <section id="logistics-service-card" class="detail-section detail-rich-list-section" aria-labelledby="logistics-service-title">
+                    <div class="detail-section-heading">
+                      <div><h3 id="logistics-service-title">Shipping service &amp; delivery window</h3><p>Selected checkout service and Shopify delivery estimate.</p></div>
+                    </div>
+                    <div id="logistics-service-list" class="detail-rich-list"><p class="detail-inline-empty">No shipping service was returned.</p></div>
                   </section>
                 </section>
 
@@ -509,12 +577,44 @@
                   <section id="customer-profile-card" class="detail-section detail-info-section">
                     <h3>Customer</h3>
                     <div id="customer-info-block">
+                      <div><span class="detail-info-label">Customer</span><span id="customer-name-val">Not available</span></div>
                       <div><span class="detail-info-label">Email</span><span id="customer-email-val">Not available</span></div>
                       <div><span class="detail-info-label">Phone</span><span id="customer-phone-val">Not available</span></div>
+                      <div><span class="detail-info-label">Locale</span><span id="customer-locale-val">Not available</span></div>
+                    </div>
+                  </section>
+                  <section id="customer-order-card" class="detail-section detail-info-section">
+                    <h3>Shopify order</h3>
+                    <div class="detail-fact-grid">
+                      <div><span class="detail-info-label">Created</span><span id="customer-order-created-val">—</span></div>
+                      <div><span class="detail-info-label">Last updated</span><span id="customer-order-updated-val">—</span></div>
+                    </div>
+                    <div>
+                      <span class="detail-info-label">Order note</span>
+                      <span id="customer-order-note-val">No customer checkout note</span>
+                    </div>
+                  </section>
+                  <section id="customer-conversion-card" class="detail-section detail-rich-list-section" aria-labelledby="customer-conversion-title">
+                    <div class="detail-section-heading"><div><h3 id="customer-conversion-title">Conversion summary</h3><p>Shopify attribution for this order.</p></div></div>
+                    <div id="customer-conversion-summary" class="detail-rich-list"><p class="detail-inline-empty">No conversion summary was returned.</p></div>
+                  </section>
+                </section>
+
+                <section id="tab-activity" class="detail-tab-panel" role="tabpanel" aria-labelledby="detail-tab-activity" hidden>
+                  <section id="detail-attention-card" class="detail-section detail-rich-list-section">
+                    <div class="detail-section-heading">
+                      <h3>Exceptions &amp; attention</h3>
+                      <span id="detail-attention-state" class="detail-context-badge">Clear</span>
+                    </div>
+                    <div id="detail-attention-list" class="detail-rich-list">
+                      <p class="detail-inline-empty">No production exceptions require attention.</p>
                     </div>
                   </section>
                   <section class="timeline-section detail-section">
-                    <h3>Order history</h3>
+                    <div class="detail-section-heading">
+                      <div><h3>Shopify order timeline</h3><p>Recent Shopify order events.</p></div>
+                      <span id="detail-sync-state" class="detail-context-badge">Current</span>
+                    </div>
                     <div id="timeline-stream-container" class="timeline-stream">
                       <div class="timeline-item">
                         <div class="timeline-icon-dot" aria-hidden="true"></div>
@@ -522,6 +622,10 @@
                         <span>Production details are available in this workspace.</span>
                       </div>
                     </div>
+                  </section>
+                  <section class="timeline-section detail-section" aria-labelledby="production-history-title">
+                    <div class="detail-section-heading"><div><h3 id="production-history-title">PrintMO production history</h3><p>Changes made to PrintMO production state.</p></div></div>
+                    <div id="production-history-container" class="timeline-stream"><p class="detail-inline-empty">No PrintMO production changes have been recorded.</p></div>
                   </section>
                 </section>
               </div>

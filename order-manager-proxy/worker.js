@@ -2152,7 +2152,6 @@ const ORDER_LINE_ITEMS_QUERY = `query PrintMOOrderLineItems($id: ID!, $after: St
     lineItems(first: 25, after: $after) {
       nodes {
         id sku title variantTitle quantity currentQuantity customAttributes { key value }
-        variant { id }
         originalUnitPriceSet { shopMoney { amount currencyCode } }
       }
       pageInfo { hasNextPage endCursor }
@@ -2162,21 +2161,48 @@ const ORDER_LINE_ITEMS_QUERY = `query PrintMOOrderLineItems($id: ID!, $after: St
 
 const ORDER_DETAIL_QUERY = `query PrintMOOrderDetail($id: ID!, $after: String) {
   order(id: $id) {
-    id name createdAt updatedAt note cancelledAt displayFinancialStatus displayFulfillmentStatus currencyCode
+    id name createdAt processedAt updatedAt cancelledAt closedAt cancelReason note tags test sourceName
+    email phone customerLocale
+    displayFinancialStatus displayFulfillmentStatus fullyPaid unpaid currencyCode
     currentSubtotalLineItemsQuantity
     currentSubtotalPriceSet { shopMoney { amount currencyCode } }
+    currentShippingPriceSet { shopMoney { amount currencyCode } }
     currentTotalDiscountsSet { shopMoney { amount currencyCode } }
+    currentTotalTaxSet { shopMoney { amount currencyCode } }
     currentTotalPriceSet { shopMoney { amount currencyCode } }
-    customer { firstName lastName displayName }
-    shippingAddress { name address1 address2 city provinceCode zip countryCodeV2 }
-    billingAddress { name address1 address2 city provinceCode zip countryCodeV2 }
-    fulfillments { id status createdAt updatedAt trackingInfo { number url company } }
+    totalReceivedSet { shopMoney { amount currencyCode } }
+    totalRefundedSet { shopMoney { amount currencyCode } }
+    totalOutstandingSet { shopMoney { amount currencyCode } }
+    paymentGatewayNames
+    transactions(first: 25) { id kind status gateway formattedGateway createdAt processedAt test errorCode amountSet { shopMoney { amount currencyCode } } }
+    shippingAddress { name company address1 address2 city province provinceCode zip country countryCodeV2 phone }
+    billingAddress { name company address1 address2 city province provinceCode zip country countryCodeV2 phone }
+    shippingLines(first: 10) { nodes { id title code source deliveryCategory custom originalPriceSet { shopMoney { amount currencyCode } } currentDiscountedPriceSet { shopMoney { amount currencyCode } } } }
+    fulfillmentOrders(first: 10) { nodes { id status requestStatus fulfillAt fulfillBy deliveryMethod { id methodType presentedName serviceCode minDeliveryDateTime maxDeliveryDateTime } } }
+    fulfillments { id name status displayStatus createdAt updatedAt deliveredAt estimatedDeliveryAt totalQuantity trackingInfo(first: 10) { number url company } }
+    customerJourneySummary { ready customerOrderIndex daysToConversion firstVisit { id occurredAt source sourceDescription sourceType landingPage referrerUrl referralCode } lastVisit { id occurredAt source sourceDescription sourceType landingPage referrerUrl referralCode } }
+    discountApplications(first: 10) { nodes { __typename allocationMethod targetSelection targetType value { __typename ... on MoneyV2 { amount currencyCode } ... on PricingPercentageValue { percentage } } ... on AutomaticDiscountApplication { title } ... on DiscountCodeApplication { code } ... on ManualDiscountApplication { title description } ... on ScriptDiscountApplication { title } } }
+    events(first: 25, reverse: true) { nodes { __typename id createdAt criticalAlert message ... on BasicEvent { action appTitle author secondaryMessage } ... on CommentEvent { action rawMessage } } }
     lineItems(first: 25, after: $after) {
       nodes {
-        id sku title variantTitle quantity currentQuantity customAttributes { key value }
-        variant { id }
-        originalUnitPriceSet { shopMoney { amount currencyCode } }
+        id sku title variantTitle vendor quantity currentQuantity unfulfilledQuantity requiresShipping customAttributes { key value }
+        originalUnitPriceSet { shopMoney { amount currencyCode } } originalTotalSet { shopMoney { amount currencyCode } } totalDiscountSet { shopMoney { amount currencyCode } } priceAfterAllDiscountsBeforeTaxesSet { shopMoney { amount currencyCode } }
         discountAllocations { allocatedAmountSet { shopMoney { amount currencyCode } } }
+        taxLines { title rate priceSet { shopMoney { amount currencyCode } } }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}`;
+
+const ORDER_DETAIL_LINE_ITEMS_QUERY = `query PrintMOOrderDetailLineItems($id: ID!, $after: String) {
+  order(id: $id) {
+    lineItems(first: 25, after: $after) {
+      nodes {
+        id sku title variantTitle vendor quantity currentQuantity unfulfilledQuantity requiresShipping customAttributes { key value }
+        originalUnitPriceSet { shopMoney { amount currencyCode } } originalTotalSet { shopMoney { amount currencyCode } } totalDiscountSet { shopMoney { amount currencyCode } } priceAfterAllDiscountsBeforeTaxesSet { shopMoney { amount currencyCode } }
+        discountAllocations { allocatedAmountSet { shopMoney { amount currencyCode } } }
+        taxLines { title rate priceSet { shopMoney { amount currencyCode } } }
       }
       pageInfo { hasNextPage endCursor }
     }
@@ -2747,7 +2773,6 @@ function moneyValue(moneySet, fallbackCurrency) {
 function normalizeLineItem(item) {
     return {
         id: item.id,
-        variantId: item.variant?.id || null,
         sku: item.sku || null,
         title: item.title || '',
         variantTitle: item.variantTitle || '',
@@ -3335,10 +3360,30 @@ function normalizePreviewLineItem(item, fallbackCurrency) {
         totalDiscount: moneyValue(item.totalDiscountSet, fallbackCurrency),
         currentTotal: moneyValue(item.priceAfterAllDiscountsBeforeTaxesSet, fallbackCurrency),
         customAttributes: Array.isArray(item.customAttributes) ? item.customAttributes : [],
+        taxLines: (item.taxLines || []).map(taxLine => ({
+            title: taxLine.title || 'Tax',
+            rate: Number(taxLine.rate || 0),
+            amount: moneyValue(taxLine.priceSet, fallbackCurrency)
+        })),
         discountAllocations: (item.discountAllocations || []).map(allocation =>
             moneyValue(allocation.allocatedAmountSet, fallbackCurrency)
         ).filter(Boolean)
     };
+}
+
+async function completeCanonicalDetailLineItems(env, orderId, connection, fallbackCurrency) {
+    const items = (connection?.nodes || []).map(item => normalizePreviewLineItem(item, fallbackCurrency));
+    const errors = [];
+    let pageInfo = connection?.pageInfo || { hasNextPage: false, endCursor: null };
+    while (pageInfo.hasNextPage) {
+        const result = await coordinatorGraphQL(env, ORDER_DETAIL_LINE_ITEMS_QUERY, { id: orderId, after: pageInfo.endCursor }, 'PrintMOOrderDetailLineItems');
+        errors.push(...(result.errors || []));
+        const next = result.data?.order?.lineItems;
+        if (!next) return { items, complete: false, errors };
+        items.push(...(next.nodes || []).map(item => normalizePreviewLineItem(item, fallbackCurrency)));
+        pageInfo = next.pageInfo || { hasNextPage: false, endCursor: null };
+    }
+    return { items, complete: true, errors };
 }
 
 async function completePreviewLineItems(env, orderId, connection, fallbackCurrency) {
@@ -3664,30 +3709,150 @@ function orderIdFromV1Path(pathname) {
 }
 
 async function fetchOrderDetail(env, gid) {
-    let result = await coordinatorGraphQL(env, ORDER_DETAIL_QUERY, { id: gid, after: null }, 'PrintMOOrderDetail');
+    const result = await coordinatorGraphQL(env, ORDER_DETAIL_QUERY, { id: gid, after: null }, 'PrintMOOrderDetail');
     const node = requireShopifyData(result, 'PrintMOOrderDetail').order;
     if (!node) throw Object.assign(new Error('Shopify order not found'), { status: 404, code: 'ORDER_NOT_FOUND' });
-    const lines = await completeLineItems(env, gid, node.lineItems, coordinatorGraphQL);
+    const currency = node.currencyCode || node.currentTotalPriceSet?.shopMoney?.currencyCode || null;
+    const lines = await completeCanonicalDetailLineItems(env, gid, node.lineItems, currency);
     const summary = await normalizeShopifySummary(env, { ...node, lineItems: { nodes: lines.items.map(item => ({
         ...item,
-        variant: { id: item.variantId },
-        originalUnitPriceSet: { shopMoney: { amount: item.unitPrice, currencyCode: node.currencyCode } }
+        originalUnitPriceSet: { shopMoney: { amount: item.unitPrice?.amount || '0', currencyCode: currency } }
     })), pageInfo: { hasNextPage: false } } }, result.errors || [], coordinatorGraphQL);
     const now = Date.now();
+    const rawErrors = [...(result.errors || []), ...lines.errors];
     const detail = {
         id: gid,
         summary,
         orderNote: node.note || null,
+        customer: {
+            displayName: selectOperationalCustomerName(node),
+            email: node.email || null,
+            phone: node.phone || null,
+            locale: node.customerLocale || null
+        },
         shippingAddress: node.shippingAddress || null,
+        billingAddress: node.billingAddress || null,
         fulfillments: node.fulfillments || [],
         lineItems: lines.items,
+        data: {
+            id: node.id,
+            displayName: node.name,
+            createdAt: node.createdAt,
+            processedAt: node.processedAt || null,
+            shopifyUpdatedAt: node.updatedAt,
+            closedAt: node.closedAt || null,
+            cancelledAt: node.cancelledAt || null,
+            cancelReason: node.cancelReason || null,
+            note: node.note || null,
+            tags: node.tags || [],
+            test: Boolean(node.test),
+            sourceName: node.sourceName || null,
+            customer: {
+                displayName: selectOperationalCustomerName(node),
+                email: node.email || null,
+                phone: node.phone || null,
+                locale: node.customerLocale || null
+            },
+            commerce: {
+                financialStatus: node.displayFinancialStatus || null,
+                fulfillmentStatus: node.displayFulfillmentStatus || null,
+                fullyPaid: Boolean(node.fullyPaid),
+                unpaid: Boolean(node.unpaid),
+                currencyCode: currency,
+                lineItemQuantity: Number(node.currentSubtotalLineItemsQuantity || 0),
+                subtotal: moneyValue(node.currentSubtotalPriceSet, currency),
+                shipping: moneyValue(node.currentShippingPriceSet, currency),
+                discounts: moneyValue(node.currentTotalDiscountsSet, currency),
+                tax: moneyValue(node.currentTotalTaxSet, currency),
+                total: moneyValue(node.currentTotalPriceSet, currency),
+                received: moneyValue(node.totalReceivedSet, currency),
+                refunded: moneyValue(node.totalRefundedSet, currency),
+                outstanding: moneyValue(node.totalOutstandingSet, currency),
+                paymentGateways: node.paymentGatewayNames || [],
+                transactions: (node.transactions || []).map(transaction => ({
+                    id: transaction.id,
+                    kind: transaction.kind,
+                    status: transaction.status,
+                    gateway: transaction.formattedGateway || transaction.gateway || null,
+                    createdAt: transaction.createdAt,
+                    processedAt: transaction.processedAt || null,
+                    test: Boolean(transaction.test),
+                    errorCode: transaction.errorCode || null,
+                    amount: moneyValue(transaction.amountSet, currency)
+                }))
+            },
+            delivery: {
+                shippingAddress: normalizePreviewAddress(node.shippingAddress),
+                billingAddress: normalizePreviewAddress(node.billingAddress),
+                shippingLines: (node.shippingLines?.nodes || []).map(line => ({
+                    id: line.id, title: line.title, code: line.code || null, source: line.source || null,
+                    deliveryCategory: line.deliveryCategory || null, custom: Boolean(line.custom),
+                    originalPrice: moneyValue(line.originalPriceSet, currency), currentPrice: moneyValue(line.currentDiscountedPriceSet, currency)
+                })),
+                fulfillmentOrders: (node.fulfillmentOrders?.nodes || []).map(fulfillmentOrder => ({
+                    id: fulfillmentOrder.id, status: fulfillmentOrder.status, requestStatus: fulfillmentOrder.requestStatus,
+                    fulfillAt: fulfillmentOrder.fulfillAt || null, fulfillBy: fulfillmentOrder.fulfillBy || null,
+                    method: fulfillmentOrder.deliveryMethod ? {
+                        type: fulfillmentOrder.deliveryMethod.methodType,
+                        presentedName: fulfillmentOrder.deliveryMethod.presentedName || null,
+                        serviceCode: fulfillmentOrder.deliveryMethod.serviceCode || null,
+                        minDeliveryAt: fulfillmentOrder.deliveryMethod.minDeliveryDateTime || null,
+                        maxDeliveryAt: fulfillmentOrder.deliveryMethod.maxDeliveryDateTime || null
+                    } : null
+                })),
+                fulfillments: (node.fulfillments || []).map(fulfillment => ({
+                    id: fulfillment.id, name: fulfillment.name, status: fulfillment.status,
+                    displayStatus: fulfillment.displayStatus || null, createdAt: fulfillment.createdAt,
+                    updatedAt: fulfillment.updatedAt, deliveredAt: fulfillment.deliveredAt || null,
+                    estimatedDeliveryAt: fulfillment.estimatedDeliveryAt || null,
+                    totalQuantity: Number(fulfillment.totalQuantity || 0), tracking: fulfillment.trackingInfo || []
+                }))
+            },
+            conversion: node.customerJourneySummary ? {
+                ready: Boolean(node.customerJourneySummary.ready),
+                customerOrderIndex: node.customerJourneySummary.customerOrderIndex,
+                daysToConversion: node.customerJourneySummary.daysToConversion,
+                firstVisit: normalizePreviewVisit(node.customerJourneySummary.firstVisit),
+                lastVisit: normalizePreviewVisit(node.customerJourneySummary.lastVisit)
+            } : null,
+            discounts: (node.discountApplications?.nodes || []).map(normalizePreviewDiscount),
+            lineItems: lines.items,
+            lineItemsComplete: lines.complete,
+            timeline: (node.events?.nodes || []).map(event => ({
+                id: event.id, type: event.__typename, createdAt: event.createdAt,
+                critical: Boolean(event.criticalAlert), message: event.message || event.rawMessage || null,
+                action: event.action || null, appTitle: event.appTitle || null,
+                author: event.author || null, secondaryMessage: event.secondaryMessage || null
+            }))
+        },
         fetchedAt: new Date(now).toISOString(),
         freshUntil: new Date(now + 300000).toISOString(),
         hardExpiresAt: new Date(now + 900000).toISOString(),
-        partial: !lines.complete || (result.errors || []).length > 0,
-        errors: result.errors || []
+        partial: !lines.complete || rawErrors.length > 0,
+        errors: rawErrors.map(previewError)
     };
     return detail;
+}
+
+async function d1ProductionEventsForOrder(env, shopId, gid) {
+    const result = await requireOrderDb(env).prepare(`
+      SELECT action, actor_id, changed_fields_json, outcome, created_at
+      FROM production_events
+      WHERE shop_id = ? AND order_gid = ?
+      ORDER BY created_at DESC
+      LIMIT 25
+    `).bind(shopId, gid).all();
+    return (result.results || []).map(row => {
+        let changedFields = [];
+        try { changedFields = Object.keys(JSON.parse(row.changed_fields_json || '{}')); } catch (_) { /* display remains useful without the field list */ }
+        return {
+            action: row.action || 'production.patch',
+            actor: row.actor_id || null,
+            fields: changedFields,
+            outcome: row.outcome || null,
+            createdAt: row.created_at || null
+        };
+    });
 }
 
 async function handleV1OrderDetailGet(request, env, allowOrigin, reqAllowHeaders) {
@@ -3699,12 +3864,16 @@ async function handleV1OrderDetailGet(request, env, allowOrigin, reqAllowHeaders
             readProductionMetafield(env, gid)
         ]);
         const shop = await d1Shop(env);
-        const assets = await d1AssetsForOrder(env, shop.id, gid);
+        const [assets, productionEvents] = await Promise.all([
+            d1AssetsForOrder(env, shop.id, gid),
+            d1ProductionEventsForOrder(env, shop.id, gid)
+        ]);
         await d1ProjectionUpsert(env, shop.id, gid, productionRead.state, productionRead.compareDigest, detail.summary, productionRead.order);
         return jsonResponse({
             ...detail.summary,
             production: productionForClient(gid, productionRead.state, productionRead.compareDigest, assets),
             attention: productionRead.state.attention,
+            productionEvents,
             detail
         }, allowOrigin, reqAllowHeaders);
     } catch (error) {

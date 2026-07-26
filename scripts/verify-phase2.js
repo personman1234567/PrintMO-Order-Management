@@ -84,7 +84,7 @@ function shopifyDetailNode() {
     email: 'fixture@example.com', phone: '555-0100', customerLocale: 'en-US',
     customer: { id: 'gid://shopify/Customer/301', displayName: 'Fixture Customer', email: 'fixture@example.com', phone: '555-0100' },
     shippingAddress: { name: 'Fixture Customer', address1: '123 Main St', city: 'Austin', provinceCode: 'TX', zip: '78701', country: 'United States', countryCodeV2: 'US' },
-    billingAddress: null,
+    billingAddress: { name: 'Fixture Billing', address1: '456 Billing Ave', city: 'Austin', provinceCode: 'TX', zip: '78702', country: 'United States', countryCodeV2: 'US' },
     fullyPaid: true, unpaid: false,
     currentShippingPriceSet: { shopMoney: { amount: '1.00', currencyCode: 'USD' } },
     currentTotalDiscountsSet: { shopMoney: { amount: '2.00', currencyCode: 'USD' } },
@@ -238,12 +238,41 @@ async function run() {
       if (request.query.includes('PrintMOShopifyPreviewOrderDetail')) {
         return new Response(JSON.stringify({ data: { order: shopifyDetailNode() } }), { status: 200, headers: { 'Content-Type': 'application/json', 'X-Shopify-API-Version': '2026-07' } });
       }
+      if (request.query.includes('PrintMOOrderDetailLineItems')) {
+        assert(!request.query.includes('variant {'), 'canonical detail pagination must not read the product variant relation');
+        return Response.json({ data: { order: { lineItems: { nodes: [{
+          id: 'gid://shopify/LineItem/102', sku: 'B002', title: 'Second Fixture Shirt', variantTitle: 'White / L',
+          quantity: 1, currentQuantity: 1, customAttributes: [],
+          originalUnitPriceSet: { shopMoney: { amount: '5.00', currencyCode: 'USD' } },
+          originalTotalSet: { shopMoney: { amount: '5.00', currencyCode: 'USD' } },
+          totalDiscountSet: { shopMoney: { amount: '0.00', currencyCode: 'USD' } },
+          priceAfterAllDiscountsBeforeTaxesSet: { shopMoney: { amount: '5.00', currencyCode: 'USD' } },
+          discountAllocations: [], taxLines: []
+        }], pageInfo: { hasNextPage: false, endCursor: null } } } } });
+      }
+      if (request.query.includes('PrintMOOrderDetail')) {
+        assert(!request.query.includes('customer {'), 'canonical detail must not read the customer relation');
+        assert(!request.query.includes('variant {'), 'canonical detail must not read the product variant relation');
+        assert(request.query.includes('customerJourneySummary'), 'canonical detail must include conversion data');
+        assert(request.query.includes('shippingLines'), 'canonical detail must include checkout shipping data');
+        assert(request.query.includes('events(first: 25'), 'canonical detail must include the Shopify timeline');
+        return new Response(JSON.stringify({ data: { order: shopifyDetailNode() } }), { status: 200, headers: { 'Content-Type': 'application/json', 'X-Shopify-API-Version': '2026-07' } });
+      }
       if (request.query.includes('PrintMOShopifyPreviewOrderLineItems')) {
         return Response.json({ data: { order: { lineItems: { nodes: [{
           id: 'gid://shopify/LineItem/102', sku: 'B002', title: 'Second Fixture Shirt', variantTitle: 'White / L', vendor: 'Fixture Vendor', quantity: 1, currentQuantity: 1, unfulfilledQuantity: 1, requiresShipping: true,
           customAttributes: [], variant: { id: 'gid://shopify/ProductVariant/202' },
           originalUnitPriceSet: { shopMoney: { amount: '5.00', currencyCode: 'USD' } }, originalTotalSet: { shopMoney: { amount: '5.00', currencyCode: 'USD' } },
           totalDiscountSet: { shopMoney: { amount: '0.00', currencyCode: 'USD' } }, priceAfterAllDiscountsBeforeTaxesSet: { shopMoney: { amount: '5.00', currencyCode: 'USD' } }, discountAllocations: []
+        }], pageInfo: { hasNextPage: false, endCursor: null } } } } });
+      }
+      if (request.query.includes('PrintMOOrderLineItems')) {
+        assert(!request.query.includes('variant {'), 'canonical detail pagination must not read the product variant relation');
+        return Response.json({ data: { order: { lineItems: { nodes: [{
+          id: 'gid://shopify/LineItem/102', sku: 'B002', title: 'Second Fixture Shirt', variantTitle: 'White / L',
+          quantity: 1, currentQuantity: 1, customAttributes: [], variant: { id: 'gid://shopify/ProductVariant/202' },
+          originalUnitPriceSet: { shopMoney: { amount: '5.00', currencyCode: 'USD' } },
+          discountAllocations: []
         }], pageInfo: { hasNextPage: false, endCursor: null } } } } });
       }
       if (request.query.includes('PrintMOBootstrapOrders')) {
@@ -297,13 +326,13 @@ async function run() {
     }
     if (target.endsWith('/order-manager/v1/supplier/ss/commit')) {
       const request = JSON.parse(options.body);
-      assert.deepEqual(request.lines, [{ sku: 'B001', qty: 2 }]);
+      assert.deepEqual(request.lines, [{ sku: 'B001', qty: 2 }, { sku: 'B002', qty: 1 }]);
       return Response.json({
         ok: true,
         orderNumber: 'SS-9001',
-        count: 1,
+        count: 2,
         subtotal: 8.5,
-        skuCount: 1,
+        skuCount: 2,
         testOrder: true,
       });
     }
@@ -429,6 +458,33 @@ async function run() {
     const renderCallsAfterDetail = calls.filter(call => call.target.startsWith('https://render.example.test')).length;
     assert.equal(renderCallsAfterDetail, renderCallsAfterPreview, 'Shopify detail preview must not read the Redis/Render adapter');
 
+    const renderCallsBeforeCanonicalDetail = calls.filter(call => call.target.startsWith('https://render.example.test')).length;
+    const canonicalDetail = await worker.fetch(
+      new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}`, { headers }),
+      env
+    );
+    assert.equal(canonicalDetail.status, 200, 'canonical operational order detail must succeed');
+    const canonicalDetailJson = await canonicalDetail.json();
+    assert.equal(canonicalDetailJson.detail.orderNote, 'Fixture note');
+    assert.equal(canonicalDetailJson.detail.customer.email, 'fixture@example.com');
+    assert.equal(canonicalDetailJson.detail.customer.phone, '555-0100');
+    assert.equal(canonicalDetailJson.detail.customer.locale, 'en-US');
+    assert.equal(canonicalDetailJson.detail.shippingAddress.address1, '123 Main St');
+    assert.equal(canonicalDetailJson.detail.billingAddress.address1, '456 Billing Ave');
+    assert.equal(canonicalDetailJson.detail.lineItems.length, 2, 'canonical detail must paginate all line items');
+    assert.equal(canonicalDetailJson.commerce.financialStatus, 'PAID');
+    assert.equal(canonicalDetailJson.production.stage, 'received');
+    assert.equal(canonicalDetailJson.attention.required, false);
+    assert.equal(canonicalDetailJson.detail.customer.id, undefined, 'canonical detail must use direct Order contact fields');
+    assert.equal(canonicalDetailJson.detail.data.delivery.shippingLines[0].title, 'Standard');
+    assert.equal(canonicalDetailJson.detail.data.conversion.customerOrderIndex, 2);
+    assert.equal(canonicalDetailJson.detail.data.discounts[0].code, 'FIXTURE');
+    assert.equal(canonicalDetailJson.detail.data.timeline[0].action, 'create');
+    assert.equal(canonicalDetailJson.detail.data.commerce.shipping.amount, '1.00');
+    assert.equal(canonicalDetailJson.detail.data.commerce.tax.amount, '2.60');
+    const renderCallsAfterCanonicalDetail = calls.filter(call => call.target.startsWith('https://render.example.test')).length;
+    assert.equal(renderCallsAfterCanonicalDetail, renderCallsBeforeCanonicalDetail, 'canonical detail must remain Redis-free');
+
     const productionRead = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
       headers: { ...headers, Origin: 'https://extensions.shopifycdn.com' }
     }), env);
@@ -550,6 +606,28 @@ async function run() {
     'Shopify order detail must expose both ordered → ready readiness sequences'
   );
   assert(
+    previewHtml.indexOf('id="detail-mockups-strip"') < previewHtml.indexOf('id="detail-notes-wrapper"')
+      && previewHtml.indexOf('id="detail-notes-wrapper"') < previewHtml.indexOf('id="detail-production-card"'),
+    'persistent detail rail must keep artwork, customer instructions, then production controls in workflow order'
+  );
+  assert.equal(
+    (previewHtml.match(/id="production-status-pill"/g) || []).length,
+    1,
+    'order detail must expose exactly one aggregate readiness summary'
+  );
+  assert(!previewHtml.includes('detail-header-ready-summary'), 'duplicate header readiness summary must stay removed');
+  assert.equal(
+    (previewHtml.match(/class="detail-tab-item/g) || []).length,
+    5,
+    'rich workbench must expose five workflow-oriented detail tabs'
+  );
+  assert(
+    previewHtml.includes('id="detail-data-status"')
+      && previewHtml.includes('id="detail-data-retry"')
+      && previewHtml.includes('id="tab-activity"'),
+    'canonical detail must expose loading/error recovery and activity/exception regions'
+  );
+  assert(
     previewHtml.includes('role="tablist"')
       && previewHtml.includes('role="tab"')
       && previewHtml.includes('role="tabpanel"')
@@ -563,7 +641,10 @@ async function run() {
   const detailEnhancements = fs.readFileSync(path.join(root, 'order-manager-web', 'detail-overlay-enhancements.js'), 'utf8');
   assert(
     detailEnhancements.includes('function wireDetailTabs()')
-      && detailEnhancements.includes('function activateDetailTab('),
+      && detailEnhancements.includes('function activateDetailTab(')
+      && detailEnhancements.includes('function hydrateCanonicalDetail(')
+      && detailEnhancements.includes('detailHydrationGeneration')
+      && detailEnhancements.includes('canonicalDetailStillActive'),
     'the Shopify detail controller must own functional tab navigation'
   );
   assert(
@@ -586,6 +667,11 @@ async function run() {
   );
   const webShim = fs.readFileSync(path.join(root, 'order-manager-web', 'web-shim.js'), 'utf8');
   assert(webShim.includes('apiErrorMessage'), 'web errors must render structured Worker errors instead of [object Object]');
+  assert(
+    webShim.includes('window.api.getOrderDetail')
+      && webShim.includes('`/order-manager/v1/orders/${encodeURIComponent(orderId)}`'),
+    'shared Shopify workbench must hydrate from the canonical on-demand detail endpoint'
+  );
   assert(webShim.includes('candidateAssetObjectUrl'), 'Shopify board must hydrate private Designer Studio manifests through authenticated asset tickets');
   assert(webShim.includes('candidateMutationChains'), 'Shopify production mutations must serialize per order');
   assert(webShim.includes('updateBoardMove'), 'Shopify board moves must persist stage and blanks state atomically');

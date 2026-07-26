@@ -28,8 +28,8 @@
 
 Candidate deployment on 2026-07-26:
 
-- Worker version: `bbcaa359-2cc9-4115-b612-c58f950c0cf6`
-- Pages deployment: `8aa312c1.print-mo-order-manager.pages.dev`
+- Worker version: `1552669a-4003-4f2a-8e27-45b8480165e1`
+- Pages deployment: `a708cc2c.print-mo-order-manager.pages.dev`
 - Shopify app version: `designer-assets-idempotency-2026-07-23`
 - Stateless supplier gateway commit: `420ff72`
 

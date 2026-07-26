@@ -97,11 +97,12 @@ The board uses the bounded Shopify/D1 summary mapped through `web-shim.js` into 
 - Front, back, and extra private design files with preview/download behavior.
 - PrintMO internal production notes.
 - Print progress as printed pieces versus total apparel.
-- Line-item quantity, title, variant title, and calculated line total.
-- Current order discount and current order total.
+- Line-item quantity, title, SKU, variant title, and calculated line total; internal asset metadata stays out of the item table.
+- Current subtotal, named shipping or local-pickup selection, discount when applied, tax total, and total. Tax breakdown is available behind a collapsed disclosure.
+- Shopify delivery/fulfillment, conversion, discounts, and timeline data when returned, plus a separate PrintMO production history.
 - PrintMO blanks/prints ordered and ready controls.
 
-The shared detail currently operates on the board renderer object. It does not load or visualize the richer canonical `GET /order-manager/v1/orders/:gid` response when a card opens.
+The shared Shopify-board workbench first paints from the bounded board object, then loads and renders the canonical `GET /order-manager/v1/orders/:gid` response. Optional Shopify permission failures remain partial-data notices rather than order exceptions.
 
 ### Separate Shopify-live detail
 
@@ -142,7 +143,7 @@ The board DTO also returns sync freshness/partial-error metadata, production sta
 
 ### Canonical rich-detail selection
 
-`GET /order-manager/v1/orders/:gid` currently adds Shopify order note, fuller shipping/billing addresses, fulfillment/tracking records, and line-item discount allocations. Those values are returned under the canonical detail response, but the shared card click does not currently consume that rich detail.
+`GET /order-manager/v1/orders/:gid` adds Shopify order note, approved customer email/phone/locale when returned, fuller shipping/billing addresses, fulfillment/tracking records, and line-item discount allocations. The shared Shopify-board workbench loads these values on demand after its bounded summary first paint.
 
 ### Shopify-live diagnostic selection
 
@@ -170,12 +171,12 @@ These fields are especially easy to overlook because no new Shopify query is req
 | Currency code | Board DTO | Amounts are formatted with a hard-coded dollar sign in the shared renderer. |
 | Shopify last-updated time | Board DTO | Not shown on shared cards/detail. |
 | Current subtotal line-item quantity | Board DTO | Renderer derives counts from line items instead. |
-| Line-item ID, variant ID, SKU, and custom attributes | Board DTO/renderer object | SKU and properties are not shown in shared detail. |
+| Line-item ID, variant ID, SKU, and custom attributes | Board DTO/renderer object | SKU is shown in its own shared-detail column; only allowlisted asset attributes are used outside the table. |
 | Line-item pagination completeness and sync errors/freshness | Board DTO | No stale/partial/error indicator is shown on shared cards. |
 | Attention required/reasons | Board DTO | Not shown by the shared renderer. |
-| Shopify order note | Canonical detail DTO | Shared detail shows PrintMO internal notes instead and does not load the canonical detail. |
-| Full shipping/billing address | Canonical detail DTO | Not shown in shared detail. |
-| Fulfillment tracking | Canonical detail DTO | Not shown in shared detail. |
+| Shopify order note | Canonical detail DTO | Shown separately from PrintMO internal notes in shared detail. |
+| Full shipping/billing address | Canonical detail DTO | Shown in the shared Fulfillment tab when returned. |
+| Fulfillment tracking | Canonical detail DTO | Shown in the shared Fulfillment tab when returned. |
 | Line-item discount allocations | Canonical detail DTO | Shared detail shows only aggregate discount. |
 
 ## Visualization-Relevant Shopify Inventory
@@ -244,12 +245,12 @@ PrintMO must continue distinguishing:
 | Data point | Shopify path | Availability now | Relevance |
 |---|---|---|---|
 | Shop and presentment currency | `currencyCode`, `presentmentCurrencyCode`; `MoneyBag` values | Shop currency queried; presentment values not normalized | Primary/detail for non-USD correctness. |
-| Current subtotal, shipping, discount, tax, total | `currentSubtotalPriceSet`, `currentShippingPriceSet`, `currentTotalDiscountsSet`, `currentTotalTaxSet`, `currentTotalPriceSet` | Board has subtotal/discount/total; live detail has all | Primary/detail. |
+| Current subtotal, shipping, discount, tax, total | `currentSubtotalPriceSet`, `currentShippingPriceSet`, `currentTotalDiscountsSet`, `currentTotalTaxSet`, `currentTotalPriceSet` | Board has subtotal/discount/total; canonical shared detail and live detail have all | Primary/detail. |
 | Original totals | `subtotalPriceSet`, `originalTotalPriceSet`, original shipping/tax/discount fields | API available, mostly not queried | Detail/history; compare only with clear “original” labeling. |
 | Received, outstanding, refundable/capturable | `totalReceivedSet`, `totalOutstandingSet`, `netPaymentSet`, `totalCapturableSet`, `capturable`, `refundable` | Received/outstanding live detail; others not queried | Detail/exception. |
 | Refund totals | `totalRefundedSet`, `totalRefundedShippingSet`, `refundDiscrepancySet` | Total refunded live detail | Exception/history. |
 | Discounts | `discountApplications`, `discountCode`, `discountCodes`, line/shipping allocations | Applications and allocations live detail; code convenience fields not queried | Detail. |
-| Tax | `currentTaxLines`, `taxLines`, `taxesIncluded`, `taxExempt`, `estimatedTaxes` | Aggregate current tax live detail | Detail/exception. |
+| Tax | `currentTaxLines`, `taxLines`, `taxesIncluded`, `taxExempt`, `estimatedTaxes` | Aggregate tax and line-item tax lines in canonical shared detail; tax breakdown is collapsed by default | Detail/exception. |
 | Duties and fees | `additionalFees`, current/original duties and additional-fee sets, `dutiesIncluded` | API available, not queried | Conditional/detail for international orders. |
 | Tips and cash rounding | `totalTipReceivedSet`, `totalCashRoundingAdjustment` | API available, not queried | Conditional/detail. |
 | Payment gateways and transactions | `paymentGatewayNames`, `transactions`, `transactionsCount` | Gateways/transactions live detail | Detail/exception. |
@@ -264,7 +265,7 @@ Transaction detail available from Shopify includes amount, kind, status, gateway
 | Data point | Shopify path | Availability now | Relevance |
 |---|---|---|---|
 | Requires shipping / fulfillable | `requiresShipping`, `fulfillable` | Order-level fields not queried | Primary/detail for physical-production routing. |
-| Shipping selection | `shippingLines`: title, code, source, category, custom flag, original/current price, discounts | Live detail | Detail. |
+| Shipping selection | `shippingLines`: title, code, source, category, custom flag, original/current price, discounts | Canonical shared detail and live detail | Detail. |
 | Legacy first shipping line | `shippingLine` | API available, not queried | Usually hidden; prefer the connection. |
 | Fulfillment-order status | `fulfillmentOrders.status`, `requestStatus` | Live detail | Primary/detail. |
 | Assigned location | `fulfillmentOrders.assignedLocation` | API available, not queried | Detail; useful if production/fulfillment location varies. |
