@@ -6,7 +6,24 @@
 - Migrating legacy production state/assets.
 - Deciding whether the legacy Redis board can be retired.
 
-## 1. Build and Contract Checks
+## Skip This When
+
+- You are making an ordinary candidate code change without deploying, migrating, or deciding cutover: read [Shopify-primary data plane](../architecture/shopify-primary-data-plane.md).
+- You do not have owner authorization for the intended external mutation.
+
+## Section Map
+
+- [Build and Contract Checks](#build-and-contract-checks)
+- [Infrastructure Checks](#infrastructure-checks)
+- [Shopify Release Gate](#shopify-release-gate)
+- [Migration](#migration)
+- [Acceptance](#acceptance)
+- [Security Hardening Gate](#security-hardening-gate)
+- [Cutover](#cutover)
+- [Recovery](#recovery)
+- [Common Failure Modes & Recovery](#common-failure-modes--recovery)
+
+## Build and Contract Checks
 
 Run:
 
@@ -21,7 +38,7 @@ npx wrangler deploy --dry-run
 
 The Render repository must also pass `npm test`.
 
-## 2. Infrastructure Checks
+## Infrastructure Checks
 
 1. Confirm `ORDER_DB` resolves to the production D1 database.
 2. Apply all remote migrations.
@@ -31,13 +48,13 @@ The Render repository must also pass `npm test`.
 6. Keep `SS_TEST_ORDER=1`.
 7. Confirm the stateless supplier gateway deployment contains `/order-manager/v1/supplier/ss/commit`.
 
-## 3. Shopify Release Gate
+## Shopify Release Gate
 
 Release `shopify.app.toml` and approve the permission update on the real **Print-MO** store. Required candidate scopes include `write_orders` and `read_all_orders` in addition to the already justified read scopes.
 
 Do not run canonical migration writes before the installed app has the new scopes and app-owned metafield definition.
 
-## 4. Migration
+## Migration
 
 1. Preserve the existing Redis export and checksums.
 2. Enable `MIGRATION_UPSTREAM_ENABLED=1`.
@@ -83,7 +100,7 @@ npx wrangler d1 execute printmo-order-manager --remote --command "SELECT checkpo
 Require the recorded checksum, `matched: 19`, `quarantined: 0`, and an empty
 `errors` array before treating the catch-up as verified.
 
-## 5. Acceptance
+## Acceptance
 
 Verify:
 
@@ -99,7 +116,7 @@ Verify:
 - invalid/missing D1 does not render an authoritative empty board;
 - private artwork requires a valid short-lived ticket.
 
-## 6. Security Hardening Gate
+## Security Hardening Gate
 
 Before owner go/no-go:
 
@@ -113,7 +130,7 @@ Before owner go/no-go:
 
 Do not describe these controls as active until their configuration and verification evidence exist.
 
-## 7. Cutover
+## Cutover
 
 Cutover requires owner go/no-go.
 
@@ -135,3 +152,12 @@ Do not delete Redis or enable live S&S ordering as part of the same unobserved c
 - Projection loss: rebuild from Shopify metafields and commerce reads.
 - Confirmed supplier order with metadata repair list: do not resubmit; run integrity reconciliation.
 - D1 corruption: use Time Travel/export, then rebuild projections from Shopify.
+
+## Common Failure Modes & Recovery
+
+| Failure | Cause | Recovery |
+|---|---|---|
+| Migration execute targets the wrong shop | Target confirmation was weak | Use the registered migration command; require exact `--shop` and `--confirm-shop`. |
+| Cutover proceeds with incomplete evidence | Candidate deployment was confused with acceptance | Complete every acceptance/security gate and obtain owner go/no-go. |
+| Supplier order is resent after an ambiguous result | `unknown` was treated as failure | Reconcile externally; never resubmit blindly. |
+| Redis is deleted during the same unobserved change | Retirement and cutover risks were combined | Retain the approved export and observe candidate operation before separate deletion approval. |

@@ -15,6 +15,21 @@ Provide a fast, non-clunky digital representation of physical shop shelf invento
 
 ---
 
+## Current Continuation State
+
+- **Current state**: The UI concept and manual assignment direction are spec-ready; Shopify inventory semantics and production-allocation contracts still require implementation-level verification.
+- **Next safe action**: Verify Shopify location/inventory mutation contracts and define an idempotent allocation ledger linking shelf adjustments to canonical order GIDs.
+- **Remaining blockers**: Inventory authority, adjustment reasons/audit, concurrent allocation, returns/corrections, and supplier-restock integration.
+- **Owner / external actions**: Confirm the physical shelf location model, initial stocked catalog, reorder thresholds, and who may adjust counts.
+- **Last verified evidence**: No inventory implementation exists; this remains a spec targeting Shopify plus Worker-mediated operations.
+
+## Open Questions & Brainstorming
+
+1. Is Shopify inventory alone sufficient for allocation history, or is a D1 app-only allocation ledger required?
+2. How should corrections, returns, damaged stock, and abandoned production assignments reverse counts?
+3. What concurrency rule prevents two operators from assigning the same final unit?
+4. Should restock suggestions enter an existing batch draft or create a separate replenishment intent?
+
 ## Current Shop Workflow vs Target Solution
 
 | Aspect | Current Shop Workflow | Target PrintMO Feature |
@@ -53,7 +68,7 @@ Provide a fast, non-clunky digital representation of physical shop shelf invento
 
 ---
 
-## Technical Specification & UI Architecture
+## Technical Specification & Task Checklist — UI Architecture
 
 ### 1. Non-Clunky UI Layout (Digital Whiteboard View)
 - Accessible via a fast dedicated top-bar tab or slide-out overlay drawer (**`[ Alt + I ]` shortcut**).

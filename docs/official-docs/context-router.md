@@ -1,32 +1,45 @@
 # Context Router
 
-> **Fast Tabular Lookup Route for AI Agents & Developers**
+> Human-readable fallback for targeted retrieval. The structured authority is [retrieval-manifest.json](retrieval-manifest.json).
 
-Use this router to find the exact document and code entry point for your task. Read *only* the indicated document and source file range to minimize token usage.
+## Preferred Lookup
 
----
+```text
+npm run repo -- route "<task, symptom, error, path, or symbol>"
+```
 
-## Task & Symptom Routing Table
+The command ranks exact document sections, source symbols, registered tools, verification, and stop conditions. Use this table when browsing manually.
 
-| Task / Symptom / Focus Area | First Doc to Read | Primary Source Code Files | Adjacent / Secondary Docs | Stop / Ask Condition |
+<!-- route:electron-ipc route:legacy-redis route:order-data-inventory route:kanban-ui route:shopify-data-plane route:blanks-batching route:web-shopify-port route:shopify-detail-scope-failure route:idempotency-key-rejection route:troubleshooting route:build-and-setup route:feature-progression route:candidate-cutover route:repository-tools route:documentation-system route:domain-language route:legacy-history -->
+
+## Task and Symptom Routing
+
+| Task, symptom, or focus | First section | Primary symbols/files | Tool / verification | Stop condition |
 |---|---|---|---|---|
-| Modifying Electron IPC, Redis storage, or main process initialization | [architecture/ipc-and-storage.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/ipc-and-storage.md) | `main.js:7-180`, `preload.js:1-25` | [runbooks/troubleshooting.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/runbooks/troubleshooting.md) | Stop & ask if mutating Redis list structures or changing key names |
-| UI Kanban drag-and-drop, card layout, or detail modal adjustments | [workflows/order-ingestion-kanban.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/workflows/order-ingestion-kanban.md) | `renderer.js`, `index.html` | [reference/ui-containers-and-views.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/reference/ui-containers-and-views.md) | Stop & ask if adding new Kanban columns or changing order state enums |
-| Auditing UI containers, card tiles, modal overlays, or field data origins | [reference/ui-containers-and-views.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/reference/ui-containers-and-views.md) | `index.html`, `renderer.js` | [reference/source-map.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/reference/source-map.md) | Stop & ask if altering core JSON schema field paths in Redis |
-| Planning Shopify-board card hierarchy, dashboard polish, responsive information density, or UI audit remediation | [future-plans/shopify-board-ui-audit-and-blueprint.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/shopify-board-ui-audit-and-blueprint.md) | `order-manager-web/index.html`, `renderer.js`, `order-manager-web/desktop.css`, `order-manager-web/mobile.css` | [reference/ui-containers-and-views.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/reference/ui-containers-and-views.md) | Keep Legacy Redis rendering unchanged; stop before changing production-state enums or list/detail API budgets |
-| S&S Activewear SKU aggregation, pricing, or batch ordering | [workflows/blanks-batching.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/workflows/blanks-batching.md) | `main.js:206-258`, `renderer.js:1330-1340` | [architecture/external-apis.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/external-apis.md) | Stop & ask if modifying S&S authentication or payload schemas |
-| Web client porting, Cloudflare Worker proxy, or browser storage fallback | [workflows/web-shopify-porting.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/workflows/web-shopify-porting.md) | `order-manager-web/*`, `order-manager-proxy/worker.js` | [architecture/system-overview.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/system-overview.md) | Stop & ask if modifying CORS headers or environment secrets |
-| Shopify board, canonical production metadata, D1, migration, reconciliation, Admin block, or Redis-free candidate diagnosis | [architecture/shopify-primary-data-plane.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/shopify-primary-data-plane.md) | `order-manager-proxy/worker.js`, `order-manager-proxy/migrations/`, `order-manager-web/web-shim.js`, `order-manager-proxy/extensions/printmo-production-status/` | [runbooks/shopify-candidate-cutover.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/runbooks/shopify-candidate-cutover.md), [workflows/web-shopify-porting.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/workflows/web-shopify-porting.md) | Stop before cutover, live S&S enablement, migration overwrite, or broader protected-customer-data access |
-| Troubleshooting UI freezes, base64 payload traps, or broken attachments | [runbooks/troubleshooting.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/runbooks/troubleshooting.md) | `main.js:149-177`, `renderer.js:910-961` | [architecture/ipc-and-storage.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/ipc-and-storage.md) | Stop & ask if data corruption in Redis list items is detected |
-| Development setup, running local Electron builds, or packaging | [runbooks/dev-setup-and-build.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/runbooks/dev-setup-and-build.md) | `package.json`, `scripts/prepare-cloudflare-pages-upload.sh` | [reference/test-map.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/reference/test-map.md) | Stop & ask if build tools fail or electron-builder fails |
-| Planning or building a new feature proposal | [future-plans/README.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/README.md) | Target plan in `docs/official-docs/future-plans/` | [runbooks/doc-governance.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/runbooks/doc-governance.md) | Stop & ask if feature requirements contradict shipped invariants |
-| Deploying, migrating, accepting, or cutting over the Shopify-primary candidate | [runbooks/shopify-candidate-cutover.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/runbooks/shopify-candidate-cutover.md) | `order-manager-proxy/wrangler.jsonc`, `order-manager-proxy/shopify.app.toml`, `scripts/run-shadow-migration.js` | [architecture/shopify-primary-data-plane.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/shopify-primary-data-plane.md), [future-plans/shopify-live-api-sync-admin-blocks-plan.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/shopify-live-api-sync-admin-blocks-plan.md) | Owner approval is required for Shopify permissions, final cutover, live S&S, and permanent Redis deletion |
-| Reviewing historical notes or archived plans | [legacy/README.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/legacy/README.md) | `docs/official-docs/legacy/*` | N/A | Stop & ask if attempting to revive deprecated architectural patterns |
+| Electron IPC, preload, OIDC, desktop initialization | [IPC bridge and Electron transport](architecture/ipc-and-storage.md#ipc-bridge-and-electron-transport) | `main.js → workerFetch, createWindow`; `preload.js → contextBridge.exposeInMainWorld` | `npm run repo -- verify phase1` | Authentication authority, secrets, or Worker trust-boundary change |
+| Legacy Redis queue, Base64 assets, fallback behavior | [Legacy Redis boundary](architecture/ipc-and-storage.md#legacy-redis-boundary) | `worker.js → shopifyOrdersQueue`; `renderer.js → splitOrderAssets` | `npm run repo -- redis backup`; Phase 1 | Restore, deletion, or schema rewrite |
+| Order data inventory, Shopify field availability, current-versus-potential visualization | [Order data visualization inventory](reference/order-data-visualization-inventory.md#purpose-and-status-vocabulary) | `worker.js → ORDER_SUMMARIES_QUERY, SHOPIFY_PREVIEW_ORDER_DETAIL_QUERY`; `web-shim.js → candidateOrderToBoard`; `renderer.js → makeCard, openDetail` | `npm run docs:check` | Stop before changing scopes, protected-customer-data use, summary payload size, or production authority |
+| Shared Kanban cards, drag/drop, detail opening | [Shared board render and mutation flow](workflows/order-ingestion-kanban.md#shared-board-render-and-mutation-flow) | `renderer.js → renderBoard, openDetail`; `web-shim.js → updateBoardMove` | Phase 2 | Canonical stage or source-isolation change |
+| UI containers, card fields, modal overlays | [UI containers reference](reference/ui-containers-and-views.md#global-application-layout--top-level-containers) | `index.html`, `renderer.js`, `desktop.css`, `mobile.css` | Phase 2 plus representative viewport | Core production schema change |
+| S&S SKU aggregation or batch state | [Batch submission and state update](workflows/blanks-batching.md#batch-submission--state-update) | `blanks-batches.js → saveBatchForOrders`; `worker.js → /order-manager/v1/batches/commit` | Phase 2 | Live supplier enablement or payload/auth changes |
+| Embedded Shopify web, mobile iframe, Pages bundle | [Source-switched operational board](workflows/web-shopify-porting.md#source-switched-operational-board) | `web-shim.js`, `shopify-preview.js`, `shopify-embedded-mobile.js` | Phase 2; `npm run prepare:cloudflare` | CORS, scopes, or browser-visible secrets |
+| Shopify detail says `404 - [object Object]` or `ACCESS_DENIED` | [Shopify live detail scope failure](runbooks/troubleshooting.md#shopify-live-detail-scope-failure) | `worker.js → fulfillmentOrders`; `web-shim.js → apiErrorMessage` | Phase 2 plus known live-order check | Scope changes require Shopify release and approval |
+| Admin block says `A valid idempotency key is required` | [Admin-block idempotency rejection](runbooks/troubleshooting.md#admin-block-idempotency-key-rejection) | `production-client.mjs → idempotencyKey`; Worker validation | Proxy tests/build plus one live save | Extension fix requires Shopify app release |
+| Shopify production metadata, D1, R2, webhooks, reconciliation | [Data-plane ownership](architecture/shopify-primary-data-plane.md#ownership) | `worker.js`; migrations; Admin block | Phase 2 and proxy package tests | Cutover, permissions, live S&S, Redis retirement |
+| Known runtime symptom or misleading error | [Diagnostic symptom matrix](runbooks/troubleshooting.md#diagnostic-symptom-matrix) | Exact error string through `npm run repo -- route` | Route-selected check | Do not mutate data before establishing the fault boundary |
+| Development setup, build, packaging | [Development workflow commands](runbooks/dev-setup-and-build.md#development-workflow-commands) | `package.json`, build scripts | `npm run docs:check`; registered build tool | Packaging would introduce secrets |
+| New proposal or meaningful partial feature work | [Feature lifecycle](future-plans/README.md#feature-lifecycle-stages) | Target plan; governance | `npm run docs:check` | Shipped invariant conflict or owner-gated external change |
+| Migration, parity, candidate acceptance, cutover | [Migration](runbooks/shopify-candidate-cutover.md#migration) | migration/parity scripts; Worker flags | Registered migration/parity tools; Phase 2 | Owner approval gates |
+| Existing script or reusable helper | [Registered commands](reference/tool-registry.md#registered-commands) | `scripts/repo-tool.js`; retrieval manifest | `npm run repo -- tools` | Do not promote one-off task artifacts |
+| Living documentation, routing, promotion, governance | [System model](reference/living-documentation-system.md#system-model) | `AGENTS.md`; manifest; docs validator | `npm run docs:check` | Do not create task diaries or duplicate authorities |
+| Confusing domain terms or identifiers | [Semantic boundaries](reference/domain-glossary.md#semantic-boundaries) | Glossary authority links | `npm run repo -- route "<term>"` | Verify historical terminology against current code |
+| Historical or archived plans | [Legacy index](legacy/README.md#quarantined-files-index) | Explicit direct file access; legacy is ignored by default search | `rg --no-ignore` only when necessary | Never revive deprecated behavior without current verification |
 
----
+## Retrieval Discipline
 
-## Quick Navigation Instructions
-
-1. Identify your current objective or issue in the **Task / Symptom** column.
-2. Click the link in **First Doc to Read** and review the document header (`## Use This When`, `## Skip This When`).
-3. Open the corresponding **Primary Source Code Files** for targeted editing.
+1. Start with one route.
+2. Read the specified section, not the entire documentation tree.
+3. Inspect named symbols rather than broad files where possible.
+4. Use existing registered tools before creating helpers.
+5. Run only the routed verification plus checks required by the actual blast radius.
+6. Promote durable knowledge after verification; keep ordinary task detail local.

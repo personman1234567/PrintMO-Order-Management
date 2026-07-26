@@ -11,6 +11,14 @@ Provide a receiving workflow for incoming blank-apparel shipments from S&S Activ
 
 ---
 
+## Current Continuation State
+
+- **Current state**: Draft requirements and the Shopify/D1 target boundary are recorded; no receiving implementation has shipped.
+- **Next safe action**: Resolve the scan/manual and partial-shipment choices, then define D1 entities and canonical production-state effects.
+- **Remaining blockers**: Receiving identity, partial quantity semantics, and relationship to in-house inventory.
+- **Owner / external actions**: Choose the preferred shop-floor input method and partial-shipment presentation.
+- **Last verified evidence**: Plan direction was aligned to the Shopify/D1 Worker boundary on 2026-07-23.
+
 ## Open Questions & Brainstorming
 
 1. **Barcode / Packing Slip Scanning**: Should we support USB barcode scanner inputs for checking in S&S packing slips, or rely on manual click check-offs?

@@ -3,6 +3,14 @@
 - **Status**: `[Spec Ready]`
 - **Owner / Target Milestone**: `v1.4 Shopify cutover polish`
 
+## Current Continuation State
+
+- **Current state**: Audit and implementation blueprint exist, the redesign itself is not implemented, and the current-versus-available field inventory is now captured in [Order Data Visualization Inventory](../reference/order-data-visualization-inventory.md).
+- **Next safe action**: Reconcile this blueprint's information hierarchy with the field inventory before choosing the new layout or beginning Pass 1; keep Legacy Redis behavior unchanged.
+- **Remaining blockers**: Owner confirmation of stale thresholds and implementation capacity.
+- **Owner / external actions**: Confirm operational thresholds only; the visual direction is already established.
+- **Last verified evidence**: Candidate code and Shopify board/detail screenshots audited on 2026-07-23; the separate detail-open repair is explicitly outside this redesign.
+
 ## Summary & Intent
 
 This plan turns the proven Shopify/D1/R2 candidate into a calmer, more informative production workspace without changing its data-plane boundaries. It covers the collapsed order cards, dashboard hierarchy, responsive behavior, and the relationship between summary cards and on-demand detail.
@@ -10,6 +18,8 @@ This plan turns the proven Shopify/D1/R2 candidate into a calmer, more informati
 The visual direction remains PrintMO's existing **Precision Workbench**: white and cool-slate surfaces, system UI typography, compact production density, and Action Blue only for active state or the primary action. This is a refinement of the established product, not a replacement design.
 
 This document is planning-only. No dashboard or card redesign described here is active until separately implemented and verified. The Legacy Redis view is outside the redesign scope and must remain behaviorally and visually unchanged during Shopify-board iteration.
+
+The [Order Data Visualization Inventory](../reference/order-data-visualization-inventory.md) is the required input for renewed layout brainstorming. This earlier blueprint does not by itself finalize which newly available Shopify or PrintMO fields belong on cards, in on-demand detail, or in exception/history views.
 
 ## Audit Scope & Evidence
 
@@ -360,7 +370,7 @@ Open detail from any card without fetching these fields in the list query. Show 
 | Saved production change | Inline “Saved” near the changed control; revision conflict offers refresh/retry. |
 | Archived/cancelled | Remove from active workflow through explicit state handling, not a silent disappearance. |
 
-## Implementation Sequence
+## Technical Specification & Task Checklist — Implementation Sequence
 
 ### Pass 1 — Contract and tokens
 

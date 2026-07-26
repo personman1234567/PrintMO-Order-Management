@@ -13,6 +13,20 @@ This architectural proposal establishes a master **Quality of Life (QoL) & Print
 
 ---
 
+## Current Continuation State
+
+- **Current state**: Eight opportunities are collected in one draft; they are not one implementation unit and none should be inferred as shipped.
+- **Next safe action**: Split the highest-value independent capability into its own spec after scoring operational value, dependencies, permission impact, and verification cost.
+- **Remaining blockers**: Priority, ownership, Shopify permission needs, notification policy, and overlap with draft-order/multi-supplier plans.
+- **Owner / external actions**: Rank the eight opportunities and choose the first standalone delivery unit.
+- **Last verified evidence**: This remains a planning collection; current behavior is defined only in current-state docs.
+
+## Open Questions & Brainstorming
+
+1. Which single capability removes the most weekly operator time without introducing new external permissions?
+2. Which items belong in the draft-order, multi-supplier, receiving, or filtering plans instead of this umbrella?
+3. Which customer communications require explicit templates, approval, audit, and opt-out behavior?
+
 ## Master Quality-of-Life (QoL) Feature Specifications
 
 ```

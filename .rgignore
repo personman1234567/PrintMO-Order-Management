@@ -1,0 +1,4 @@
+docs/official-docs/legacy/**
+backups/**
+dist/**
+node_modules/**

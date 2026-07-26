@@ -464,7 +464,11 @@ async function run() {
     const batchJson = await batchResponse.json();
     assert.equal(batchJson.supplierOrderNumber, 'SS-9001');
     assert.equal(batchJson.metadataRepairRequired.length, 0);
-    assert.equal(productionState.stage, 'blanks_ordered');
+    assert.equal(
+      productionState.stage,
+      'blanks_cart',
+      'confirmed supplier batches must enter In S&S Cart until the operator marks them Ordered'
+    );
     assert(productionState.batchRefs.includes(batchJson.poNumber));
     const savedBatch = await env.ORDER_DB.prepare('SELECT state FROM batches WHERE id = ?')
       .bind(batchJson.batchId).first();

@@ -1,108 +1,98 @@
 # IPC and Storage Architecture
 
 ## Use This When
-- You are modifying Electron main process IPC handlers in `main.js`.
-- You are updating the `preload.js` bridge contract (`window.api`).
-- You are working on Redis queue persistence (`shopifyOrdersQueue`) or browser fallback storage (`storage-browser.js`).
+
+- You are modifying Electron startup, authenticated Worker transport, IPC handlers, or `window.api`.
+- You need to distinguish the isolated Legacy Redis view from the Shopify-primary candidate.
+- You are diagnosing desktop authentication, IPC, legacy queue, or attachment behavior.
 
 ## Skip This When
-- You are modifying UI CSS or drag-and-drop animations $\rightarrow$ read [workflows/order-ingestion-kanban.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/workflows/order-ingestion-kanban.md).
-- You are configuring Cloudflare worker endpoints $\rightarrow$ read [workflows/web-shopify-porting.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/workflows/web-shopify-porting.md).
+
+- You are changing only the Shopify/D1/R2 candidate → read [Shopify-primary data plane](shopify-primary-data-plane.md).
+- You are changing card layout or drag/drop → read [Order ingestion and Kanban](../workflows/order-ingestion-kanban.md).
+- You are changing embedded browser adapters → read [Web and Shopify porting](../workflows/web-shopify-porting.md).
 
 ## Section Map
-- [1. IPC Bridge Contract (preload.js)](#1-ipc-bridge-contract-preloadjs)
-- [2. Main Process Handlers (main.js)](#2-main-process-handlers-mainjs)
-- [3. Redis Data Schema (shopifyOrdersQueue)](#3-redis-data-schema-shopifyordersqueue)
-- [4. Web Storage Fallback (storage-browser.js)](#4-web-storage-fallback-storage-browserjs)
+
+- [IPC Bridge and Electron Transport](#ipc-bridge-and-electron-transport)
+- [Legacy Redis Boundary](#legacy-redis-boundary)
+- [Shopify Candidate Boundary](#shopify-candidate-boundary)
+- [Attachment and Browser Storage Boundaries](#attachment-and-browser-storage-boundaries)
 - [Common Failure Modes & Recovery](#common-failure-modes--recovery)
 
----
+## IPC Bridge and Electron Transport
 
-## 1. IPC Bridge Contract (preload.js)
+Electron maintains `contextIsolation: true` and `nodeIntegration: false`. `preload.js` exposes the renderer API through `contextBridge.exposeInMainWorld`.
 
-The renderer process accesses Node/Electron capabilities exclusively via `window.api`:
+Representative methods include:
 
 ```javascript
-// Exposed IPC surface in preload.js
-contextBridge.exposeInMainWorld('api', {
-  getQueue: () => ipcRenderer.invoke('get-queue'),
-  updateStatus: (index, status) => ipcRenderer.invoke('update-status', { index, status }),
-  processBatch: (toOrder) => ipcRenderer.invoke('process-batch', toOrder),
-  updateReady: (index, isReady) => ipcRenderer.invoke('update-ready', { index, isReady }),
-  deleteOrder: (index) => ipcRenderer.invoke('delete-order', { index }),
-  setBundle: (index, isBundle, subOrders) => ipcRenderer.invoke('set-bundle', { index, isBundle, subOrders }),
-  updateBundleStatus: (index, subOrderIndex, status) => ipcRenderer.invoke('update-bundle-status', { index, subOrderIndex, status }),
-  addFile: (index, fileData) => ipcRenderer.invoke('add-file', { index, fileData }),
-  removeFiles: (index, fileIndices) => ipcRenderer.invoke('remove-files', { index, fileIndices }),
-  updateNotes: (index, notes) => ipcRenderer.invoke('update-notes', { index, notes }),
-  updateName: (index, name) => ipcRenderer.invoke('update-name', { index, name }),
-  updateProgress: (index, progress) => ipcRenderer.invoke('update-progress', { index, progress }),
-  downloadAsset: (url, filename) => ipcRenderer.invoke('download-asset', { url, filename }),
-  getAssetPath: (relativePath) => ipcRenderer.sendSync('get-asset-path', relativePath)
-});
+getQueue: () => ipcRenderer.invoke('get-queue')
+updateStatus: (orderId, status) => ipcRenderer.invoke('update-status', orderId, status)
+processBatch: orderIds => ipcRenderer.invoke('process-batch', orderIds)
+downloadAsset: (url, filename) => ipcRenderer.invoke('download-asset', url, filename)
 ```
 
----
+`main.js` owns:
 
-## 2. Main Process Handlers (main.js)
+- loading public Worker/OIDC runtime configuration;
+- obtaining a short-lived token through `DesktopOidcAuth`;
+- attaching the bearer token to Worker calls through `workerFetch`;
+- legacy-compatible IPC handlers;
+- authenticated asset download;
+- BrowserWindow creation.
 
-Electron preserves the existing `window.api` IPC contract, but `main.js` now sends every queue and S&S operation to authenticated `/order-manager/v1/legacy/*` Worker endpoints. Electron obtains a short-lived OIDC ID token through Authorization Code + PKCE in the system browser and stores only a rotating refresh token through `safeStorage`.
+Electron contains no direct Redis client or S&S credentials. Production packages contain public runtime configuration only and explicitly exclude `.env`.
 
-- Electron contains no direct Redis or S&S code path and packages no `.env`.
-- `get-queue` reads the legacy list through the Worker adapter.
-- The Worker forwards queue operations over authenticated HTTPS to the Render data adapter; only that adapter holds `REDIS_URL`.
-- Queue mutations and deletion are executed by atomic Redis Lua scripts in the Render adapter.
-- `process-batch` executes through the authenticated Worker and Render adapter; S&S credentials remain server-only.
+## Legacy Redis Boundary
 
----
+The Legacy Redis board remains an isolated pre-cutover fallback:
 
-## 3. Redis Data Schema (shopifyOrdersQueue)
-
-During candidate acceptance, this list remains the source for the explicitly labeled **Legacy Redis** view only. The **Shopify board** does not read, mirror, or mutate it; that view uses the app-owned Shopify production metafield plus D1/R2 as documented in `shopify-primary-data-plane.md`. Incoming paid-order ingestion may continue reaching the legacy list while `LEGACY_INGEST_ENABLED=1` so the old view remains usable before owner-approved cutover.
-
-The queue stores a JSON-serialized list under the key `shopifyOrdersQueue`:
-
-```json
-{
-  "id": "1001",
-  "name": "#1001",
-  "created_at": "2026-07-21T20:00:00Z",
-  "status": "payment_received",
-  "isReady": false,
-  "notes": "",
-  "files": [
-    {
-      "name": "front_mockup.png",
-      "data": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
-      "type": "image/png"
-    }
-  ],
-  "line_items": [
-    {
-      "sku": "2000-WHT-L",
-      "title": "Gildan Ultra Cotton Tee - White / L",
-      "quantity": 12,
-      "price": "15.00"
-    }
-  ]
-}
+```text
+Desktop or web legacy view
+→ authenticated Worker /legacy route
+→ authenticated Render legacy adapter
+→ shopifyOrdersQueue
 ```
 
----
+- Only the Render legacy adapter owns `REDIS_URL`.
+- Candidate reads and mutations never mirror into this queue.
+- The legacy queue may still receive paid-order ingestion while `LEGACY_INGEST_ENABLED=1`.
+- Queue mutations are addressed by stable order/bundle identity at the client boundary; the adapter owns atomic Redis mutation details.
+- Full queue backup is available through `npm run repo -- redis backup`.
 
-## 4. Web Storage Fallback (storage-browser.js)
+The queue contains legacy JSON order objects and may include Base64 attachment payloads. It is not the target architecture for new features.
 
-In the web interface (`order-manager-web/`), native IPC is unavailable (`window.api` is undefined). `storage-browser.js` provides an identical interface backed by browser `localStorage` or remote Cloudflare endpoints:
+## Shopify Candidate Boundary
 
-- Emulates `window.api` methods asynchronously.
-- Preserves identical order data model for seamless cross-platform support.
+The Shopify board bypasses legacy queue routes:
 
----
+```text
+Embedded web candidate view
+→ authenticated Worker candidate endpoint
+→ Shopify canonical production metafield
+→ D1 projection/app records
+→ private R2 assets
+```
+
+Shopify owns commerce facts and the per-order production authority. D1 is a rebuildable board index plus authoritative app-only relational records. R2 owns private asset bytes.
+
+See [Shopify-primary data plane](shopify-primary-data-plane.md) for concurrency, idempotency, webhook, reconciliation, asset, migration, and batch contracts.
+
+## Attachment and Browser Storage Boundaries
+
+- Legacy attachments may remain Base64 inside legacy queue items and can make full-list reads expensive.
+- Candidate artwork is represented by D1 manifests and private R2 bytes; board DTOs never expose object keys.
+- Candidate cards render before private ticket hydration completes.
+- `order-manager-web/web-shim.js` provides the source-aware browser API.
+- `storage-browser.js` is a browser storage/endpoint adapter; it must not become a client-side infrastructure credential holder.
 
 ## Common Failure Modes & Recovery
 
-| Symptom / Trap | Root Cause | Diagnosis & Recovery |
+| Symptom | Cause | Recovery |
 |---|---|---|
-| Queue mutation conflict or shifted index | A caller bypassed the authenticated Worker/Render Lua adapter | Confirm both clients use `/order-manager/v1/legacy/*`; only the Render service may contain `REDIS_URL`. |
-| Redis memory spike or slow `getQueue` | Large Base64 attachment files stored directly in list JSON | Inspect file upload sizes; compress or move large attachments to external blob storage. |
-| `TypeError: window.api.getQueue is not a function` in web mode | `web-shim.js` or `storage-browser.js` failed to initialize | Ensure `web-shim.js` is loaded prior to `renderer.js` in `order-manager-web/index.html`. |
+| Desktop reports sign-in failure | OIDC configuration, browser authorization, token refresh, or Worker trust failure | Inspect `DesktopOidcAuth` and `workerFetch`; run Phase 1 verification. |
+| `window.api` is missing in Electron | Preload failed or context bridge contract changed | Check `preload.js`, BrowserWindow preload path, and syntax. |
+| `window.api` is missing on web | `web-shim.js` loaded after the renderer or failed initialization | Preserve script ordering and run the web route verification. |
+| Legacy queue is slow | Large Base64 payloads make full-list transport expensive | Inspect payload size safely; avoid high-frequency full-list operations. |
+| Candidate edit changes Legacy Redis | Source isolation was violated | Stop, restore source-aware routing, and run Phase 2 verification. |

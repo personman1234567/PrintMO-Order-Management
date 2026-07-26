@@ -5,18 +5,18 @@
 - You are debugging batch submit failures or price aggregation errors.
 
 ## Skip This When
-- You are working on general Kanban board card layout $\rightarrow$ read [workflows/order-ingestion-kanban.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/workflows/order-ingestion-kanban.md).
-- You are editing external API authorization parameters $\rightarrow$ read [architecture/external-apis.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/external-apis.md).
+- You are working on general Kanban board card layout → read [Order ingestion and Kanban](order-ingestion-kanban.md).
+- You are editing external API authorization parameters → read [External APIs](../architecture/external-apis.md).
 
 ## Section Map
-- [1. Blanks Batching Sequence](#1-blanks-batching-sequence)
-- [2. SKU Aggregation Algorithm](#2-sku-aggregation-algorithm)
-- [3. Batch Submission & State Update](#3-batch-submission--state-update)
+- [Blanks Batching Sequence](#blanks-batching-sequence)
+- [SKU Aggregation Algorithm](#sku-aggregation-algorithm)
+- [Batch Submission & State Update](#batch-submission--state-update)
 - [Common Failure Modes & Recovery](#common-failure-modes--recovery)
 
 ---
 
-## 1. Blanks Batching Sequence
+## Blanks Batching Sequence
 
 ```mermaid
 sequenceDiagram
@@ -44,7 +44,7 @@ sequenceDiagram
 
 ---
 
-## 2. SKU Aggregation Algorithm
+## SKU Aggregation Algorithm
 
 When orders are dragged into the batch zone:
 
@@ -57,7 +57,7 @@ When orders are dragged into the batch zone:
 
 ---
 
-## 3. Batch Submission & State Update
+## Batch Submission & State Update
 
 1. The Worker inserts an idempotent D1 batch and allows only one transition to `submitting`.
 2. The Render gateway validates the already-aggregated lines, adds server-held credentials/payment/shipping configuration, performs pricing lookups, and posts to S&S without reading Redis.

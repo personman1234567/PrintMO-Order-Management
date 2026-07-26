@@ -1,87 +1,41 @@
-# Official Documentation Index & Governance Guide
+# Official Documentation Index
 
-> **Directory Root**: `docs/official-docs/`
+> Repository operational memory for targeted human and agent retrieval.
 
-Welcome to the official documentation directory for **PrintMO Order Management**. This system is structured to provide human developers and AI agents with targeted, low-token context retrieval.
+## Fast Entry
 
----
+1. Run `npm run repo -- route "<task, symptom, error, path, or symbol>"`.
+2. Read only the highest-ranked section and inspect its listed source symbols.
+3. Use [context-router.md](context-router.md) when a human-readable overview is preferable.
+4. Run `npm run docs:check` after documentation or routing changes.
 
-## 1. Directory Structure & Sub-System Orientation
+## Documentation Planes
 
-- [context-router.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/context-router.md): **Fast Tabular Router** for mapping tasks or symptoms directly to docs and source code.
-- **`architecture/`**: System models, runtime contracts, state ownership, security, and external APIs.
-  - [system-overview.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/system-overview.md)
-  - [ipc-and-storage.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/ipc-and-storage.md)
-  - [external-apis.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/external-apis.md)
-- **`workflows/`**: Pipeline docs for end-to-end trigger-to-outcome sequences.
-  - [order-ingestion-kanban.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/workflows/order-ingestion-kanban.md)
-  - [blanks-batching.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/workflows/blanks-batching.md)
-  - [web-shopify-porting.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/workflows/web-shopify-porting.md)
-- **`features/`**: Current state of shipped user-facing feature sets.
-- **`runbooks/`**: Operational, development, and maintenance procedures.
-  - [dev-setup-and-build.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/runbooks/dev-setup-and-build.md)
-  - [troubleshooting.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/runbooks/troubleshooting.md)
-  - [doc-governance.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/runbooks/doc-governance.md)
-- **`reference/`**: Detailed mapping files.
-  - [source-map.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/reference/source-map.md)
-  - [test-map.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/reference/test-map.md)
-- **`future-plans/`**: **Feature Progression Engine** for capturing ideas, specifications, and active work.
-  - [README.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/future-plans/README.md): Roadmap index & active progress matrix.
-- **`legacy/`**: Quarantined historical documentation and deprecated notes.
-  - [README.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/legacy/README.md)
+- [architecture/](architecture/): verified ownership, boundaries, contracts, security, and invariants.
+- [workflows/](workflows/): verified trigger-to-outcome execution paths.
+- [runbooks/](runbooks/): operational, development, recovery, cutover, and governance procedures.
+- [reference/](reference/): source/test/tool mappings, UI inventory, terminology, and the reusable living-documentation design.
+- [future-plans/](future-plans/): unshipped proposals and meaningful partial implementation state.
+- [legacy/](legacy/): quarantined history excluded from ordinary search.
+- [retrieval-manifest.json](retrieval-manifest.json): machine-readable task/error/path/symbol routes and tool registry.
 
----
+## High-Value References
 
-## 2. Documentation Header Contracts
+- [Context Router](context-router.md)
+- [Documentation Governance](runbooks/doc-governance.md)
+- [Tool Registry](reference/tool-registry.md)
+- [Domain Glossary](reference/domain-glossary.md)
+- [Verification Map](reference/test-map.md)
+- [Source Map](reference/source-map.md)
+- [Order Data Visualization Inventory](reference/order-data-visualization-inventory.md)
+- [Living Documentation as an Operational Memory System](reference/living-documentation-system.md)
 
-### A. Current-State Docs (`architecture/`, `workflows/`, `features/`, `runbooks/`)
-Every current-state document MUST begin with the following structure:
-```markdown
-# [Doc Title]
+## Operating Principle
 
-## Use This When
-- Bullet points of exact tasks, bugs, or contexts where this doc applies.
+This system preserves reusable understanding, not everything that happened.
 
-## Skip This When
-- Explicit conditions to stop reading and route elsewhere.
+Durable knowledge includes verified invariants, cross-system relationships, meaningful feature continuation state, recurring failure recovery, consequential rationale, reusable procedures, tool contracts, and verification expectations.
 
-## Section Map
-- Anchor links to internal sections.
+Ordinary task recaps, obvious code behavior, command transcripts, unsupported hypotheses, and one-off implementation details remain task-local.
 
-[Core Content & Invariants]
-
-## Common Failure Modes & Recovery
-- Past bugs, environmental traps, and exact steps to diagnose/fix.
-```
-
-### B. Future Plan Docs (`future-plans/`)
-Every plan file in `future-plans/` MUST begin with this header:
-```markdown
-# [Feature / Plan Name]
-
-- **Status**: `[Draft / Idea]` | `[Spec Ready]` | `[In Progress]` | `[Graduated]`
-- **Owner / Target Milestone**: e.g., `v1.4` or `Q3 Backlog`
-
-## Summary & Intent
-- Purpose and operational objective.
-
-## Open Questions & Brainstorming
-- (For draft / half-baked ideas).
-
-## Technical Specification & Task Checklist
-- (For ready / in-progress plans).
-
-## Progress Log
-- Real-time updates as sub-tasks are completed.
-```
-
----
-
-## 3. Governance Rules & Feature Graduation
-
-1. **Isolation**: Never document unreleased features in `architecture/`, `workflows/`, or `features/`. Keep them strictly in `future-plans/`.
-2. **Graduation Protocol**: When a feature ships:
-   - Move operational contracts and facts into the appropriate current-state folder.
-   - Update `context-router.md` to index the new current-state docs.
-   - Change the plan status in `future-plans/` to `[Graduated]`.
-3. **Definition of Done**: A code pull request or change task is incomplete until matching docs updates have been made.
+See [Documentation Governance](runbooks/doc-governance.md) for promotion, retirement, graduation, and Definition of Done.

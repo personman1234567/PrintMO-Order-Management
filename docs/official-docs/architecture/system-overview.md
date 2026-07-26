@@ -5,8 +5,8 @@
 - You are evaluating the boundaries between the Electron desktop app, Web/Shopify Admin client, Redis queue layer, and Cloudflare proxy.
 
 ## Skip This When
-- You are debugging specific IPC handler calls or Redis list mutations $\rightarrow$ read [architecture/ipc-and-storage.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/ipc-and-storage.md).
-- You are looking for S&S Activewear API schemas or webhook HMAC logic $\rightarrow$ read [architecture/external-apis.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/external-apis.md).
+- You are debugging specific IPC handlers or legacy Redis adapter behavior → read [IPC and storage](ipc-and-storage.md).
+- You are looking for S&S Activewear or webhook contracts → read [External APIs](external-apis.md).
 
 ## Section Map
 - [1. High-Level System Architecture](#1-high-level-system-architecture)

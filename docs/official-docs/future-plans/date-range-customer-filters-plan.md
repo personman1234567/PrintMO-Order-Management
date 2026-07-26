@@ -11,6 +11,14 @@ Introduce date range filtering and customer search capabilities to the PrintMO K
 
 ---
 
+## Current Continuation State
+
+- **Current state**: Draft UX and data-boundary questions are recorded; no filter implementation has shipped.
+- **Next safe action**: Define the exact operator queries and map each to indexed D1 fields or bounded Shopify lookups.
+- **Remaining blockers**: Protected-customer search scope, archive policy, and cursor/filter contract.
+- **Owner / external actions**: Prioritize the first filter set and decide whether archived work belongs in the same surface.
+- **Last verified evidence**: The obsolete Redis filtering direction was removed on 2026-07-23.
+
 ## Open Questions & Brainstorming
 
 1. **Client-Side vs Server-Side Filtering**: Which filters can use indexed D1 projection fields, and which protected customer searches require bounded Shopify queries?

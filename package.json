@@ -3,12 +3,17 @@
   "version": "1.3.0",
   "description": "Desktop app for managing PrintMO orders and batching to S&S Activewear",
   "author": "Ethan Duke ethan.duke@icloud.com",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "predist": "node scripts/create-desktop-config.js",
     "dist": "electron-builder",
     "prepare:cloudflare": "bash scripts/prepare-cloudflare-pages-upload.sh",
+    "repo": "node scripts/repo-tool.js",
+    "docs:check": "node scripts/check-docs.js",
     "verify:phase1": "node scripts/verify-phase1.js",
     "verify:phase2": "node scripts/verify-phase2.js"
   },

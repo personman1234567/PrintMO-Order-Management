@@ -19,6 +19,21 @@ This architectural proposal designs a **Shopify Draft Orders & Invoicing Engine*
 
 ---
 
+## Current Continuation State
+
+- **Current state**: Workflow concepts and UI ideas are drafted; no draft-order workspace or invoicing endpoint has shipped.
+- **Next safe action**: Verify current Shopify DraftOrder mutations, installed-app scope behavior, customer-data requirements, invoice delivery constraints, and webhook transitions from primary Shopify documentation.
+- **Remaining blockers**: Permission model, fee/product representation, draft metadata ownership, customer access, audit/idempotency, and payment-to-production enrollment.
+- **Owner / external actions**: Confirm quote/invoice workflow, fee catalog, customer-contact policy, and required operators.
+- **Last verified evidence**: No executable implementation exists; the security/token model below remains a proposal requiring verification.
+
+## Open Questions & Brainstorming
+
+1. Can least privilege be achieved through one installed app plus route-level authorization, or are separately installed credentials genuinely required?
+2. Which customer fields are operationally necessary for quote creation and invoice delivery?
+3. How are custom fees represented so accounting, discounts, taxes, and re-opened drafts remain correct?
+4. Which Shopify event enrolls a paid draft into production exactly once?
+
 ## Security Architecture: Micro-Scoped Least-Privilege Tokens
 
 To prevent over-privileged credential exposure ("all permissions on one key"), API authentication is compartmentalized into **three isolated micro-scoped tokens** enforced by the Cloudflare Worker proxy firewall:

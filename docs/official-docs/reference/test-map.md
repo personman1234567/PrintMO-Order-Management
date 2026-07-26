@@ -5,16 +5,17 @@
 - You need to select the appropriate syntax check or manual runbook test for a subsystem.
 
 ## Skip This When
-- You are looking for source code file locations $\rightarrow$ read [reference/source-map.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/reference/source-map.md).
+- You are looking for source ownership and symbols → read [Source map](source-map.md).
 
 ## Section Map
-- [1. Automated & Syntax Verification Commands](#1-automated--syntax-verification-commands)
-- [2. Subsystem Manual Verification Matrix](#2-subsystem-manual-verification-matrix)
-- [3. Build & Packaging Verification](#3-build--packaging-verification)
+- [Automated and Syntax Verification Commands](#automated-and-syntax-verification-commands)
+- [Subsystem Manual Verification Matrix](#subsystem-manual-verification-matrix)
+- [Build and Packaging Verification](#build-and-packaging-verification)
+- [Common Failure Modes & Recovery](#common-failure-modes--recovery)
 
 ---
 
-## 1. Automated & Syntax Verification Commands
+## Automated and Syntax Verification Commands
 
 Run these targeted CLI commands to verify syntax integrity without side effects:
 
@@ -31,15 +32,16 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Render Legacy Adapter + Stateless S&S Gateway | Run `npm test` in `E:\PrintMO\shopify-ss-integration` | Legacy regressions pass and candidate supplier route is proven Redis-free |
 | Web Client Renderer | `node --check order-manager-web/renderer.js` | Silent exit code 0 |
 | Web Storage Adapter | `node --check order-manager-web/storage-browser.js` | Silent exit code 0 |
+| Living Documentation Contracts | `npm run docs:check` | Routes, links, plan states, source ranges, and tool registry pass |
 
 ---
 
-## 2. Subsystem Manual Verification Matrix
+## Subsystem Manual Verification Matrix
 
 | Component / Workflow | Manual Verification Procedure | Success Criteria |
 |---|---|---|
-| Desktop App Local Boot | Run `npm start` | Window launches, connects to Redis, displays 3-column Kanban board with cards. |
-| Kanban Card Drag-and-Drop | Drag order card from `Payment Received` to `Blanks Ordered` | Card moves smoothly, IPC `update-status` fires, status persists in Redis on refresh. |
+| Desktop App Local Boot | Run `npm start` | OIDC sign-in succeeds, the window launches, and the authenticated legacy board loads through the Worker. |
+| Legacy Kanban Card Drag-and-Drop | In **Legacy Redis**, move a card between supported columns | IPC calls the authenticated legacy adapter; the stable-identity mutation persists after refresh. |
 | Order Detail Modal | Click any order card | Modal overlays dashboard showing customer info, SKU variants, unit costs, and attachments. |
 | Attachment File Upload | Upload image attachment via detail modal | FileReader encodes image Base64, IPC `add-file` persists file, image renders in preview tab. |
 | S&S Blank Batching | Drag multiple cards to Create Blanks Order zone, click Submit | SKUs aggregate, API call executes, order confirmation returns, cards advance to `Blanks Ordered`. |
@@ -57,15 +59,24 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Embedded Mobile Detail Scroll | Open a long detail view at 320px and 393px, swipe its content from top to bottom, then swipe at both boundaries | Detail content scrolls; fixed app shell does not move or rubber-band sideways; boundary gestures do not chain into Shopify Admin |
 | Shopify Admin Order Block | Open an order after the coordinated release, change one field, save, and refresh | Block loads the selected GID, uses a Worker-valid idempotency key even without `randomUUID`, advances one revision, and converges with the Shopify board |
 | Designer Studio Assets | Run `npm run verify:phase2`, then open an active Designer Studio order in Shopify board | Line-item properties survive the summary query; preview/promoted bytes are checksum-copied to private R2; D1 records role/side/line item; the board hydrates the manifest by ticket and displays the mockup without reading Redis |
-| Candidate S&S Batch | Keep `SS_TEST_ORDER=1`; submit selected candidate orders once | D1 batch becomes confirmed, one supplier test order is returned, and Shopify stages become `blanks_ordered` |
+| Candidate S&S Batch | Keep `SS_TEST_ORDER=1`; submit selected candidate orders once | D1 batch becomes confirmed, one supplier test order is returned, and Shopify stages enter `blanks_cart` until the operator marks them Ordered |
 | Candidate Bootstrap and Empty-State Safety | Use a fresh D1 database, then repeat with the initial Shopify read forced to fail | A successful bounded read records `bootstrap` and returns the populated board; a failed read returns `BOARD_NOT_INITIALIZED` and the UI keeps the previous board instead of displaying zero |
 | Shared Board Source Visibility | Run `npm run verify:phase2`, then switch between Legacy Redis and Shopify board | Both sources keep `#orders-view` visible; obsolete diagnostic CSS cannot blank the Shopify workspace |
 
 ---
 
-## 3. Build & Packaging Verification
+## Build and Packaging Verification
 
 | Target | Command | Verification Artifact |
 |---|---|---|
 | Electron Packaging (macOS / Windows) | `npm run dist` | Executable packages generated in `dist/` directory without builder errors. |
 | Cloudflare Pages Upload Bundle | `npm run prepare:cloudflare` | Web assets copied and packaged according to `scripts/prepare-cloudflare-pages-upload.sh`. |
+
+## Common Failure Modes & Recovery
+
+| Failure | Cause | Recovery |
+|---|---|---|
+| Full Phase 2 runs for an unrelated small change | Verification was selected by habit, not route/blast radius | Start with the route result; add broader checks only when dependencies require them. |
+| Syntax passes but live permissions fail | Local contract tests cannot prove installed external scopes | Run the explicit production scope/acceptance gate. |
+| Candidate batch is expected to enter Ordered immediately | Supplier confirmation and operator Mark Ordered were conflated | Expect `blanks_cart`, then verify the operator-controlled transition. |
+| Docs and source maps drift despite code tests passing | Documentation validation was omitted | Run `npm run docs:check`. |

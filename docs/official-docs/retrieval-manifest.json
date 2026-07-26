@@ -1,0 +1,449 @@
+{
+  "schemaVersion": 1,
+  "description": "Machine-readable retrieval and repository-tool registry. The Markdown context router is the human-readable companion.",
+  "tools": [
+    {
+      "id": "route",
+      "command": "npm run repo -- route <task-or-error>",
+      "purpose": "Rank the smallest relevant documentation sections, source symbols, tools, and verification commands.",
+      "mode": "read-only",
+      "script": "scripts/repo-tool.js"
+    },
+    {
+      "id": "docs-check",
+      "command": "npm run docs:check",
+      "purpose": "Validate documentation contracts, links, plan states, retrieval entries, tool registration, and numeric source ranges.",
+      "mode": "read-only",
+      "script": "scripts/check-docs.js"
+    },
+    {
+      "id": "verify-phase1",
+      "command": "npm run repo -- verify phase1",
+      "purpose": "Verify Electron authentication, secret isolation, and legacy transport contracts.",
+      "mode": "read-only",
+      "script": "scripts/verify-phase1.js"
+    },
+    {
+      "id": "verify-phase2",
+      "command": "npm run repo -- verify phase2",
+      "purpose": "Verify Shopify/D1/R2 candidate, board, asset, migration, batching, and conflict contracts.",
+      "mode": "read-only",
+      "script": "scripts/verify-phase2.js"
+    },
+    {
+      "id": "redis-backup",
+      "command": "npm run repo -- redis backup",
+      "purpose": "Read the legacy Redis queue and write a checksummed backup plus redacted fixtures under ignored backups/.",
+      "mode": "local-write",
+      "script": "scripts/backup-redis-queue.js"
+    },
+    {
+      "id": "migration",
+      "command": "npm run repo -- migration dry-run --shop <domain> --env <environment> --url <worker-url>",
+      "purpose": "Run bounded authenticated migration pages. Dry-run is the default; execution requires --execute and an exact --confirm-shop.",
+      "mode": "remote-read-by-default",
+      "script": "scripts/run-shadow-migration.js"
+    },
+    {
+      "id": "parity",
+      "command": "npm run repo -- parity check",
+      "purpose": "Run the authenticated, PII-redacted server-side legacy/candidate parity comparison.",
+      "mode": "remote-read-only",
+      "script": "scripts/run-parity-check.js"
+    },
+    {
+      "id": "desktop-config",
+      "command": "npm run repo -- build desktop-config",
+      "purpose": "Generate ignored non-secret Electron runtime configuration before packaging.",
+      "mode": "local-write",
+      "script": "scripts/create-desktop-config.js"
+    },
+    {
+      "id": "cloudflare-bundle",
+      "command": "npm run repo -- build cloudflare",
+      "purpose": "Prepare the Cloudflare Pages upload bundle.",
+      "mode": "local-write",
+      "script": "scripts/prepare-cloudflare-pages-upload.sh"
+    }
+  ],
+  "routes": [
+    {
+      "id": "electron-ipc",
+      "description": "Electron initialization, IPC bridge, OIDC token custody, and Worker transport",
+      "taskTypes": ["change", "diagnosis", "security"],
+      "keywords": ["electron", "ipc", "preload", "context isolation", "oidc", "desktop", "worker transport"],
+      "paths": ["main.js", "preload.js", "desktop-auth.js"],
+      "symbols": ["workerFetch", "contextBridge.exposeInMainWorld", "ipcMain.handle"],
+      "errors": ["window.api is undefined", "PrintMO sign-in failed"],
+      "read": [
+        {
+          "path": "docs/official-docs/architecture/ipc-and-storage.md",
+          "anchor": "ipc-bridge-and-electron-transport"
+        }
+      ],
+      "inspect": [
+        {"path": "main.js", "symbols": ["workerFetch", "createWindow"]},
+        {"path": "preload.js", "symbols": ["contextBridge.exposeInMainWorld"]}
+      ],
+      "tools": ["verify-phase1"],
+      "verify": ["node --check main.js", "node --check preload.js", "npm run verify:phase1"],
+      "stop": ["Changing authentication authority, secret placement, or the Worker trust boundary requires explicit review."]
+    },
+    {
+      "id": "legacy-redis",
+      "description": "Legacy Redis fallback queue, attachment payloads, and legacy adapter behavior",
+      "taskTypes": ["change", "diagnosis", "migration"],
+      "keywords": ["redis", "legacy board", "shopifyOrdersQueue", "base64", "queue", "legacy adapter"],
+      "paths": ["order-manager-proxy/worker.js", "renderer.js"],
+      "symbols": ["shopifyOrdersQueue", "splitOrderAssets"],
+      "errors": ["assets || []).forEach is not a function", "Redis board shows zero cards"],
+      "read": [
+        {
+          "path": "docs/official-docs/architecture/ipc-and-storage.md",
+          "anchor": "legacy-redis-boundary"
+        },
+        {
+          "path": "docs/official-docs/runbooks/troubleshooting.md",
+          "anchor": "empty-redis-board-caused-by-malformed-line-item-assets"
+        }
+      ],
+      "inspect": [
+        {"path": "order-manager-proxy/worker.js", "symbols": ["shopifyOrdersQueue"]},
+        {"path": "renderer.js", "symbols": ["splitOrderAssets"]}
+      ],
+      "tools": ["redis-backup", "verify-phase1"],
+      "verify": ["npm run verify:phase1"],
+      "stop": ["Stop before restoring, deleting, or structurally rewriting legacy Redis data."]
+    },
+    {
+      "id": "order-data-inventory",
+      "description": "Current UI field coverage and complete Shopify/PrintMO order-data inventory for visualization planning",
+      "taskTypes": ["design", "reference", "architecture"],
+      "keywords": ["order data", "field inventory", "visualization", "current display", "shopify order fields", "conversion summary", "line items", "customer data", "mockup thumbnail"],
+      "paths": ["renderer.js", "order-manager-web/web-shim.js", "order-manager-web/shopify-preview.js", "order-manager-proxy/worker.js"],
+      "symbols": ["candidateOrderToBoard", "makeCard", "openDetail", "SHOPIFY_PREVIEW_ORDER_DETAIL_QUERY", "ORDER_SUMMARIES_QUERY"],
+      "errors": ["field is not displayed", "protected customer data", "partial Shopify detail"],
+      "read": [
+        {
+          "path": "docs/official-docs/reference/order-data-visualization-inventory.md",
+          "anchor": "purpose-and-status-vocabulary"
+        }
+      ],
+      "inspect": [
+        {"path": "renderer.js", "symbols": ["makeCard", "openDetail"]},
+        {"path": "order-manager-web/web-shim.js", "symbols": ["candidateOrderToBoard"]},
+        {"path": "order-manager-web/shopify-preview.js", "symbols": ["renderOrderDetail"]},
+        {"path": "order-manager-proxy/worker.js", "symbols": ["ORDER_SUMMARIES_QUERY", "SHOPIFY_PREVIEW_ORDER_DETAIL_QUERY"]}
+      ],
+      "tools": ["docs-check"],
+      "verify": ["npm run docs:check"],
+      "stop": ["Stop before changing Shopify scopes, protected-customer-data use, bounded board payloads, or production authority."]
+    },
+    {
+      "id": "kanban-ui",
+      "description": "Shared Kanban rendering, cards, drag-and-drop, board columns, and detail opening",
+      "taskTypes": ["change", "diagnosis", "design"],
+      "keywords": ["kanban", "card", "drag", "drop", "column", "detail modal", "renderer", "board"],
+      "paths": ["renderer.js", "index.html", "order-manager-web/renderer.js"],
+      "symbols": ["renderBoard", "openDetail", "updateBoardMove"],
+      "errors": ["card reverts", "detail overlay does not open", "board is blank"],
+      "read": [
+        {
+          "path": "docs/official-docs/workflows/order-ingestion-kanban.md",
+          "anchor": "shared-board-render-and-mutation-flow"
+        },
+        {
+          "path": "docs/official-docs/reference/ui-containers-and-views.md",
+          "anchor": "collapsed-order-card-tile-specification"
+        }
+      ],
+      "inspect": [
+        {"path": "renderer.js", "symbols": ["renderBoard", "openDetail"]},
+        {"path": "order-manager-web/web-shim.js", "symbols": ["updateBoardMove"]}
+      ],
+      "tools": ["verify-phase2"],
+      "verify": ["node --check renderer.js", "npm run verify:phase2"],
+      "stop": ["Stop before changing canonical production stages or legacy/candidate source isolation."]
+    },
+    {
+      "id": "shopify-data-plane",
+      "description": "Shopify canonical production metadata, D1 projection, R2 assets, webhooks, and reconciliation",
+      "taskTypes": ["change", "diagnosis", "architecture", "security"],
+      "keywords": ["shopify", "d1", "r2", "metafield", "projection", "webhook", "reconciliation", "asset manifest", "candidate"],
+      "paths": ["order-manager-proxy/worker.js", "order-manager-proxy/migrations", "order-manager-web/web-shim.js"],
+      "symbols": ["production_state_v1", "mutation_requests", "asset_manifests"],
+      "errors": ["BOARD_NOT_INITIALIZED", "VERSION_CONFLICT", "SYNC_PENDING"],
+      "read": [
+        {
+          "path": "docs/official-docs/architecture/shopify-primary-data-plane.md",
+          "anchor": "ownership"
+        }
+      ],
+      "inspect": [
+        {"path": "order-manager-proxy/worker.js", "symbols": ["BOARD_NOT_INITIALIZED", "VERSION_CONFLICT"]},
+        {"path": "order-manager-proxy/migrations/0001_redis_free.sql", "symbols": ["order_projection"]}
+      ],
+      "tools": ["verify-phase2"],
+      "verify": ["node --check order-manager-proxy/worker.js", "npm run verify:phase2"],
+      "stop": ["Stop before final cutover, broader Shopify permissions, live S&S, or permanent Redis retirement."]
+    },
+    {
+      "id": "blanks-batching",
+      "description": "Candidate and legacy blank-apparel batching, SKU aggregation, S&S submission, and ordered state",
+      "taskTypes": ["change", "diagnosis", "operations"],
+      "keywords": ["blanks", "batch", "s&s", "sku", "supplier", "in s&s cart", "ordered", "purchase order"],
+      "paths": ["order-manager-web/blanks-batches.js", "order-manager-proxy/worker.js"],
+      "symbols": ["batches/commit", "process-batch"],
+      "errors": ["unknown supplier result", "invalid sku", "batch submit"],
+      "read": [
+        {
+          "path": "docs/official-docs/workflows/blanks-batching.md",
+          "anchor": "batch-submission--state-update"
+        }
+      ],
+      "inspect": [
+        {"path": "order-manager-web/blanks-batches.js", "symbols": ["saveBatchForOrders"]},
+        {"path": "order-manager-proxy/worker.js", "symbols": ["/order-manager/v1/batches/commit"]}
+      ],
+      "tools": ["verify-phase2"],
+      "verify": ["npm run verify:phase2"],
+      "stop": ["Stop before enabling live supplier ordering or changing supplier authentication/payload contracts."]
+    },
+    {
+      "id": "web-shopify-port",
+      "description": "Embedded web client, source adapter, Shopify Admin iframe, browser storage, responsive behavior, and Pages bundle",
+      "taskTypes": ["change", "diagnosis", "build"],
+      "keywords": ["web", "shopify admin", "iframe", "web shim", "storage browser", "mobile", "pages", "cors"],
+      "paths": ["order-manager-web", "scripts/prepare-cloudflare-pages-upload.sh"],
+      "symbols": ["window.api", "setPreviewActive", "installEmbeddedTouchContainment"],
+      "errors": ["window.api is undefined", "mobile detail cannot scroll", "CORS"],
+      "read": [
+        {
+          "path": "docs/official-docs/workflows/web-shopify-porting.md",
+          "anchor": "source-switched-operational-board"
+        }
+      ],
+      "inspect": [
+        {"path": "order-manager-web/web-shim.js", "symbols": ["window.api"]},
+        {"path": "order-manager-web/shopify-preview.js", "symbols": ["setPreviewActive"]}
+      ],
+      "tools": ["verify-phase2", "cloudflare-bundle"],
+      "verify": ["npm run verify:phase2", "npm run prepare:cloudflare"],
+      "stop": ["Stop before changing CORS allowlists, Shopify scopes, or browser-visible secrets."]
+    },
+    {
+      "id": "shopify-detail-scope-failure",
+      "description": "Known Shopify rich-detail failure where an existing order is rendered as 404 or [object Object]",
+      "taskTypes": ["diagnosis", "permissions"],
+      "keywords": ["shopify detail", "scope", "access denied", "fulfillment orders", "object object"],
+      "paths": ["order-manager-proxy/worker.js", "order-manager-web/web-shim.js", "order-manager-proxy/shopify.app.toml"],
+      "symbols": ["fulfillmentOrders", "apiErrorMessage"],
+      "errors": ["404 - [object Object]", "ACCESS_DENIED", "ORDER_NOT_FOUND"],
+      "read": [
+        {
+          "path": "docs/official-docs/runbooks/troubleshooting.md",
+          "anchor": "shopify-live-detail-scope-failure"
+        }
+      ],
+      "inspect": [
+        {"path": "order-manager-proxy/worker.js", "symbols": ["fulfillmentOrders"]},
+        {"path": "order-manager-web/web-shim.js", "symbols": ["apiErrorMessage"]}
+      ],
+      "tools": ["verify-phase2"],
+      "verify": ["npm run verify:phase2", "Open a recent known production order after any scope release"],
+      "stop": ["Changing Shopify scopes requires an app release and merchant approval; a Worker/Pages deploy cannot grant them."]
+    },
+    {
+      "id": "idempotency-key-rejection",
+      "description": "Admin block or board mutation rejected because a fallback idempotency key contains invalid characters",
+      "taskTypes": ["diagnosis", "mutation", "shopify-extension"],
+      "keywords": ["idempotency", "admin block", "fallback key", "gid slash"],
+      "paths": ["order-manager-proxy/extensions/printmo-production-status/src/production-client.mjs", "order-manager-proxy/worker.js"],
+      "symbols": ["idempotencyKey", "IDEMPOTENCY_KEY_REQUIRED"],
+      "errors": ["A valid idempotency key is required", "IDEMPOTENCY_KEY_REQUIRED"],
+      "read": [
+        {
+          "path": "docs/official-docs/runbooks/troubleshooting.md",
+          "anchor": "admin-block-idempotency-key-rejection"
+        }
+      ],
+      "inspect": [
+        {"path": "order-manager-proxy/extensions/printmo-production-status/src/production-client.mjs", "symbols": ["idempotencyKey"]},
+        {"path": "order-manager-proxy/worker.js", "symbols": ["IDEMPOTENCY_KEY_REQUIRED"]}
+      ],
+      "tools": ["verify-phase2"],
+      "verify": ["Run proxy tests/build", "Save one changed Admin-block field and confirm one revision advance"],
+      "stop": ["Releasing extension JavaScript requires a Shopify app release; Worker deployment alone is insufficient."]
+    },
+    {
+      "id": "troubleshooting",
+      "description": "Known symptoms, misleading clues, safe diagnostic checks, and confirmed recovery",
+      "taskTypes": ["diagnosis"],
+      "keywords": ["error", "failure", "freeze", "broken", "troubleshoot", "diagnose", "recovery"],
+      "paths": ["docs/official-docs/runbooks/troubleshooting.md"],
+      "symbols": [],
+      "errors": ["404 - [object Object]", "assets || []).forEach is not a function", "A valid idempotency key is required"],
+      "read": [
+        {
+          "path": "docs/official-docs/runbooks/troubleshooting.md",
+          "anchor": "diagnostic-symptom-matrix"
+        }
+      ],
+      "inspect": [],
+      "tools": ["route"],
+      "verify": [],
+      "stop": ["Do not mutate data merely because a UI surface appears empty; establish the fault boundary first."]
+    },
+    {
+      "id": "build-and-setup",
+      "description": "Development setup, Electron packaging, Cloudflare Pages preparation, and targeted verification",
+      "taskTypes": ["setup", "build", "verification"],
+      "keywords": ["setup", "install", "build", "package", "electron builder", "cloudflare pages", "npm start"],
+      "paths": ["package.json", "scripts/create-desktop-config.js", "scripts/prepare-cloudflare-pages-upload.sh"],
+      "symbols": [],
+      "errors": ["electron-builder", "permission denied", "OIDC_ISSUER and OIDC_CLIENT_ID are required"],
+      "read": [
+        {
+          "path": "docs/official-docs/runbooks/dev-setup-and-build.md",
+          "anchor": "development-workflow-commands"
+        },
+        {
+          "path": "docs/official-docs/reference/test-map.md",
+          "anchor": "automated-and-syntax-verification-commands"
+        }
+      ],
+      "inspect": [{"path": "package.json", "symbols": ["prepare:cloudflare", "verify:phase2"]}],
+      "tools": ["docs-check", "desktop-config", "cloudflare-bundle"],
+      "verify": ["npm run docs:check"],
+      "stop": ["Stop if packaging would require introducing secrets into the client bundle."]
+    },
+    {
+      "id": "feature-progression",
+      "description": "New feature proposals, active implementation continuation, graduation, and durable knowledge promotion",
+      "taskTypes": ["planning", "implementation", "documentation"],
+      "keywords": ["feature", "plan", "progress", "continue", "partially implemented", "graduation", "roadmap", "knowledge promotion"],
+      "paths": ["docs/official-docs/future-plans", "docs/official-docs/runbooks/doc-governance.md"],
+      "symbols": [],
+      "errors": [],
+      "read": [
+        {
+          "path": "docs/official-docs/future-plans/README.md",
+          "anchor": "feature-lifecycle-stages"
+        },
+        {
+          "path": "docs/official-docs/runbooks/doc-governance.md",
+          "anchor": "knowledge-promotion-and-retirement"
+        }
+      ],
+      "inspect": [],
+      "tools": ["docs-check"],
+      "verify": ["npm run docs:check"],
+      "stop": ["Stop if a proposal contradicts a shipped invariant or requires owner-gated external changes."]
+    },
+    {
+      "id": "candidate-cutover",
+      "description": "Migration, parity, acceptance, security gates, and owner-approved Shopify-primary cutover",
+      "taskTypes": ["migration", "deployment", "acceptance", "operations"],
+      "keywords": ["cutover", "migration", "parity", "acceptance", "redis retirement", "go no-go"],
+      "paths": ["scripts/run-shadow-migration.js", "scripts/run-parity-check.js", "order-manager-proxy/wrangler.jsonc"],
+      "symbols": ["migration_ledger", "reconciliation_checkpoints"],
+      "errors": ["MIGRATION_UPSTREAM_ENABLED", "overwriteChangedOrders"],
+      "read": [
+        {
+          "path": "docs/official-docs/runbooks/shopify-candidate-cutover.md",
+          "anchor": "migration"
+        }
+      ],
+      "inspect": [
+        {"path": "scripts/run-shadow-migration.js", "symbols": ["--confirm-shop"]},
+        {"path": "scripts/run-parity-check.js", "symbols": ["parityStatus"]}
+      ],
+      "tools": ["migration", "parity", "verify-phase2"],
+      "verify": ["npm run verify:phase2"],
+      "stop": ["Owner approval is required for migration overwrite, final cutover, live S&S, and Redis deletion."]
+    },
+    {
+      "id": "repository-tools",
+      "description": "Discover, promote, document, and safely run reusable repository commands",
+      "taskTypes": ["tooling", "automation", "documentation"],
+      "keywords": ["script", "tool", "command", "automation", "dry run", "repo tool", "reusable"],
+      "paths": ["scripts", "docs/official-docs/reference/tool-registry.md"],
+      "symbols": [],
+      "errors": [],
+      "read": [
+        {
+          "path": "docs/official-docs/reference/tool-registry.md",
+          "anchor": "registered-commands"
+        }
+      ],
+      "inspect": [{"path": "scripts/repo-tool.js", "symbols": ["routeQuery", "runRegisteredCommand"]}],
+      "tools": ["route", "docs-check"],
+      "verify": ["npm run repo -- tools", "npm run docs:check"],
+      "stop": ["Do not promote a one-off task artifact unless it encodes durable repository knowledge or a recurring procedure."]
+    },
+    {
+      "id": "documentation-system",
+      "description": "Living-documentation architecture, retrieval design, knowledge lifecycle, governance, and adoption",
+      "taskTypes": ["documentation", "architecture", "governance"],
+      "keywords": ["living docs", "documentation system", "context routing", "knowledge lifecycle", "fresh agent", "token efficiency"],
+      "paths": ["AGENTS.md", "docs/official-docs", "scripts/check-docs.js"],
+      "symbols": [],
+      "errors": [],
+      "read": [
+        {
+          "path": "docs/official-docs/reference/living-documentation-system.md",
+          "anchor": "system-model"
+        },
+        {
+          "path": "docs/official-docs/runbooks/doc-governance.md",
+          "anchor": "core-documentation-rules"
+        }
+      ],
+      "inspect": [
+        {"path": "docs/official-docs/retrieval-manifest.json", "symbols": ["schemaVersion"]},
+        {"path": "scripts/check-docs.js", "symbols": ["validateManifest"]}
+      ],
+      "tools": ["route", "docs-check"],
+      "verify": ["npm run docs:check"],
+      "stop": ["Do not turn ordinary task recaps or obvious code behavior into permanent knowledge."]
+    },
+    {
+      "id": "domain-language",
+      "description": "Repository terminology, semantic boundaries, identifiers, and source-of-truth distinctions",
+      "taskTypes": ["orientation", "diagnosis", "architecture"],
+      "keywords": ["glossary", "meaning", "difference", "authority", "gid", "order name", "projection", "manifest"],
+      "paths": ["docs/official-docs/reference/domain-glossary.md"],
+      "symbols": [],
+      "errors": [],
+      "read": [
+        {
+          "path": "docs/official-docs/reference/domain-glossary.md",
+          "anchor": "semantic-boundaries"
+        }
+      ],
+      "inspect": [],
+      "tools": ["route"],
+      "verify": [],
+      "stop": []
+    },
+    {
+      "id": "legacy-history",
+      "description": "Explicit historical research into quarantined and obsolete documentation",
+      "taskTypes": ["history"],
+      "keywords": ["legacy docs", "historical", "obsolete", "archived plan"],
+      "paths": ["docs/official-docs/legacy"],
+      "symbols": [],
+      "errors": [],
+      "read": [
+        {
+          "path": "docs/official-docs/legacy/README.md",
+          "anchor": "quarantined-files-index"
+        }
+      ],
+      "inspect": [],
+      "tools": [],
+      "verify": [],
+      "stop": ["Never revive a deprecated pattern without verifying it against live code and current architecture."]
+    }
+  ]
+}

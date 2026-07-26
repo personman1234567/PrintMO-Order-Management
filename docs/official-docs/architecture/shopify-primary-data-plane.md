@@ -10,6 +10,20 @@
 - You are changing only the legacy Redis queue or Electron IPC: read `ipc-and-storage.md`.
 - You are changing only card layout: read `../workflows/order-ingestion-kanban.md`.
 
+## Section Map
+
+- [Current Release Boundary](#current-release-boundary)
+- [Ownership](#ownership)
+- [Canonical Production Metafield](#canonical-production-metafield)
+- [D1 Schema](#d1-schema)
+- [Board Reads](#board-reads)
+- [Webhooks and Reconciliation](#webhooks-and-reconciliation)
+- [Batches](#batches)
+- [Assets and Migration](#assets-and-migration)
+- [Environment Flags](#environment-flags)
+- [Security Baseline and Remaining Hardening](#security-baseline-and-remaining-hardening)
+- [Common Failure Modes & Recovery](#common-failure-modes--recovery)
+
 ## Current Release Boundary
 
 Candidate deployment on 2026-07-25:
@@ -159,3 +173,13 @@ Before final cutover, complete these defense-in-depth items:
 - disable the migration and legacy-ingestion bridges immediately after their approved windows.
 
 These remaining items are cutover gates, not claims about current shipped behavior.
+
+## Common Failure Modes & Recovery
+
+| Failure | Boundary violated | Recovery |
+|---|---|---|
+| Candidate production edit changes Redis | Legacy and candidate mutation paths were coupled | Stop, restore source-aware routing, and run Phase 2 verification. |
+| D1 projection is treated as canonical order state | Projection/authority distinction was lost | Rebuild from Shopify commerce and the canonical production metafield. |
+| Failed bootstrap renders an empty board | `BOARD_NOT_INITIALIZED` was suppressed | Preserve the last usable board and surface the structured error. |
+| Ambiguous supplier result is resent | `unknown` was treated as retryable | Reconcile the supplier result; never blindly resubmit. |
+| Private asset key or URL reaches the browser | Manifest/ticket boundary was bypassed | Return manifest metadata only and require a short-lived authenticated ticket. |

@@ -6,21 +6,22 @@
 - You are adding new fields, badges, or buttons to collapsed order cards or detail overlays.
 
 ## Skip This When
-- You are editing backend IPC handlers or main process logic $\rightarrow$ read [architecture/ipc-and-storage.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/ipc-and-storage.md).
-- You are looking for S&S/SanMar API schemas $\rightarrow$ read [architecture/external-apis.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/external-apis.md).
+- You are editing backend IPC handlers or main-process logic → read [IPC and storage](../architecture/ipc-and-storage.md).
+- You are looking for current S&S API contracts → read [External APIs](../architecture/external-apis.md).
 
 ## Living Documentation Rule
 > **MANDATORY MAINTENANCE CONTRACT**: Any time the UI layout, card tile structure, container contents, or modal fields change in the codebase, this document **MUST** be updated concurrently to match the live implementation.
 
 ## Section Map
-- [1. Global Application Layout & Top-Level Containers](#1-global-application-layout--top-level-containers)
-- [2. Collapsed Order Card Tile Specification](#2-collapsed-order-card-tile-specification)
-- [3. Complete Modal Overlays & Display Inventory](#3-complete-modal-overlays--display-inventory)
-- [4. Data Field Source & Pipeline Mapping Table](#4-data-field-source--pipeline-mapping-table)
+- [Global Application Layout & Top-Level Containers](#global-application-layout--top-level-containers)
+- [Collapsed Order Card Tile Specification](#collapsed-order-card-tile-specification)
+- [Complete Modal Overlays & Display Inventory](#complete-modal-overlays--display-inventory)
+- [Data Field Source & Pipeline Mapping Table](#data-field-source--pipeline-mapping-table)
+- [Common Failure Modes & Recovery](#common-failure-modes--recovery)
 
 ---
 
-## 1. Global Application Layout & Top-Level Containers
+## Global Application Layout & Top-Level Containers
 
 The primary user interface is built as a three-column grid layout (`.container`) in desktop view, adapting to a tabbed navigation bar (`#mobile-tab-bar`) in constrained/mobile/Shopify Admin iframe views. In the embedded web app, the **Legacy Redis / Shopify board** source control reuses this same renderer. Legacy mode receives the original queue shape; Shopify mode maps the Worker board DTO into the renderer shape without reading or mutating Redis.
 
@@ -58,7 +59,7 @@ The primary user interface is built as a three-column grid layout (`.container`)
 
 ---
 
-## 2. Collapsed Order Card Tile Specification
+## Collapsed Order Card Tile Specification
 
 An **Order Card** (`.pipeline-card`, `.card`) is the fundamental visual unit displayed in Kanban columns *before* a user clicks to open the Order Detail overlay.
 
@@ -90,7 +91,7 @@ An **Order Card** (`.pipeline-card`, `.card`) is the fundamental visual unit dis
 
 ---
 
-## 3. Complete Modal Overlays & Display Inventory
+## Complete Modal Overlays & Display Inventory
 
 Below is the complete inventory of all 10 modal overlays and secondary screens embedded in `index.html`.
 
@@ -147,7 +148,7 @@ Below is the complete inventory of all 10 modal overlays and secondary screens e
 
 ---
 
-## 4. Data Field Source & Pipeline Mapping Table
+## Data Field Source & Pipeline Mapping Table
 
 This table maps the established renderer contract to its visual destinations. In Legacy Redis mode these fields come from `shopifyOrdersQueue`; in Shopify board mode `order-manager-web/web-shim.js` derives the commerce fields from Shopify/D1 DTOs and the writable production fields from the canonical Shopify metafield.
 
@@ -167,3 +168,12 @@ This table maps the established renderer contract to its visual destinations. In
 | `order.files` | Array (Base64) | `#file-list`, `#detail-design-panel` | Rendered as clickable image thumbnails or PDF icon placeholders. |
 | `order.mockup` | String (Base64) | Card `.mockup-slot`, `#detail-mockups-track` | Rendered inside `<img>` tag as base64 data URL. |
 | `order.bundle` | String/Boolean | Card `.bundle-card`, `#bundle-title` | Alters card styling to blue bundle style and displays bundle name. |
+
+## Common Failure Modes & Recovery
+
+| Failure | Cause | Recovery |
+|---|---|---|
+| Documented selector does not exist | UI inventory drifted after a refactor | Update this reference in the same task and run `npm run docs:check`. |
+| Candidate-only styling changes Legacy Redis | Source scoping was removed | Restore `body[data-order-source="shopify"]` or equivalent candidate scope. |
+| Card field is fetched through rich detail during board load | Summary/detail boundary was ignored | Add the bounded field to the proper summary contract or defer it until detail opens. |
+| Mobile content is clipped | Fixed shell has no explicit inner scroll owner | Preserve the routed mobile detail scroll contract. |

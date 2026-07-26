@@ -5,22 +5,22 @@
 - You need a symptom-to-boundary lookup path to diagnose recurring issues instantly without re-debugging.
 
 ## Skip This When
-- You are setting up your development environment from scratch $\rightarrow$ read [runbooks/dev-setup-and-build.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/runbooks/dev-setup-and-build.md).
-- You are reviewing system architecture contracts $\rightarrow$ read [architecture/system-overview.md](file:///e:/PrintMO/PrintMO-Order-Management/docs/official-docs/architecture/system-overview.md).
+- You are setting up your development environment from scratch → read [Developer setup and build](dev-setup-and-build.md).
+- You are reviewing system architecture contracts → read [System overview](../architecture/system-overview.md).
 
 ## Section Map
-- [1. Diagnostic Symptom Matrix](#1-diagnostic-symptom-matrix)
-- [2. Detailed Troubleshooting & Recovery Procedures](#2-detailed-troubleshooting--recovery-procedures)
+- [Diagnostic Symptom Matrix](#diagnostic-symptom-matrix)
+- [Detailed Troubleshooting & Recovery Procedures](#detailed-troubleshooting--recovery-procedures)
 - [Common Failure Modes & Recovery](#common-failure-modes--recovery)
 
 ---
 
-## 1. Diagnostic Symptom Matrix
+## Diagnostic Symptom Matrix
 
 | Observed Symptom | Primary Fault Boundary | Target Code Location | Primary Action / Recovery |
 |---|---|---|---|
-| Large file attachments cause slow UI load or Redis timeouts | Base64 payload size bloat in Redis list items | `main.js:149-177`, `renderer.js:910-961` | Compress attachment image client-side prior to Base64 encoding. |
-| Dragged Kanban card resets position after drop | Out-of-sync list array index during Redis `LSET` | `main.js:93-105`, `renderer.js:1290-1310` | Force full queue refresh (`getQueue`) before index mutation. |
+| Large legacy attachments cause slow board load or adapter timeouts | Base64 payload size bloat in legacy Redis list items | `renderer.js` file handling; authenticated legacy adapter | Capture a checksummed backup, measure payload size safely, and require owner approval before repairing source records. |
+| Dragged card resets position after drop | Candidate canonical write failed/conflicted, or legacy adapter mutation failed | `web-shim.js:updateBoardMove`; legacy mutation route | Identify the active source first. Preserve candidate rollback/conflict handling; diagnose legacy transport by stable order identity. |
 | Web client error: `window.api is undefined` | Web shim loading order mismatch | `order-manager-web/web-shim.js`, `order-manager-web/index.html` | Verify `web-shim.js` is loaded prior to `renderer.js` script tag. |
 | Redis board shows zero cards while bundle tiles remain; console says `(assets || []).forEach is not a function` | A legacy line item contains a non-array `assets` value, causing card rendering to stop mid-board | `renderer.js:splitOrderAssets`, `order-manager-web/renderer.js:splitOrderAssets` | Confirm queue length read-only before any restore. Current renderers ignore malformed asset containers and continue rendering; inspect and repair the source record separately only if its missing artwork is operationally important. |
 | Shopify detail error: `404 - [object Object]` | Historical symptom of denied `fulfillmentOrders` access or another structured upstream error being rendered poorly | `order-manager-proxy/worker.js`, `order-manager-web/web-shim.js`, `order-manager-proxy/shopify.app.toml` | Do not assume the order is missing. Follow Procedure C and compare the installed scopes with the currently released app version. |
@@ -37,29 +37,34 @@
 | Shopify drag/drop reports `VERSION_CONFLICT`, feels delayed, then appears after refresh | Separate stage/readiness writes raced, or another client advanced the canonical revision | `web-shim.js:updateBoardMove`, `candidateMutationChains`, `blanks-batches.js:applyOptimisticOrderUpdate` | Keep the move atomic, serialized per order, optimistic, and rollback-safe. The Worker must include current revision/state in conflict details; the client reconciles and retries once only. |
 | Production cards render as tiny slivers, a lone card stretches across the section, or pipeline footer values clip | CSS expects semantic `production-card`/`pipeline-main-card` classes that the generated card did not receive, compounded by inherited one-third width or an `auto-fit` grid that expands a lone card | `dashboard-triage-enhancements.js:decorateCard`, `desktop.css`, `mobile.css` | Confirm Shopify cards receive the semantic class before changing grid math. Candidate production grids use `auto-fill` at desktop widths so one card retains the normal two-column width; phone production cards use one column. Do not un-scope the repair onto Legacy Redis. |
 | Mobile detail opens but cannot scroll | Fixed-shell touch containment selects no inner vertical scroll owner | `shopify-embedded-mobile.js:installEmbeddedTouchContainment`, `mobile.css` detail repair layer | Preserve `#detail-content` as the touch owner and scrollable flex child; suppress page bounce only at its boundaries. |
-| Packaged desktop app fails to connect to Redis | `process.resourcesPath` `.env` path resolution failure | `main.js:7-21` | Ensure `.env` is properly copied by `electron-builder` `extraResources`. |
-| S&S Batch submission returns 401 Unauthorized | Missing or expired `SS_API_KEY` | `main.js:206-258` | Check `.env` key value; re-authenticate credentials. |
+| Packaged desktop app fails before loading orders | Public OIDC config, sign-in, or authenticated Worker connectivity failed | `main.js:loadRuntimeConfig`, `DesktopOidcAuth`, `main.js:workerFetch` | Verify public runtime config and identity/Worker reachability. Never copy `.env` or infrastructure secrets into the package. |
+| S&S batch submission returns 401 Unauthorized | Supplier-gateway credentials or Worker-to-gateway authentication failed | Worker batch route and stateless supplier gateway | Inspect server-side gateway configuration and request IDs. No S&S credential belongs in Electron or the browser. |
 
 ---
 
-## 2. Detailed Troubleshooting & Recovery Procedures
+## Detailed Troubleshooting & Recovery Procedures
 
 ### A. Diagnosing Base64 Attachment Bloat
 - **Trap**: Uploading high-resolution PNG mockups encodes raw image files as multi-megabyte Base64 strings embedded directly inside `shopifyOrdersQueue` JSON objects.
-- **Symptom**: Redis `LRANGE` calls stall for several seconds; UI freezes during card render.
+- **Symptom**: Authenticated legacy queue reads stall; UI rendering is delayed.
 - **Recovery**:
-  1. Inspect queue items in Redis using `redis-cli LRANGE shopifyOrdersQueue 0 5`.
-  2. Clear oversized Base64 strings from affected items.
-  3. Ensure client-side image downscaling (max 1024px width) before calling `window.api.addFile`.
+  1. Run `npm run repo -- redis backup` and preserve the printed checksum.
+  2. Inspect attachment manifest sizes without logging customer data or Base64 bytes.
+  3. Confirm client-side image downscaling before `window.api.addFile`.
+  4. Treat source-record deletion or replacement as a separate owner-approved repair; do not mutate Redis merely because the UI is slow.
 
-### B. Index Shift & Array Mutation Race Conditions
-- **Trap**: Electron IPC methods (`update-status`, `delete-order`, `update-ready`) mutate Redis list items by zero-based index (`LSET shopifyOrdersQueue <index> <json>`).
-- **Symptom**: If an order is deleted or ingested while a user is dragging a card, the target index shifts, resulting in the wrong order being mutated.
+### B. Source-Aware Card Mutation Failure
+
+- **Trap**: Diagnosing every reverted card as a Redis index problem ignores the active board source and current transport architecture.
+- **Candidate diagnosis**: Inspect the structured canonical response. Preserve optimistic local rollback, per-order serialization, expected revision, and one bounded `VERSION_CONFLICT` reconciliation.
+- **Legacy diagnosis**: Confirm the client used the authenticated legacy route and supplied stable order/bundle identity. Only the Render adapter owns Redis mutation details.
 - **Recovery**:
-  1. Match target order `id` string before executing index mutations.
-  2. Implement optimistic UI locking or immediate re-fetch (`getQueue`).
+  1. Confirm whether **Legacy Redis** or **Shopify board** is active.
+  2. Inspect the first structured transport/canonical error.
+  3. Re-fetch only after the failed mutation has been classified.
+  4. Never introduce direct Redis IPC or client-side list-index mutation as a repair.
 
-### C. Shopify Live Detail Scope Failure
+### Shopify Live Detail Scope Failure
 
 - **Observed symptom**: The Shopify list loads, but clicking a known order opens an empty read-only dialog with `Shopify order details could not load: 404 - [object Object]`; DevTools shows the detail GET returning 404.
 - **Actual upstream result**: Shopify returns HTTP 200, `data.order: null`, and `ACCESS_DENIED` at GraphQL path `order.fulfillmentOrders`. The order still exists.
@@ -77,7 +82,7 @@
 - Confirm the field exists in Shopify Admin before assuming a permission issue. Request only operationally necessary fields through the app's API access requests and keep the Redis board available during approval.
 - Reference: [Shopify protected customer data](https://shopify.dev/docs/apps/launch/protected-customer-data).
 
-### E. Empty Redis Board Caused by Malformed Line-Item Assets
+### Empty Redis Board Caused by Malformed Line-Item Assets
 
 - **Observed symptom**: Board counts/cards fall to zero or rendering stops, while a bundle tile may already be visible and Redis still contains orders. DevTools reports `TypeError: (assets || []).forEach is not a function` from `splitOrderAssets`.
 - **Meaning**: This is a client rendering failure, not proof of queue deletion. One line item's `assets` field is present but is not an array (for example `{}`).
@@ -85,7 +90,7 @@
 - **Shipped behavior**: Desktop and embedded-web renderers normalize non-array line-item asset containers to an empty list. The affected card remains usable but cannot show artwork from that malformed field; other cards continue rendering.
 - **2026-07-22 incident**: All 21 queue records were intact and parseable. One item on order `#1558` contained `assets: {}`. No Redis mutation or restore was required.
 
-### F. Admin Block Idempotency-Key Rejection
+### Admin Block Idempotency-Key Rejection
 
 - **Observed symptom**: The order block loads current production data, but save shows `A valid idempotency key is required`.
 - **Cause**: Shopify UI extensions do not guarantee `crypto.randomUUID()`. The retired fallback used `${gid}:${timestamp}:...`; Shopify GIDs contain `/`, while the Worker intentionally accepts only letters, digits, `.`, `_`, `:`, and `-`.

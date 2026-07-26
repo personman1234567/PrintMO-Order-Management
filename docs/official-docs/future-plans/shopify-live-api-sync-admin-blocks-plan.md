@@ -1,6 +1,6 @@
 # Shopify Live API Sync, Admin Blocks, and Redis-Free Cutover Plan
 
-- **Status**: `[Implemented Candidate — Acceptance/Cutover Pending]`
+- **Status**: `[Implemented Candidate]`
 - **Owner / Target Milestone**: `v1.4`
 - **Last Updated**: `2026-07-23`
 - **Remaining Delivery Unit**: `Owner permission approval, migration/acceptance evidence, and cutover`
@@ -10,6 +10,14 @@
 ## Summary & Intent
 
 PrintMO will graduate the proven Shopify Live preview and Admin order block into the complete operational order manager while removing Redis from the runtime architecture.
+
+## Current Continuation State
+
+- **Current state**: The Shopify/D1/R2 candidate is implemented and live for acceptance; Legacy Redis remains an isolated fallback.
+- **Next safe action**: Execute the remaining read-only acceptance and parity evidence in the cutover runbook, then present the owner go/no-go gates.
+- **Remaining blockers**: Final acceptance evidence, security hardening gates, cutover window, and post-cutover observation.
+- **Owner / external actions**: Owner approval is required for final cutover, live S&S, migration overwrite, and Redis retirement.
+- **Last verified evidence**: `npm run verify:phase2`, proxy tests/build, production D1 migration/backfill checkpoints, and the release evidence recorded in the current architecture/runbook.
 
 The finished application preserves the workflow and familiarity of the current Redis board, but uses purpose-specific durable sources:
 
