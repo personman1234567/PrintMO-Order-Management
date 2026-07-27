@@ -39,6 +39,8 @@
   let accountingHydratePromise = null;
   let detailAccountingOrderName = '';
   let activeBlanksView = 'cart';
+  let activeSuppliesView = 'cart';
+  let suppliesHoverTimer = null;
 
   function currentOrders() {
     try {
@@ -62,7 +64,9 @@
     if (section) section.dataset.blanksView = activeBlanksView;
     [
       ['blanks-view-cart', 'cart'],
-      ['blanks-view-ordered', 'ordered']
+      ['blanks-view-ordered', 'ordered'],
+      ['supplies-view-cart', 'cart'],
+      ['supplies-view-ordered', 'ordered']
     ].forEach(([id, view]) => {
       const button = document.getElementById(id);
       const selected = view === activeBlanksView;
@@ -72,18 +76,149 @@
     });
     const cart = document.getElementById('blanks-cart-count');
     const ordered = document.getElementById('blanks-ordered-count');
+    const suppliesCart = document.getElementById('supplies-cart-count');
+    const suppliesOrdered = document.getElementById('supplies-ordered-count');
     const total = document.getElementById('count-blanks');
     if (cart) cart.textContent = String(cartCount);
     if (ordered) ordered.textContent = String(orderedCount);
+    if (suppliesCart) suppliesCart.textContent = String(cartCount);
+    if (suppliesOrdered) suppliesOrdered.textContent = String(orderedCount);
     if (total) total.textContent = String(blanksOrders.length);
+    syncSuppliesLayout();
   }
 
   window.setActiveBlanksView = function setActiveBlanksView(view, { render = true } = {}) {
     if (!isShopifyBoard()) return;
     activeBlanksView = view === 'ordered' ? 'ordered' : 'cart';
+    activeSuppliesView = activeBlanksView;
     syncBlanksViewUi();
     if (render && typeof renderStatusColumn === 'function') renderStatusColumn('blanks');
   };
+
+  function isSuppliesDesktop() {
+    return isShopifyBoard() && window.matchMedia('(min-width: 901px)').matches;
+  }
+
+  function syncSuppliesLayout() {
+    const panel = document.querySelector('.panel.create');
+    const createBody = panel?.querySelector('.create-body');
+    const blanksSection = document.getElementById('blanks-section');
+    const fulfillmentBody = document.querySelector('.panel.fulfillment > .panel-body');
+    const printSection = document.getElementById('print-section');
+    if (!panel || !createBody || !blanksSection || !fulfillmentBody || !printSection) return;
+
+    const desktopSupplies = isSuppliesDesktop();
+    if (desktopSupplies && blanksSection.parentElement !== panel) {
+      panel.appendChild(blanksSection);
+    } else if (!desktopSupplies && blanksSection.parentElement !== fulfillmentBody) {
+      fulfillmentBody.insertBefore(blanksSection, printSection);
+    }
+
+    panel.classList.toggle('supplies-desktop-active', desktopSupplies);
+    panel.dataset.suppliesView = desktopSupplies ? activeSuppliesView : '';
+    createBody.hidden = desktopSupplies && activeSuppliesView !== 'build';
+    blanksSection.hidden = desktopSupplies && activeSuppliesView === 'build';
+    createBody.setAttribute('aria-hidden', createBody.hidden ? 'true' : 'false');
+    blanksSection.setAttribute('aria-hidden', blanksSection.hidden ? 'true' : 'false');
+    blanksSection.setAttribute('aria-labelledby', activeSuppliesView === 'ordered'
+      ? 'supplies-view-ordered'
+      : 'supplies-view-cart');
+
+    [
+      ['supplies-view-build', 'build'],
+      ['supplies-view-cart', 'cart'],
+      ['supplies-view-ordered', 'ordered']
+    ].forEach(([id, view]) => {
+      const button = document.getElementById(id);
+      if (!button) return;
+      const selected = desktopSupplies && view === activeSuppliesView;
+      button.classList.toggle('active', selected);
+      button.setAttribute('aria-selected', selected ? 'true' : 'false');
+      button.tabIndex = selected ? 0 : -1;
+    });
+  }
+
+  function setActiveSuppliesView(view) {
+    if (!isSuppliesDesktop()) return;
+    const nextView = ['build', 'cart', 'ordered'].includes(view) ? view : 'cart';
+    if (nextView === 'cart' || nextView === 'ordered') {
+      window.setActiveBlanksView(nextView);
+      return;
+    }
+    activeSuppliesView = 'build';
+    syncSuppliesLayout();
+  }
+
+  function draggedFromPipeline() {
+    return Boolean(document.querySelector('#col-received .card.dragging, #col-received .bundle-card.dragging'));
+  }
+
+  function setupSuppliesTabs() {
+    const panel = document.querySelector('.panel.create');
+    if (!panel || panel.dataset.suppliesTabsReady === '1') return;
+    panel.dataset.suppliesTabsReady = '1';
+
+    const views = ['build', 'cart', 'ordered'];
+    views.forEach((view, index) => {
+      const button = document.getElementById(`supplies-view-${view}`);
+      if (!button) return;
+      button.addEventListener('click', () => setActiveSuppliesView(view));
+      button.addEventListener('keydown', event => {
+        if (!isSuppliesDesktop() || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        let nextIndex = index;
+        if (event.key === 'ArrowLeft') nextIndex = (index + views.length - 1) % views.length;
+        if (event.key === 'ArrowRight') nextIndex = (index + 1) % views.length;
+        if (event.key === 'Home') nextIndex = 0;
+        if (event.key === 'End') nextIndex = views.length - 1;
+        const nextView = views[nextIndex];
+        setActiveSuppliesView(nextView);
+        document.getElementById(`supplies-view-${nextView}`)?.focus();
+      });
+      if (view === 'cart' || view === 'ordered') {
+        button.addEventListener('dragover', event => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+          button.classList.add('drag-over');
+        });
+        button.addEventListener('dragleave', () => button.classList.remove('drag-over'));
+        button.addEventListener('drop', async event => {
+          event.preventDefault();
+          button.classList.remove('drag-over');
+          document.body.classList.remove('dragging-cursor');
+          document.querySelectorAll('.dragging').forEach(card => card.classList.remove('dragging'));
+          try {
+            await handleBatchAwareDrop(event.dataTransfer.getData('text/plain'), 'blanks', {
+              blanksOrdered: view === 'ordered' ? 1 : 0,
+              activateBlanksView: view
+            });
+          } catch (error) {
+            console.error('Unable to move order to Supplies view', error);
+            showMoveNotice(`Could not move order. ${error?.message || error}`);
+          }
+        });
+      }
+    });
+
+    const activateBuildFromPipeline = () => {
+      if (!isSuppliesDesktop() || !draggedFromPipeline() || activeSuppliesView === 'build') return;
+      window.clearTimeout(suppliesHoverTimer);
+      suppliesHoverTimer = window.setTimeout(() => setActiveSuppliesView('build'), 180);
+    };
+    panel.addEventListener('dragenter', activateBuildFromPipeline);
+    panel.addEventListener('dragover', activateBuildFromPipeline);
+    panel.addEventListener('dragleave', event => {
+      if (event.relatedTarget instanceof Node && panel.contains(event.relatedTarget)) return;
+      window.clearTimeout(suppliesHoverTimer);
+    });
+    document.addEventListener('dragend', () => window.clearTimeout(suppliesHoverTimer));
+
+    const desktopQuery = window.matchMedia('(min-width: 901px)');
+    desktopQuery.addEventListener('change', syncSuppliesLayout);
+    const sourceObserver = new MutationObserver(syncSuppliesLayout);
+    sourceObserver.observe(document.body, { attributes: true, attributeFilter: ['data-order-source'] });
+    syncSuppliesLayout();
+  }
 
   window.blanksOrderedValueForActiveView = function blanksOrderedValueForActiveView() {
     return isShopifyBoard() && activeBlanksView === 'ordered' ? 1 : 0;
@@ -1447,6 +1582,7 @@
   patchBlanksColumnView();
 
   document.addEventListener('DOMContentLoaded', () => {
+    setupSuppliesTabs();
     ensureReceiveButton();
     ensureReceiveOverlay();
     setupBlanksTabDropTargets();

@@ -22,15 +22,15 @@
   <link rel="stylesheet" href="./shopify-preview.css" />
   <link rel="stylesheet" href="./order-detail-split.css" />
 </head>
-<body data-active-tab="pipeline" data-active-view="orders">
+<body data-active-tab="pipeline" data-active-view="orders" data-order-source="shopify">
   <header class="app-header">
     <div class="app-brand">PrintMO Order Manager</div>
     <div class="order-source-switch" role="group" aria-label="Order data view">
       <span class="order-source-label">Data view</span>
-      <button id="order-source-redis" class="order-source-option active" type="button" data-order-source-target="redis" aria-pressed="true">
+      <button id="order-source-redis" class="order-source-option" type="button" data-order-source-target="redis" aria-pressed="false">
         Legacy Redis
       </button>
-      <button id="order-source-shopify" class="order-source-option" type="button" data-order-source-target="shopify" aria-pressed="false">
+      <button id="order-source-shopify" class="order-source-option active" type="button" data-order-source-target="shopify" aria-pressed="true">
         Shopify board
       </button>
     </div>
@@ -72,8 +72,8 @@
       </button>
     </nav>
     <div class="mobile-order-source-switch" role="group" aria-label="Order data view">
-      <button class="order-source-option active" type="button" data-order-source-target="redis" aria-pressed="true">Legacy Redis</button>
-      <button class="order-source-option" type="button" data-order-source-target="shopify" aria-pressed="false">Shopify board</button>
+      <button class="order-source-option" type="button" data-order-source-target="redis" aria-pressed="false">Legacy Redis</button>
+      <button class="order-source-option active" type="button" data-order-source-target="shopify" aria-pressed="true">Shopify board</button>
     </div>
     <nav id="mobile-blanks-subnav" class="mobile-blanks-subnav" aria-label="Blanks workflow" hidden>
       <button type="button" data-mobile-blanks-target="to-order" aria-pressed="true">To order</button>
@@ -182,9 +182,25 @@
       <div class="panel-body cards" id="col-received"></div>
     </div>
 
-    <!-- MIDDLE: Create Blanks Order -->
+    <!-- MIDDLE: Supplies (Shopify desktop refines this into a tabbed workspace). -->
     <div class="panel create">
-      <div class="panel-header">CREATE BLANKS ORDER</div>
+      <div class="panel-header supplies-panel-header">
+        <h2 class="panel-title">
+          <span class="supplies-legacy-title">CREATE BLANKS ORDER</span>
+          <span class="supplies-title">SUPPLIES</span>
+        </h2>
+        <div id="supplies-tabs" class="supplies-tabs" role="tablist" aria-label="Supplies workflow">
+          <button id="supplies-view-build" class="supplies-tab" type="button" role="tab" aria-selected="false" aria-controls="col-toOrder">
+            Build Order
+          </button>
+          <button id="supplies-view-cart" class="supplies-tab" type="button" role="tab" aria-selected="true" aria-controls="blanks-section">
+            In S&amp;S Cart <span id="supplies-cart-count" class="supplies-tab-count">0</span>
+          </button>
+          <button id="supplies-view-ordered" class="supplies-tab" type="button" role="tab" aria-selected="false" aria-controls="blanks-section">
+            Ordered <span id="supplies-ordered-count" class="supplies-tab-count">0</span>
+          </button>
+        </div>
+      </div>
       <div class="panel-body create-body">
         <div class="drag-area" id="col-toOrder">Drag cards here</div>
         <div class="picked-cards" id="picked-cards"></div>

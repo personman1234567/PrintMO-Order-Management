@@ -860,7 +860,6 @@
     els.detailError = document.getElementById('shopify-preview-detail-error');
     els.detailContent = document.getElementById('shopify-preview-detail-content');
 
-    document.body.dataset.orderSource = 'redis';
     document.querySelectorAll('[data-order-source-target]').forEach((button) => {
       button.addEventListener('click', () => setPreviewActive(button.dataset.orderSourceTarget === 'shopify'));
     });
@@ -876,8 +875,8 @@
     els.detail?.addEventListener('click', (event) => {
       if (event.target === els.detail) closeOrderDetail();
     });
-    // renderer.js owns the initial board load. Do not start a duplicate Redis
+    // renderer.js owns the initial board load. Do not start a duplicate Shopify
     // request while the DOMContentLoaded render is already in flight.
-    setPreviewActive(false, { render: false });
+    setPreviewActive(true, { render: false });
   });
 })();

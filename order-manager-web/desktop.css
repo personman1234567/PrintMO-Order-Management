@@ -5481,7 +5481,7 @@
 /* Shopify board repair layer.
    These final rules intentionally do not affect the Legacy Redis board. */
 body[data-order-source="shopify"] .fulfillment .sub-section .cards {
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-content: start;
   gap: 12px;
 }
@@ -5518,6 +5518,192 @@ body[data-order-source="shopify"] .blanks-segment,
 body[data-order-source="shopify"] .section-actions button,
 body[data-order-source="shopify"] .panel-header button {
   min-height: 40px;
+}
+
+/* Desktop Shopify board: supplier purchasing is one middle-column workspace.
+   Legacy Redis retains the original three-column presentation. */
+#supplies-tabs,
+.supplies-title {
+  display: none;
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active .supplies-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active .supplies-legacy-title {
+  display: none;
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active .supplies-title,
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active #supplies-tabs {
+  display: inline-flex;
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active #supplies-tabs {
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  padding: 3px;
+  border: 1px solid #d0d7e2;
+  border-radius: 10px;
+  background: #f6f8fb;
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active .supplies-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 9px;
+  background: transparent;
+  color: #334155;
+  font-size: 0.76rem;
+  font-weight: 750;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active .supplies-tab.active {
+  background: #1a73e8;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.16);
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active .supplies-tab.drag-over {
+  background: #dbeafe;
+  color: #0f172a;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active .supplies-tab:focus-visible {
+  outline: 3px solid rgba(26, 115, 232, 0.38);
+  outline-offset: 2px;
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active .supplies-tab-count {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.1);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active .supplies-tab.active .supplies-tab-count {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active .create-body,
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active #blanks-section {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active #blanks-section {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active #blanks-section .section-header {
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active #blanks-section .blanks-workflow-controls {
+  display: none;
+}
+
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active #blanks-section .cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: start;
+  gap: 12px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+body[data-order-source="shopify"] .panel.fulfillment {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+body[data-order-source="shopify"] .panel.fulfillment > .panel-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px;
+}
+
+body[data-order-source="shopify"] .panel.fulfillment #print-section {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+body[data-order-source="shopify"] .panel.fulfillment #print-section .cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: start;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+/* A Supplies tab owns the entire middle-column body. The base dashboard has
+   competing display declarations, so inactive bodies need a final-layer hide. */
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active[data-supplies-view="build"] #blanks-section,
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active[data-supplies-view="cart"] .create-body,
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active[data-supplies-view="ordered"] .create-body {
+  display: none !important;
+}
+
+/* Keep every desktop Shopify work queue in a stable two-card grid. A sparse
+   queue must not stretch its only card across the whole column. */
+body[data-order-source="shopify"] .pipeline .cards,
+body[data-order-source="shopify"] .picked-cards,
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active #blanks-section .cards,
+body[data-order-source="shopify"] .panel.fulfillment #print-section .cards {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  justify-content: stretch;
+}
+
+body[data-order-source="shopify"] .pipeline .cards > .card,
+body[data-order-source="shopify"] .picked-cards > .card,
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active #blanks-section .cards > .card,
+body[data-order-source="shopify"] .panel.fulfillment #print-section .cards > .card {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
 }
 
 .order-move-toast {

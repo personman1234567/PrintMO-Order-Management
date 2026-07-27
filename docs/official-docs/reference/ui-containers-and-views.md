@@ -25,6 +25,8 @@
 
 The primary user interface is built as a three-column grid layout (`.container`) in desktop view, adapting to a tabbed navigation bar (`#mobile-tab-bar`) in constrained/mobile/Shopify Admin iframe views. In the embedded web app, the **Legacy Redis / Shopify board** source control reuses this same renderer. Legacy mode receives the original queue shape; Shopify mode maps the Worker board DTO into the renderer shape without reading or mutating Redis.
 
+On the **Shopify board at desktop widths above 900px**, the middle panel becomes the tabbed **Supplies** workspace: `Build Order`, `In S&S Cart`, and `Ordered`. The existing `#blanks-section` is moved into that panel only for this candidate desktop presentation; the right panel then gives `#print-section` its full height. Legacy Redis and the mobile layout preserve the original placement. The diagram below is that retained Legacy/mobile base layout.
+
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │                                 PRINTMO ORDER MANAGER                                 │
@@ -53,8 +55,8 @@ The primary user interface is built as a three-column grid layout (`.container`)
 |---|---|---|---|
 | **Main Grid Shell** | `.container` | Outer responsive grid wrapper establishing 3 primary workspace columns. | `.panel.pipeline`, `.panel.create`, `.panel.fulfillment` |
 | **Order Pipeline Column** | `.panel.pipeline` | Houses incoming unpaid/paid customer orders awaiting batch assignment. | Header count (`#pipeline-count`), Bundle controls, Cards container (`#col-received`). |
-| **Create Blanks Panel** | `.panel.create` | Interactive staging area for aggregating orders into S&S/SanMar batch orders. | Drag target (`#col-toOrder`), Picked cards grid (`#picked-cards`), Batch summary drawer (`.summary`). |
-| **Production & Fulfillment** | `.panel.fulfillment` | Split column managing active production states. | Sub-section: Blanks Ordered (`#col-blanks`), Sub-section: Ready to Print (`#col-print`). |
+| **Create Blanks / Supplies Panel** | `.panel.create` | Legacy: interactive staging area for aggregating orders into S&S/SanMar batch orders. Shopify desktop: tabbed Supplies workspace. | Legacy/Build: drag target (`#col-toOrder`), picked cards grid (`#picked-cards`), batch summary (`.summary`). Shopify desktop also hosts the existing Blanks section (`#col-blanks`) for `In S&S Cart` and `Ordered`. |
+| **Production & Fulfillment** | `.panel.fulfillment` | Legacy: split column managing active production states. Shopify desktop: full-height Ready to Print workspace. | Legacy: Blanks (`#col-blanks`) and Ready to Print (`#col-print`). Shopify desktop: Ready to Print (`#print-section` / `#col-print`) only. |
 | **Mobile Tab Bar** | `#mobile-tab-bar` | Bottom navigation bar active in mobile/Shopify Admin viewports (`<1400px`). | Navigation buttons (`Pipeline`, `Blanks Cart`, `Blanks Ordered`, `Ready To Print`). |
 
 ---
@@ -180,5 +182,6 @@ This table maps the established renderer contract to its visual destinations. In
 |---|---|---|
 | Documented selector does not exist | UI inventory drifted after a refactor | Update this reference in the same task and run `npm run docs:check`. |
 | Candidate-only styling changes Legacy Redis | Source scoping was removed | Restore `body[data-order-source="shopify"]` or equivalent candidate scope. |
+| Shopify desktop shows multiple Supplies bodies or a wide single card | A final dashboard layout rule overrode the tab visibility or two-column grid | Keep explicit candidate-scoped inactive-body hiding and `repeat(2, minmax(0, 1fr))` queue grids in the final desktop layer. |
 | Card field is fetched through rich detail during board load | Summary/detail boundary was ignored | Add the bounded field to the proper summary contract or defer it until detail opens. |
 | Mobile content is clipped | Fixed shell has no explicit inner scroll owner | Preserve the routed mobile detail scroll contract. |

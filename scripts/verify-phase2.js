@@ -662,7 +662,7 @@ async function run() {
   const previewController = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-preview.js'), 'utf8');
   assert(previewController.includes('getShopifyPreviewOrderDetail'), 'preview controller must load details only when an order is opened');
   assert(
-    previewController.includes('setPreviewActive(false, { render: false })'),
+    previewController.includes('setPreviewActive(true, { render: false })'),
     'source-controller initialization must not duplicate the renderer-owned initial queue request'
   );
   const webShim = fs.readFileSync(path.join(root, 'order-manager-web', 'web-shim.js'), 'utf8');
@@ -724,8 +724,8 @@ async function run() {
   assert(blanksFoundation.includes('applyOptimisticOrderUpdate'), 'Shopify moves must render optimistically and roll back on failure');
   const desktopCss = fs.readFileSync(path.join(root, 'order-manager-web', 'desktop.css'), 'utf8');
   assert(
-    desktopCss.includes('repeat(auto-fill, minmax(190px, 1fr))'),
-    'a single Shopify production card must retain the normal two-column card width'
+    desktopCss.includes('repeat(2, minmax(0, 1fr))'),
+    'Shopify desktop work queues must keep a sparse queue in a two-column card grid'
   );
   const triageController = fs.readFileSync(path.join(root, 'order-manager-web', 'dashboard-triage-enhancements.js'), 'utf8');
   assert(triageController.includes("card.classList.add('production-card')"), 'fulfillment cards must receive the production layout contract');
