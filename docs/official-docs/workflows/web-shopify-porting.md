@@ -56,7 +56,9 @@ flowchart LR
   - Keeps Render/Redis calls behind explicitly named legacy or migration routes during acceptance.
   - Handled via `scripts/prepare-cloudflare-pages-upload.sh`.
 
-The prepared Cloudflare Pages artifact injects the public Shopify client ID into the App Bridge meta tag. Source HTML intentionally contains a placeholder and must not be deployed without `npm run prepare:cloudflare`.
+The prepared Cloudflare Pages artifact injects the public Shopify client ID, hashes its asset URLs, and records a release marker in the output HTML. Root `renderer.js` is copied into the artifact only; preparation must never rewrite the tracked `order-manager-web/renderer.js` fallback. Source HTML intentionally contains a placeholder and must not be deployed without `npm run prepare:cloudflare`.
+
+For Pages publishing, `npm run prepare:cloudflare` only creates a local artifact. Use `npm run repo -- deploy cloudflare -- --production` for the live site or `npm run repo -- deploy cloudflare -- --preview <branch>` for a preview. The deployment command verifies the marker from its target before reporting success.
 
 ### Source-switched operational board
 

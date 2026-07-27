@@ -373,27 +373,39 @@
 .detail-mockups-browser {
   width: 100%;
   min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px;
+  align-items: stretch;
+  gap: 10px;
 }
 
 .detail-mockup-feature:not(.hidden) {
   display: grid !important;
+  grid-column: 1;
   gap: 7px;
   width: 100%;
-  margin: 0 0 10px;
+  margin: 0;
 }
 
 #detail-mockup-main {
+  position: relative;
   width: 100%;
-  height: clamp(220px, 32vh, 340px);
-  min-height: 220px;
+  min-height: 0;
+  aspect-ratio: 4 / 3;
   display: grid;
   place-items: center;
-  padding: 10px;
+  padding: 8px;
   overflow: hidden;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
-  background: #f1f5f9;
+  background: #f8fafc;
   cursor: zoom-in;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+#detail-mockup-main:hover {
+  border-color: #94a3b8;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.12);
 }
 
 .detail-mockup-main-content {
@@ -404,11 +416,12 @@
   display: grid;
   place-items: center;
   color: var(--detail-muted);
+  overflow: hidden;
 }
 
 .detail-mockup-main-content img {
-  width: auto;
-  height: auto;
+  width: 100%;
+  height: 100%;
   max-width: 100%;
   max-height: 100%;
   min-width: 0;
@@ -418,40 +431,6 @@
   object-position: center;
 }
 
-/* The featured asset and its selector are one gallery, not a thumbnail plus a
-   second cropped preview. Keep the image's complete intrinsic composition in
-   a dedicated stage and put the selector in a real vertical rail. */
-#detail-mockups-browser {
-  display: grid !important;
-  grid-template-columns: minmax(0, 1fr) 76px;
-  align-items: stretch;
-  gap: 10px;
-}
-
-#detail-mockup-feature:not(.hidden) {
-  grid-column: 1;
-  margin: 0;
-}
-
-#detail-mockup-main {
-  height: auto !important;
-  min-height: 0 !important;
-  aspect-ratio: 4 / 3;
-}
-
-.detail-mockup-main-content {
-  overflow: visible;
-}
-
-.detail-mockup-main-content img {
-  width: 100% !important;
-  height: 100% !important;
-  max-width: 100% !important;
-  max-height: 100% !important;
-  object-fit: contain !important;
-  object-position: center !important;
-}
-
 #detail-mockups-track,
 #detail-mockups-track.center-align,
 #detail-mockups-track.left-align {
@@ -459,50 +438,17 @@
   grid-row: 1;
   width: 76px;
   min-width: 76px;
-  height: 100%;
+  height: auto;
   min-height: 0;
   max-height: none;
+  display: flex;
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-
-#detail-mockups-track .mockup-thumb {
-  flex: 0 0 68px;
-  width: 68px;
-  min-width: 68px;
-  height: 68px;
-}
-
-#detail-mockups-track .mockup-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  object-position: center;
-}
-
-.detail-mockup-meta {
-  display: flex;
-  justify-content: flex-end;
-}
-
-#detail-mockups-track,
-#detail-mockups-track.center-align,
-#detail-mockups-track.left-align {
-  width: 100%;
-  height: auto;
-  min-height: 66px;
-  max-height: none;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: flex-start;
   gap: 8px;
   padding: 2px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   scrollbar-width: thin;
 }
 
@@ -510,16 +456,16 @@
   position: relative;
   flex: 0 0 68px;
   width: 68px;
-  height: 62px;
+  height: 68px;
   min-width: 68px;
-  max-width: none;
-  max-height: none;
+  max-width: 68px;
+  max-height: 68px;
   display: grid;
   place-items: center;
-  padding: 5px;
+  padding: 4px;
   border: 1px solid var(--detail-border);
   border-radius: 8px;
-  background: var(--detail-surface);
+  background: #ffffff;
   box-shadow: none;
   cursor: pointer;
   transition: border-color 150ms ease, background-color 150ms ease;
@@ -538,38 +484,45 @@
 }
 
 #detail-mockups-track .mockup-thumb.is-selected::after {
-  content: "✓";
+  content: "";
   position: absolute;
   inset-block-start: 3px;
   inset-inline-end: 3px;
-  width: 20px;
-  height: 20px;
-  display: grid;
-  place-items: center;
+  width: 7px;
+  height: 7px;
   border: 2px solid #ffffff;
   border-radius: 999px;
   background: var(--detail-action);
-  color: #ffffff;
-  font-size: 0.68rem;
-  font-weight: 900;
-  line-height: 1;
-  text-align: center;
 }
 
 #detail-mockups-track .mockup-thumb img {
+  width: 100%;
+  height: 100%;
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+  object-position: center;
+}
+
+.detail-mockup-meta {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.detail-mockup-dots {
+  display: none;
 }
 
 #detail-mockups-placeholder {
-  min-height: 220px;
+  min-height: 0;
+  aspect-ratio: 4 / 3;
   display: grid;
   place-items: center;
   margin: 0;
   padding: 20px;
+  border: 1px dashed #cbd5e1;
   border-radius: 10px;
-  background: #f1f5f9;
+  background: #f8fafc;
   color: var(--detail-muted);
   text-align: center;
 }
@@ -1924,27 +1877,82 @@
     padding: 10px;
   }
 
+  #detail-mockups-browser {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .detail-mockup-feature:not(.hidden) {
+    display: flex !important;
+    flex-direction: column;
+    width: 100%;
+  }
+
   #detail-mockup-main {
-    height: clamp(220px, 38dvh, 320px);
-    min-height: 220px;
+    height: clamp(190px, 34dvh, 280px);
+    min-height: 190px;
+    max-height: 280px;
+    aspect-ratio: auto;
   }
 
   body.mobile-mode #detail-overlay.mobile-fullscreen-detail .detail-mockup-main {
-    height: clamp(220px, 38dvh, 320px);
-    min-height: 220px;
-    max-height: none;
+    height: clamp(190px, 34dvh, 280px);
+    min-height: 190px;
+    max-height: 280px;
   }
 
-  #detail-mockups-track {
-    min-height: 68px;
+  .detail-mockup-dots:not(.hidden) {
+    order: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 18px;
+  }
+
+  .mockup-dot {
+    width: 8px;
+    height: 8px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: #cbd5e1;
+    cursor: pointer;
+    transition: background-color 150ms ease, transform 150ms ease;
+  }
+
+  .mockup-dot.is-active {
+    background: var(--detail-action);
+    transform: scale(1.25);
+  }
+
+  .mockup-dot:focus-visible {
+    outline: 2px solid rgba(26, 115, 232, 0.55);
+    outline-offset: 3px;
+  }
+
+  #detail-mockups-track,
+  #detail-mockups-track.center-align,
+  #detail-mockups-track.left-align {
+    order: 3;
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    min-width: 0;
+    height: 78px;
+    min-height: 78px;
+    max-height: 78px;
     justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
   #detail-mockups-track .mockup-thumb {
-    flex-basis: 76px;
-    width: 76px;
-    min-width: 76px;
-    height: 66px;
+    flex-basis: 68px;
+    width: 68px;
+    min-width: 68px;
+    height: 68px;
   }
 
   #detail-production-card,
@@ -2189,7 +2197,8 @@
   #detail-overlay,
   #detail-card,
   .print-progress-bar-fill,
-  #detail-mockups-track .mockup-thumb {
+  #detail-mockups-track .mockup-thumb,
+  .mockup-dot {
     transition: none;
   }
 }

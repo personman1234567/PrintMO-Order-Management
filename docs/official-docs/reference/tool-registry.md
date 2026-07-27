@@ -96,6 +96,14 @@ The machine-readable authority is `../retrieval-manifest.json`. Run `npm run rep
 - Purpose: prepares the deployable Cloudflare Pages asset bundle.
 - Equivalent existing command: `npm run prepare:cloudflare`.
 
+<!-- tool:cloudflare-deploy -->
+### `cloudflare-deploy`
+
+- Command: `npm run repo -- deploy cloudflare -- --production` or `npm run repo -- deploy cloudflare -- --preview [branch]`.
+- Mode: remote write; preview and production publishing are explicit.
+- Purpose: creates a fresh Pages artifact, deploys to the selected branch, and verifies the release marker served from that target.
+- Safety: production requires `--production`, deploys only to `main`, and exits nonzero unless the production hostname serves the exact marker. The bundle preparation step must not alter tracked web source.
+
 ## Tool Promotion Contract
 
 Promote a helper only when it is likely to recur, encodes non-obvious repository knowledge, replaces an error-prone sequence, or provides important validation.

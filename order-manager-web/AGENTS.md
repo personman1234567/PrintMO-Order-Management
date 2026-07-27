@@ -9,3 +9,4 @@
 - Candidate-only layout changes must remain scoped so Legacy Redis presentation is unchanged.
 - Do not introduce secrets, permanent public asset URLs, or direct infrastructure access.
 - Run syntax checks, `npm run verify:phase2`, and `npm run prepare:cloudflare` when the deployment bundle changes.
+- Publish Pages only with `npm run repo -- deploy cloudflare -- --production`; a successful upload is not a live release until the command verifies the production release marker.

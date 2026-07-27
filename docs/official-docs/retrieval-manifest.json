@@ -64,6 +64,13 @@
       "purpose": "Prepare the Cloudflare Pages upload bundle.",
       "mode": "local-write",
       "script": "scripts/prepare-cloudflare-pages-upload.sh"
+    },
+    {
+      "id": "cloudflare-deploy",
+      "command": "npm run repo -- deploy cloudflare -- --production|--preview [branch]",
+      "purpose": "Publish a prepared Cloudflare Pages release and verify its served release marker.",
+      "mode": "remote-write",
+      "script": "scripts/deploy-cloudflare-pages.sh"
     }
   ],
   "routes": [
@@ -227,8 +234,8 @@
         {"path": "order-manager-web/web-shim.js", "symbols": ["window.api"]},
         {"path": "order-manager-web/shopify-preview.js", "symbols": ["setPreviewActive"]}
       ],
-      "tools": ["verify-phase2", "cloudflare-bundle"],
-      "verify": ["npm run verify:phase2", "npm run prepare:cloudflare"],
+      "tools": ["verify-phase2", "cloudflare-bundle", "cloudflare-deploy"],
+      "verify": ["npm run verify:phase2", "npm run prepare:cloudflare", "npm run repo -- deploy cloudflare -- --production"],
       "stop": ["Stop before changing CORS allowlists, Shopify scopes, or browser-visible secrets."]
     },
     {
@@ -343,7 +350,7 @@
         }
       ],
       "inspect": [{"path": "package.json", "symbols": ["prepare:cloudflare", "verify:phase2"]}],
-      "tools": ["docs-check", "desktop-config", "cloudflare-bundle"],
+      "tools": ["docs-check", "desktop-config", "cloudflare-bundle", "cloudflare-deploy"],
       "verify": ["npm run docs:check"],
       "stop": ["Stop if packaging would require introducing secrets into the client bundle."]
     },

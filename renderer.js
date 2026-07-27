@@ -1046,6 +1046,12 @@ function renderOrderAssets(order) {
     back: document.getElementById('design-group-back'),
     extras: document.getElementById('design-group-extras'),
   };
+  const mockupFeature = document.getElementById('detail-mockup-feature');
+  const mockupMain = document.getElementById('detail-mockup-main');
+  const mockupMainContent = document.getElementById('detail-mockup-main-content');
+  const mockupCount = document.getElementById('detail-mockup-count');
+  const mockupDots = document.getElementById('detail-mockup-dots');
+
   if (!mockupTrack || !mockupPlaceholder || !designPlaceholder ||
       !lists.front || !lists.back || !lists.extras ||
       !groups.front || !groups.back || !groups.extras) return;
@@ -1053,6 +1059,7 @@ function renderOrderAssets(order) {
   const token = ++detailAssetRenderToken;
   cleanupDetailAssetPreviews();
   mockupTrack.innerHTML = '';
+  if (mockupDots) mockupDots.innerHTML = '';
   Object.values(lists).forEach(list => { list.innerHTML = ''; });
   Object.values(groups).forEach(g => g.classList.remove('hidden'));
 
@@ -1063,30 +1070,97 @@ function renderOrderAssets(order) {
   ];
 
   if (!mockups.length) {
+    if (mockupFeature) mockupFeature.classList.add('hidden');
+    if (mockupDots) mockupDots.classList.add('hidden');
     mockupTrack.classList.remove('left-align', 'center-align');
     mockupPlaceholder.classList.remove('hidden');
+    if (mockupCount) mockupCount.textContent = '0 mockups';
   } else {
+    if (mockupFeature) mockupFeature.classList.remove('hidden');
     mockupPlaceholder.classList.add('hidden');
     mockupTrack.classList.remove('left-align', 'center-align');
     mockupTrack.classList.add(mockups.length >= 4 ? 'left-align' : 'center-align');
+
+    let activeIndex = 0;
+    const loadedUrls = new Array(mockups.length).fill(null);
+    const thumbElements = [];
+    const dotElements = [];
+
+    const updateStage = (index) => {
+      activeIndex = index;
+      const targetUrl = loadedUrls[index] || mockups[index].url;
+      if (mockupMainContent) {
+        const featuredImage = document.createElement('img');
+        featuredImage.src = targetUrl;
+        featuredImage.alt = `Mockup ${index + 1} of ${mockups.length}`;
+        mockupMainContent.replaceChildren(featuredImage);
+      }
+      if (mockupMain) {
+        mockupMain.onclick = () => openAssetViewer(targetUrl);
+      }
+      if (mockupCount) {
+        mockupCount.textContent = `${index + 1} of ${mockups.length} mockup${mockups.length === 1 ? '' : 's'}`;
+      }
+      thumbElements.forEach((el, i) => {
+        const isSelected = i === index;
+        el.classList.toggle('is-selected', isSelected);
+        el.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+      });
+      dotElements.forEach((dot, i) => {
+        const isActive = i === index;
+        dot.classList.toggle('is-active', isActive);
+        dot.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+    };
+
+    if (mockupDots) {
+      if (mockups.length > 1) {
+        mockupDots.classList.remove('hidden');
+        mockups.forEach((_, idx) => {
+          const dot = document.createElement('button');
+          dot.type = 'button';
+          dot.className = `mockup-dot${idx === 0 ? ' is-active' : ''}`;
+          dot.setAttribute('aria-label', `Show mockup ${idx + 1} of ${mockups.length}`);
+          dot.setAttribute('aria-pressed', idx === 0 ? 'true' : 'false');
+          dot.onclick = () => updateStage(idx);
+          mockupDots.appendChild(dot);
+          dotElements.push(dot);
+        });
+      } else {
+        mockupDots.classList.add('hidden');
+      }
+    }
+
     mockups.forEach((asset, idx) => {
       const { url, isSvg, isManual } = asset;
       if (token !== detailAssetRenderToken) return;
       const thumb = document.createElement('div');
-      thumb.className = `mockup-thumb${isManual ? ' manual-mockup-thumb' : ''}`;
+      thumb.className = `mockup-thumb${isManual ? ' manual-mockup-thumb' : ''}${idx === 0 ? ' is-selected' : ''}`;
+      thumb.tabIndex = 0;
+      thumb.setAttribute('role', 'button');
+      thumb.setAttribute('aria-label', `Show mockup ${idx + 1} of ${mockups.length}`);
+      thumb.setAttribute('aria-pressed', idx === 0 ? 'true' : 'false');
 
       const img = document.createElement('img');
       img.alt = `Mockup ${idx + 1}`;
       img.loading = 'lazy';
       thumb.appendChild(img);
+      thumbElements.push(thumb);
 
-      thumb.addEventListener('click', () => openAssetViewer(img.src || url));
+      thumb.addEventListener('click', () => updateStage(idx));
+      thumb.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        updateStage(idx);
+      });
       if (isManual) {
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'manual-mockup-delete';
         remove.dataset.assetId = asset.id || '';
-        remove.textContent = 'Remove';
+        remove.title = 'Remove mockup';
+        remove.setAttribute('aria-label', 'Remove mockup');
+        remove.textContent = '×';
         remove.addEventListener('click', async event => {
           event.preventDefault();
           event.stopPropagation();
@@ -1117,6 +1191,8 @@ function renderOrderAssets(order) {
           .then(objectUrl => {
             if (objectUrl && token === detailAssetRenderToken) {
               img.src = objectUrl;
+              loadedUrls[idx] = objectUrl;
+              if (idx === activeIndex) updateStage(idx);
             } else if (objectUrl) {
               URL.revokeObjectURL(objectUrl);
             }
@@ -1134,6 +1210,8 @@ function renderOrderAssets(order) {
           img.remove();
           showUnavailable();
         });
+        loadedUrls[idx] = url;
+        if (idx === 0) updateStage(0);
       }
 
       mockupTrack.appendChild(thumb);

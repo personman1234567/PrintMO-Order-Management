@@ -12,6 +12,7 @@
     "predist": "node scripts/create-desktop-config.js",
     "dist": "electron-builder",
     "prepare:cloudflare": "bash scripts/prepare-cloudflare-pages-upload.sh",
+    "deploy:cloudflare": "bash scripts/deploy-cloudflare-pages.sh",
     "repo": "node scripts/repo-tool.js",
     "docs:check": "node scripts/check-docs.js",
     "verify:phase1": "node scripts/verify-phase1.js",

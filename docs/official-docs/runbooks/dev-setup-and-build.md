@@ -68,7 +68,20 @@ npm run dist
 # Execute Cloudflare Pages upload build script
 npm run prepare:cloudflare
 ```
-- Bundles `order-manager-web/` assets for deployment to Cloudflare Pages.
+- Bundles `order-manager-web/` assets for deployment to Cloudflare Pages, applies cache-busting parameters, and writes a release marker into the ignored artifact.
+- It copies the root `renderer.js` into the artifact only. It must never rewrite `order-manager-web/renderer.js` or any other tracked source file.
+
+### C. Deploying Cloudflare Pages
+```bash
+# Explicit non-production deployment
+npm run repo -- deploy cloudflare -- --preview Shopify-Sync
+
+# Explicit production deployment to the project's main branch
+npm run repo -- deploy cloudflare -- --production
+```
+- The deploy command runs the preparation step, rejects whitespace errors, and verifies the release marker served by the exact deployment target.
+- A preview is not production. Do not describe an upload as live until the production command confirms `https://print-mo-order-manager.pages.dev` serves its release marker.
+- Keep Cloudflare authentication in Wrangler's local credential store; do not add a token or infrastructure secret to source, `.env`, or the Pages artifact.
 
 ---
 
@@ -79,3 +92,4 @@ npm run prepare:cloudflare
 | Electron tries to load `.env` or connect to Redis | Stale pre-Phase-1 build/code | Rebuild from the current branch; Electron must call the Worker and must not package `.env`. |
 | Render reports Redis `ECONNREFUSED` | Its private `REDIS_URL` is missing or invalid | Correct the Render service environment; do not move `REDIS_URL` to the Worker or clients. |
 | Cloudflare script permission denied | Bash execution permission missing | Run `bash scripts/prepare-cloudflare-pages-upload.sh` directly. |
+| Wrangler says upload succeeded but the live site is unchanged | A preview branch was deployed or the old site was never checked | Run `npm run repo -- deploy cloudflare -- --production`; it fails unless the live hostname serves the new release marker. |

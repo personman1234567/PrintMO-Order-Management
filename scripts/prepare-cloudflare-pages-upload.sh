@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_DIR="$ROOT_DIR/order-manager-web"
 OUT_DIR="$ROOT_DIR/dist/cloudflare-order-manager-web"
 ZIP_FILE="$ROOT_DIR/dist/cloudflare-order-manager-web.zip"
+SOURCE_RENDERER_HASH="$(node -e "const fs=require('fs'); const crypto=require('crypto'); process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'))" "$SRC_DIR/renderer.js")"
 
 rm -rf "$OUT_DIR" "$ZIP_FILE"
 mkdir -p "$OUT_DIR"
@@ -18,6 +19,11 @@ rsync -a \
   --exclude 'Assets/PrintMO_Orders.ico' \
   "$SRC_DIR"/ "$OUT_DIR"/
 
+# renderer.js at the repository root is the readable source of truth. The web
+# directory keeps the existing optimized fallback, so only the output artifact
+# is replaced—never the tracked source file.
+cp "$ROOT_DIR/renderer.js" "$OUT_DIR/renderer.js"
+
 SHOPIFY_API_KEY_VALUE="${SHOPIFY_API_KEY:-}"
 if [[ -z "$SHOPIFY_API_KEY_VALUE" ]]; then
   SHOPIFY_API_KEY_VALUE="$(cd "$ROOT_DIR" && node -e "require('dotenv').config({path:'.env'}); process.stdout.write(process.env.SHOPIFY_API_KEY || '')")"
@@ -27,6 +33,12 @@ if [[ -z "$SHOPIFY_API_KEY_VALUE" ]]; then
   exit 1
 fi
 SHOPIFY_API_KEY="$SHOPIFY_API_KEY_VALUE" node -e "const fs=require('fs'); const file=process.argv[1]; const html=fs.readFileSync(file,'utf8'); if(!html.includes('__SHOPIFY_API_KEY__')) throw new Error('Shopify API key placeholder missing'); fs.writeFileSync(file, html.replace('__SHOPIFY_API_KEY__', process.env.SHOPIFY_API_KEY));" "$OUT_DIR/index.html"
+node "$ROOT_DIR/scripts/cache-bust-html.js" "$OUT_DIR/index.html"
+
+if [[ "$SOURCE_RENDERER_HASH" != "$(node -e "const fs=require('fs'); const crypto=require('crypto'); process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'))" "$SRC_DIR/renderer.js")" ]]; then
+  echo "Cloudflare preparation must not modify order-manager-web/renderer.js" >&2
+  exit 1
+fi
 
 for required in index.html renderer.js web-shim.js storage-browser.js blanks-batches.js desktop.css mobile.css accessibility-hardening.css accessibility-hardening.js shopify-embedded-mobile.js shopify-preview.css shopify-preview.js order-detail-split.css; do
   if [[ ! -f "$OUT_DIR/$required" ]]; then

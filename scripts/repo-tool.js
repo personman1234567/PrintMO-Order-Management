@@ -106,6 +106,7 @@ function runNode(script, args = []) {
 
 function runRegisteredCommand(args) {
   const [group, action, ...rest] = args;
+  const commandArgs = rest[0] === '--' ? rest.slice(1) : rest;
   if (group === 'verify' && ['phase1', 'phase2'].includes(action)) {
     return runNode(`scripts/verify-${action}.js`, rest);
   }
@@ -113,7 +114,8 @@ function runRegisteredCommand(args) {
   if (group === 'redis' && action === 'backup') return runNode('scripts/backup-redis-queue.js', rest);
   if (group === 'parity' && action === 'check') return runNode('scripts/run-parity-check.js', rest);
   if (group === 'build' && action === 'desktop-config') return runNode('scripts/create-desktop-config.js', rest);
-  if (group === 'build' && action === 'cloudflare') return run('bash', [path.join(root, 'scripts/prepare-cloudflare-pages-upload.sh'), ...rest]);
+  if (group === 'build' && action === 'cloudflare') return run('bash', ['scripts/prepare-cloudflare-pages-upload.sh', ...commandArgs]);
+  if (group === 'deploy' && action === 'cloudflare') return run('bash', ['scripts/deploy-cloudflare-pages.sh', ...commandArgs]);
   if (group === 'migration' && ['dry-run', 'execute'].includes(action)) {
     const mode = action === 'execute' ? '--execute' : '--dry-run';
     return runNode('scripts/run-shadow-migration.js', [mode, ...rest]);
@@ -133,6 +135,7 @@ Usage:
   npm run repo -- parity check
   npm run repo -- migration dry-run|execute [migration arguments]
   npm run repo -- build desktop-config|cloudflare
+  npm run repo -- deploy cloudflare -- --production|--preview [branch]
 
 Safety:
   Route, tools, docs checks, and verifiers are read-only.

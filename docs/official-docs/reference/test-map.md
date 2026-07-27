@@ -70,7 +70,8 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Target | Command | Verification Artifact |
 |---|---|---|
 | Electron Packaging (macOS / Windows) | `npm run dist` | Executable packages generated in `dist/` directory without builder errors. |
-| Cloudflare Pages Upload Bundle | `npm run prepare:cloudflare` | Web assets copied and packaged according to `scripts/prepare-cloudflare-pages-upload.sh`. |
+| Cloudflare Pages Upload Bundle | `npm run prepare:cloudflare` | Web assets copied into `dist/cloudflare-order-manager-web/`, asset URLs are versioned, and the artifact contains a release marker without mutating tracked web source. |
+| Cloudflare Pages Production Release | `npm run repo -- deploy cloudflare -- --production` | Wrangler publishes the `main` branch and the public production hostname returns the exact release marker. |
 
 ## Common Failure Modes & Recovery
 
