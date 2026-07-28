@@ -5486,23 +5486,146 @@ body[data-order-source="shopify"] .fulfillment .sub-section .cards {
   gap: 12px;
 }
 
-body[data-order-source="shopify"] .fulfillment .sub-section .cards .production-card {
+body[data-order-source="shopify"] .production-card {
   width: 100%;
   min-width: 0;
   max-width: none;
-  min-height: 142px;
+  min-height: 240px;
+  aspect-ratio: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-body[data-order-source="shopify"] .production-card .compact-body,
+body[data-order-source="shopify"] .production-card .card-body,
 body[data-order-source="shopify"] .bundle-card.production-card .card-body {
-  min-height: 78px;
+  min-height: 0;
   padding: 12px;
+  align-items: stretch;
+  gap: 8px;
+}
+
+body[data-order-source="shopify"] .production-card .mockup-slot {
+  width: 100%;
+  max-width: none;
+  height: 110px;
+  min-height: 88px;
+  max-height: 132px;
+  flex: 1 1 110px;
+  border: 1px solid #e5ebf3;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+body[data-order-source="shopify"] .production-card .mockup-slot img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+body[data-order-source="shopify"] .production-card.print-card {
+  height: clamp(252px, 20vw, 280px);
+  min-height: clamp(252px, 20vw, 280px);
+}
+
+body[data-order-source="shopify"] .production-card.print-card .card-body {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-rows: clamp(84px, 8vw, 112px) minmax(54px, 1fr);
+  gap: 10px;
+  min-height: 0;
+  padding: 10px 12px;
+}
+
+body[data-order-source="shopify"] .production-card.print-card .mockup-slot {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+body[data-order-source="shopify"] .production-card.print-card .progress-view {
+  position: static;
+  inset: auto;
+  min-width: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  opacity: 1;
+  transition: none;
+}
+
+body[data-order-source="shopify"] .production-card.print-card:hover .progress-view {
+  opacity: 1;
+}
+
+body[data-order-source="shopify"] .production-card.print-card .normal-view {
+  display: none;
+  opacity: 0;
+}
+
+body[data-order-source="shopify"] .production-card.print-card .cust-name {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  line-height: 1.18;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+body[data-order-source="shopify"] .production-card.print-card .mockup-slot-loading {
+  background: #eef2f7;
+  animation: printmo-preview-pulse 1.4s ease-in-out infinite;
+}
+
+body[data-order-source="shopify"] .production-card.print-card .mockup-slot-unavailable {
+  border-style: dashed;
+  background: #f8fafc;
+}
+
+body[data-order-source="shopify"] .production-card.print-card .mockup-placeholder-label {
+  color: #64748b;
+  font-size: clamp(0.7rem, 0.82vw, 0.8rem);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+@keyframes printmo-preview-pulse {
+  0%,
+  100% {
+    background-color: #eef2f7;
+  }
+  50% {
+    background-color: #f8fafc;
+  }
+}
+
+body[data-order-source="shopify"] .production-card .card-body.has-mockup {
+  justify-content: flex-start;
+}
+
+body[data-order-source="shopify"] .production-card .card-body.no-mockup {
+  justify-content: center;
 }
 
 body[data-order-source="shopify"] .pipeline-main-card.dashboard-counts-in-footer .card-footer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-order-source="shopify"] .production-card.print-card .mockup-slot-loading {
+    animation: none;
+  }
 }
 
 body[data-order-source="shopify"] .pipeline-main-card .dashboard-footer-counts {
@@ -5694,6 +5817,8 @@ body[data-order-source="shopify"] .picked-cards,
 body[data-order-source="shopify"] .panel.create.supplies-desktop-active #blanks-section .cards,
 body[data-order-source="shopify"] .panel.fulfillment #print-section .cards {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: max-content;
+  align-items: start;
   justify-content: stretch;
 }
 

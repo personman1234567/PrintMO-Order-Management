@@ -95,10 +95,28 @@ window.api.transport = "http";
 
 const candidateOrdersByName = new Map();
 const candidateAssetObjectUrls = new Map();
+const candidateAssetObjectUrlLoads = new Map();
 const candidateMutationChains = new Map();
+const ASSET_HYDRATION_CONCURRENCY = 4;
 let candidateForceRefreshOnce = false;
 let candidateAssetHydrationRun = 0;
 let candidateQueueLoadGeneration = 0;
+
+async function runWithConcurrency(items, limit, worker) {
+  const queue = Array.isArray(items) ? items : [];
+  let nextIndex = 0;
+  const runners = Array.from(
+    { length: Math.min(Math.max(Number(limit) || 1, 1), queue.length) },
+    async () => {
+      while (nextIndex < queue.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        await worker(queue[index], index);
+      }
+    }
+  );
+  await Promise.all(runners);
+}
 
 function isShopifyCandidateView() {
   return document.body?.dataset.orderSource === "shopify";
@@ -193,6 +211,7 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
     printsStatus: Number(production.printsStatus || 0),
     blanksOrdered: Number(production.blanksOrdered ?? (production.stage === "blanks_ordered" ? 1 : 0)),
     printsOrdered: Number(production.printsOrdered || 0),
+    displayFulfillmentStatus: order.commerce?.fulfillmentStatus || "",
     shopify: order,
     assets: production.assets || [],
   };
@@ -203,33 +222,73 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
 async function candidateAssetObjectUrl(asset) {
   if (!asset?.assetId) return "";
   if (candidateAssetObjectUrls.has(asset.assetId)) return candidateAssetObjectUrls.get(asset.assetId);
-  const ticket = await apiFetch(
-    `/order-manager/v1/assets/${encodeURIComponent(asset.assetId)}/read-ticket`,
-    { method: "POST", body: "{}" }
-  );
-  if (!ticket?.url) throw new Error(`Private asset ticket was not returned for ${asset.name || asset.assetId}.`);
-  const blob = await apiFetch(ticket.url, { method: "GET", expect: "blob" });
-  const url = URL.createObjectURL(blob);
-  candidateAssetObjectUrls.set(asset.assetId, url);
-  return url;
+  if (candidateAssetObjectUrlLoads.has(asset.assetId)) return candidateAssetObjectUrlLoads.get(asset.assetId);
+  const load = (async () => {
+    const ticket = await apiFetch(
+      `/order-manager/v1/assets/${encodeURIComponent(asset.assetId)}/read-ticket`,
+      { method: "POST", body: "{}" }
+    );
+    if (!ticket?.url) throw new Error(`Private asset ticket was not returned for ${asset.name || asset.assetId}.`);
+    const blob = await apiFetch(ticket.url, { method: "GET", expect: "blob" });
+    const url = URL.createObjectURL(blob);
+    candidateAssetObjectUrls.set(asset.assetId, url);
+    return url;
+  })().finally(() => {
+    candidateAssetObjectUrlLoads.delete(asset.assetId);
+  });
+  candidateAssetObjectUrlLoads.set(asset.assetId, load);
+  return load;
 }
 
-async function hydrateCandidateAssets(records) {
-  const assets = [];
-  records.forEach((order) => {
-    (order?.production?.assets || []).forEach((asset) => assets.push({ asset, orderId: order.id }));
-  });
+function candidateAssetIsMockup(asset) {
+  if (asset?.role === "mockup") return true;
+  return /(?:^|[/_-])side\.(?:png|jpe?g|webp)(?:$|\?)/i.test(String(asset?.name || asset?.filename || ""));
+}
+
+function candidateAssetOrderPriority(record) {
+  const stage = record?.production?.stage;
+  if (stage === "print") return 0;
+  if (stage === "received") return 1;
+  if (stage === "blanks_cart" || stage === "blanks_ordered") return 2;
+  if (stage === "to_order") return 3;
+  return 4;
+}
+
+function candidateAssetHydrationQueue(records) {
+  const firstMockups = [];
+  const remainingMockups = [];
+  const remainingAssets = [];
+  [...records]
+    .sort((left, right) => candidateAssetOrderPriority(left) - candidateAssetOrderPriority(right))
+    .forEach((record) => {
+      const assets = Array.isArray(record?.production?.assets) ? record.production.assets : [];
+      const mockups = assets.filter(candidateAssetIsMockup);
+      if (mockups[0]) firstMockups.push({ asset: mockups[0], record, isMockup: true });
+      mockups.slice(1).forEach((asset) => remainingMockups.push({ asset, record, isMockup: true }));
+      assets
+        .filter((asset) => !candidateAssetIsMockup(asset))
+        .forEach((asset) => remainingAssets.push({ asset, record, isMockup: false }));
+    });
+  return [...firstMockups, ...remainingMockups, ...remainingAssets];
+}
+
+async function hydrateCandidateAssets(records, { onMockupChange } = {}) {
+  const assets = candidateAssetHydrationQueue(records);
   const changedOrderIds = new Set();
-  await Promise.all(assets.map(async ({ asset, orderId }) => {
+  await runWithConcurrency(assets, ASSET_HYDRATION_CONCURRENCY, async ({ asset, record, isMockup }) => {
     try {
       const previousUrl = asset.url || "";
       const nextUrl = await candidateAssetObjectUrl(asset);
       asset.url = nextUrl;
-      if (nextUrl && nextUrl !== previousUrl) changedOrderIds.add(orderId);
+      asset._previewState = "ready";
+      if (nextUrl && nextUrl !== previousUrl) changedOrderIds.add(record.id);
     } catch (error) {
+      asset._previewState = "failed";
       console.warn("Unable to hydrate private Designer Studio asset", asset?.assetId, error);
+    } finally {
+      if (isMockup && typeof onMockupChange === "function") onMockupChange(record);
     }
-  }));
+  });
   return changedOrderIds;
 }
 
@@ -261,25 +320,31 @@ async function loadCandidateQueue({ refresh = false } = {}) {
   // Private Designer Studio previews are useful but must not hold the board
   // hostage. Hydrate them after commerce + production metadata has rendered.
   const hydrationRun = ++candidateAssetHydrationRun;
-  void hydrateCandidateAssets(records).then((changedOrderIds) => {
+  const pendingStatuses = new Set();
+  let repaintFrame = null;
+  const scheduleMockupRepaint = (record) => {
     if (hydrationRun !== candidateAssetHydrationRun || !isShopifyCandidateView()) return;
-    const changedStatuses = new Set();
-    records.forEach((record) => {
-      if (!changedOrderIds.has(record.id)) return;
-      const displayName = record.displayName || record.id || "Shopify order";
-      const customer = selectOperationalCustomerName(record) || "Name unavailable";
-      const key = `${displayName} \u2013 ${customer}`;
-      const current = candidateOrdersByName.get(key);
-      if (!current) return;
-      changedStatuses.add(current.status || "received");
+    const displayName = record.displayName || record.id || "Shopify order";
+    const customer = selectOperationalCustomerName(record) || "Name unavailable";
+    const key = `${displayName} \u2013 ${customer}`;
+    const current = candidateOrdersByName.get(key);
+    if (!current) return;
+    pendingStatuses.add(current.status || "received");
+    if (repaintFrame !== null) return;
+    repaintFrame = requestAnimationFrame(() => {
+      repaintFrame = null;
+      if (hydrationRun !== candidateAssetHydrationRun || !isShopifyCandidateView()) return;
+      const changedStatuses = new Set(pendingStatuses);
+      pendingStatuses.clear();
+      if (!changedStatuses.size) return;
+      if (typeof window.renderBoardFromLocalState === "function") {
+        void window.renderBoardFromLocalState(changedStatuses, { invalidateQueueLoads: false });
+      } else if (typeof window.renderStatusColumn === "function") {
+        changedStatuses.forEach((status) => window.renderStatusColumn(status));
+      }
     });
-    if (!changedStatuses.size) return;
-    if (typeof window.renderBoardFromLocalState === "function") {
-      void window.renderBoardFromLocalState(changedStatuses);
-    } else if (typeof window.renderStatusColumn === "function") {
-      changedStatuses.forEach((status) => window.renderStatusColumn(status));
-    }
-  }).catch((error) => {
+  };
+  void hydrateCandidateAssets(records, { onMockupChange: scheduleMockupRepaint }).catch((error) => {
     console.warn("Unable to hydrate Shopify board previews", error);
   });
   return mapped;
@@ -586,7 +651,9 @@ window.api.processBatch = async (orderIds) => {
     });
     const now = Date.now();
     orders.forEach((order) => {
-      order.status = "blanks";
+      // The shared renderer owns the visible toOrder -> blanks transition so it
+      // can repaint both columns. Mutating status here first loses the source
+      // column from patchLocalOrders() and leaves stale Build Order cards.
       order.blanksOrdered = 0;
       order._batchConfirmedAt = now;
       if (result?.poNumber) order.blanksPo = [result.poNumber];
@@ -655,20 +722,28 @@ window.api.headStorageObject = async (key) => {
 };
 
 const storageObjectUrls = new Map();
+const storageObjectUrlLoads = new Map();
 
 window.api.getStorageObjectUrl = async (key) => {
   if (!key) return "";
   if (storageObjectUrls.has(key)) return storageObjectUrls.get(key);
-  const query = buildQuery({ key });
-  const blob = await apiFetch(`/order-manager/storage/object${query}`, { method: "GET", expect: "blob" });
-  const url = URL.createObjectURL(blob);
-  if (storageObjectUrls.size >= 200) {
-    const oldestKey = storageObjectUrls.keys().next().value;
-    URL.revokeObjectURL(storageObjectUrls.get(oldestKey));
-    storageObjectUrls.delete(oldestKey);
-  }
-  storageObjectUrls.set(key, url);
-  return url;
+  if (storageObjectUrlLoads.has(key)) return storageObjectUrlLoads.get(key);
+  const load = (async () => {
+    const query = buildQuery({ key });
+    const blob = await apiFetch(`/order-manager/storage/object${query}`, { method: "GET", expect: "blob" });
+    const url = URL.createObjectURL(blob);
+    if (storageObjectUrls.size >= 200) {
+      const oldestKey = storageObjectUrls.keys().next().value;
+      URL.revokeObjectURL(storageObjectUrls.get(oldestKey));
+      storageObjectUrls.delete(oldestKey);
+    }
+    storageObjectUrls.set(key, url);
+    return url;
+  })().finally(() => {
+    storageObjectUrlLoads.delete(key);
+  });
+  storageObjectUrlLoads.set(key, load);
+  return load;
 };
 
 window.api.updateBoardMove = async (name, patch = {}) => {
@@ -692,15 +767,16 @@ window.api.updateBoardMove = async (name, patch = {}) => {
   return updateCandidateOrder(name, metadataPatch);
 };
 
-async function hydrateAssetUrls(result) {
+async function hydrateAssetUrls(result, { onManifest } = {}) {
   const manifests = result?.orders && typeof result.orders === "object"
     ? Object.values(result.orders)
     : [result];
-  for (const manifest of manifests) {
+  await runWithConcurrency(manifests, ASSET_HYDRATION_CONCURRENCY, async (manifest) => {
     for (const asset of (manifest?.assets || [])) {
       if (asset?.key) asset.url = await window.api.getStorageObjectUrl(asset.key);
     }
-  }
+    if (typeof onManifest === "function") await onManifest(manifest);
+  });
   return result;
 }
 
@@ -729,13 +805,21 @@ window.api.deleteManualMockup = async (orderNumber, assetId) => {
   return apiFetch(`/order-manager/orders/manual-mockups${query}`, { method: "DELETE" });
 };
 
-window.api.bulkListManualMockups = async (orderNumbers) => {
+window.api.bulkListManualMockups = async (orderNumbers, { onOrder } = {}) => {
   const unique = Array.from(new Set((Array.isArray(orderNumbers) ? orderNumbers : []).filter(Boolean)));
   if (!unique.length) return { orders: {} };
-  return hydrateAssetUrls(await apiFetch("/order-manager/orders/manual-mockups/bulk", {
+  const result = await apiFetch("/order-manager/orders/manual-mockups/bulk", {
     method: "POST",
     body: JSON.stringify({ orderNumbers: unique }),
-  }));
+  });
+  return hydrateAssetUrls(result, {
+    onManifest: (manifest) => {
+      if (typeof onOrder === "function") {
+        return onOrder(String(manifest?.orderNumber || ""), manifest);
+      }
+      return undefined;
+    },
+  });
 };
 
 window.api.listManualChecklist = async (orderNumber) => {

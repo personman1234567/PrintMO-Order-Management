@@ -6164,6 +6164,96 @@ body.mobile-mode[data-order-source="shopify"] .bundle-card.production-card .card
   padding: 10px;
 }
 
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card {
+  height: 164px;
+  min-height: 164px !important;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card .card-body {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: clamp(74px, 24vw, 92px) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 10px;
+  min-height: 0;
+  padding: 9px 10px;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card .mockup-slot {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border: 1px solid #e5ebf3;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card .mockup-slot img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card .progress-view {
+  position: static;
+  inset: auto;
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  opacity: 1;
+  transition: none;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card:hover .progress-view {
+  opacity: 1;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card .normal-view {
+  display: none;
+  opacity: 0;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card .mockup-slot-loading {
+  background: #eef2f7;
+  animation: printmo-mobile-preview-pulse 1.4s ease-in-out infinite;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card .mockup-slot-unavailable {
+  border-style: dashed;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card .mockup-placeholder-label {
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+@keyframes printmo-mobile-preview-pulse {
+  0%,
+  100% {
+    background-color: #eef2f7;
+  }
+  50% {
+    background-color: #f8fafc;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-mode[data-order-source="shopify"] .production-card.print-card .mockup-slot-loading {
+    animation: none;
+  }
+}
+
 body.mobile-mode[data-order-source="shopify"] .blanks-segment,
 body.mobile-mode[data-order-source="shopify"] .section-actions button,
 body.mobile-mode[data-order-source="shopify"] .mobile-stage-tab,

@@ -19,7 +19,11 @@ let notesResizeHandler = null;
 let detailAssetRenderToken = 0;
 const detailAssetBlobUrls = new Set();
 const manualMockupsByOrderNumber = new Map();
+const manualMockupsHydratedOrderNumbers = new Set();
+const manualMockupsHydratingOrderNumbers = new Set();
+const pendingManualMockupStatuses = new Set();
 let manualMockupHydrationRun = 0;
+let manualMockupRepaintFrame = null;
 let activeCardDrag = null;
 
 const APPAREL_ICON = typeof window.getAssetPath === 'function'
@@ -228,6 +232,7 @@ function candidateOrderRenderFingerprint(order) {
     printsStatus: Number(order.printsStatus || 0),
     blanksOrdered: Number(order.blanksOrdered || 0),
     printsOrdered: Number(order.printsOrdered || 0),
+    displayFulfillmentStatus: order.displayFulfillmentStatus || '',
     assets: (order.assets || []).map(candidateAssetRenderFingerprint)
   });
 }
@@ -284,7 +289,11 @@ function renderStatusColumn(status) {
   const container = document.getElementById(config.containerId);
   if (!container) return;
 
-  const orders = allOrders.filter(order => (order.status || 'received') === status);
+  const orders = allOrders.filter(order => {
+    if ((order.status || 'received') !== status) return false;
+    if (status !== 'print' || !order._candidate) return true;
+    return String(order.displayFulfillmentStatus || '').toUpperCase() !== 'FULFILLED';
+  });
   const groups = {};
   const singles = [];
   orders.forEach(order => {
@@ -378,9 +387,10 @@ function removeLocalOrders(orderNames) {
 /**
  * Repaint only mutated columns from already-cached order data.
  * @param {Iterable<string>|string} statuses - Board statuses impacted by a mutation.
+ * @param {{invalidateQueueLoads?: boolean}} [options] - Asset-only repaints preserve the active hydration run.
  */
-async function renderBoardFromLocalState(statuses) {
-  await renderBoard({ useLocalOrders: true, statuses });
+async function renderBoardFromLocalState(statuses, { invalidateQueueLoads = true } = {}) {
+  await renderBoard({ useLocalOrders: true, statuses, invalidateQueueLoads });
 }
 
 /**
@@ -568,16 +578,22 @@ function makeCard(o, style = 'default') {
     const totalApparel = (o.items || []).reduce((sum, it) => sum + (isPrintItem(it) ? 0 : it.qty), 0);
     const prog = typeof o.progress === 'number' ? o.progress : 0;
     const pct = totalApparel ? Math.round((prog / totalApparel) * 100) : 0;
+    const showProductionPreview = Boolean(o._candidate);
+    const productionMockupState = getProductionMockupState(o, hasMockup);
     card.classList.add('pipeline-card', 'print-card');
     card.innerHTML = `
       <div class="card-header">
         <span class="order-number">${orderNum}</span>
         <span class="time-ago-pill">${timeAgo(o.receivedAt)}</span>
       </div>
-      <div class="card-body">
+      <div class="card-body ${showProductionPreview ? 'has-mockup' : 'no-mockup'} production-preview-${productionMockupState}">
+        ${showProductionPreview ? productionMockupSlotMarkup(firstMockupUrl, productionMockupState, orderNum) : ''}
         <div class="progress-view">
           <div class="cust-name">${custName}</div>
-          <div class="progress-pct">${pct}%</div>
+          <div class="progress-row">
+            <div class="progress-pct">${pct}%</div>
+            <div class="progress-count">${prog} / ${totalApparel}</div>
+          </div>
         </div>
         <div class="normal-view">
           <div class="cust-name">${custName}</div>
@@ -864,27 +880,65 @@ async function refreshManualMockupsForOrder(order) {
   if (!orderNumber || typeof window.api?.listManualMockups !== 'function') return false;
   manualMockupHydrationRun += 1;
   const manifest = await window.api.listManualMockups(orderNumber);
+  manualMockupsHydratedOrderNumbers.add(orderNumber);
   return setManualMockups(orderNumber, manifest?.assets || []);
 }
 
-async function hydrateManualMockupsForOrders(orders) {
+function scheduleManualMockupRepaint(status) {
+  if (status) pendingManualMockupStatuses.add(status);
+  if (manualMockupRepaintFrame !== null) return;
+  manualMockupRepaintFrame = requestAnimationFrame(() => {
+    manualMockupRepaintFrame = null;
+    const statuses = new Set(pendingManualMockupStatuses);
+    pendingManualMockupStatuses.clear();
+    if (statuses.size) void renderBoardFromLocalState(statuses, { invalidateQueueLoads: false });
+  });
+}
+
+async function hydrateManualMockupsForOrders(orders, { refresh = false } = {}) {
   if (typeof window.api?.bulkListManualMockups !== 'function') return;
-  const orderNumbers = Array.from(new Set((orders || []).map(orderNumberFromOrder).filter(Boolean)));
+  const knownOrderNumbers = Array.from(new Set((orders || []).map(orderNumberFromOrder).filter(Boolean)));
+  if (refresh) {
+    knownOrderNumbers.forEach(orderNumber => manualMockupsHydratedOrderNumbers.delete(orderNumber));
+  }
+  const orderNumbers = knownOrderNumbers
+    .filter(orderNumber =>
+      !manualMockupsHydratedOrderNumbers.has(orderNumber)
+      && !manualMockupsHydratingOrderNumbers.has(orderNumber)
+    );
   if (!orderNumbers.length) return;
+  orderNumbers.forEach(orderNumber => manualMockupsHydratingOrderNumbers.add(orderNumber));
+  const ordersByNumber = new Map((orders || []).map(order => [orderNumberFromOrder(order), order]));
   const run = ++manualMockupHydrationRun;
   try {
-    const result = await window.api.bulkListManualMockups(orderNumbers);
+    const result = await window.api.bulkListManualMockups(orderNumbers, {
+      onOrder: (orderNumber, manifest) => {
+        if (run !== manualMockupHydrationRun || !orderNumber) return;
+        const wasHydrated = manualMockupsHydratedOrderNumbers.has(orderNumber);
+        const changed = setManualMockups(orderNumber, manifest?.assets || []);
+        manualMockupsHydratedOrderNumbers.add(orderNumber);
+        manualMockupsHydratingOrderNumbers.delete(orderNumber);
+        const order = ordersByNumber.get(orderNumber);
+        if (changed || !wasHydrated) scheduleManualMockupRepaint(order?.status || 'received');
+      }
+    });
     if (run !== manualMockupHydrationRun) return;
     const changedStatuses = new Set();
     (orders || []).forEach(order => {
       const orderNumber = orderNumberFromOrder(order);
+      const wasHydrated = manualMockupsHydratedOrderNumbers.has(orderNumber);
       if (setManualMockups(orderNumber, result?.orders?.[orderNumber]?.assets || [])) {
         changedStatuses.add(order.status || 'received');
       }
+      manualMockupsHydratedOrderNumbers.add(orderNumber);
+      manualMockupsHydratingOrderNumbers.delete(orderNumber);
+      if (!wasHydrated) changedStatuses.add(order.status || 'received');
     });
-    if (changedStatuses.size) await renderBoardFromLocalState(changedStatuses);
+    changedStatuses.forEach(scheduleManualMockupRepaint);
   } catch (err) {
     console.warn('Unable to load manual mockups', err);
+  } finally {
+    orderNumbers.forEach(orderNumber => manualMockupsHydratingOrderNumbers.delete(orderNumber));
   }
 }
 
@@ -936,6 +990,50 @@ function getFirstMockupUrl(order) {
   const assets = splitOrderAssets(order);
   const entry = assets.mockups[0];
   return entry ? getAssetUrlValue(entry) : '';
+}
+
+function candidateMockupManifests(order) {
+  const assets = [
+    ...(Array.isArray(order?.assets) ? order.assets : []),
+    ...(order?.items || []).flatMap(item => Array.isArray(item?.assets) ? item.assets : [])
+  ];
+  const seen = new Set();
+  return assets.filter(asset => {
+    if (!asset || typeof asset !== 'object') return false;
+    const key = asset.assetId || asset.id || `${asset.name || asset.filename || ''}:${asset.lineItemId || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    if (asset.role === 'mockup') return true;
+    return /(?:^|[/_-])side\.(?:png|jpe?g|webp)(?:$|\?)/i.test(String(asset.name || asset.filename || ''));
+  });
+}
+
+function getProductionMockupState(order, hasMockup) {
+  if (hasMockup) return 'ready';
+  if (!order?._candidate) return 'unavailable';
+  const pendingDesignerMockup = candidateMockupManifests(order)
+    .some(asset => asset._previewState !== 'failed');
+  const manualHydrated = manualMockupsHydratedOrderNumbers.has(orderNumberFromOrder(order));
+  return pendingDesignerMockup || !manualHydrated ? 'loading' : 'unavailable';
+}
+
+function productionMockupSlotMarkup(url, state, orderNumber) {
+  if (state === 'ready' && url) {
+    return `
+      <div class="mockup-slot mockup-slot-ready">
+        <img src="${url}" alt="Mockup preview for order ${orderNumber}" loading="eager" fetchpriority="high" />
+      </div>
+    `;
+  }
+  const label = state === 'loading' ? 'Loading preview' : 'No mockup';
+  const ariaLabel = state === 'loading'
+    ? `Mockup preview for order ${orderNumber} is loading`
+    : `No mockup preview is available for order ${orderNumber}`;
+  return `
+    <div class="mockup-slot mockup-slot-${state}" aria-label="${ariaLabel}">
+      <span class="mockup-placeholder-label" aria-hidden="true">${label}</span>
+    </div>
+  `;
 }
 
 function addCacheBustParam(url, attempt) {
@@ -1807,16 +1905,16 @@ window.addEventListener('blur', () => finishCardDrag());
  * Render the order board from Redis or from the cached order array.
  * Full refreshes still fetch the queue, while mutation paths pass
  * useLocalOrders/statuses so only impacted columns are rebuilt.
- * @param {{useLocalOrders?: boolean, statuses?: Iterable<string>|string}} [options]
+ * @param {{useLocalOrders?: boolean, statuses?: Iterable<string>|string, invalidateQueueLoads?: boolean}} [options]
  */
 async function renderBoard(options = {}) {
-  const { useLocalOrders = false, statuses = null } = options;
+  const { useLocalOrders = false, statuses = null, invalidateQueueLoads = true } = options;
   let statusesToRender = normalizeBoardStatuses(statuses);
   if (useLocalOrders) {
     // A local mutation or asset hydration is newer than any queue read that
     // started before it. Prevent that older response from repainting stale data.
     boardFetchGeneration += 1;
-    if (typeof window.api.invalidateQueueLoads === 'function') {
+    if (invalidateQueueLoads && typeof window.api.invalidateQueueLoads === 'function') {
       window.api.invalidateQueueLoads();
     }
   } else {
@@ -1837,7 +1935,7 @@ async function renderBoard(options = {}) {
   statusesToRender.forEach(renderStatusColumn);
   boardHasRendered = true;
   refreshOpenBundleModal();
-  if (!useLocalOrders) void hydrateManualMockupsForOrders(allOrders);
+  if (!useLocalOrders) void hydrateManualMockupsForOrders(allOrders, { refresh: true });
   return { rendered: true, stale: false, statuses: statusesToRender };
 }
 
@@ -2045,14 +2143,24 @@ document.addEventListener('DOMContentLoaded', async () => {
       try {
         await window.api.processBatch(toOrder);
 
-        // auto-move into Blanks Ordered
+        // A confirmed supplier submission always enters In S&S Cart.
         if (typeof window.api.updateStatuses === 'function') {
           await window.api.updateStatuses(toOrder, 'blanks');
         } else {
           await Promise.all(toOrder.map(id => window.api.updateStatus(id, 'blanks')));
         }
 
-        const touchedStatuses = patchLocalOrders(toOrder, { status: 'blanks' });
+        const touchedStatuses = patchLocalOrders(toOrder, { status: 'blanks', blanksOrdered: 0 });
+        // Both ends of the move must repaint even if an adapter has already
+        // adopted canonical batch metadata in its local cache.
+        touchedStatuses.add('toOrder');
+        touchedStatuses.add('blanks');
+        if (
+          document.body?.dataset.orderSource === 'shopify'
+          && typeof window.setActiveBlanksView === 'function'
+        ) {
+          window.setActiveBlanksView('cart', { render: false });
+        }
         await renderBoardFromLocalState(touchedStatuses);
         submitBtn.textContent = '✅ Submitted';
 

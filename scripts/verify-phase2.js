@@ -672,7 +672,21 @@ async function run() {
       && webShim.includes('`/order-manager/v1/orders/${encodeURIComponent(orderId)}`'),
     'shared Shopify workbench must hydrate from the canonical on-demand detail endpoint'
   );
-  assert(webShim.includes('candidateAssetObjectUrl'), 'Shopify board must hydrate private Designer Studio manifests through authenticated asset tickets');
+  assert(
+    webShim.includes('candidateAssetObjectUrl')
+      && webShim.includes('candidateAssetObjectUrlLoads')
+      && webShim.includes('ASSET_HYDRATION_CONCURRENCY')
+      && webShim.includes('onMockupChange'),
+    'Shopify board must hydrate private Designer Studio mockups progressively through deduplicated authenticated asset tickets'
+  );
+  const processBatchSource = webShim.slice(
+    webShim.indexOf('window.api.processBatch'),
+    webShim.indexOf('window.api.createBlanksBatch')
+  );
+  assert(
+    !processBatchSource.includes('order.status = "blanks"'),
+    'confirmed supplier batches must let the renderer own the visible source/destination column repaint'
+  );
   assert(webShim.includes('candidateMutationChains'), 'Shopify production mutations must serialize per order');
   assert(webShim.includes('updateBoardMove'), 'Shopify board moves must persist stage and blanks state atomically');
   assert(webShim.includes('VERSION_CONFLICT'), 'Shopify board must reconcile and retry a genuine version conflict once');
@@ -710,6 +724,18 @@ async function run() {
       && sharedRenderer.includes('fetchGeneration !== boardFetchGeneration'),
     'shared board rendering must discard superseded fetches and skip unchanged Shopify column repaints'
   );
+  const printCardSource = sharedRenderer.slice(
+    sharedRenderer.indexOf("style === 'printProgress'"),
+    sharedRenderer.indexOf("style === 'picked'")
+  );
+  assert(
+    printCardSource.includes('productionMockupSlotMarkup')
+      && sharedRenderer.includes("toUpperCase() !== 'FULFILLED'")
+      && sharedRenderer.includes("return pendingDesignerMockup || !manualHydrated ? 'loading' : 'unavailable'")
+      && sharedRenderer.includes("touchedStatuses.add('toOrder')")
+      && sharedRenderer.includes("window.setActiveBlanksView('cart', { render: false })"),
+    'supplier submit repaint, fulfillment filtering, and stable Ready to Print preview states must retain their shared renderer contract'
+  );
   const previewCss = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-preview.css'), 'utf8');
   assert(
     !/body\\[data-order-source=["']shopify["']\\]\\s+#orders-view\\s*\\{[^}]*display:\\s*none/im.test(previewCss),
@@ -726,6 +752,20 @@ async function run() {
   assert(
     desktopCss.includes('repeat(2, minmax(0, 1fr))'),
     'Shopify desktop work queues must keep a sparse queue in a two-column card grid'
+  );
+  assert(
+    desktopCss.includes('body[data-order-source="shopify"] .production-card')
+      && desktopCss.includes('grid-auto-rows: max-content')
+      && desktopCss.includes('.production-card.print-card:hover .progress-view')
+      && desktopCss.includes('.mockup-slot-unavailable'),
+    'relocated Supplies and Ready to Print cards must share a non-overlapping production layout contract'
+  );
+  const mobileCss = fs.readFileSync(path.join(root, 'order-manager-web', 'mobile.css'), 'utf8');
+  assert(
+    mobileCss.includes('body.mobile-mode[data-order-source="shopify"] .production-card.print-card')
+      && mobileCss.includes('grid-template-columns: clamp(74px, 24vw, 92px) minmax(0, 1fr)')
+      && mobileCss.includes('.production-card.print-card:hover .progress-view'),
+    'mobile Ready to Print cards must keep the same stable preview and always-visible progress contract'
   );
   const triageController = fs.readFileSync(path.join(root, 'order-manager-web', 'dashboard-triage-enhancements.js'), 'utf8');
   assert(triageController.includes("card.classList.add('production-card')"), 'fulfillment cards must receive the production layout contract');
@@ -744,7 +784,7 @@ async function run() {
     webShimCode.includes('candidateQueueLoadGeneration')
       && webShimCode.includes('applyCandidateCachedAssetUrls')
       && webShimCode.includes('window.api.invalidateQueueLoads')
-      && webShimCode.includes('renderBoardFromLocalState(changedStatuses)'),
+      && webShimCode.includes('renderBoardFromLocalState(changedStatuses, { invalidateQueueLoads: false })'),
     'candidate polling and preview hydration must preserve cached assets and repaint only affected columns'
   );
   const shimContext = vm.createContext({

@@ -86,7 +86,7 @@ An **Order Card** (`.pipeline-card`, `.card`) is the fundamental visual unit dis
 | **Time-Ago Pill** | `.time-ago-pill` | Relative elapsed time since creation (e.g., `15m ago`, `2d ago`). | Source: Computed dynamically from ISO-8601 timestamp string `order.created_at`. |
 | **Delete Trigger** | `.delete-btn` | Circle trash icon button (`×`). | Source: Calls `window.api.deleteOrder(orderName)`. Hidden when in bundle mode. |
 | **Customer Title** | `.cust-name` | Full customer name or custom customer label. | Source: `order.customer` or `order.shipping_address.name` (editable via Name Modal). |
-| **Mockup Slot** | `.mockup-slot` | Product artwork thumbnail preview image. | Source: Base64 data URL string in `order.mockup` or first item's image URL. |
+| **Mockup Slot** | `.mockup-slot` | Product artwork thumbnail preview image on Pipeline, In S&S Cart/Ordered, and Ready to Print cards. Ready to Print reserves the slot from first paint and shows loading, available, or unavailable state without changing card height. | Source: first manual R2 mockup, otherwise the first private Designer Studio mockup resolved progressively after first paint. |
 | **Garment Count** | `.counts .count-items` | Garment icon + total apparel piece count. | Source: Calculated by summing `item.qty` for all line items in `order.items`. |
 | **Print Count** | `.counts .count-prints` | Printer icon + total print impressions needed. | Source: Calculated by inspecting `order.items[].prints` or print location tags. |
 | **Footer Bar** | `.card-footer` | Item count summary or production progress. | Displays item total; on `Ready To Print` cards (`.print-card`), displays percentage complete progress bar (`75%`). |
