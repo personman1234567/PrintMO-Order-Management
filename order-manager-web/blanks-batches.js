@@ -387,14 +387,6 @@
     };
   }
 
-  function capturedOrdersAreMarked(capturedOrders) {
-    const byName = new Map(currentOrders().map(order => [order.name, order]));
-    return capturedOrders.every(order => {
-      const current = byName.get(order.name);
-      return current && current.status === 'blanks' && isOrdered(current);
-    });
-  }
-
   async function saveBatchForOrders(orders) {
     if (!window.api || typeof window.api.createBlanksBatch !== 'function') return null;
 
@@ -1527,45 +1519,45 @@
     return true;
   }
 
-  function patchMarkInCartOrdered() {
-    try {
-      if (typeof markInCartBlanksOrdered !== 'function') return false;
-      if (markInCartBlanksOrdered.__blanksBatchFoundationPatched) return true;
+  function setupMarkInCartOrdered() {
+    const button = document.getElementById('blanks-mark-ordered-btn');
+    if (!button || button.dataset.markInCartOrderedReady === '1') return;
+    button.dataset.markInCartOrderedReady = '1';
+    const defaultLabel = button.textContent;
 
-      const originalMarkInCartBlanksOrdered = markInCartBlanksOrdered;
-      markInCartBlanksOrdered = async function patchedMarkInCartBlanksOrdered(...args) {
-        if (markOrderedInFlight) return undefined;
+    button.addEventListener('click', async () => {
+      if (markOrderedInFlight || !isShopifyBoard()) return;
 
-        const candidateOrders = currentOrders()
-          .filter(order => order?.status === 'blanks' && !isOrdered(order));
+      const cartOrders = currentOrders()
+        .filter(order => order?.status === 'blanks' && !isOrdered(order));
+      if (!cartOrders.length) {
+        showMoveNotice('No orders are currently in In S&S Cart.', 'info');
+        return;
+      }
 
-        markOrderedInFlight = true;
-        let result;
+      const orderNames = cartOrders.map(order => order.name).filter(Boolean);
+      markOrderedInFlight = true;
+      button.disabled = true;
+      button.textContent = `Marking ${orderNames.length} ordered...`;
+      try {
+        await applyBatchAwareOrderMove(orderNames, 'blanks', { blanksOrdered: 1 });
+        window.setActiveBlanksView?.('ordered');
         try {
-          result = await originalMarkInCartBlanksOrdered.apply(this, args);
-        } finally {
-          markOrderedInFlight = false;
-        }
-
-        if (!candidateOrders.length || !capturedOrdersAreMarked(candidateOrders)) {
-          return result;
-        }
-
-        try {
-          await saveBatchForOrders(candidateOrders);
+          await saveBatchForOrders(cartOrders);
         } catch (error) {
           console.error('Unable to create blanks batch manifest', error);
           alert(`Orders were marked ordered, but the S&S batch manifest was not saved: ${error?.message || error}`);
         }
-
-        return result;
-      };
-      markInCartBlanksOrdered.__blanksBatchFoundationPatched = true;
-      return true;
-    } catch (error) {
-      console.warn('Unable to patch Mark In Cart Ordered for blanks batch creation', error);
-      return false;
-    }
+      } catch (error) {
+        // applyBatchAwareOrderMove already restores the optimistic card update
+        // and communicates the persistence failure.
+        console.error('Unable to mark In S&S Cart orders as ordered', error);
+      } finally {
+        markOrderedInFlight = false;
+        button.disabled = false;
+        button.textContent = defaultLabel;
+      }
+    });
   }
 
   window.blanksBatchFoundation = {
@@ -1586,6 +1578,7 @@
     ensureReceiveButton();
     ensureReceiveOverlay();
     setupBlanksTabDropTargets();
+    setupMarkInCartOrdered();
     syncBlanksViewUi();
     patchRenderBoardForAccounting();
     patchOpenDetailForAccounting();
@@ -1596,7 +1589,4 @@
     });
   });
 
-  if (!patchMarkInCartOrdered()) {
-    document.addEventListener('DOMContentLoaded', patchMarkInCartOrdered, { once: true });
-  }
 })();

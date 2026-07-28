@@ -759,6 +759,13 @@ async function run() {
     'drops into the Shopify blanks column must persist the selected In S&S Cart or Ordered view'
   );
   assert(blanksFoundation.includes('applyOptimisticOrderUpdate'), 'Shopify moves must render optimistically and roll back on failure');
+  assert(
+    blanksFoundation.includes('function setupMarkInCartOrdered()')
+      && blanksFoundation.includes("document.getElementById('blanks-mark-ordered-btn')")
+      && blanksFoundation.includes("applyBatchAwareOrderMove(orderNames, 'blanks', { blanksOrdered: 1 })")
+      && !blanksFoundation.includes('patchMarkInCartOrdered'),
+    'Mark In Cart Ordered must directly persist all cart orders as canonical blanks_ordered state'
+  );
   const desktopCss = fs.readFileSync(path.join(root, 'order-manager-web', 'desktop.css'), 'utf8');
   assert(
     desktopCss.includes('repeat(2, minmax(0, 1fr))'),

@@ -66,7 +66,7 @@ When orders are dragged into the batch zone:
 5. If the supplier confirms but metadata is incomplete, the response lists repair-required GIDs and nightly integrity reconciliation repairs them. The supplier order is never resent.
 6. A timeout or ambiguous gateway result is stored as `unknown` and requires reconciliation.
 
-Confirmed batches leave `readiness.blanksOrdered` false so newly submitted cards appear in **In S&S Cart**. Operators later mark them Ordered manually; reconciliation preserves that later stage and readiness instead of moving the card backward.
+Confirmed batches leave `readiness.blanksOrdered` false so newly submitted cards appear in **In S&S Cart**. **Mark In Cart Ordered** advances every current cart card to `blanks_ordered`, sets `readiness.blanksOrdered`, opens the Ordered view, and then records the receiving manifest. Reconciliation preserves that later stage and readiness instead of moving cards backward.
 
 Legacy Redis mode continues using its existing process-batch route until final cutover; candidate mode never calls it.
 
