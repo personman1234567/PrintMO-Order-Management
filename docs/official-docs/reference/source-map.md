@@ -39,7 +39,7 @@ Electron calls authenticated Worker endpoints. It does not directly own Redis or
 | [index.html](../../../order-manager-web/index.html) | Shopify Admin/standalone shell and script ordering | App Bridge meta, `#orders-view` |
 | [renderer.js](../../../order-manager-web/renderer.js) | Prepared/minified shared renderer for web deployment | `renderBoard`, `openDetail`, `splitOrderAssets` |
 | [web-shim.js](../../../order-manager-web/web-shim.js) | Source-aware `window.api`, candidate DTO mapping, canonical mutations, private-asset tickets | `window.api`, `updateBoardMove` |
-| [shopify-preview.js](../../../order-manager-web/shopify-preview.js) | Legacy/Shopify source switch, failure rollback, rich detail, production controls | `setPreviewActive` |
+| [shopify-preview.js](../../../order-manager-web/shopify-preview.js) | Shopify-first source control, debug-only Legacy Redis switch, failure rollback, rich detail, production controls | `setPreviewActive`, `installLegacyDebugSourceControls` |
 | [storage-browser.js](../../../order-manager-web/storage-browser.js) | Browser storage and endpoint adapter | storage-backed `window.api` methods |
 | [blanks-batches.js](../../../order-manager-web/blanks-batches.js) | Blank-apparel selection, views, aggregation, and batch submission | `processBatch`, blanks view state |
 | [shopify-embedded-mobile.js](../../../order-manager-web/shopify-embedded-mobile.js) | Fixed-shell mobile interaction and scroll containment | `installEmbeddedTouchContainment` |

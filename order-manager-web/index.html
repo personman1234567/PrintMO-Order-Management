@@ -25,15 +25,6 @@
 <body data-active-tab="pipeline" data-active-view="orders" data-order-source="shopify">
   <header class="app-header">
     <div class="app-brand">PrintMO Order Manager</div>
-    <div class="order-source-switch" role="group" aria-label="Order data view">
-      <span class="order-source-label">Data view</span>
-      <button id="order-source-redis" class="order-source-option" type="button" data-order-source-target="redis" aria-pressed="false">
-        Legacy Redis
-      </button>
-      <button id="order-source-shopify" class="order-source-option active" type="button" data-order-source-target="shopify" aria-pressed="true">
-        Shopify board
-      </button>
-    </div>
     <nav class="app-nav" aria-label="Primary navigation">
       <button class="app-nav-tab" type="button" data-view="orders" aria-pressed="true">Orders</button>
       <button class="app-nav-tab" type="button" data-view="storage" aria-pressed="false">Storage Browser</button>
@@ -71,10 +62,6 @@
         <span class="mobile-refresh-label">Sync</span>
       </button>
     </nav>
-    <div class="mobile-order-source-switch" role="group" aria-label="Order data view">
-      <button class="order-source-option" type="button" data-order-source-target="redis" aria-pressed="false">Legacy Redis</button>
-      <button class="order-source-option active" type="button" data-order-source-target="shopify" aria-pressed="true">Shopify board</button>
-    </div>
     <nav id="mobile-blanks-subnav" class="mobile-blanks-subnav" aria-label="Blanks workflow" hidden>
       <button type="button" data-mobile-blanks-target="to-order" aria-pressed="true">To order</button>
       <button type="button" data-mobile-blanks-target="in-cart" aria-pressed="false">In cart</button>

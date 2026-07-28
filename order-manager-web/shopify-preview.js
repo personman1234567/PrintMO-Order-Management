@@ -8,6 +8,30 @@
   };
 
   const els = {};
+  const LEGACY_DEBUG_QUERY_PARAM = 'printmo_debug_legacy';
+
+  // Legacy Redis remains available only as a deliberate operational escape
+  // hatch. It is not part of the normal production UI or navigation flow.
+  function legacyDebugModeEnabled() {
+    return new URLSearchParams(window.location.search).get(LEGACY_DEBUG_QUERY_PARAM) === '1';
+  }
+
+  function installLegacyDebugSourceControls() {
+    if (!legacyDebugModeEnabled()) return;
+    const header = document.querySelector('.app-header');
+    if (!header) return;
+
+    const controls = document.createElement('div');
+    controls.className = 'order-source-switch legacy-debug-source-switch';
+    controls.setAttribute('role', 'group');
+    controls.setAttribute('aria-label', 'Debug order data view');
+    controls.innerHTML = `
+      <span class="order-source-label">Debug data view</span>
+      <button class="order-source-option" type="button" data-order-source-target="redis" aria-pressed="false">Legacy Redis</button>
+      <button class="order-source-option active" type="button" data-order-source-target="shopify" aria-pressed="true">Shopify board</button>
+    `;
+    header.appendChild(controls);
+  }
 
   function idempotencyKey() {
     if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
@@ -805,7 +829,7 @@
 
   function setPreviewActive(active, { preserveActiveView = false, render = true } = {}) {
     const previousSource = document.body.dataset.orderSource || 'redis';
-    state.active = Boolean(active);
+    state.active = Boolean(active) || !legacyDebugModeEnabled();
     document.body.dataset.orderSource = state.active ? 'shopify' : 'redis';
     syncSourceButtons(state.active ? 'shopify' : 'redis');
     // Both sources use the same production board. Only the data adapter changes.
@@ -860,13 +884,9 @@
     els.detailError = document.getElementById('shopify-preview-detail-error');
     els.detailContent = document.getElementById('shopify-preview-detail-content');
 
+    installLegacyDebugSourceControls();
     document.querySelectorAll('[data-order-source-target]').forEach((button) => {
       button.addEventListener('click', () => setPreviewActive(button.dataset.orderSourceTarget === 'shopify'));
-    });
-    document.querySelectorAll('.app-nav-tab').forEach((button) => {
-      button.addEventListener('click', () => {
-        if (state.active) setPreviewActive(false, { preserveActiveView: true });
-      });
     });
     els.refresh?.addEventListener('click', handleRefresh, true);
     els.mobileRefresh?.addEventListener('click', handleRefresh, true);

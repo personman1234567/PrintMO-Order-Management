@@ -584,7 +584,7 @@ async function run() {
   assert.equal(opts.includeAssets, false);
   assert(source.includes('https://extensions.shopifycdn.com'), 'Worker must allow the exact Shopify admin extension origin');
   const previewHtml = fs.readFileSync(path.join(root, 'order-manager-web', 'index.html'), 'utf8');
-  assert(previewHtml.includes('data-order-source-target="shopify"'), 'web UI must expose the Shopify preview toggle');
+  assert(!previewHtml.includes('data-order-source-target'), 'normal web UI must not expose a Legacy Redis source switch');
   assert(previewHtml.includes('shopify-preview.js'), 'web UI must load the read-only preview controller');
   assert(previewHtml.includes('shopify-preview-detail'), 'web UI must include the Shopify-only order detail dialog');
   [
@@ -660,6 +660,11 @@ async function run() {
     'mobile order detail must keep #detail-content as its explicit vertical scroll owner'
   );
   const previewController = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-preview.js'), 'utf8');
+  assert(
+    previewController.includes("const LEGACY_DEBUG_QUERY_PARAM = 'printmo_debug_legacy'")
+      && previewController.includes('installLegacyDebugSourceControls'),
+    'Legacy Redis source controls must require the explicit debug query parameter'
+  );
   assert(previewController.includes('getShopifyPreviewOrderDetail'), 'preview controller must load details only when an order is opened');
   assert(
     previewController.includes('setPreviewActive(true, { render: false })'),
@@ -714,6 +719,12 @@ async function run() {
   const webRenderer = fs.readFileSync(path.join(root, 'order-manager-web', 'renderer.js'), 'utf8');
   assert(webRenderer.includes('assetId'), 'shared web renderer must recognize private manifest assets without public /orders/ URLs');
   const sharedRenderer = fs.readFileSync(path.join(root, 'renderer.js'), 'utf8');
+  assert(
+    sharedRenderer.includes('function formatCardMoney(value)')
+      && sharedRenderer.includes('formatCardMoney(o.subtotal)')
+      && !sharedRenderer.includes('(o.subtotal||0).toFixed(2)'),
+    'shared cards must safely format legacy string subtotals after a mutation repaint'
+  );
   assert(
     sharedRenderer.includes('if (detailFilesBtn)'),
     'shared detail renderer must tolerate the Shopify layout omitting the legacy aggregate Files button'

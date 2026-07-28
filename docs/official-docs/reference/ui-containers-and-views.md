@@ -23,7 +23,7 @@
 
 ## Global Application Layout & Top-Level Containers
 
-The primary user interface is built as a three-column grid layout (`.container`) in desktop view, adapting to a tabbed navigation bar (`#mobile-tab-bar`) in constrained/mobile/Shopify Admin iframe views. In the embedded web app, the **Legacy Redis / Shopify board** source control reuses this same renderer. Legacy mode receives the original queue shape; Shopify mode maps the Worker board DTO into the renderer shape without reading or mutating Redis.
+The primary user interface is built as a three-column grid layout (`.container`) in desktop view, adapting to a tabbed navigation bar (`#mobile-tab-bar`) in constrained/mobile/Shopify Admin iframe views. The embedded web app normally uses the **Shopify board** only. Legacy Redis remains an isolated debug fallback at `?printmo_debug_legacy=1`; it receives the original queue shape, while Shopify maps the Worker board DTO into the renderer shape without reading or mutating Redis.
 
 On the **Shopify board at desktop widths above 900px**, the middle panel becomes the tabbed **Supplies** workspace: `Build Order`, `In S&S Cart`, and `Ordered`. The existing `#blanks-section` is moved into that panel only for this candidate desktop presentation; the right panel then gives `#print-section` its full height. Legacy Redis and the mobile layout preserve the original placement. The diagram below is that retained Legacy/mobile base layout.
 

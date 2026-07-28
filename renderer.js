@@ -516,6 +516,14 @@ function shortenNameIfWrapped(el) {
   }
 }
 
+// Legacy queue records predate the current money-field contract and can retain
+// string values such as "50.00". Rendering must never turn that data-shape
+// issue into a post-save failure after the mutation has already succeeded.
+function formatCardMoney(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount.toFixed(2) : '0.00';
+}
+
 // build a card from the record’s `items` array
 function makeCard(o, style = 'default') {
   const card = document.createElement('div');
@@ -558,7 +566,7 @@ function makeCard(o, style = 'default') {
       </div>
       <div class="card-footer">
         <span class="footer-label">Subtotal</span>
-        <span class="footer-value">$${(o.subtotal||0).toFixed(2)}</span>
+        <span class="footer-value">$${formatCardMoney(o.subtotal)}</span>
       </div>
     `;
     requestAnimationFrame(() => {
@@ -605,7 +613,7 @@ function makeCard(o, style = 'default') {
       </div>
       <div class="card-footer">
         <span class="footer-label">Subtotal</span>
-        <span class="footer-value">$${(o.subtotal||0).toFixed(2)}</span>
+        <span class="footer-value">$${formatCardMoney(o.subtotal)}</span>
       </div>
     `;
     requestAnimationFrame(() => {
