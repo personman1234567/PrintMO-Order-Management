@@ -4642,6 +4642,11 @@ body.manual-add-open {
   color: #176235;
 }
 
+.card-status-badge.production-complete {
+  background: #dcfce7;
+  color: #166534;
+}
+
 .fulfillment .panel-body {
   gap: 12px;
   padding: 12px;

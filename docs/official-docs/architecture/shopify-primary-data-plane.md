@@ -74,6 +74,19 @@ The JSON metafield contains:
 - attention/archive fields and actor/timestamps.
 
 Allowed stages are `received`, `to_order`, `blanks_cart`, `blanks_ordered`, `print`, and `completed`.
+The Admin order block presents five operator-facing stages by grouping
+`blanks_cart` and `blanks_ordered` under **Blanks** with a required substage.
+Its production DTO also returns a read-only `garmentCount`, calculated from all
+paginated current line-item quantities after excluding known print-service
+lines. The Worker rejects `printedCount` values above that current garment
+total.
+
+`completed` means manufacturing is finished, not that pickup or delivery has
+finished. A completed order remains active in the existing Ready to Print board
+column, including when Shopify reports it fulfilled, until an operator marks
+customer handoff complete. That action server-stamps `archivedAt` and
+`archivedBy`; only archive state removes the order from the active projection.
+Reopening clears both archive fields.
 
 Every client mutation supplies an expected revision and idempotency key. Keys use only the Worker-accepted `[A-Za-z0-9._:-]` character set and are generated independently of Shopify GIDs; a GID contains `/` separators and must never be embedded in a fallback key. The Worker records the request in D1, reads the metafield digest, calls Shopify `metafieldsSet` with `compareDigest`, and then commits the D1 projection/audit result. If Shopify commits before D1 finalization, `lastMutationId` lets a retry repair D1. A concurrent edit returns `409 VERSION_CONFLICT`.
 

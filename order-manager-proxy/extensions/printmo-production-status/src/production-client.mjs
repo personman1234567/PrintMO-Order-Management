@@ -3,21 +3,31 @@ export const API_BASE = 'https://order-manager-proxy.printmobusiness.workers.dev
 export const STAGE_OPTIONS = [
   {value: 'received', label: 'Received'},
   {value: 'to_order', label: 'Create blanks order'},
-  {value: 'blanks_cart', label: 'Blanks cart'},
-  {value: 'blanks_ordered', label: 'Blanks ordered'},
+  {value: 'blanks_cart', label: 'Blanks'},
+  {value: 'blanks_ordered', label: 'Blanks'},
   {value: 'print', label: 'Ready to print'},
-  {value: 'completed', label: 'Completed'},
+  {value: 'completed', label: 'Production complete'},
+];
+
+export const DISPLAY_STAGE_OPTIONS = [
+  {value: 'received', label: 'Received'},
+  {value: 'to_order', label: 'Create blanks order'},
+  {value: 'blanks', label: 'Blanks'},
+  {value: 'print', label: 'Ready to print'},
+  {value: 'completed', label: 'Production complete'},
 ];
 
 const MUTABLE_FIELDS = [
   ['stage', 'stage'],
-  ['bundleId', 'bundle_id'],
   ['internalNotes', 'internal_notes'],
   ['printedCount', 'printed_count'],
   ['blanksStatus', 'blanks_status'],
+  ['blanksOrdered', 'blanks_ordered'],
   ['printsStatus', 'prints_status'],
   ['printsOrdered', 'prints_ordered'],
 ];
+
+const STAGE_RANK = new Map(DISPLAY_STAGE_OPTIONS.map((option, index) => [option.value, index]));
 
 export function productionPath(gid) {
   if (!gid) throw new Error('Shopify did not provide an order ID.');
@@ -25,17 +35,22 @@ export function productionPath(gid) {
 }
 
 export function normalizeProduction(value = {}) {
+  const garmentCount = Number(value.garmentCount);
   return {
     id: value.id || null,
     stage: STAGE_OPTIONS.some((option) => option.value === value.stage) ? value.stage : 'received',
     version: Number.isInteger(Number(value.version)) ? Number(value.version) : 0,
     bundleId: value.bundleId || '',
     blanksPo: Array.isArray(value.blanksPo) ? value.blanksPo : [],
+    garmentCount: Number.isInteger(garmentCount) && garmentCount >= 0 ? garmentCount : 0,
     printedCount: Math.max(0, Number(value.printedCount) || 0),
     blanksStatus: Number(value.blanksStatus) ? 1 : 0,
+    blanksOrdered: Number(value.blanksOrdered) ? 1 : 0,
     printsStatus: Number(value.printsStatus) ? 1 : 0,
     printsOrdered: Number(value.printsOrdered) ? 1 : 0,
-    internalNotes: value.internalNotes || '',
+    internalNotes: String(value.internalNotes || '').slice(0, 5000),
+    archivedAt: value.archivedAt || null,
+    archivedBy: value.archivedBy || null,
     updatedAt: value.updatedAt || null,
   };
 }
@@ -47,11 +62,106 @@ export function buildProductionPatch(original, draft) {
   for (const [clientField, apiField] of MUTABLE_FIELDS) {
     if (after[clientField] !== before[clientField]) patch[apiField] = after[clientField];
   }
+
+  // Stage and blanksOrdered jointly encode the two canonical Blanks substages.
+  // Whenever either changes, send both so another client can never observe an
+  // impossible mixed state.
+  if ('stage' in patch || 'blanks_ordered' in patch) {
+    patch.stage = after.stage;
+    patch.blanks_ordered = after.blanksOrdered;
+  }
   return patch;
 }
 
+export function displayStage(stage) {
+  return stage === 'blanks_cart' || stage === 'blanks_ordered' ? 'blanks' : stage;
+}
+
 export function stageLabel(stage) {
-  return STAGE_OPTIONS.find((option) => option.value === stage)?.label || 'Received';
+  return DISPLAY_STAGE_OPTIONS.find((option) => option.value === displayStage(stage))?.label || 'Received';
+}
+
+export function stageRank(stage) {
+  return STAGE_RANK.get(displayStage(stage)) ?? 0;
+}
+
+export function blanksSubstage(production = {}) {
+  return production.stage === 'blanks_ordered' || Number(production.blanksOrdered)
+    ? 'ordered'
+    : 'cart';
+}
+
+export function setBlanksSubstage(current, substage) {
+  const ordered = substage === 'ordered';
+  return {
+    ...current,
+    stage: ordered ? 'blanks_ordered' : 'blanks_cart',
+    blanksOrdered: ordered ? 1 : 0,
+  };
+}
+
+export function applyDisplayStageTransition(current, nextDisplayStage) {
+  const next = {...current};
+  const previousDisplayStage = displayStage(current.stage);
+  if (nextDisplayStage === 'blanks') {
+    next.stage = 'blanks_cart';
+    next.blanksOrdered = 0;
+  } else {
+    next.stage = nextDisplayStage;
+  }
+  if (previousDisplayStage === 'blanks' && nextDisplayStage === 'print') {
+    next.blanksStatus = 1;
+  }
+  if (nextDisplayStage === 'completed') {
+    next.printedCount = Math.max(0, Number(current.garmentCount) || 0);
+  }
+  return next;
+}
+
+export function updateReadinessDependency(current, orderedField, readyField, checked) {
+  const next = {...current, [orderedField]: checked ? 1 : 0};
+  const clearedReady = !checked && Boolean(next[readyField]);
+  if (clearedReady) next[readyField] = 0;
+  return {next, clearedReady};
+}
+
+function touchedClientFields(original, draft) {
+  const before = normalizeProduction(original);
+  const after = normalizeProduction({...before, ...draft});
+  const touched = new Set(
+    MUTABLE_FIELDS
+      .map(([clientField]) => clientField)
+      .filter((clientField) => before[clientField] !== after[clientField]),
+  );
+  if (touched.has('stage') || touched.has('blanksOrdered')) {
+    touched.add('stage');
+    touched.add('blanksOrdered');
+  }
+  return touched;
+}
+
+export function currentProductionSatisfiesDraft(original, draft, current) {
+  const after = normalizeProduction({...normalizeProduction(original), ...draft});
+  const latest = normalizeProduction(current);
+  return [...touchedClientFields(original, draft)]
+    .every((field) => latest[field] === after[field]);
+}
+
+export function mergeProductionConflict(original, draft, current) {
+  const latest = normalizeProduction(current);
+  const operatorDraft = normalizeProduction({...normalizeProduction(original), ...draft});
+  const merged = {...latest};
+  for (const field of touchedClientFields(original, draft)) merged[field] = operatorDraft[field];
+  return merged;
+}
+
+export function printedCountError(value, garmentCount) {
+  const text = String(value ?? '').trim();
+  if (!/^\d+$/.test(text)) return 'Enter a whole number.';
+  const count = Number(text);
+  if (!Number.isSafeInteger(count)) return 'Enter a smaller whole number.';
+  if (count > garmentCount) return `Pieces printed cannot exceed ${garmentCount}.`;
+  return '';
 }
 
 export function responseError(status, body) {
@@ -60,9 +170,11 @@ export function responseError(status, body) {
     ? nested
     : nested?.message || body?.message || `Request failed (${status})`;
   const error = new Error(message);
+  const details = nested?.details || body?.details || {};
   error.status = status;
   error.code = nested?.code || body?.code || null;
-  error.currentVersion = nested?.currentVersion;
+  error.currentVersion = details.currentVersion ?? nested?.currentVersion;
+  error.currentProduction = details.current || nested?.current;
   return error;
 }
 

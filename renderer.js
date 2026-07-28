@@ -212,6 +212,7 @@ function candidateOrderRenderFingerprint(order) {
     name: order.name || '',
     receivedAt: order.receivedAt || '',
     status: order.status || 'received',
+    productionStage: order.productionStage || '',
     items: (order.items || []).map(item => ({
       id: item.id || '',
       title: item.title || '',
@@ -292,7 +293,8 @@ function renderStatusColumn(status) {
   const orders = allOrders.filter(order => {
     if ((order.status || 'received') !== status) return false;
     if (status !== 'print' || !order._candidate) return true;
-    return String(order.displayFulfillmentStatus || '').toUpperCase() !== 'FULFILLED';
+    return order.productionStage === 'completed'
+      || String(order.displayFulfillmentStatus || '').toUpperCase() !== 'FULFILLED';
   });
   const groups = {};
   const singles = [];
@@ -543,6 +545,9 @@ function makeCard(o, style = 'default') {
   });
   const firstMockupUrl = getFirstMockupUrl(o);
   const hasMockup = !!firstMockupUrl;
+  const productionCompleteBadge = o.productionStage === 'completed'
+    ? '<span class="card-status-badge production-complete">Production complete</span>'
+    : '';
 
   if (style === 'pipeline') {
     // PIPELINE style
@@ -550,6 +555,7 @@ function makeCard(o, style = 'default') {
     card.innerHTML = `
       <div class="card-header">
         <span class="order-number">${orderNum}</span>
+        ${productionCompleteBadge}
         <span class="time-ago-pill">${timeAgo(o.receivedAt)}</span>
       </div>
       <div class="card-body ${hasMockup ? 'has-mockup' : 'no-mockup'}">
@@ -592,6 +598,7 @@ function makeCard(o, style = 'default') {
     card.innerHTML = `
       <div class="card-header">
         <span class="order-number">${orderNum}</span>
+        ${productionCompleteBadge}
         <span class="time-ago-pill">${timeAgo(o.receivedAt)}</span>
       </div>
       <div class="card-body ${showProductionPreview ? 'has-mockup' : 'no-mockup'} production-preview-${productionMockupState}">

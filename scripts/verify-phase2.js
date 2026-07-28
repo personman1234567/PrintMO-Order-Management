@@ -204,6 +204,18 @@ async function run() {
               name: shopifyNode().name,
               createdAt: shopifyNode().createdAt,
               updatedAt: shopifyNode().updatedAt,
+              lineItems: {
+                nodes: [
+                  shopifyNode().lineItems.nodes[0],
+                  {
+                    id: 'gid://shopify/LineItem/print-1',
+                    title: 'T-shirt Chest Print',
+                    quantity: 1,
+                    currentQuantity: 1,
+                  },
+                ],
+                pageInfo: { hasNextPage: true, endCursor: 'production-page-1' },
+              },
               metafield: {
                 id: 'gid://shopify/Metafield/1',
                 namespace: 'app--fixture--printmo',
@@ -489,7 +501,9 @@ async function run() {
       headers: { ...headers, Origin: 'https://extensions.shopifycdn.com' }
     }), env);
     assert.equal(productionRead.status, 200, 'lightweight production metadata read must succeed');
-    assert.equal((await productionRead.json()).production.stage, 'received');
+    const productionReadJson = await productionRead.json();
+    assert.equal(productionReadJson.production.stage, 'received');
+    assert.equal(productionReadJson.production.garmentCount, 3, 'production DTO must count all paginated non-print garments');
     assert.equal(productionRead.headers.get('Access-Control-Allow-Origin'), 'https://extensions.shopifycdn.com', 'Shopify admin extensions must receive exact-origin CORS');
 
     const mutation = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
@@ -510,6 +524,80 @@ async function run() {
     assert.equal(conflictJson.error.code, 'VERSION_CONFLICT');
     assert.equal(conflictJson.error.details.currentVersion, 2, 'conflict response must expose the current revision for safe client reconciliation');
     assert.equal(conflictJson.error.details.current.stage, 'to_order', 'conflict response must expose current canonical production state');
+    assert.equal(conflictJson.error.details.current.garmentCount, 3, 'conflict recovery must retain the current garment cap');
+
+    const invalidPrintedCount = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
+      method: 'PATCH', headers, body: JSON.stringify({ expectedVersion: 2, patch: { printed_count: 4 }, idempotencyKey: 'mutation-invalid-count-1' })
+    }), env);
+    assert.equal(invalidPrintedCount.status, 400, 'printed count above the paginated garment total must be rejected');
+    assert.equal((await invalidPrintedCount.json()).error.code, 'INVALID_PRINTED_COUNT');
+
+    const completedMutation = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        expectedVersion: 2,
+        patch: { stage: 'completed', printed_count: 3 },
+        idempotencyKey: 'mutation-completed-1'
+      })
+    }), env);
+    assert.equal(completedMutation.status, 200);
+    const completedJson = await completedMutation.json();
+    assert.equal(completedJson.production.stage, 'completed');
+    assert.equal(completedJson.production.garmentCount, 3);
+    const completedProjection = await env.ORDER_DB.prepare('SELECT active, stage FROM order_projection WHERE order_gid = ?')
+      .bind(shopifyNode().id).first();
+    assert.equal(completedProjection.active, 1, 'Production complete must remain active until customer handoff');
+    assert.equal(completedProjection.stage, 'completed');
+
+    const archiveMutation = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        expectedVersion: 3,
+        patch: { archived_at: 'untrusted-client-time' },
+        idempotencyKey: 'mutation-archive-1'
+      })
+    }), env);
+    assert.equal(archiveMutation.status, 200);
+    const archiveJson = await archiveMutation.json();
+    assert.equal(archiveJson.production.archivedBy, 'shopify:partner-1', 'archive actor must come from authenticated identity');
+    assert.notEqual(archiveJson.production.archivedAt, 'untrusted-client-time', 'archive timestamp must be server-stamped');
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active,
+      0,
+      'handoff completion must remove the order from the active board'
+    );
+
+    const reopenMutation = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        expectedVersion: 4,
+        patch: { archived_at: null },
+        idempotencyKey: 'mutation-reopen-1'
+      })
+    }), env);
+    assert.equal(reopenMutation.status, 200);
+    const reopenJson = await reopenMutation.json();
+    assert.equal(reopenJson.production.archivedAt, null);
+    assert.equal(reopenJson.production.archivedBy, null);
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active,
+      1,
+      'reopening must return the order to the active board'
+    );
+
+    const resetForBatch = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        expectedVersion: 5,
+        patch: { stage: 'to_order' },
+        idempotencyKey: 'mutation-reset-batch-stage-1'
+      })
+    }), env);
+    assert.equal(resetForBatch.status, 200, 'fixture order must return to the supplier-eligible stage');
 
     const batchResponse = await worker.fetch(new Request('https://worker.test/order-manager/v1/batches/commit', {
       method: 'POST',

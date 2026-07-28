@@ -125,7 +125,7 @@ function isShopifyCandidateView() {
 function candidateStageToBoard(stage) {
   if (stage === "to_order") return "toOrder";
   if (stage === "blanks_cart" || stage === "blanks_ordered") return "blanks";
-  if (stage === "print") return "print";
+  if (stage === "print" || stage === "completed") return "print";
   return "received";
 }
 
@@ -196,6 +196,7 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
     _candidate: true,
     _gid: order.id,
     _version: Number(production.version || 0),
+    productionStage: production.stage || "received",
     name,
     orderNumber: String(displayName).replace(/^#/, ""),
     receivedAt: order.createdAt,
@@ -247,7 +248,7 @@ function candidateAssetIsMockup(asset) {
 
 function candidateAssetOrderPriority(record) {
   const stage = record?.production?.stage;
-  if (stage === "print") return 0;
+  if (stage === "print" || stage === "completed") return 0;
   if (stage === "received") return 1;
   if (stage === "blanks_cart" || stage === "blanks_ordered") return 2;
   if (stage === "to_order") return 3;
@@ -358,7 +359,10 @@ function candidateByName(name) {
 
 function applyCandidateProduction(order, production = {}) {
   order._version = Number(production.version ?? production.revision ?? order._version + 1);
-  if (production.stage) order.status = candidateStageToBoard(production.stage);
+  if (production.stage) {
+    order.productionStage = production.stage;
+    order.status = candidateStageToBoard(production.stage);
+  }
   if ("bundleId" in production) order.bundle = production.bundleId || "";
   if ("internalNotes" in production) order.notes = production.internalNotes || "";
   if ("printedCount" in production) order.progress = Number(production.printedCount || 0);
@@ -375,6 +379,7 @@ function candidateProductionMatchesPatch(production = {}, patch = {}) {
     internal_notes: "internalNotes",
     printed_count: "printedCount",
     blanks_status: "blanksStatus",
+    blanks_ordered: "blanksOrdered",
     prints_status: "printsStatus",
     prints_ordered: "printsOrdered",
   };
@@ -482,8 +487,8 @@ window.api.getOrderDetail = async (orderId, { signal } = {}) => {
 };
 
 // Production metadata is separate from the Shopify commerce response. These
-// endpoints update the v1 order hash and atomically mirror supported fields to
-// the legacy Redis queue while that board remains in production.
+// endpoints update the canonical app-owned Shopify production metafield; the
+// D1 board projection is rebuildable and candidate edits remain Redis-free.
 window.api.getProductionMetadata = async (orderId) => {
   if (!orderId) throw new Error("A Shopify order ID is required");
   return apiFetch(

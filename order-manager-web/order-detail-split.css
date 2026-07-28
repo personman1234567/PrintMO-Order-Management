@@ -135,7 +135,8 @@
 }
 
 .status-badge.is-paid,
-.status-badge.is-fulfilled {
+.status-badge.is-fulfilled,
+.status-badge.is-production-complete {
   background: var(--detail-success-soft);
   color: #166534;
 }

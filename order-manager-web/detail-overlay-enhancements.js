@@ -150,6 +150,7 @@
     order.phone = customer.phone || order.phone || '';
     order.customer = customer;
     order.attention = result.attention || production.attention || order.attention || { required: false, reasons: [] };
+    order.productionStage = production.stage || order.productionStage || order.status || 'received';
     order.sync = result.sync || order.sync || {};
     order.canonicalDetail = result;
 
@@ -1284,6 +1285,8 @@
       order.displayFulfillmentStatus || order.fulfillmentStatus,
       'Unfulfilled'
     );
+    const productionCompleteBadge = document.getElementById('badge-production-complete');
+    productionCompleteBadge?.classList.toggle('hidden', order.productionStage !== 'completed');
     syncCustomerContext(order);
     syncNotesContext(order);
     syncCommerceDetail(order);

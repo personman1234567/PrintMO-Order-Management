@@ -2237,6 +2237,12 @@ const PRODUCTION_STAGES = new Set(['received', 'to_order', 'blanks_cart', 'blank
 const PRODUCTION_STATE_QUERY = `query PrintMOProductionState($id: ID!) {
   order(id: $id) {
     id name createdAt updatedAt
+    lineItems(first: 50) {
+      nodes {
+        id title quantity currentQuantity
+      }
+      pageInfo { hasNextPage endCursor }
+    }
     metafield(namespace: "${PRODUCTION_METAFIELD_NAMESPACE}", key: "${PRODUCTION_METAFIELD_KEY}") {
       id namespace key type value compareDigest createdAt updatedAt
     }
@@ -2352,7 +2358,7 @@ function parseProductionMetafield(metafield, actor = 'system') {
     }
 }
 
-function productionForClient(gid, state, compareDigest, assets = []) {
+function productionForClient(gid, state, compareDigest, assets = [], garmentCount = null) {
     return {
         id: gid,
         stage: state.stage,
@@ -2361,6 +2367,7 @@ function productionForClient(gid, state, compareDigest, assets = []) {
         compareDigest: compareDigest || null,
         bundleId: state.bundleId || '',
         blanksPo: state.batchRefs || [],
+        garmentCount: Number.isInteger(garmentCount) && garmentCount >= 0 ? garmentCount : null,
         printedCount: state.printedCount,
         blanksOrdered: state.readiness.blanksOrdered ? 1 : 0,
         blanksStatus: state.readiness.blanksReady ? 1 : 0,
@@ -2369,6 +2376,7 @@ function productionForClient(gid, state, compareDigest, assets = []) {
         internalNotes: state.internalNotes,
         attention: state.attention,
         archivedAt: state.archivedAt,
+        archivedBy: state.archivedBy,
         updatedAt: state.updatedAt,
         updatedBy: state.updatedBy,
         assets
@@ -2405,9 +2413,7 @@ function normalizeProductionPatch(patch) {
         prints_ordered: 'printsOrdered',
         attention: 'attention',
         archivedAt: 'archivedAt',
-        archived_at: 'archivedAt',
-        archivedBy: 'archivedBy',
-        archived_by: 'archivedBy'
+        archived_at: 'archivedAt'
     };
     const normalized = {};
     for (const [key, value] of Object.entries(patch)) {
@@ -2435,6 +2441,14 @@ function normalizeProductionPatch(patch) {
             throw Object.assign(new Error(`${flag} must be boolean or 0/1.`), { code: 'INVALID_READINESS', status: 400 });
         }
     }
+    if (
+        'archivedAt' in normalized
+        && normalized.archivedAt !== null
+        && normalized.archivedAt !== true
+        && (typeof normalized.archivedAt !== 'string' || !normalized.archivedAt.trim())
+    ) {
+        throw Object.assign(new Error('Archive state must be a timestamp, true, or null.'), { code: 'INVALID_ARCHIVE_STATE', status: 400 });
+    }
     return normalized;
 }
 
@@ -2449,8 +2463,10 @@ function applyProductionPatch(current, patch, actor, mutationId) {
     if ('printsStatus' in patch) next.readiness.printsReady = Boolean(Number(patch.printsStatus));
     if ('printsOrdered' in patch) next.readiness.printsOrdered = Boolean(Number(patch.printsOrdered));
     if ('attention' in patch) next.attention = normalizeProductionState({ attention: patch.attention }, actor).attention;
-    if ('archivedAt' in patch) next.archivedAt = patch.archivedAt || null;
-    if ('archivedBy' in patch) next.archivedBy = patch.archivedBy || null;
+    if ('archivedAt' in patch) {
+        next.archivedAt = patch.archivedAt ? isoNow() : null;
+        next.archivedBy = next.archivedAt ? actor : null;
+    }
     next.revision = current.revision + 1;
     next.lastMutationId = mutationId;
     next.updatedAt = isoNow();
@@ -2556,7 +2572,7 @@ async function d1AssetsForOrders(env, shopId, gids) {
 async function d1ProjectionUpsert(env, shopId, gid, state, compareDigest, summary = undefined, order = {}) {
     const db = requireOrderDb(env);
     const now = isoNow();
-    const active = !state.archivedAt && state.stage !== 'completed' ? 1 : 0;
+    const active = state.archivedAt ? 0 : 1;
     await db.prepare(`
       INSERT INTO order_projection (
         shop_id, order_gid, display_name, stage, active, production_revision,
@@ -2795,6 +2811,37 @@ async function completeLineItems(env, orderId, connection, graphQL = coordinator
         pageInfo = next.pageInfo || { hasNextPage: false, endCursor: null };
     }
     return { items, complete: true, errors: [] };
+}
+
+function garmentCountFromLineItems(items = []) {
+    return items.reduce((total, item) => {
+        if (PRINT_TITLES.has(item?.title)) return total;
+        const quantity = Number(item?.currentQuantity ?? item?.quantity ?? 0);
+        return total + (Number.isInteger(quantity) && quantity > 0 ? quantity : 0);
+    }, 0);
+}
+
+async function productionGarmentCount(env, productionRead, graphQL = coordinatorGraphQL) {
+    if (!productionRead?.order?.lineItems) {
+        throw Object.assign(new Error('Shopify did not return order line items for garment counting.'), {
+            code: 'GARMENT_COUNT_UNAVAILABLE',
+            status: 502
+        });
+    }
+    const lines = await completeLineItems(
+        env,
+        productionRead.gid,
+        productionRead.order.lineItems,
+        graphQL
+    );
+    if (!lines.complete) {
+        throw Object.assign(new Error('Shopify line-item pagination did not complete.'), {
+            code: 'GARMENT_COUNT_INCOMPLETE',
+            status: 502,
+            details: lines.errors
+        });
+    }
+    return garmentCountFromLineItems(lines.items);
 }
 
 function selectOperationalCustomerName(node) {
@@ -3871,7 +3918,13 @@ async function handleV1OrderDetailGet(request, env, allowOrigin, reqAllowHeaders
         await d1ProjectionUpsert(env, shop.id, gid, productionRead.state, productionRead.compareDigest, detail.summary, productionRead.order);
         return jsonResponse({
             ...detail.summary,
-            production: productionForClient(gid, productionRead.state, productionRead.compareDigest, assets),
+            production: productionForClient(
+                gid,
+                productionRead.state,
+                productionRead.compareDigest,
+                assets,
+                garmentCountFromLineItems(detail.summary?.commerce?.lineItems || [])
+            ),
             attention: productionRead.state.attention,
             productionEvents,
             detail
@@ -3887,12 +3940,15 @@ async function handleV1ProductionGet(request, env, allowOrigin, reqAllowHeaders)
         if (!gid) return v1Error({ code: 'INVALID_ORDER_ID', message: 'Invalid Shopify order GID' }, allowOrigin, reqAllowHeaders, 400);
         const productionRead = await readProductionMetafield(env, gid);
         const shop = await d1Shop(env);
-        const assets = await d1AssetsForOrder(env, shop.id, gid);
+        const [assets, garmentCount] = await Promise.all([
+            d1AssetsForOrder(env, shop.id, gid),
+            productionGarmentCount(env, productionRead)
+        ]);
         await d1ProjectionUpsert(env, shop.id, gid, productionRead.state, productionRead.compareDigest, undefined, productionRead.order);
         return jsonResponse({
             gid,
             canonicalSource: 'shopify-app-owned-metafield',
-            production: productionForClient(gid, productionRead.state, productionRead.compareDigest, assets)
+            production: productionForClient(gid, productionRead.state, productionRead.compareDigest, assets, garmentCount)
         }, allowOrigin, reqAllowHeaders);
     } catch (error) {
         return v1Error(error.body?.error || error, allowOrigin, reqAllowHeaders, error.status || 500, error.body);
@@ -3902,7 +3958,7 @@ async function handleV1ProductionGet(request, env, allowOrigin, reqAllowHeaders)
 async function d1FinalizeProductionMutation(env, shopId, requestRow, gid, state, compareDigest, production, changedFields, order) {
     const db = requireOrderDb(env);
     const now = isoNow();
-    const active = !state.archivedAt && state.stage !== 'completed' ? 1 : 0;
+    const active = state.archivedAt ? 0 : 1;
     const resultJson = JSON.stringify({
         ok: true,
         canonicalSource: 'shopify-app-owned-metafield',
@@ -3992,9 +4048,21 @@ async function handleV1ProductionPatch(request, env, allowOrigin, reqAllowHeader
         }
 
         const current = await readProductionMetafield(env, gid, actor);
+        const garmentCount = await productionGarmentCount(env, current);
+        if ('printedCount' in patch && patch.printedCount > garmentCount) {
+            await db.prepare(`
+              UPDATE mutation_requests
+              SET state = 'failed', error_code = 'INVALID_PRINTED_COUNT', updated_at = ?
+              WHERE id = ?
+            `).bind(isoNow(), requestRow.id).run();
+            return v1Error({
+                code: 'INVALID_PRINTED_COUNT',
+                message: `Printed count cannot exceed the current garment count of ${garmentCount}.`
+            }, allowOrigin, reqAllowHeaders, 400);
+        }
         if (current.state.lastMutationId === requestRow.id) {
             const assets = await d1AssetsForOrder(env, shop.id, gid);
-            const production = productionForClient(gid, current.state, current.compareDigest, assets);
+            const production = productionForClient(gid, current.state, current.compareDigest, assets, garmentCount);
             const repaired = await d1FinalizeProductionMutation(
                 env, shop.id, requestRow, gid, current.state, current.compareDigest,
                 production, Object.keys(patch), current.order
@@ -4007,14 +4075,14 @@ async function handleV1ProductionPatch(request, env, allowOrigin, reqAllowHeader
                 message: 'Production metadata changed on another client.'
             }, allowOrigin, reqAllowHeaders, 409, {
                 currentVersion: current.state.revision,
-                current: productionForClient(gid, current.state, current.compareDigest)
+                current: productionForClient(gid, current.state, current.compareDigest, [], garmentCount)
             });
         }
 
         const nextState = applyProductionPatch(current.state, patch, actor, requestRow.id);
         const saved = await setProductionMetafield(env, gid, nextState, current.compareDigest);
         const assets = await d1AssetsForOrder(env, shop.id, gid);
-        const production = productionForClient(gid, saved.state, saved.compareDigest, assets);
+        const production = productionForClient(gid, saved.state, saved.compareDigest, assets, garmentCount);
         try {
             const result = await d1FinalizeProductionMutation(
                 env, shop.id, requestRow, gid, saved.state, saved.compareDigest,
