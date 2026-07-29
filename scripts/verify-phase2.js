@@ -736,6 +736,12 @@ async function run() {
     'the Shopify detail controller must own functional tab navigation'
   );
   assert(
+    previewHtml.includes('id="detail-tab-items" class="detail-tab-item active"')
+      && previewHtml.includes('id="tab-items" class="detail-tab-panel active"')
+      && detailEnhancements.includes("activateDetailTab('tab-items')"),
+    'Items & financials must be the default Shopify order-detail tab'
+  );
+  assert(
     detailEnhancements.includes("orderedId: 'chk-blanks-ordered'")
       && detailEnhancements.includes("readyId: 'chk-blanks'")
       && detailEnhancements.includes("orderedId: 'chk-prints-ordered'")
@@ -746,6 +752,11 @@ async function run() {
   assert(
     /@media \(max-width: 900px\)[\s\S]*?#detail-content[\s\S]*?overflow-y:\s*auto/.test(detailCss),
     'mobile order detail must keep #detail-content as its explicit vertical scroll owner'
+  );
+  assert(
+    /#detail-items-wrapper\s*\{[\s\S]*?overflow:\s*visible;/.test(detailCss)
+      && !/\.detail-table\s*\{[\s\S]*?min-width:\s*620px;/.test(detailCss),
+    'line-item tables must stay fully visible without becoming a nested scroll owner'
   );
   const previewController = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-preview.js'), 'utf8');
   assert(

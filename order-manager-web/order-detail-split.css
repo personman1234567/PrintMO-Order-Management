@@ -1520,7 +1520,8 @@
 #detail-items-wrapper {
   width: 100%;
   max-height: none;
-  overflow: auto;
+  /* The surrounding tab panel is the only scroll owner. */
+  overflow: visible;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
 }
@@ -1531,6 +1532,10 @@
   border-collapse: collapse;
 }
 
+.detail-table {
+  table-layout: fixed;
+}
+
 .detail-table th {
   padding: 10px;
   border-bottom: 1px solid var(--detail-border);
@@ -1539,7 +1544,7 @@
   font-size: 0.72rem;
   font-weight: 700;
   text-align: start;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .detail-table td {
@@ -1548,6 +1553,7 @@
   color: var(--detail-text);
   font-size: 0.82rem;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 #detail-summary {
@@ -2052,14 +2058,6 @@
     height: 82px;
   }
 
-  #detail-items-wrapper {
-    overflow-x: auto;
-    overflow-y: visible;
-  }
-
-  .detail-table {
-    min-width: 620px;
-  }
 }
 
 @media (max-width: 1180px) {

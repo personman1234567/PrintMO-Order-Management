@@ -1941,7 +1941,7 @@
       const result = originalOpenDetail.call(this, order, ...args);
       const overlay = document.getElementById('detail-overlay');
       overlay?.setAttribute('aria-hidden', 'false');
-      activateDetailTab('tab-production');
+      activateDetailTab('tab-items');
       syncDetailHeader(order);
       wireCustomerNotesControls();
       wireReadyInputs();
