@@ -315,6 +315,9 @@
   };
 
   function isOrdered(order) {
+    if (isShopifyBoard() && order?.productionStage) {
+      return order.productionStage === 'blanks_ordered';
+    }
     try {
       if (typeof isBlanksOrdered === 'function') return isBlanksOrdered(order);
     } catch (error) {

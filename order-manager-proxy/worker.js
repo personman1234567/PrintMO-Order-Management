@@ -2462,6 +2462,12 @@ function applyProductionPatch(current, patch, actor, mutationId) {
     if ('blanksOrdered' in patch) next.readiness.blanksOrdered = Boolean(Number(patch.blanksOrdered));
     if ('printsStatus' in patch) next.readiness.printsReady = Boolean(Number(patch.printsStatus));
     if ('printsOrdered' in patch) next.readiness.printsOrdered = Boolean(Number(patch.printsOrdered));
+    // Blanks Cart and Blanks Ordered are canonical substages. Keep the
+    // compatibility readiness flag aligned so older render surfaces cannot
+    // classify an otherwise valid blanks_ordered record as In S&S Cart.
+    if (next.stage === 'blanks_cart' || next.stage === 'blanks_ordered') {
+        next.readiness.blanksOrdered = next.stage === 'blanks_ordered';
+    }
     if ('attention' in patch) next.attention = normalizeProductionState({ attention: patch.attention }, actor).attention;
     if ('archivedAt' in patch) {
         next.archivedAt = patch.archivedAt ? isoNow() : null;

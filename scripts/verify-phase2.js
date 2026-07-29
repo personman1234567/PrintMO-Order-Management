@@ -865,6 +865,13 @@ async function run() {
       && !blanksFoundation.includes('patchMarkInCartOrdered'),
     'Mark In Cart Ordered must directly persist all cart orders as canonical blanks_ordered state'
   );
+  const workerSource = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8');
+  assert(
+    webShim.includes('metadataPatch.blanks_ordered = currentBlanksOrdered ? 1 : 0')
+      && blanksFoundation.includes("return order.productionStage === 'blanks_ordered';")
+      && workerSource.includes("next.readiness.blanksOrdered = next.stage === 'blanks_ordered';"),
+    'Shopify Blanks moves must atomically persist and consistently render the ordered substage after reload'
+  );
   const desktopCss = fs.readFileSync(path.join(root, 'order-manager-web', 'desktop.css'), 'utf8');
   assert(
     desktopCss.includes('repeat(2, minmax(0, 1fr))'),

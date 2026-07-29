@@ -769,6 +769,10 @@ window.api.updateBoardMove = async (name, patch = {}) => {
       ? (currentBlanksOrdered ? "blanks_ordered" : "blanks_cart")
       : boardStageToCandidate(status, order),
   };
+  // The Blanks tabs are separate canonical stages, but the existing shared
+  // renderer still reads this readiness field. Persist both in the same CAS
+  // mutation so a board reload cannot observe a contradictory state.
+  if (status === "blanks") metadataPatch.blanks_ordered = currentBlanksOrdered ? 1 : 0;
   return updateCandidateOrder(name, metadataPatch);
 };
 
