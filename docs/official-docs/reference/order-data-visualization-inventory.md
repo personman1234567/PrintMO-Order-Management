@@ -73,7 +73,7 @@ The board uses the bounded Shopify/D1 summary mapped through `web-shim.js` into 
 
 | Current visual | Current data | Notes |
 |---|---|---|
-| Column and tab placement | PrintMO production `stage`; `blanks_cart` and `blanks_ordered` remain distinct | Stage is both data and board position. |
+| Column and tab placement | PrintMO production `stage`; `blanks_cart` and `blanks_ordered` remain distinct; `print` and `completed` map to **To Print** and **Printed** | Stage is both data and board position. |
 | Column counts | Number of active projected orders per visible stage/view | A view count, not a Shopify order field. |
 | Order number/name | Shopify `Order.name` mapped to the card order-number segment | Example: `#1572`. |
 | Customer/recipient name | Shipping name, then billing name, then customer first/last name | Falls back to `Name unavailable`; protected fields may be redacted. |
@@ -83,7 +83,7 @@ The board uses the bounded Shopify/D1 summary mapped through `web-shim.js` into 
 | Print count | Sum of renderer items classified as print items | Derived compatibility concept; Shopify does not supply a PrintMO print-impression count directly. |
 | Subtotal | Shopify current subtotal | Current amount after applicable edits/returns/refunds. |
 | Readiness state | PrintMO blanks/prints readiness and ordered flags | Communicated by status color and green/neutral icons. |
-| Print progress | PrintMO `printedCount` divided by apparel quantity | Used by the Ready to Print card style as a percentage. |
+| Print progress | PrintMO `printedCount` divided by apparel quantity | Used by the Ready to Print card style as a percentage. Reaching the nonzero garment total from `print` atomically advances the board stage to `completed`; correcting a completed count below the total returns it to `print`. |
 | Bundle | PrintMO `bundleId` | Bundled orders collapse into a bundle card with order count/readiness. |
 | Archive/delete affordance | PrintMO archive mutation in Shopify view | The control archives candidate orders; it does not delete the Shopify order. |
 

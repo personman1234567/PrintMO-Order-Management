@@ -5529,14 +5529,14 @@ body[data-order-source="shopify"] .production-card .mockup-slot img {
 }
 
 body[data-order-source="shopify"] .production-card.print-card {
-  height: clamp(252px, 20vw, 280px);
-  min-height: clamp(252px, 20vw, 280px);
+  height: clamp(280px, 23vw, 296px);
+  min-height: clamp(280px, 23vw, 296px);
 }
 
 body[data-order-source="shopify"] .production-card.print-card .card-body {
   flex: 1 1 auto;
   display: grid;
-  grid-template-rows: clamp(84px, 8vw, 112px) minmax(54px, 1fr);
+  grid-template-rows: minmax(84px, 1fr) auto;
   gap: 10px;
   min-height: 0;
   padding: 10px 12px;
@@ -5866,4 +5866,136 @@ body[data-order-source="shopify"] .panel.fulfillment #print-section .cards > .ca
 .order-move-toast.visible {
   opacity: 1;
   transform: translate(-50%, 0);
+}
+
+/* Shopify Ready to Print views and stable print-card anatomy. */
+.print-workflow-controls {
+  display: none;
+}
+
+body[data-order-source="shopify"] #print-section .section-header {
+  align-items: center;
+}
+
+body[data-order-source="shopify"] #print-section .print-header-title {
+  flex: 0 0 auto;
+}
+
+body[data-order-source="shopify"] #print-section .print-workflow-controls {
+  display: flex;
+  flex: 1 1 172px;
+  min-width: 0;
+  align-items: center;
+}
+
+body[data-order-source="shopify"] .print-view-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 3px;
+  border: 1px solid #d0d7e2;
+  border-radius: 999px;
+  background: #f6f8fb;
+}
+
+body[data-order-source="shopify"] .print-view-tab {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+body[data-order-source="shopify"] .print-view-tab.active {
+  background: #1a73e8;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.16);
+}
+
+body[data-order-source="shopify"] .print-view-tab:focus-visible {
+  outline: 3px solid rgba(26, 115, 232, 0.38);
+  outline-offset: 2px;
+}
+
+body[data-order-source="shopify"] .print-view-count {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.1);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-order-source="shopify"] .print-view-tab.active .print-view-count {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+body[data-order-source="shopify"] #col-print:empty::before {
+  content: attr(data-empty-message);
+}
+
+body[data-order-source="shopify"] .production-card.print-card .print-card-details {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 6px;
+  overflow: visible;
+}
+
+body[data-order-source="shopify"] .production-card.print-card .print-card-statuses {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow: visible;
+}
+
+body[data-order-source="shopify"] .production-card.print-card .print-card-statuses:empty {
+  display: none;
+}
+
+body[data-order-source="shopify"] .production-card.print-card .print-card-statuses .card-status-badge,
+body[data-order-source="shopify"] .production-card.print-card .print-card-statuses .blanks-accounting-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body[data-order-source="shopify"] #print-section.fullscreen .print-view-tabs button {
+  display: inline-flex;
+}
+
+body[data-order-source="shopify"] #print-section.fullscreen .section-header {
+  justify-content: flex-start;
+}
+
+body[data-order-source="shopify"] #print-section.fullscreen .print-header-title {
+  font-size: 1.2rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-order-source="shopify"] .print-view-tab {
+    transition: none;
+  }
 }

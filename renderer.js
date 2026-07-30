@@ -71,7 +71,9 @@ const PRINT_TITLES = new Set([
 
 const MOBILE_TAB_BREAKPOINT = 900;
 const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint'];
+const PRINT_VIEWS = ['toPrint', 'printed'];
 let activeMobileTab = MOBILE_TABS[0];
+let activePrintView = PRINT_VIEWS[0];
 let isMobileViewport = false;
 let mobileMediaQuery = null;
 
@@ -131,6 +133,98 @@ function initMobileTabs() {
     btn.addEventListener('click', () => setActiveMobileTab(btn.dataset.tab));
   });
 }
+
+function isShopifyBoardView() {
+  return document.body?.dataset.orderSource === 'shopify';
+}
+
+function printViewForOrder(order) {
+  return order?.productionStage === 'completed' ? 'printed' : 'toPrint';
+}
+
+function visibleShopifyPrintOrders(view = activePrintView) {
+  return allOrders.filter(order => {
+    if ((order.status || 'received') !== 'print' || !order._candidate) return false;
+    const orderView = printViewForOrder(order);
+    if (orderView !== view) return false;
+    if (orderView === 'printed') return true;
+    return String(order.displayFulfillmentStatus || '').toUpperCase() !== 'FULFILLED';
+  });
+}
+
+function syncPrintViewUi() {
+  const section = document.getElementById('print-section');
+  const container = document.getElementById('col-print');
+  if (!section || !container) return;
+
+  section.dataset.printView = activePrintView;
+  const counts = {
+    toPrint: visibleShopifyPrintOrders('toPrint').length,
+    printed: visibleShopifyPrintOrders('printed').length
+  };
+
+  PRINT_VIEWS.forEach(view => {
+    const button = document.getElementById(`print-view-${view === 'toPrint' ? 'to-print' : 'printed'}`);
+    const selected = view === activePrintView;
+    button?.classList.toggle('active', selected);
+    button?.setAttribute('aria-selected', selected ? 'true' : 'false');
+    if (button) button.tabIndex = selected ? 0 : -1;
+  });
+
+  const toPrintCount = document.getElementById('print-to-print-count');
+  const printedCount = document.getElementById('print-printed-count');
+  if (toPrintCount) toPrintCount.textContent = String(counts.toPrint);
+  if (printedCount) printedCount.textContent = String(counts.printed);
+
+  const activeTabId = activePrintView === 'printed' ? 'print-view-printed' : 'print-view-to-print';
+  container.setAttribute('aria-labelledby', activeTabId);
+  container.dataset.emptyMessage = activePrintView === 'printed'
+    ? 'No printed orders awaiting handoff'
+    : 'No orders waiting to be printed';
+}
+
+function setActivePrintView(view, { render = true } = {}) {
+  if (!isShopifyBoardView()) return;
+  activePrintView = PRINT_VIEWS.includes(view) ? view : PRINT_VIEWS[0];
+  syncPrintViewUi();
+  if (render) renderStatusColumn('print');
+}
+
+function initPrintTabs() {
+  const tabIds = ['print-view-to-print', 'print-view-printed'];
+  tabIds.forEach((id, index) => {
+    const button = document.getElementById(id);
+    if (!button) return;
+    button.addEventListener('click', () => {
+      setActivePrintView(index === 0 ? 'toPrint' : 'printed');
+    });
+    button.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      let nextIndex = index;
+      if (event.key === 'ArrowLeft') nextIndex = (index + tabIds.length - 1) % tabIds.length;
+      if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabIds.length;
+      if (event.key === 'Home') nextIndex = 0;
+      if (event.key === 'End') nextIndex = tabIds.length - 1;
+      setActivePrintView(nextIndex === 0 ? 'toPrint' : 'printed');
+      document.getElementById(tabIds[nextIndex])?.focus();
+    });
+  });
+
+  const sourceObserver = new MutationObserver(() => {
+    if (isShopifyBoardView()) {
+      syncPrintViewUi();
+      renderStatusColumn('print');
+    }
+  });
+  sourceObserver.observe(document.body, {
+    attributes: true,
+    attributeFilter: ['data-order-source']
+  });
+  syncPrintViewUi();
+}
+
+window.setActivePrintView = setActivePrintView;
 
 
 function timeAgo(isoDate) {
@@ -293,6 +387,7 @@ function renderStatusColumn(status) {
   const orders = allOrders.filter(order => {
     if ((order.status || 'received') !== status) return false;
     if (status !== 'print' || !order._candidate) return true;
+    if (printViewForOrder(order) !== activePrintView) return false;
     return order.productionStage === 'completed'
       || String(order.displayFulfillmentStatus || '').toUpperCase() !== 'FULFILLED';
   });
@@ -322,6 +417,9 @@ function renderStatusColumn(status) {
   }
   if (status === 'toOrder') {
     updateSummary();
+  }
+  if (status === 'print') {
+    syncPrintViewUi();
   }
 }
 
@@ -598,16 +696,20 @@ function makeCard(o, style = 'default') {
     card.innerHTML = `
       <div class="card-header">
         <span class="order-number">${orderNum}</span>
-        ${productionCompleteBadge}
         <span class="time-ago-pill">${timeAgo(o.receivedAt)}</span>
       </div>
       <div class="card-body ${showProductionPreview ? 'has-mockup' : 'no-mockup'} production-preview-${productionMockupState}">
         ${showProductionPreview ? productionMockupSlotMarkup(firstMockupUrl, productionMockupState, orderNum) : ''}
-        <div class="progress-view">
-          <div class="cust-name">${custName}</div>
-          <div class="progress-row">
-            <div class="progress-pct">${pct}%</div>
-            <div class="progress-count">${prog} / ${totalApparel}</div>
+        <div class="print-card-details">
+          <div class="print-card-statuses">
+            ${productionCompleteBadge}
+          </div>
+          <div class="progress-view">
+            <div class="cust-name">${custName}</div>
+            <div class="progress-row">
+              <div class="progress-pct">${pct}%</div>
+              <div class="progress-count">${prog} / ${totalApparel}</div>
+            </div>
           </div>
         </div>
         <div class="normal-view">
@@ -1508,12 +1610,15 @@ function openDetail(o) {
     progressBar.style.width = pct + '%';
   };
   updateProgressUI();
-  document.getElementById('progress-plus1').onclick = async () => {
+  const progressPlusOne = document.getElementById('progress-plus1');
+  progressPlusOne.onclick = async () => {
     if (o.progress < totalApparel) {
-      o.progress += 1;
-      await window.api.updateProgress(o.name, o.progress);
-      await renderBoardFromLocalState([o.status || 'received']);
-      updateProgressUI();
+      progressPlusOne.disabled = true;
+      try {
+        await saveProductionProgress(o, o.progress + 1, updateProgressUI);
+      } finally {
+        progressPlusOne.disabled = false;
+      }
     }
   };
   document.getElementById('progress-custom').onclick = () => openProgressModal(o, updateProgressUI);
@@ -1885,11 +1990,13 @@ function openProgressModal(order, updateFn) {
     let val = parseInt(input.value, 10);
     if (isNaN(val) || val < 0) val = 0;
     if (val > order.totalApparel) val = order.totalApparel;
-    order.progress = val;
-    await window.api.updateProgress(order.name, order.progress);
-    await renderBoardFromLocalState([order.status || 'received']);
-    updateFn();
-    cleanup();
+    confirmBtn.disabled = true;
+    try {
+      const saved = await saveProductionProgress(order, val, updateFn);
+      if (saved) cleanup();
+    } finally {
+      confirmBtn.disabled = false;
+    }
   };
 
   cancelBtn.onclick = () => cleanup();
@@ -1897,6 +2004,84 @@ function openProgressModal(order, updateFn) {
 
   overlay.classList.remove('hidden');
   input.focus();
+}
+
+function intendedStageForProgress(order, progress, totalApparel) {
+  if (
+    !order?._candidate
+    || !['print', 'completed'].includes(order.productionStage)
+  ) {
+    return null;
+  }
+  if (totalApparel > 0 && progress === totalApparel) return 'completed';
+  if (order.productionStage === 'completed' && progress < totalApparel) return 'print';
+  return order.productionStage;
+}
+
+function showProductionNotice(message, tone = 'success') {
+  let notice = document.getElementById('order-move-toast');
+  if (!notice) {
+    notice = document.createElement('div');
+    notice.id = 'order-move-toast';
+    notice.className = 'order-move-toast';
+    notice.setAttribute('role', 'status');
+    notice.setAttribute('aria-live', 'polite');
+    document.body.appendChild(notice);
+  }
+  notice.textContent = message;
+  notice.dataset.tone = tone;
+  notice.classList.add('visible');
+  window.clearTimeout(showProductionNotice.timer);
+  showProductionNotice.timer = window.setTimeout(() => notice.classList.remove('visible'), 4200);
+}
+
+async function saveProductionProgress(order, nextProgress, updateFn) {
+  const previousProgress = Number(order.progress || 0);
+  const previousStage = order.productionStage || '';
+  const nextStage = intendedStageForProgress(order, nextProgress, order.totalApparel);
+  const stageChanged = Boolean(nextStage && nextStage !== previousStage);
+
+  order.progress = nextProgress;
+  if (nextStage) order.productionStage = nextStage;
+  updateFn();
+
+  try {
+    await window.api.updateProgress({
+      name: order.name,
+      progress: nextProgress,
+      ...(nextStage ? { stage: nextStage } : {})
+    });
+    order.progress = nextProgress;
+    if (nextStage) {
+      order.productionStage = nextStage;
+      order.status = 'print';
+    }
+    const completeBadge = document.getElementById('badge-production-complete');
+    completeBadge?.classList.toggle('hidden', order.productionStage !== 'completed');
+    await renderBoardFromLocalState([order.status || 'received']);
+    updateFn();
+    if (stageChanged) {
+      showProductionNotice(nextStage === 'completed'
+        ? 'Order moved to Printed'
+        : 'Order returned to To Print');
+    }
+    return true;
+  } catch (error) {
+    order.progress = previousProgress;
+    order.productionStage = previousStage;
+    updateFn();
+    if (order._candidate) {
+      try {
+        await renderBoard();
+      } catch (_) {
+        await renderBoardFromLocalState([order.status || 'received']);
+      }
+    } else {
+      await renderBoardFromLocalState([order.status || 'received']);
+    }
+    showProductionNotice(`Could not save print progress. ${error?.message || error}`, 'error');
+    return false;
+  }
 }
 
 // close handlers
@@ -2137,6 +2322,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   initMobileTabs();
+  initPrintTabs();
   setupManualMockupControls();
 
   // wire up the four zones

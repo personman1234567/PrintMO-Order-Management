@@ -594,7 +594,11 @@ window.api.updateReady = async (...args) => {
 
 window.api.updateProgress = async (a, b) => {
   const payload = (a && typeof a === "object") ? a : { name: a, progress: b };
-  if (isShopifyCandidateView()) return updateCandidateOrder(payload.name, { printed_count: Number(payload.progress || 0) });
+  if (isShopifyCandidateView()) {
+    const metadataPatch = { printed_count: Number(payload.progress || 0) };
+    if (payload.stage === "print" || payload.stage === "completed") metadataPatch.stage = payload.stage;
+    return updateCandidateOrder(payload.name, metadataPatch);
+  }
   return apiFetch("/order-manager/v1/legacy/queue/mutate", {
     method: "POST",
     body: JSON.stringify({ orderName: payload.name, patch: { progress: payload.progress } }),

@@ -120,6 +120,10 @@ function runRegisteredCommand(args) {
     const mode = action === 'execute' ? '--execute' : '--dry-run';
     return runNode('scripts/run-shadow-migration.js', [mode, ...rest]);
   }
+  if (group === 'completion' && ['dry-run', 'execute'].includes(action)) {
+    const mode = action === 'execute' ? '--execute' : '--dry-run';
+    return runNode('scripts/repair-production-completion.js', [mode, ...rest]);
+  }
   throw new Error(`Unknown command '${args.join(' ')}'. Run 'npm run repo -- --help'.`);
 }
 
@@ -134,19 +138,20 @@ Usage:
   npm run repo -- redis backup
   npm run repo -- parity check
   npm run repo -- migration dry-run|execute [migration arguments]
+  npm run repo -- completion dry-run|execute [completion-repair arguments]
   npm run repo -- build desktop-config|cloudflare
   npm run repo -- deploy cloudflare -- --production|--preview [branch]
 
 Safety:
   Route, tools, docs checks, and verifiers are read-only.
-  Migration defaults to dry-run and execution still requires exact --confirm-shop.
+  Migration and completion repair default to dry-run; execution requires exact --confirm-shop.
   Redis backup and build commands write only their documented local artifacts.
 
 Run 'npm run repo -- tools <tool-id>' for purpose and mutation mode.`);
 }
 
 function main(argv) {
-  if (!argv.length || argv.includes('--help') || argv[0] === 'help') return printHelp();
+  if (!argv.length || argv[0] === '--help' || argv[0] === 'help') return printHelp();
   if (argv[0] === 'route') {
     const json = argv.includes('--json');
     return routeQuery(argv.slice(1).filter(value => value !== '--json').join(' '), { json });

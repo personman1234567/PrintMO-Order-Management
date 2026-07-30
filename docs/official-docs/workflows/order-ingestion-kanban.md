@@ -82,7 +82,9 @@ Candidate stages are:
 
 `blanks_cart` and `blanks_ordered` are distinct canonical stages. **In S&S Cart** and **Ordered** tabs filter those stages; selecting a tab alone is read-only. A confirmed supplier submission enters `blanks_cart`; an operator later marks it `blanks_ordered`. After confirmation, the client repaints both `to_order` and `blanks_cart` immediately and opens **In S&S Cart**. Adapter-side batch metadata must not preempt the renderer's source/destination-column calculation.
 
-The Shopify board keeps commerce fulfillment separate from PrintMO production state. A `FULFILLED` Shopify order is omitted from the visible **Ready to Print** queue without rewriting its canonical `print` stage; partial, unknown, and unfulfilled statuses remain visible. The browser maps fulfillment status into its render fingerprint so the next webhook-backed projection refresh and board poll remove a newly fulfilled card.
+The Shopify board keeps commerce fulfillment separate from PrintMO production state. Ready to Print has two internal views: **To Print** renders canonical `print` orders and **Printed** renders canonical `completed` orders. A `FULFILLED` Shopify order is omitted from To Print without rewriting its `print` stage, while a completed order remains in Printed regardless of Shopify fulfillment until the explicit customer-handoff action archives it. The browser maps fulfillment and production stage into its render fingerprint so the next webhook-backed projection refresh and board poll repaint the correct view.
+
+Saving the nonzero garment total as `printedCount` from a `print` order sends `printed_count` and `stage: completed` in one versioned production patch. Lowering a completed order below its garment total sends `stage: print` in the same patch. The selected Ready to Print tab remains stable; count badges and an accessible status notice communicate the move.
 
 Legacy status values remain compatibility data for the Legacy Redis view only.
 

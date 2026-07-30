@@ -524,6 +524,24 @@
     }
   }
 
+  function patchRenderStatusColumnForAccounting() {
+    try {
+      if (
+        typeof renderStatusColumn !== 'function'
+        || renderStatusColumn.__blanksBatchAccountingPatched
+      ) return;
+      const originalRenderStatusColumn = renderStatusColumn;
+      renderStatusColumn = function patchedRenderStatusColumn(status, ...args) {
+        const result = originalRenderStatusColumn.call(this, status, ...args);
+        if (status === 'blanks' || status === 'print') annotateAccountingCards();
+        return result;
+      };
+      renderStatusColumn.__blanksBatchAccountingPatched = true;
+    } catch (error) {
+      console.warn('Unable to patch column rendering for blanks accounting', error);
+    }
+  }
+
   function patchOpenDetailForAccounting() {
     try {
       if (typeof openDetail !== 'function' || openDetail.__blanksBatchAccountingPatched) return;
@@ -589,10 +607,12 @@
       ? 'All garments are accounted for in the S&S batch'
       : `${accounting.missingGarments} garment${accounting.missingGarments === 1 ? '' : 's'} still missing`;
 
+    const statusRegion = card.querySelector('.print-card-statuses');
     const body = card.querySelector('.compact-body') || card.querySelector('.card-body') || card;
     const anchor = body.querySelector('.card-status-badge');
     if (!existing) {
-      if (anchor?.nextSibling) body.insertBefore(chip, anchor.nextSibling);
+      if (statusRegion) statusRegion.appendChild(chip);
+      else if (anchor?.nextSibling) body.insertBefore(chip, anchor.nextSibling);
       else if (anchor) body.appendChild(chip);
       else body.insertBefore(chip, body.firstChild);
     }
@@ -1572,6 +1592,7 @@
   };
 
   patchRenderBoardForAccounting();
+  patchRenderStatusColumnForAccounting();
   patchOpenDetailForAccounting();
   patchDropZonesForBatchCorrections();
   patchBlanksColumnView();
@@ -1584,6 +1605,7 @@
     setupMarkInCartOrdered();
     syncBlanksViewUi();
     patchRenderBoardForAccounting();
+    patchRenderStatusColumnForAccounting();
     patchOpenDetailForAccounting();
     patchDropZonesForBatchCorrections();
     patchBlanksColumnView();

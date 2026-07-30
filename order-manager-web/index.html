@@ -232,13 +232,27 @@
         </div>
         <div class="sub-section" id="print-section">
           <div class="section-header">
-            <h3>Ready To Print</h3>
-            <button id="print-fullscreen-btn" class="fullscreen-btn">Fullscreen</button>
-            <button id="print-bundle-start" class="bundle-btn">Bundle</button>
-            <button id="print-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
-            <button id="print-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
+            <h3 class="print-header-title">Ready To Print</h3>
+            <div class="print-workflow-controls">
+              <div class="print-view-tabs" role="tablist" aria-label="Ready to Print status view">
+                <button id="print-view-to-print" class="print-view-tab active" type="button" role="tab" aria-selected="true" aria-controls="col-print">
+                  <span>To Print</span>
+                  <span id="print-to-print-count" class="print-view-count">0</span>
+                </button>
+                <button id="print-view-printed" class="print-view-tab" type="button" role="tab" aria-selected="false" aria-controls="col-print" tabindex="-1">
+                  <span>Printed</span>
+                  <span id="print-printed-count" class="print-view-count">0</span>
+                </button>
+              </div>
+            </div>
+            <div class="section-actions">
+              <button id="print-fullscreen-btn" class="fullscreen-btn">Fullscreen</button>
+              <button id="print-bundle-start" class="bundle-btn">Bundle</button>
+              <button id="print-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
+              <button id="print-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
+            </div>
           </div>
-          <div class="cards" id="col-print"></div>
+          <div class="cards" id="col-print" role="tabpanel" aria-labelledby="print-view-to-print" data-empty-message="No orders waiting to be printed"></div>
         </div>
       </div>
     </div>

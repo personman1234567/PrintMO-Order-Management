@@ -71,6 +71,16 @@ The machine-readable authority is `../retrieval-manifest.json`. Run `npm run rep
 - Safety: execution requires the exact shop twice and remains bounded to pages of at most five.
 - Procedure: read [../runbooks/shopify-candidate-cutover.md#migration](../runbooks/shopify-candidate-cutover.md#migration).
 
+<!-- tool:completion-repair -->
+### `completion-repair`
+
+- Dry-run command: `npm run repo -- completion dry-run --shop <domain> --env <environment> --url <worker-url>`
+- Execute command: `npm run repo -- completion execute --shop <domain> --confirm-shop <same-domain> --env <environment> --url <worker-url>`
+- Mode: authenticated remote read by default; explicit canonical production mutation in execute mode.
+- Prerequisite: `ORDER_MANAGER_BEARER_TOKEN` in the current shell.
+- Output: a PII-minimized exact list of active `print` orders whose nonzero garment count equals `printedCount`.
+- Safety: execution requires the shop domain twice, reuses the existing versioned/idempotent production PATCH contract, and changes only `stage` to `completed` plus the already-equal `printed_count`. Rerun dry-run after any conflict.
+
 <!-- tool:parity -->
 ### `parity`
 

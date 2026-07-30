@@ -6170,7 +6170,7 @@ body.mobile-mode[data-order-source="shopify"] .bundle-card.production-card .card
 }
 
 body.mobile-mode[data-order-source="shopify"] .production-card.print-card {
-  height: 164px;
+  height: auto;
   min-height: 164px !important;
 }
 
@@ -6344,4 +6344,66 @@ body.mobile-mode .order-move-toast.visible {
   body.mobile-mode[data-order-source="shopify"] .fulfillment .sub-section .cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+body.mobile-mode[data-order-source="shopify"] #print-section .section-header {
+  align-items: stretch;
+}
+
+body.mobile-mode[data-order-source="shopify"] #print-section .print-header-title {
+  align-self: center;
+}
+
+body.mobile-mode[data-order-source="shopify"] #print-section .print-workflow-controls {
+  flex: 1 1 100%;
+  order: 3;
+}
+
+body.mobile-mode[data-order-source="shopify"] #print-section .print-view-tabs {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+body.mobile-mode[data-order-source="shopify"] #print-section .print-view-tab {
+  min-width: 0;
+  min-height: 44px;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card .print-card-details {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  overflow: visible;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card .print-card-statuses {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  overflow: visible;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card .print-card-statuses:empty {
+  display: none;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card .print-card-statuses .card-status-badge,
+body.mobile-mode[data-order-source="shopify"] .production-card.print-card .print-card-statuses .blanks-accounting-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.mobile-mode[data-order-source="shopify"] #print-section.fullscreen .print-view-tabs button {
+  display: inline-flex;
 }

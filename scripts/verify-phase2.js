@@ -4,6 +4,11 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const { DatabaseSync } = require('node:sqlite');
+const {
+  completionCandidate,
+  garmentCount: repairGarmentCount,
+  parseArgs: parseCompletionRepairArgs
+} = require('./repair-production-completion');
 
 if (!globalThis.crypto) globalThis.crypto = crypto.webcrypto;
 
@@ -840,11 +845,28 @@ async function run() {
   );
   assert(
     printCardSource.includes('productionMockupSlotMarkup')
+      && printCardSource.includes('print-card-details')
+      && printCardSource.includes('print-card-statuses')
       && sharedRenderer.includes("toUpperCase() !== 'FULFILLED'")
       && sharedRenderer.includes("return pendingDesignerMockup || !manualHydrated ? 'loading' : 'unavailable'")
       && sharedRenderer.includes("touchedStatuses.add('toOrder')")
       && sharedRenderer.includes("window.setActiveBlanksView('cart', { render: false })"),
     'supplier submit repaint, fulfillment filtering, and stable Ready to Print preview states must retain their shared renderer contract'
+  );
+  assert(
+    sharedRenderer.includes("const PRINT_VIEWS = ['toPrint', 'printed']")
+      && sharedRenderer.includes("return order?.productionStage === 'completed' ? 'printed' : 'toPrint'")
+      && sharedRenderer.includes("if (printViewForOrder(order) !== activePrintView) return false")
+      && sharedRenderer.includes("if (orderView === 'printed') return true"),
+    'Ready to Print tabs must separate canonical print/completed stages while retaining fulfilled completed orders'
+  );
+  assert(
+    sharedRenderer.includes("return 'completed'")
+      && sharedRenderer.includes("return 'print'")
+      && sharedRenderer.includes("stageChanged")
+      && sharedRenderer.includes("Order moved to Printed")
+      && sharedRenderer.includes("Order returned to To Print"),
+    'progress changes must atomically advance and reverse the canonical production stage with visible feedback'
   );
   const previewCss = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-preview.css'), 'utf8');
   assert(
@@ -858,6 +880,12 @@ async function run() {
     'drops into the Shopify blanks column must persist the selected In S&S Cart or Ordered view'
   );
   assert(blanksFoundation.includes('applyOptimisticOrderUpdate'), 'Shopify moves must render optimistically and roll back on failure');
+  assert(
+    blanksFoundation.includes("card.querySelector('.print-card-statuses')")
+      && blanksFoundation.includes('statusRegion.appendChild(chip)')
+      && blanksFoundation.includes('patchRenderStatusColumnForAccounting'),
+    'garment accounting must mount inside the dedicated print-card status region and survive direct print-tab rerenders'
+  );
   assert(
     blanksFoundation.includes('function setupMarkInCartOrdered()')
       && blanksFoundation.includes("document.getElementById('blanks-mark-ordered-btn')")
@@ -881,15 +909,26 @@ async function run() {
     desktopCss.includes('body[data-order-source="shopify"] .production-card')
       && desktopCss.includes('grid-auto-rows: max-content')
       && desktopCss.includes('.production-card.print-card:hover .progress-view')
-      && desktopCss.includes('.mockup-slot-unavailable'),
+      && desktopCss.includes('.mockup-slot-unavailable')
+      && desktopCss.includes('.production-card.print-card .print-card-details')
+      && desktopCss.includes('.print-view-tab.active'),
     'relocated Supplies and Ready to Print cards must share a non-overlapping production layout contract'
   );
   const mobileCss = fs.readFileSync(path.join(root, 'order-manager-web', 'mobile.css'), 'utf8');
   assert(
     mobileCss.includes('body.mobile-mode[data-order-source="shopify"] .production-card.print-card')
       && mobileCss.includes('grid-template-columns: clamp(74px, 24vw, 92px) minmax(0, 1fr)')
-      && mobileCss.includes('.production-card.print-card:hover .progress-view'),
+      && mobileCss.includes('.production-card.print-card:hover .progress-view')
+      && mobileCss.includes('.print-view-tab')
+      && mobileCss.includes('min-height: 44px'),
     'mobile Ready to Print cards must keep the same stable preview and always-visible progress contract'
+  );
+  assert(
+    previewHtml.includes('id="print-view-to-print"')
+      && previewHtml.includes('id="print-view-printed"')
+      && previewHtml.includes('role="tabpanel"')
+      && previewHtml.includes('No orders waiting to be printed'),
+    'Ready to Print markup must expose accessible To Print and Printed tabs with a named panel'
   );
   const triageController = fs.readFileSync(path.join(root, 'order-manager-web', 'dashboard-triage-enhancements.js'), 'utf8');
   assert(triageController.includes("card.classList.add('production-card')"), 'fulfillment cards must receive the production layout contract');
@@ -910,6 +949,11 @@ async function run() {
       && webShimCode.includes('window.api.invalidateQueueLoads')
       && webShimCode.includes('renderBoardFromLocalState(changedStatuses, { invalidateQueueLoads: false })'),
     'candidate polling and preview hydration must preserve cached assets and repaint only affected columns'
+  );
+  assert(
+    webShimCode.includes('payload.stage === "print" || payload.stage === "completed"')
+      && webShimCode.includes('metadataPatch.stage = payload.stage'),
+    'progress updates must send print/completed stage together with printed_count when requested'
   );
   const shimContext = vm.createContext({
     document: { body: {} },
@@ -972,7 +1016,38 @@ async function run() {
   const board6 = candidateOrderToBoard(fixture6Node);
   assert.equal(board6.name, 'Shopify order – Name unavailable');
 
-  // 7. Discount source in worker contract
+  // 7. Completion repair remains exact, PII-minimized, and dry-run by default.
+  const completionFixture = {
+    id: 'gid://shopify/Order/1001',
+    displayName: '#1001',
+    commerce: {
+      lineItems: [
+        { title: 'Fixture Shirt', currentQuantity: 3 },
+        { title: 'DTF Print', currentQuantity: 1 }
+      ]
+    },
+    production: {
+      stage: 'print',
+      version: 7,
+      printedCount: 3,
+      archivedAt: null
+    }
+  };
+  assert.equal(repairGarmentCount(completionFixture), 3);
+  assert.deepEqual(completionCandidate(completionFixture), {
+    id: 'gid://shopify/Order/1001',
+    order: '#1001',
+    version: 7,
+    garmentCount: 3,
+    printedCount: 3
+  });
+  assert.equal(completionCandidate({
+    ...completionFixture,
+    production: { ...completionFixture.production, archivedAt: '2026-07-30T12:00:00Z' }
+  }), null, 'archived orders must never enter the completion repair report');
+  assert.equal(parseCompletionRepairArgs([]).execute, false, 'completion repair must default to dry-run');
+
+  // 8. Discount source in worker contract
   assert(source.includes('currentTotalDiscountsSet'), 'Worker query must fetch currentTotalDiscountsSet');
   assert(source.includes('discount: moneyValue(node.currentTotalDiscountsSet'), 'Worker summary normalization must map commerce.discount from currentTotalDiscountsSet');
 

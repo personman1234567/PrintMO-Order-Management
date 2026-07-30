@@ -45,6 +45,13 @@
       "script": "scripts/run-shadow-migration.js"
     },
     {
+      "id": "completion-repair",
+      "command": "npm run repo -- completion dry-run --shop <domain> --env <environment> --url <worker-url>",
+      "purpose": "Report active print-stage orders already at 100% and, only with explicit execute confirmation, repair their canonical stage to completed.",
+      "mode": "remote-read-by-default",
+      "script": "scripts/repair-production-completion.js"
+    },
+    {
       "id": "parity",
       "command": "npm run repo -- parity check",
       "purpose": "Run the authenticated, PII-redacted server-side legacy/candidate parity comparison.",
@@ -142,8 +149,8 @@
         {"path": "order-manager-web/shopify-preview.js", "symbols": ["renderOrderDetail"]},
         {"path": "order-manager-proxy/worker.js", "symbols": ["ORDER_SUMMARIES_QUERY", "SHOPIFY_PREVIEW_ORDER_DETAIL_QUERY"]}
       ],
-      "tools": ["docs-check"],
-      "verify": ["npm run docs:check"],
+      "tools": ["completion-repair", "docs-check"],
+      "verify": ["npm run repo -- completion dry-run --help", "npm run docs:check"],
       "stop": ["Stop before changing Shopify scopes, protected-customer-data use, bounded board payloads, or production authority."]
     },
     {

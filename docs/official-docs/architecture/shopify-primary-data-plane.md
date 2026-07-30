@@ -82,9 +82,10 @@ lines. The Worker rejects `printedCount` values above that current garment
 total.
 
 `completed` means manufacturing is finished, not that pickup or delivery has
-finished. A completed order remains active in the existing Ready to Print board
-column, including when Shopify reports it fulfilled, until an operator marks
-customer handoff complete. That action server-stamps `archivedAt` and
+finished. The Ready to Print workspace renders `print` under **To Print** and
+`completed` under **Printed**. A completed order remains active in Printed,
+including when Shopify reports it fulfilled, until an operator marks customer
+handoff complete. That action server-stamps `archivedAt` and
 `archivedBy`; only archive state removes the order from the active projection.
 Reopening clears both archive fields.
 
