@@ -2133,33 +2133,118 @@
 
   .detail-table .detail-item-row {
     display: grid;
-    gap: 0;
-    margin-bottom: 8px;
-    padding: 8px 10px;
-    border-radius: 10px;
-    background: var(--detail-canvas);
+    grid-template-columns: 36px minmax(0, 1fr) max-content;
+    grid-template-areas:
+      "quantity description total"
+      "quantity variant total"
+      "quantity sku total";
+    column-gap: 10px;
+    row-gap: 3px;
+    margin: 0;
+    padding: 12px 2px;
+    border-bottom: 1px solid var(--detail-border);
+    background: transparent;
   }
 
-  .detail-table .detail-item-row td {
+  #detail-items.detail-table .detail-item-row td {
     min-width: 0;
-    display: grid;
-    grid-template-columns: minmax(86px, 0.36fr) minmax(0, 1fr);
-    gap: 10px;
-    padding: 7px 0;
-    border-bottom: 1px solid #e2e8f0;
+    display: block;
+    /* Override the legacy table-cell padding that is marked important in mobile.css. */
+    padding: 0 !important;
+    border: 0;
     text-align: start;
     white-space: normal;
   }
 
-  .detail-table .detail-item-row td:last-child {
+  .detail-table .detail-item-row:last-child {
     border-bottom: 0;
   }
 
-  .detail-table .detail-item-row td::before {
-    content: attr(data-label);
+  #detail-items.detail-table .detail-item-row td::before {
+    display: none;
+  }
+
+  #detail-items.detail-table .detail-item-row .detail-item-qty-cell {
+    grid-area: quantity;
+    align-self: start;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    min-height: 30px;
+    padding: 4px 6px !important;
+    border-radius: 8px;
+    background: var(--detail-canvas);
+    color: var(--detail-text);
+    font-size: 0.78rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+
+  #detail-items .detail-item-row .detail-item-qty-cell::before {
+    content: "×";
+    display: inline;
+    margin-right: 2px;
     color: var(--detail-muted);
-    font-size: 0.68rem;
     font-weight: 700;
+  }
+
+  #detail-items .detail-item-row .detail-item-description-cell {
+    grid-area: description;
+    color: var(--detail-text);
+    font-size: 0.84rem;
+    font-weight: 750;
+    line-height: 1.3;
+  }
+
+  #detail-items .detail-item-row .detail-item-variant-cell {
+    grid-area: variant;
+    color: var(--detail-muted);
+    font-size: 0.74rem;
+    line-height: 1.3;
+  }
+
+  #detail-items .detail-item-row .detail-item-sku-cell {
+    grid-area: sku;
+    color: var(--detail-muted);
+    font-size: 0.67rem;
+    line-height: 1.3;
+  }
+
+  #detail-items .detail-item-row .detail-item-sku-cell::before {
+    content: "SKU";
+    display: inline;
+    margin-right: 5px;
+    color: var(--detail-muted);
+    font-family: inherit;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+
+  #detail-items .detail-item-row .detail-item-sku-cell.is-placeholder {
+    display: none !important;
+  }
+
+  #detail-items .detail-item-row .detail-money-cell {
+    grid-area: total;
+    align-self: start;
+    min-width: 52px;
+    color: var(--detail-text);
+    font-size: 0.8rem;
+    font-weight: 750;
+    line-height: 1.3;
+    text-align: end;
+  }
+
+  #detail-items .detail-item-row .detail-money-cell::before {
+    content: "Total";
+    display: block;
+    margin-bottom: 2px;
+    color: var(--detail-muted);
+    font-size: 0.6rem;
+    font-weight: 700;
+    line-height: 1;
   }
 
   .detail-item-attributes-row {

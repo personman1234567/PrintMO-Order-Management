@@ -109,6 +109,8 @@ Migration `order-manager-proxy/migrations/0001_redis_free.sql` creates:
 
 Migration `0002_designer_asset_metadata.sql` adds line-item, design-reference, role, and side metadata to `asset_manifests`. These fields let the shared renderer place private Designer Studio mockups and print files without exposing R2 object keys.
 
+Migration `0003_asset_blob_links.sql` separates stored private blobs from their Shopify line-item associations. `asset_manifests` now identifies checksum-verified bytes, while `asset_manifest_links` can associate one blob with several sizes or repeated line items. The migration coalesces active same-order manifests with identical SHA-256, byte size, and content type; it does not delete the superseded R2 objects.
+
 The Worker binding is `ORDER_DB`. The production database is `printmo-order-manager`.
 
 ## Board Reads
@@ -119,7 +121,7 @@ The Worker binding is `ORDER_DB`. The production database is `printmo-order-mana
 
 `order-manager-web/web-shim.js` maps the candidate DTO into the existing board renderer. Source-aware mutation methods route only the Shopify view to canonical endpoints; the legacy branch retains its existing URLs and payloads. Candidate queue loads are generation-guarded, cached private preview URLs are preserved between polls, and the shared renderer discards superseded responses and repaints only columns whose render-relevant order data changed.
 
-Summary identity uses explicit customer first/last name, then shipping name, then billing name, falling back to `Name unavailable` when none of those fields are returned. Candidate detail commerce includes exact Shopify subtotal, discount, and total values from `currentSubtotalPriceSet`, `currentTotalDiscountsSet`, and `currentTotalPriceSet`. A manual **Refresh Shopify** request bypasses the 60-second summary TTL for the currently paged projection so newly returned identity fields can be reprojected immediately.
+Summary identity uses the fulfillment recipient from shipping name, then billing name, falling back to `Name unavailable` when neither is returned. The routine board query intentionally avoids the protected `customer` relation and the product-gated `variant` relation; rich detail uses its separately approved direct Order fields. Candidate detail commerce includes exact Shopify subtotal, discount, and total values from `currentSubtotalPriceSet`, `currentTotalDiscountsSet`, and `currentTotalPriceSet`. A manual **Refresh Shopify** request bypasses the 60-second summary TTL for the currently paged projection so newly returned identity fields can be reprojected immediately.
 
 Candidate mutations are serialized per order in the browser. A board move sends one canonical patch containing the resulting stage (including `blanks_cart` versus `blanks_ordered`) and its paired `blanksOrdered` readiness value, rather than separate status/readiness requests. The Worker enforces the same pairing for both Blanks substages. The UI applies the move optimistically, then rolls it back only if the canonical write fails. On `409 VERSION_CONFLICT`, the Worker returns the current revision and production state under `error.details`; the client adopts that state, treats an already-satisfied patch as success, or retries once with the current revision. It never retries indefinitely or overwrites a newer edit blindly.
 
@@ -127,9 +129,11 @@ Candidate mutations are serialized per order in the browser. A board move sends 
 
 - HMAC is verified against the raw body before JSON parsing.
 - Shopify delivery IDs are deduplicated in D1.
-- `orders/paid` enrolls the order by creating the canonical metafield when absent.
+- `orders/paid` enrolls the order by creating the canonical metafield when absent, unless the payload is already fulfilled, cancelled, or closed.
+- `orders/updated` also enrolls only when its verified payload is exactly paid and remains unfulfilled, non-cancelled, and open. This is a liveness fallback for installations where the dedicated paid subscription is missing; refunded, fulfilled, cancelled, and closed historical updates never create a new active candidate. The app release should still keep both webhook subscriptions installed.
 - Webhooks mark projections stale and schedule a coalesced refresh.
 - Five-minute reconciliation uses an overlap window and a D1 checkpoint.
+- Successful incremental reconciliation closes stale `received` paid/update receipts after ten minutes and records `RECONCILED_BY_INCREMENTAL` for auditability.
 - Nightly integrity checks stuck mutations, projection errors, and confirmed batches whose Shopify state needs repair.
 
 ## Batches
@@ -153,15 +157,15 @@ The migration bridge is available only while `MIGRATION_UPSTREAM_ENABLED=1`. It 
 Shopify summary reads retain the Designer Studio line-item properties `_designref`/`_design_ref` and `design_preview_url`/`design-preview-url`. Reconciliation converts only valid HTTPS `previews/YYYY-MM-DD/<designRef>/<file>` paths into asset candidates. It does not fetch the supplied hostname, so a line-item property cannot become an SSRF target. The Worker resolves bytes through the bound `PREVIEWS` bucket:
 
 1. try the original `previews/...` object key;
-2. if Designer Studio already promoted the purchase, search the bounded `orders/<orderNumber>_.../<designRef>/<file>` prefix/suffix;
+2. if Designer Studio already promoted the purchase, try the privacy-safe exact key `orders/<orderNumber>/<designRef>/<file>`, then retain the bounded `orders/<orderNumber>_.../<designRef>/<file>` scan only for legacy objects;
 3. copy the object into `R2_BUCKET` under a deterministic private key;
 4. read it back and require the same SHA-256 before activating the D1 manifest.
 
-The first release runs a bounded active-order backfill of at most 50 orders and records the `designer-studio-assets-v1` reconciliation checkpoint only when every discovered candidate resolves. An incomplete run leaves no completion checkpoint and retries from the board background task or five-minute cron. Normal future summary/webhook refreshes use the same deterministic import path, so retries do not duplicate manifests.
+The first release runs a bounded active-order backfill of at most 50 orders and records the `designer-studio-assets-v1` reconciliation checkpoint only when every discovered candidate resolves. An incomplete run leaves no completion checkpoint and retries from the board background task or five-minute cron. Normal future summary/webhook refreshes use the same deterministic import path. Candidate generation is per Shopify line item, not per unit quantity; identical bytes within an order reuse one manifest and add line-item links instead of another R2 copy.
 
 Production backfill evidence on 2026-07-23: 12 active orders scanned, 12 candidates resolved, 12 active `designer-studio-sync` manifests, zero failures, checkpoint `2026-07-24T03:28:53.220Z` (UTC).
 
-Board DTOs include manifest metadata but never private object keys. `web-shim.js` renders commerce/production cards first, then exchanges manifest IDs for signed 60-second tickets in the background and repaints affected columns when private previews are ready. Artwork latency therefore cannot block the operational board. Asset role, side, line-item ID, and filename—not a public URL shape—drive mockup/design placement.
+Board DTOs include at most one representative asset per order and never private object keys. `web-shim.js` renders commerce/production cards first, requests all needed signed 60-second URLs through one authenticated batch-ticket call, and lets image elements stream those private responses directly instead of buffering every full file into JavaScript blobs. Ticket payloads contain only opaque manifest IDs; the read route resolves R2 keys server-side after signature verification. On mobile, only the active workflow tab is hydrated, and selecting another tab triggers its deferred previews. Opening an order loads the complete linked asset set on demand, with requests deduplicated by asset ID and signed URLs held in a bounded, expiry-aware cache. Artwork latency therefore cannot block the operational board or make hidden-stage/design files part of initial mobile hydration. Asset role, side, line-item ID, and filename—not a public URL shape—drive mockup/design placement.
 
 ## Environment Flags
 

@@ -74,6 +74,7 @@ function shopifyNode() {
         customAttributes: [
           { key: '_designref', value: 'fixture-design-ref' },
           { key: 'design_preview_url', value: 'https://designer.example.test/previews/2026-07-20/fixture-design-ref/mockup_side.png' },
+          { key: 'batch_role', value: 'garment' },
         ],
       }],
       pageInfo: { hasNextPage: false, endCursor: null }
@@ -125,12 +126,24 @@ async function run() {
 
   const root = path.join(__dirname, '..');
   const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8');
-  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql']
+  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql']
     .map(file => fs.readFileSync(path.join(root, 'order-manager-proxy', 'migrations', file), 'utf8'))
     .join('\n');
   const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
   const worker = module.default;
   assert.equal(typeof module.OrderSyncCoordinator, 'function', 'Durable Object coordinator must be exported');
+  assert.equal(module.webhookConfirmsPayment('orders/updated', { financial_status: 'paid' }), true);
+  assert.equal(module.webhookConfirmsPayment('orders/updated', { financial_status: 'pending' }), false);
+  assert.equal(
+    module.webhookConfirmsPayment('orders/updated', { financial_status: 'paid', fulfillment_status: 'fulfilled' }),
+    false,
+    'fulfilled order updates must not enroll historical orders into the active board'
+  );
+  assert.equal(
+    module.webhookConfirmsPayment('orders/paid', { financial_status: 'paid', cancelled_at: '2024-01-01T00:00:00Z' }),
+    false,
+    'cancelled orders must not enter the active board even when a paid webhook is replayed'
+  );
 
   const secret = 'phase2-test-secret';
   const now = Math.floor(Date.now() / 1000);
@@ -444,6 +457,52 @@ async function run() {
     assert(!JSON.stringify(boardJson.data[0].production.assets).includes('orders/60129381/assets/'), 'board DTO must not expose private R2 object keys');
     assert.equal(boardJson.data[0].sync.stale, false);
     assert.equal(boardJson.data[0].customer.displayName, 'Fixture Guest Checkout', 'guest checkout must fall back to the Shopify shipping name');
+    const quantityFiveCandidates = module.designerAssetCandidates({
+      displayName: '#1001',
+      commerce: {
+        lineItems: [{
+          ...shopifyNode().lineItems.nodes[0],
+          id: 'gid://shopify/LineItem/quantity-five',
+          quantity: 5,
+          currentQuantity: 5,
+        }],
+      },
+    });
+    assert.equal(quantityFiveCandidates.length, 1, 'line-item quantity must not multiply Designer asset candidates');
+    assert.equal(quantityFiveCandidates[0].role, 'mockup', 'explicit Designer garment role must win over SKU heuristics');
+    const linkedDuplicate = await module.copyDesignerAsset(env, 1, shopifyNode().id, {
+      ...quantityFiveCandidates[0],
+      lineItemId: 'gid://shopify/LineItem/duplicate-mockup',
+    });
+    assert.equal(linkedDuplicate.state, 'existing', 'identical Designer bytes must reuse the private blob');
+    assert.equal(
+      (await env.ORDER_DB.prepare(`SELECT COUNT(*) AS count FROM asset_manifests WHERE state = 'active'`).first()).count,
+      1,
+      'identical Designer bytes must create only one active manifest'
+    );
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT COUNT(*) AS count FROM asset_manifest_links').first()).count,
+      2,
+      'deduplicated Designer bytes must retain both line-item associations'
+    );
+    const batchTicketsResponse = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/assets/read-tickets',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ assetIds: [boardJson.data[0].production.assets[0].assetId] }),
+      }
+    ), env);
+    assert.equal(batchTicketsResponse.status, 200, 'board assets must support one authenticated batch ticket request');
+    const batchTickets = await batchTicketsResponse.json();
+    assert.equal(batchTickets.tickets.length, 1);
+    assert(!JSON.stringify(batchTickets).includes('orders/60129381/assets/'), 'batch tickets must not expose private R2 keys');
+    const signedAssetUrl = new URL(batchTickets.tickets[0].url, 'https://worker.test');
+    const signedPayload = signedAssetUrl.searchParams.get('ticket').split('.')[0];
+    assert(!Buffer.from(signedPayload, 'base64url').toString('utf8').includes('object_key'));
+    assert(!Buffer.from(signedPayload, 'base64url').toString('utf8').includes('orders/'));
+    const signedAssetRead = await worker.fetch(new Request(signedAssetUrl), env);
+    assert.equal(signedAssetRead.status, 200, 'a valid short-lived ticket must authorize a direct image-tag read');
     if (assetBackfill) await assetBackfill;
     const assetCheckpoint = await env.ORDER_DB.prepare(
       `SELECT checkpoint FROM reconciliation_checkpoints WHERE name = 'designer-studio-assets-v1'`
@@ -491,6 +550,12 @@ async function run() {
     assert.equal(canonicalDetailJson.detail.lineItems.length, 2, 'canonical detail must paginate all line items');
     assert.equal(canonicalDetailJson.commerce.financialStatus, 'PAID');
     assert.equal(canonicalDetailJson.production.stage, 'received');
+    assert.equal(canonicalDetailJson.production.assets.length, 2, 'detail must return every line-item link for the deduplicated blob');
+    assert.equal(
+      new Set(canonicalDetailJson.production.assets.map(asset => asset.assetId)).size,
+      1,
+      'detail links for identical Designer bytes must share one private asset ID'
+    );
     assert.equal(canonicalDetailJson.attention.required, false);
     assert.equal(canonicalDetailJson.detail.customer.id, undefined, 'canonical detail must use direct Order contact fields');
     assert.equal(canonicalDetailJson.detail.data.delivery.shippingLines[0].title, 'Standard');
@@ -741,6 +806,14 @@ async function run() {
     'the Shopify detail controller must own functional tab navigation'
   );
   assert(
+    detailEnhancements.includes('const canonicalAssets = Array.isArray(production.assets)')
+      && detailEnhancements.includes('assets: assetsByLine.get(item.id)')
+      && detailEnhancements.includes("if (typeof renderOrderAssets === 'function') renderOrderAssets(order)")
+      && detailEnhancements.includes('consolidateLineItemsForDisplay(rawLineItems)')
+      && detailEnhancements.includes('consolidateLineItemsForDisplay(order?.items || [])'),
+    'canonical detail must attach every private asset to its line, repaint Production downloads, and consolidate display rows'
+  );
+  assert(
     previewHtml.includes('id="detail-tab-items" class="detail-tab-item active"')
       && previewHtml.includes('id="tab-items" class="detail-tab-panel active"')
       && detailEnhancements.includes("activateDetailTab('tab-items')"),
@@ -763,6 +836,14 @@ async function run() {
       && !/\.detail-table\s*\{[\s\S]*?min-width:\s*620px;/.test(detailCss),
     'line-item tables must stay fully visible without becoming a nested scroll owner'
   );
+  assert(
+    detailEnhancements.includes("'grouped item' : 'grouped items'")
+      && detailEnhancements.includes("detail-item-qty-cell")
+      && detailEnhancements.includes("classList.toggle('is-placeholder'")
+      && /grid-template-areas:[\s\S]*?"quantity description total"/.test(detailCss)
+      && /#detail-items \.detail-item-row \.detail-item-sku-cell\.is-placeholder\s*\{[\s\S]*?display:\s*none(?:\s*!important)?;/.test(detailCss),
+    'mobile item breakdown must present consolidated lines compactly and suppress empty SKU metadata'
+  );
   const previewController = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-preview.js'), 'utf8');
   assert(
     previewController.includes("const LEGACY_DEBUG_QUERY_PARAM = 'printmo_debug_legacy'")
@@ -781,12 +862,32 @@ async function run() {
       && webShim.includes('`/order-manager/v1/orders/${encodeURIComponent(orderId)}`'),
     'shared Shopify workbench must hydrate from the canonical on-demand detail endpoint'
   );
+  const candidateAssetLoaderSource = webShim.slice(
+    webShim.indexOf('async function candidateAssetObjectUrl'),
+    webShim.indexOf('function candidateAssetIsMockup')
+  );
   assert(
     webShim.includes('candidateAssetObjectUrl')
       && webShim.includes('candidateAssetObjectUrlLoads')
       && webShim.includes('ASSET_HYDRATION_CONCURRENCY')
+      && webShim.includes('CANDIDATE_ASSET_OBJECT_URL_LIMIT')
+      && webShim.includes('URL.revokeObjectURL')
+      && webShim.includes('/order-manager/v1/assets/read-tickets')
+      && webShim.includes('new URL(url, API_BASE).toString()')
+      && !candidateAssetLoaderSource.includes('expect: "blob"')
       && webShim.includes('onMockupChange'),
-    'Shopify board must hydrate private Designer Studio mockups progressively through deduplicated authenticated asset tickets'
+    'Shopify board must batch private tickets and stream previews directly instead of buffering every full image in JavaScript'
+  );
+  assert(
+    webShim.includes('window.api.downloadAsset = async (url, filename, assetId)')
+      && webShim.includes('await candidateAssetObjectUrl({ assetId, name: filename })'),
+    'detail downloads must refresh an expired private ticket from the stable opaque asset ID'
+  );
+  assert(
+    webShim.includes('boardVisibleOnly')
+      && webShim.includes('candidateRecordBelongsToActiveMobileTab')
+      && webShim.includes('.mobile-tab[data-tab]'),
+    'mobile board hydration must defer hidden-stage mockups until their tab becomes active'
   );
   const processBatchSource = webShim.slice(
     webShim.indexOf('window.api.processBatch'),
@@ -810,6 +911,14 @@ async function run() {
     'ordinary Shopify board reads must return the D1 projection while stale summaries refresh in the background'
   );
   assert(source.includes('customAttributes { key value }'), 'Shopify board summaries must retain Designer Studio line-item properties');
+  const summaryQuerySource = source.match(/const ORDER_SUMMARIES_QUERY[\s\S]*?`;\n/)?.[0] || '';
+  assert(!summaryQuerySource.includes('customer {'), 'board summary refresh must not request unapproved protected-customer fields');
+  assert(!summaryQuerySource.includes('variant {'), 'board summary refresh must not request the unapproved product relation');
+  assert(
+    source.includes("if (webhookConfirmsPayment(topic, payload))"),
+    'paid orders/updated deliveries must enroll candidates when orders/paid is absent'
+  );
+  assert(source.includes('ROW_NUMBER() OVER ('), 'board payload must select one representative private preview per order');
   assert(source.includes('designer-studio-sync'), 'Shopify summary reconciliation must import Designer Studio assets into private R2');
   assert(source.includes('designer-studio-assets-v1'), 'active-order Designer Studio backfill must have an idempotent checkpoint');
   assert(
@@ -823,6 +932,30 @@ async function run() {
   const webRenderer = fs.readFileSync(path.join(root, 'order-manager-web', 'renderer.js'), 'utf8');
   assert(webRenderer.includes('assetId'), 'shared web renderer must recognize private manifest assets without public /orders/ URLs');
   const sharedRenderer = fs.readFileSync(path.join(root, 'renderer.js'), 'utf8');
+  const consolidatorStart = sharedRenderer.indexOf('function consolidateLineItemsForDisplay');
+  const consolidatorEnd = sharedRenderer.indexOf('\nfunction openDetail', consolidatorStart);
+  assert(consolidatorStart >= 0 && consolidatorEnd > consolidatorStart, 'shared renderer must expose display-only line consolidation');
+  const consolidationInput = [
+    { title: 'DTF Print', variantTitle: 'Full Back Print', sku: '', qty: 1, unitPrice: 8, customAttributes: [{ key: 'batch_id', value: 'a' }] },
+    { title: 'DTF Print', variantTitle: 'Full Back Print', sku: '', qty: 2, unitPrice: 8, customAttributes: [{ key: 'batch_id', value: 'b' }] },
+    { title: 'DTF Print', variantTitle: 'Breast Print', sku: '', qty: 3, unitPrice: 2 },
+    { title: 'Gold Soft Touch T-Shirt', variantTitle: 'Black / XL', sku: 'B01542506', qty: 1, unitPrice: 4.49 },
+    { title: 'Gold Soft Touch T-Shirt', variantTitle: 'Black / XL', sku: 'B01542506', qty: 2, unitPrice: 4.49 }
+  ];
+  const consolidationResult = vm.runInNewContext(
+    `${sharedRenderer.slice(consolidatorStart, consolidatorEnd)}\nconsolidateLineItemsForDisplay(input);`,
+    { input: consolidationInput },
+    { filename: 'line-item-consolidation-fixture.js' }
+  );
+  assert.equal(consolidationResult.length, 3, 'batch-split Shopify lines must collapse into three commercial display rows');
+  assert.equal(consolidationResult[0].qty, 3, 'matching print quantities must be summed visually');
+  assert.equal(consolidationResult[0]._displayCurrentTotal, 24, 'consolidated print totals must remain financially exact');
+  assert.equal(consolidationResult[0].customAttributes.length, 0, 'batch identifiers must stay out of the operator-facing table');
+  assert(
+    sharedRenderer.includes("const itemColumnCount = document.querySelectorAll('#detail-items thead th').length || 4")
+      && sharedRenderer.includes('const separateSkuColumn = itemColumnCount >= 5'),
+    'fallback detail rows must match both the four-column desktop shell and five-column Shopify table while detail hydrates'
+  );
   assert(
     sharedRenderer.includes('function formatCardMoney(value)')
       && sharedRenderer.includes('formatCardMoney(o.subtotal)')
@@ -832,6 +965,12 @@ async function run() {
   assert(
     sharedRenderer.includes('if (detailFilesBtn)'),
     'shared detail renderer must tolerate the Shopify layout omitting the legacy aggregate Files button'
+  );
+  assert(
+    sharedRenderer.includes('orderIsVisibleOnOperationalBoard')
+      && sharedRenderer.includes("fulfillment !== 'FULFILLED'")
+      && sharedRenderer.includes("return order.productionStage === 'completed'"),
+    'fulfilled historical projections must stay hidden while intentionally completed production remains in Printed'
   );
   assert(
     sharedRenderer.includes('boardFetchGeneration')

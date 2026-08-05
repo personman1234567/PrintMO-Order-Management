@@ -132,6 +132,18 @@
     const customer = rich.customer || detail.customer || result.customer || {};
     const existingItems = new Map((order.items || []).map(item => [item.id, item]));
     const lineItems = canonicalLineItems(result);
+    const canonicalAssets = Array.isArray(production.assets) ? production.assets : [];
+    const assetsByLine = new Map();
+    const unassignedAssets = [];
+    canonicalAssets.forEach(asset => {
+      if (!asset?.lineItemId) {
+        unassignedAssets.push(asset);
+        return;
+      }
+      const linked = assetsByLine.get(asset.lineItemId) || [];
+      linked.push(asset);
+      assetsByLine.set(asset.lineItemId, linked);
+    });
 
     order.displayFinancialStatus = commerce.financialStatus || result.commerce?.financialStatus || order.displayFinancialStatus;
     order.displayFulfillmentStatus = commerce.fulfillmentStatus || result.commerce?.fulfillmentStatus || order.displayFulfillmentStatus;
@@ -171,6 +183,7 @@
           price: Number(unitPrice) || 0,
           unitPrice: Number(unitPrice) || 0,
           customAttributes,
+          assets: assetsByLine.get(item.id) || existing.assets || [],
           discountAllocations: item.discountAllocations || [],
           originalQuantity: Number(item.quantity ?? existing.originalQuantity ?? 0),
           currentQuantity: Number(item.currentQuantity ?? item.quantity ?? existing.qty ?? 0),
@@ -182,7 +195,11 @@
           requiresShipping: Boolean(item.requiresShipping)
         };
       });
+      if (order.items.length && unassignedAssets.length) {
+        order.items[0].assets = [...(order.items[0].assets || []), ...unassignedAssets];
+      }
     }
+    order.assets = canonicalAssets;
 
     const firstTracking = (order.fulfillments || [])
       .flatMap(fulfillment => fulfillment.tracking || fulfillment.trackingInfo || [])
@@ -247,7 +264,10 @@
   }
 
   function renderCanonicalItems(order, result) {
-    const lineItems = canonicalLineItems(result);
+    const rawLineItems = canonicalLineItems(result);
+    const lineItems = typeof consolidateLineItemsForDisplay === 'function'
+      ? consolidateLineItemsForDisplay(rawLineItems)
+      : rawLineItems;
     const tbody = document.querySelector('#detail-items tbody');
     if (!tbody || !lineItems.length) return;
     const detailData = detailResponseData(result) || {};
@@ -267,7 +287,9 @@
         const allocationMoney = allocation?.allocatedAmountSet?.shopMoney || allocation;
         return total + (Number(allocationMoney?.amount) || 0);
       }, 0);
-      const currentTotal = item.currentTotal?.amount
+      const currentTotal = Number.isFinite(item._displayCurrentTotal)
+        ? item._displayCurrentTotal
+        : item.currentTotal?.amount
         ?? Math.max(0, (Number(unitPrice) * quantity) - allocatedDiscount);
       [
         String(quantity),
@@ -325,7 +347,7 @@
 
     const taxSection = document.getElementById('detail-tax-details');
     const taxList = document.getElementById('detail-tax-details-list');
-    const taxLines = lineItems.flatMap(item => item.taxLines || []);
+    const taxLines = rawLineItems.flatMap(item => item.taxLines || []);
     const taxGroups = Array.from(taxLines.reduce((groups, taxLine) => {
       const rate = Number(taxLine.rate || 0);
       const key = `${taxLine.title || 'Tax'}|${rate}`;
@@ -692,6 +714,7 @@
 
   function renderCanonicalDetail(order, result) {
     mergeCanonicalDetail(order, result);
+    if (typeof renderOrderAssets === 'function') renderOrderAssets(order);
     syncDetailHeader(order);
     syncCommerceDetail(order);
     renderCanonicalItems(order, result);
@@ -1310,11 +1333,14 @@
     if (noteText) noteText.textContent = checkoutNote;
     noteBanner?.classList.toggle('hidden', !checkoutNote);
 
-    const itemCount = Array.isArray(order?.items) ? order.items.length : 0;
+    const displayItems = typeof consolidateLineItemsForDisplay === 'function'
+      ? consolidateLineItemsForDisplay(order?.items || [])
+      : order?.items || [];
+    const itemCount = displayItems.length;
     const itemsBadge = document.getElementById('tab-badge-items');
     if (itemsBadge) {
       itemsBadge.textContent = String(itemCount);
-      itemsBadge.setAttribute('aria-label', `${itemCount} ${itemCount === 1 ? 'line item' : 'line items'}`);
+      itemsBadge.setAttribute('aria-label', `${itemCount} displayed ${itemCount === 1 ? 'line item' : 'line items'}`);
     }
 
     const customerName = document.getElementById('detail-cust-name')?.textContent?.trim() || '';
@@ -1799,10 +1825,10 @@
       : itemRows.reduce((total, row) => total + (Number(cellText(row.cells[0])) || 0), 0);
 
     if (count) {
-      const lineLabel = itemRows.length === 1 ? 'line' : 'lines';
+      const itemLabel = itemRows.length === 1 ? 'grouped item' : 'grouped items';
       const pieceLabel = quantity === 1 ? 'piece' : 'pieces';
-      count.textContent = `${itemRows.length} ${lineLabel} / ${quantity} ${pieceLabel}`;
-      count.title = 'Line items and total quantity in this order';
+      count.textContent = `${itemRows.length} ${itemLabel} · ${quantity} ${pieceLabel}`;
+      count.title = 'Batch-split lines are combined by item, SKU, and variant';
     }
 
     wrapper?.classList.toggle('has-many-items', itemRows.length > 12);
@@ -1817,11 +1843,22 @@
       row.classList.add('detail-item-row');
       row.dataset.rowNumber = String(index + 1);
       ['Qty', 'Item', 'SKU', 'Variant', 'Current total'].forEach((label, cellIndex) => {
-        if (cells[cellIndex]) cells[cellIndex].dataset.label = label;
+        if (!cells[cellIndex]) return;
+        cells[cellIndex].dataset.label = label;
+        cells[cellIndex].classList.add([
+          'detail-item-qty-cell',
+          'detail-item-description-cell',
+          'detail-item-sku-cell',
+          'detail-item-variant-cell',
+          'detail-money-cell'
+        ][cellIndex]);
       });
       wrapCellText(cells[1], 'detail-item-description-cell');
       wrapCellText(cells[2], 'detail-item-sku-cell');
       wrapCellText(cells[3], 'detail-item-variant-cell');
+
+      const skuText = cellText(cells[2]);
+      cells[2]?.classList.toggle('is-placeholder', !skuText || /^[–—-]$/.test(skuText));
 
       const description = cellText(cells[1]);
       const isPrint = typeof isPrintItem === 'function'

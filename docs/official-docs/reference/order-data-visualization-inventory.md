@@ -121,6 +121,7 @@ The diagnostic/live detail currently displays substantially more data than the s
 - conversion readiness, customer order index, days to conversion, and first/last attributed visit;
 - discount application label/type/target/value;
 - all paginated line items with title, variant, custom attributes, SKU, original/current quantity, unit price, discount, and current total;
+- operational order detail preserves those canonical lines but presents repeated title/SKU/variant combinations as one consolidated row with summed quantity and current total; internal batch/link identities remain hidden and unchanged;
 - the 25 most recent Shopify order events;
 - editable PrintMO stage, printed count, bundle, internal notes, readiness, blanks PO references, production revision, and last-saved time.
 

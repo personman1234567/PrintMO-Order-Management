@@ -377,6 +377,16 @@ function refreshVisibleRelativeTimes() {
  * Render one status column from the cached allOrders array.
  * @param {string} status - Queue status represented by the target column.
  */
+function orderIsVisibleOnOperationalBoard(order) {
+  if (!order?._candidate) return true;
+  const fulfillment = String(order.displayFulfillmentStatus || '').trim().toUpperCase();
+  if (fulfillment !== 'FULFILLED') return true;
+  // Intentionally completed production remains visible in Printed until the
+  // operator archives it. Fulfilled commerce records with a default workflow
+  // stage must not re-enter the active pipeline.
+  return order.productionStage === 'completed';
+}
+
 function renderStatusColumn(status) {
   const config = STATUS_COLUMN_CONFIG[status];
   if (!config) return;
@@ -385,6 +395,7 @@ function renderStatusColumn(status) {
   if (!container) return;
 
   const orders = allOrders.filter(order => {
+    if (!orderIsVisibleOnOperationalBoard(order)) return false;
     if ((order.status || 'received') !== status) return false;
     if (status !== 'print' || !order._candidate) return true;
     if (printViewForOrder(order) !== activePrintView) return false;
@@ -435,7 +446,9 @@ function refreshOpenBundleModal() {
   const container = document.getElementById('bundle-cards');
   if (!bundleName || !container) return;
 
-  const bundleOrders = allOrders.filter(order => order.bundle === bundleName);
+  const bundleOrders = allOrders.filter(order =>
+    order.bundle === bundleName && orderIsVisibleOnOperationalBoard(order)
+  );
   const fragment = document.createDocumentFragment();
   bundleOrders.forEach(order => fragment.appendChild(makeCard(order, 'pipeline')));
   container.replaceChildren(fragment);
@@ -1084,7 +1097,9 @@ function splitOrderAssets(order) {
         ? (typeof asset.metadata === 'object' && asset.metadata) || (typeof asset.meta === 'object' && asset.meta) || undefined
         : undefined;
       const dimensionsIn = getAssetDimensionsIn(asset);
-      const entry = { url, isSvg };
+      const entry = asset && typeof asset === 'object'
+        ? { ...asset, url, isSvg }
+        : { url, isSvg };
       if (metadata) entry.metadata = metadata;
       if (dimensionsIn) entry.dimensionsIn = dimensionsIn;
       if (isMockup) {
@@ -1228,7 +1243,7 @@ function closeAssetViewer() {
   overlay.classList.add('hidden');
 }
 
-async function handleAssetDownload(url, filename, btn) {
+async function handleAssetDownload(asset, filename, btn) {
   if (!window.api || typeof window.api.downloadAsset !== 'function') {
     alert('Download is not available in this build.');
     return;
@@ -1237,7 +1252,11 @@ async function handleAssetDownload(url, filename, btn) {
   btn.disabled = true;
   btn.textContent = 'Downloading...';
   try {
-    await window.api.downloadAsset(url, filename);
+    await window.api.downloadAsset(
+      getAssetUrlValue(asset),
+      filename,
+      asset && typeof asset === 'object' ? asset.assetId : undefined
+    );
   } catch (err) {
     console.error('Failed to download asset', err);
     alert(`Download failed: ${err.message}`);
@@ -1465,8 +1484,8 @@ function renderOrderAssets(order) {
       const downloadBtn = document.createElement('button');
       downloadBtn.className = 'detail-asset-download';
       downloadBtn.textContent = 'Download';
-      const filename = detailAssetFilename(url, idx);
-      downloadBtn.addEventListener('click', () => handleAssetDownload(url, filename, downloadBtn));
+      const filename = item.name || item.filename || detailAssetFilename(url, idx);
+      downloadBtn.addEventListener('click', () => handleAssetDownload(item, filename, downloadBtn));
       actions.appendChild(downloadBtn);
       tile.appendChild(actions);
 
@@ -1564,6 +1583,73 @@ function setupManualMockupControls() {
   if (paste) paste.addEventListener('click', pasteManualMockupFromClipboard);
 }
 
+/**
+ * Collapse Shopify's batch-split lines into the commercial rows an operator
+ * needs to read. The underlying order items and their IDs remain untouched;
+ * this helper is presentation-only.
+ */
+function consolidateLineItemsForDisplay(items = []) {
+  const groups = new Map();
+  const amount = value => Number(value?.amount ?? value ?? 0) || 0;
+  const quantity = item => Number(item?.currentQuantity ?? item?.qty ?? item?.quantity ?? 0) || 0;
+  const normalizedAttributeKey = attribute => String(attribute?.key || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  const hiddenAttributeKeys = new Set([
+    'group_id', 'batch_id', 'role', 'group_role', 'batch_role'
+  ]);
+
+  (Array.isArray(items) ? items : []).forEach(item => {
+    const key = JSON.stringify([
+      String(item?.title || '').trim().toLowerCase(),
+      String(item?.sku || '').trim().toLowerCase(),
+      String(item?.variantTitle || '').trim().toLowerCase()
+    ]);
+    const qty = quantity(item);
+    const unitPrice = amount(item?.unitPrice ?? item?.price);
+    const allocatedDiscount = (item?.discountAllocations || []).reduce((total, allocation) => {
+      const allocationMoney = allocation?.allocatedAmountSet?.shopMoney || allocation;
+      return total + amount(allocationMoney);
+    }, 0);
+    const currentTotal = item?.currentTotal == null
+      ? Math.max(0, (unitPrice * qty) - allocatedDiscount)
+      : amount(item.currentTotal);
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        ...item,
+        qty: 0,
+        quantity: 0,
+        currentQuantity: 0,
+        _displayCurrentTotal: 0,
+        _displayLineCount: 0,
+        customAttributes: [],
+        _displayAttributeKeys: new Set()
+      };
+      groups.set(key, group);
+    }
+    group.qty += qty;
+    group.quantity += qty;
+    group.currentQuantity += qty;
+    group._displayCurrentTotal += currentTotal;
+    group._displayLineCount += 1;
+    (item?.customAttributes || []).forEach(attribute => {
+      const attributeKey = normalizedAttributeKey(attribute);
+      if (!attributeKey || hiddenAttributeKeys.has(attributeKey)) return;
+      const signature = `${attributeKey}\u0000${String(attribute?.value || '')}`;
+      if (group._displayAttributeKeys.has(signature)) return;
+      group._displayAttributeKeys.add(signature);
+      group.customAttributes.push(attribute);
+    });
+  });
+
+  return Array.from(groups.values(), group => {
+    delete group._displayAttributeKeys;
+    return group;
+  });
+}
+
 function openDetail(o) {
   detailOrder = o;
   renderOrderAssets(o);
@@ -1625,23 +1711,34 @@ function openDetail(o) {
 
   // tab badge items count
   const badgeItems = document.getElementById('tab-badge-items');
-  if (badgeItems) badgeItems.textContent = (o.items || []).length;
+  const displayItems = consolidateLineItemsForDisplay(o.items || []);
+  if (badgeItems) badgeItems.textContent = displayItems.length;
 
   // line items with custom attributes sub-rows
   const tbody = document.querySelector('#detail-items tbody');
-  tbody.innerHTML = (o.items || []).map(i => {
+  const itemColumnCount = document.querySelectorAll('#detail-items thead th').length || 4;
+  const separateSkuColumn = itemColumnCount >= 5;
+  tbody.innerHTML = displayItems.map(i => {
     const p = Number(i.unitPrice) || 0;
-    const lineTotal = (p * i.qty).toFixed(2) || 0;
-    const skuLabel = i.sku ? `<br><small style="color:#64748b;">SKU: ${i.sku}</small>` : '';
+    const lineTotal = Number.isFinite(i._displayCurrentTotal)
+      ? i._displayCurrentTotal.toFixed(2)
+      : (p * i.qty).toFixed(2) || 0;
+    const skuLabel = !separateSkuColumn && i.sku
+      ? `<br><small style="color:#64748b;">SKU: ${i.sku}</small>`
+      : '';
+    const skuCell = separateSkuColumn
+      ? `<td style="padding:8px;">${i.sku || '–'}</td>`
+      : '';
     let attrsHtml = '';
     if (Array.isArray(i.customAttributes) && i.customAttributes.length > 0) {
       const chips = i.customAttributes.map(a => `<span class="attribute-chip"><strong>${a.key}:</strong> ${a.value}</span>`).join('');
-      attrsHtml = `<tr><td colspan="4" class="line-item-attributes">${chips}</td></tr>`;
+      attrsHtml = `<tr><td colspan="${itemColumnCount}" class="line-item-attributes">${chips}</td></tr>`;
     }
     return `
       <tr>
         <td style="padding:8px;">${i.qty}</td>
         <td style="padding:8px;"><strong>${i.title}</strong>${skuLabel}</td>
+        ${skuCell}
         <td style="padding:8px;">${i.variantTitle || '–'}</td>
         <td style="padding:8px; text-align:right;">$${lineTotal}</td>
       </tr>
@@ -2141,7 +2238,7 @@ async function renderBoard(options = {}) {
 
 // recalc summary from “toOrder” items
 function updateSummary() {
-  const picks = allOrders.filter(x => x.status === 'toOrder');
+  const picks = allOrders.filter(x => x.status === 'toOrder' && orderIsVisibleOnOperationalBoard(x));
   const summary = { Apparel: 0, Prints: 0 };
   picks.forEach(o =>
     (o.items || []).forEach(it => {
@@ -2333,7 +2430,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.warn('⚠️ #order-submit button not found');
   } else {
     submitBtn.addEventListener('click', async () => {
-      const toOrder = allOrders.filter(x => x.status === 'toOrder').map(x => x.name);
+      const toOrder = allOrders
+        .filter(x => x.status === 'toOrder' && orderIsVisibleOnOperationalBoard(x))
+        .map(x => x.name);
       if (!toOrder.length) {
         return alert('Drag some cards into “Drag cards here” first.');
       }
@@ -2383,7 +2482,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   } else {
     clearBtn.addEventListener('click', async () => {
       const toOrder = allOrders
-        .filter(o => o.status === 'toOrder')
+        .filter(o => o.status === 'toOrder' && orderIsVisibleOnOperationalBoard(o))
         .map(o => o.name);
 
       if (!toOrder.length) return;

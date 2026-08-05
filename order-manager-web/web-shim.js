@@ -98,9 +98,12 @@ const candidateAssetObjectUrls = new Map();
 const candidateAssetObjectUrlLoads = new Map();
 const candidateMutationChains = new Map();
 const ASSET_HYDRATION_CONCURRENCY = 4;
+const CANDIDATE_ASSET_OBJECT_URL_LIMIT = 100;
 let candidateForceRefreshOnce = false;
 let candidateAssetHydrationRun = 0;
 let candidateQueueLoadGeneration = 0;
+let candidateBoardHydrationRecords = [];
+let candidateBoardMockupRepaint = null;
 
 async function runWithConcurrency(items, limit, worker) {
   const queue = Array.isArray(items) ? items : [];
@@ -120,6 +123,34 @@ async function runWithConcurrency(items, limit, worker) {
 
 function isShopifyCandidateView() {
   return document.body?.dataset.orderSource === "shopify";
+}
+
+function candidateCachedAssetUrl(assetId) {
+  const entry = assetId ? candidateAssetObjectUrls.get(assetId) : null;
+  if (!entry) return "";
+  if (entry.expiresAt <= Date.now() + 5000) {
+    candidateAssetObjectUrls.delete(assetId);
+    if (String(entry.url || "").startsWith("blob:")) URL.revokeObjectURL(entry.url);
+    return "";
+  }
+  candidateAssetObjectUrls.delete(assetId);
+  candidateAssetObjectUrls.set(assetId, entry);
+  return entry.url;
+}
+
+function rememberCandidateAssetUrl(assetId, url, expiresIn = 60) {
+  if (!assetId || !url) return "";
+  candidateAssetObjectUrls.set(assetId, {
+    url: new URL(url, API_BASE).toString(),
+    expiresAt: Date.now() + Math.max(Number(expiresIn) || 60, 1) * 1000,
+  });
+  while (candidateAssetObjectUrls.size > CANDIDATE_ASSET_OBJECT_URL_LIMIT) {
+    const oldest = candidateAssetObjectUrls.entries().next().value;
+    if (!oldest) break;
+    candidateAssetObjectUrls.delete(oldest[0]);
+    if (String(oldest[1]?.url || "").startsWith("blob:")) URL.revokeObjectURL(oldest[1].url);
+  }
+  return candidateAssetObjectUrls.get(assetId)?.url || "";
 }
 
 function candidateStageToBoard(stage) {
@@ -222,7 +253,8 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
 
 async function candidateAssetObjectUrl(asset) {
   if (!asset?.assetId) return "";
-  if (candidateAssetObjectUrls.has(asset.assetId)) return candidateAssetObjectUrls.get(asset.assetId);
+  const cached = candidateCachedAssetUrl(asset.assetId);
+  if (cached) return cached;
   if (candidateAssetObjectUrlLoads.has(asset.assetId)) return candidateAssetObjectUrlLoads.get(asset.assetId);
   const load = (async () => {
     const ticket = await apiFetch(
@@ -230,15 +262,26 @@ async function candidateAssetObjectUrl(asset) {
       { method: "POST", body: "{}" }
     );
     if (!ticket?.url) throw new Error(`Private asset ticket was not returned for ${asset.name || asset.assetId}.`);
-    const blob = await apiFetch(ticket.url, { method: "GET", expect: "blob" });
-    const url = URL.createObjectURL(blob);
-    candidateAssetObjectUrls.set(asset.assetId, url);
-    return url;
+    return rememberCandidateAssetUrl(asset.assetId, ticket.url, ticket.expiresIn);
   })().finally(() => {
     candidateAssetObjectUrlLoads.delete(asset.assetId);
   });
   candidateAssetObjectUrlLoads.set(asset.assetId, load);
   return load;
+}
+
+async function prefetchCandidateAssetTickets(assets) {
+  const assetIds = [...new Set((assets || [])
+    .map(asset => asset?.assetId)
+    .filter(assetId => assetId && !candidateCachedAssetUrl(assetId)))];
+  if (!assetIds.length) return;
+  const result = await apiFetch("/order-manager/v1/assets/read-tickets", {
+    method: "POST",
+    body: JSON.stringify({ assetIds }),
+  });
+  (result?.tickets || []).forEach(ticket => {
+    rememberCandidateAssetUrl(ticket.assetId, ticket.url, ticket.expiresIn);
+  });
 }
 
 function candidateAssetIsMockup(asset) {
@@ -248,18 +291,45 @@ function candidateAssetIsMockup(asset) {
 
 function candidateAssetOrderPriority(record) {
   const stage = record?.production?.stage;
-  if (stage === "print" || stage === "completed") return 0;
-  if (stage === "received") return 1;
-  if (stage === "blanks_cart" || stage === "blanks_ordered") return 2;
-  if (stage === "to_order") return 3;
-  return 4;
+  const defaultPriority = stage === "print" || stage === "completed"
+    ? 0
+    : stage === "received"
+      ? 1
+      : stage === "blanks_cart" || stage === "blanks_ordered"
+        ? 2
+        : stage === "to_order" ? 3 : 4;
+  const mobile = window.matchMedia?.("(max-width: 900px)")?.matches;
+  const activeTab = document.body?.dataset.activeTab || "pipeline";
+  if (mobile) {
+    const belongsToActiveTab = (activeTab === "pipeline" && stage === "received")
+      || ((activeTab === "blanksCart" || activeTab === "blanksOrdered")
+        && (stage === "to_order" || stage === "blanks_cart" || stage === "blanks_ordered"))
+      || (activeTab === "readyToPrint" && (stage === "print" || stage === "completed"));
+    return belongsToActiveTab ? 0 : defaultPriority + 1;
+  }
+  return defaultPriority;
 }
 
-function candidateAssetHydrationQueue(records) {
+function candidateRecordBelongsToActiveMobileTab(record) {
+  const stage = record?.production?.stage;
+  const activeTab = document.body?.dataset.activeTab || "pipeline";
+  if (activeTab === "pipeline") return stage === "received";
+  if (activeTab === "blanksCart" || activeTab === "blanksOrdered") {
+    return stage === "to_order" || stage === "blanks_cart" || stage === "blanks_ordered";
+  }
+  if (activeTab === "readyToPrint") return stage === "print" || stage === "completed";
+  return false;
+}
+
+function candidateAssetHydrationQueue(records, { boardVisibleOnly = false } = {}) {
   const firstMockups = [];
   const remainingMockups = [];
   const remainingAssets = [];
-  [...records]
+  const mobile = window.matchMedia?.("(max-width: 900px)")?.matches;
+  const scopedRecords = boardVisibleOnly && mobile
+    ? [...records].filter(candidateRecordBelongsToActiveMobileTab)
+    : [...records];
+  scopedRecords
     .sort((left, right) => candidateAssetOrderPriority(left) - candidateAssetOrderPriority(right))
     .forEach((record) => {
       const assets = Array.isArray(record?.production?.assets) ? record.production.assets : [];
@@ -273,9 +343,14 @@ function candidateAssetHydrationQueue(records) {
   return [...firstMockups, ...remainingMockups, ...remainingAssets];
 }
 
-async function hydrateCandidateAssets(records, { onMockupChange } = {}) {
-  const assets = candidateAssetHydrationQueue(records);
+async function hydrateCandidateAssets(records, { onMockupChange, boardVisibleOnly = false } = {}) {
+  const assets = candidateAssetHydrationQueue(records, { boardVisibleOnly });
   const changedOrderIds = new Set();
+  try {
+    await prefetchCandidateAssetTickets(assets.map(entry => entry.asset));
+  } catch (error) {
+    console.warn("Unable to batch private asset tickets; using per-asset fallback", error);
+  }
   await runWithConcurrency(assets, ASSET_HYDRATION_CONCURRENCY, async ({ asset, record, isMockup }) => {
     try {
       const previousUrl = asset.url || "";
@@ -296,7 +371,7 @@ async function hydrateCandidateAssets(records, { onMockupChange } = {}) {
 function applyCandidateCachedAssetUrls(records) {
   records.forEach((order) => {
     (order?.production?.assets || []).forEach((asset) => {
-      const cached = asset?.assetId ? candidateAssetObjectUrls.get(asset.assetId) : "";
+      const cached = candidateCachedAssetUrl(asset?.assetId);
       if (cached) asset.url = cached;
     });
   });
@@ -345,11 +420,27 @@ async function loadCandidateQueue({ refresh = false } = {}) {
       }
     });
   };
-  void hydrateCandidateAssets(records, { onMockupChange: scheduleMockupRepaint }).catch((error) => {
+  candidateBoardHydrationRecords = records;
+  candidateBoardMockupRepaint = scheduleMockupRepaint;
+  void hydrateCandidateAssets(records, {
+    onMockupChange: scheduleMockupRepaint,
+    boardVisibleOnly: true,
+  }).catch((error) => {
     console.warn("Unable to hydrate Shopify board previews", error);
   });
   return mapped;
 }
+
+document.addEventListener?.("click", (event) => {
+  if (!event.target?.closest?.(".mobile-tab[data-tab]")) return;
+  window.setTimeout(() => {
+    if (!candidateBoardHydrationRecords.length || !isShopifyCandidateView()) return;
+    void hydrateCandidateAssets(candidateBoardHydrationRecords, {
+      onMockupChange: candidateBoardMockupRepaint,
+      boardVisibleOnly: true,
+    }).catch(error => console.warn("Unable to hydrate active mobile previews", error));
+  }, 0);
+});
 
 function candidateByName(name) {
   const order = candidateOrdersByName.get(name);
@@ -477,13 +568,16 @@ window.api.getShopifyPreviewOrderDetail = async (orderId, { refresh = false } = 
 // metadata only after an operator opens an order.
 window.api.getOrderDetail = async (orderId, { signal } = {}) => {
   if (!orderId) throw new Error("A Shopify order ID is required");
-  return apiFetch(
+  const result = await apiFetch(
     `/order-manager/v1/orders/${encodeURIComponent(orderId)}`,
     {
       method: "GET",
       ...(signal ? { signal } : {}),
     }
   );
+  applyCandidateCachedAssetUrls([result]);
+  await hydrateCandidateAssets([result]);
+  return result;
 };
 
 // Production metadata is separate from the Shopify commerce response. These
@@ -887,12 +981,15 @@ function triggerBlobDownload(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
-window.api.downloadAsset = async (url, filename) => {
-  if (!url) throw new Error("Asset URL is required");
+window.api.downloadAsset = async (url, filename, assetId) => {
+  const resolvedUrl = assetId
+    ? await candidateAssetObjectUrl({ assetId, name: filename })
+    : url;
+  if (!resolvedUrl) throw new Error("Asset URL is required");
 
-  const res = url.startsWith(API_BASE)
-    ? await apiFetch(url.slice(API_BASE.length), { method: "GET", rawResponse: true })
-    : await fetch(url, { cache: "no-store" });
+  const res = resolvedUrl.startsWith(API_BASE)
+    ? await apiFetch(resolvedUrl.slice(API_BASE.length), { method: "GET", rawResponse: true })
+    : await fetch(resolvedUrl, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`Download failed: ${res.status} ${res.statusText}`);
   }

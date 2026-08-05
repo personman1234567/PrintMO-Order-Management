@@ -149,6 +149,12 @@ export default {
             return handleShopifyWebhook(request, env, allowOrigin || origin || "*", reqAllowHeaders, ctx);
         }
 
+        // The signed one-minute ticket is the authorization for cross-origin
+        // image-tag reads. Its payload contains only the opaque manifest ID.
+        if (url.pathname.startsWith("/order-manager/v1/assets/") && url.pathname.endsWith("/read") && request.method === "GET") {
+            return handleV1AssetRead(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
         let identity;
         try {
             identity = await authenticateRequest(request, env);
@@ -302,6 +308,10 @@ export default {
 
         if (url.pathname === "/order-manager/v1/batches/commit" && request.method === "POST") {
             return handleV1BatchCommit(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
+        }
+
+        if (url.pathname === "/order-manager/v1/assets/read-tickets" && request.method === "POST") {
+            return handleV1AssetReadTickets(request, env, allowOrigin || origin || "*", reqAllowHeaders);
         }
 
         if (url.pathname.startsWith("/order-manager/v1/assets/") && url.pathname.endsWith("/read-ticket") && request.method === "POST") {
@@ -2132,13 +2142,11 @@ const ORDER_SUMMARIES_QUERY = `query PrintMOOrderSummaries($ids: [ID!]!) {
       currentSubtotalPriceSet { shopMoney { amount currencyCode } }
       currentTotalDiscountsSet { shopMoney { amount currencyCode } }
       currentTotalPriceSet { shopMoney { amount currencyCode } }
-      customer { firstName lastName displayName }
       shippingAddress { name }
       billingAddress { name }
       lineItems(first: 25) {
         nodes {
           id sku title variantTitle quantity currentQuantity customAttributes { key value }
-          variant { id }
           originalUnitPriceSet { shopMoney { amount currencyCode } }
         }
         pageInfo { hasNextPage endCursor }
@@ -2215,7 +2223,10 @@ const ORDER_SEARCH_QUERY = `query PrintMOOrderSearch($query: String!) {
 
 const UPDATED_ORDERS_QUERY = `query PrintMOUpdatedOrders($query: String!, $after: String) {
   orders(first: 50, after: $after, sortKey: UPDATED_AT, query: $query) {
-    nodes { id name createdAt updatedAt displayFinancialStatus }
+    nodes {
+      id name createdAt updatedAt cancelledAt closedAt
+      displayFinancialStatus displayFulfillmentStatus
+    }
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -2525,10 +2536,17 @@ async function ensureCandidateOrder(env, gid, actor = 'system', graphQL = coordi
 
 async function d1AssetsForOrder(env, shopId, gid) {
     const result = await requireOrderDb(env).prepare(`
-      SELECT id, filename, content_type, byte_size, sha256, line_item_id, design_ref, role, side, state, created_at
-      FROM asset_manifests
-      WHERE shop_id = ? AND order_gid = ? AND state = 'active'
-      ORDER BY created_at, id
+      SELECT manifests.id, manifests.filename, manifests.content_type,
+             manifests.byte_size, manifests.sha256,
+             COALESCE(links.line_item_id, manifests.line_item_id, '') AS line_item_id,
+             COALESCE(links.design_ref, manifests.design_ref, '') AS design_ref,
+             COALESCE(links.role, manifests.role, '') AS role,
+             COALESCE(links.side, manifests.side, '') AS side,
+             manifests.created_at
+      FROM asset_manifests AS manifests
+      LEFT JOIN asset_manifest_links AS links ON links.asset_id = manifests.id
+      WHERE manifests.shop_id = ? AND manifests.order_gid = ? AND manifests.state = 'active'
+      ORDER BY manifests.created_at, manifests.id, links.line_item_id, links.role, links.side
     `).bind(shopId, gid).all();
     return (result.results || []).map(row => ({
         assetId: row.id,
@@ -2552,9 +2570,26 @@ async function d1AssetsForOrders(env, shopId, gids) {
         const result = await requireOrderDb(env).prepare(`
           SELECT order_gid, id, filename, content_type, byte_size, sha256,
                  line_item_id, design_ref, role, side
-          FROM asset_manifests
-          WHERE shop_id = ? AND state = 'active' AND order_gid IN (${placeholders})
-          ORDER BY created_at, id
+          FROM (
+            SELECT manifests.order_gid, manifests.id, manifests.filename,
+                   manifests.content_type, manifests.byte_size, manifests.sha256,
+                   COALESCE(links.line_item_id, manifests.line_item_id, '') AS line_item_id,
+                   COALESCE(links.design_ref, manifests.design_ref, '') AS design_ref,
+                   COALESCE(links.role, manifests.role, '') AS role,
+                   COALESCE(links.side, manifests.side, '') AS side,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY manifests.order_gid
+                     ORDER BY
+                       CASE COALESCE(links.role, manifests.role, '') WHEN 'mockup' THEN 0 ELSE 1 END,
+                       manifests.created_at, manifests.id, links.line_item_id
+                   ) AS asset_rank
+            FROM asset_manifests AS manifests
+            LEFT JOIN asset_manifest_links AS links ON links.asset_id = manifests.id
+            WHERE manifests.shop_id = ? AND manifests.state = 'active'
+              AND manifests.order_gid IN (${placeholders})
+          )
+          WHERE asset_rank = 1
+          ORDER BY order_gid
         `).bind(shopId, ...chunk).all();
         for (const row of result.results || []) {
             const assets = byOrder.get(row.order_gid) || [];
@@ -2946,6 +2981,7 @@ function designerAssetCandidates(summary) {
         }
         if (pathDesignRef !== designRef) continue;
         if (!rest || rest.split('/').some(segment => !segment || segment === '.' || segment === '..')) continue;
+        const groupRole = String(values.get('batch_role') || values.get('group_role') || '').toLowerCase();
         candidates.push({
             lineItemId: item.id,
             designRef,
@@ -2953,7 +2989,11 @@ function designerAssetCandidates(summary) {
             orderNumber,
             rest,
             name: safeAssetName(rest.split('/').pop()),
-            role: item.sku ? 'mockup' : 'design',
+            role: groupRole === 'garment'
+                ? 'mockup'
+                : groupRole === 'print'
+                    ? 'design'
+                    : item.sku ? 'mockup' : 'design',
             side: designerSideFromName(rest)
         });
     }
@@ -2963,6 +3003,8 @@ function designerAssetCandidates(summary) {
 async function resolveDesignerSourceKey(env, candidate) {
     if (!env.PREVIEWS) throw new Error('Designer Studio preview storage is not configured.');
     if (await env.PREVIEWS.head(candidate.previewKey)) return candidate.previewKey;
+    const promotedKey = `orders/${candidate.orderNumber}/${candidate.designRef}/${candidate.rest}`;
+    if (await env.PREVIEWS.head(promotedKey)) return promotedKey;
     const prefix = `orders/${candidate.orderNumber}_`;
     const suffix = `/${candidate.designRef}/${candidate.rest}`;
     let cursor;
@@ -2980,13 +3022,27 @@ async function resolveDesignerSourceKey(env, candidate) {
 }
 
 async function copyDesignerAsset(env, shopId, gid, candidate) {
-    const sourceIdentity = `designer-studio:${candidate.lineItemId}:${candidate.previewKey}`;
-    const assetId = await stableAssetId(`${gid}:${sourceIdentity}`);
-    const existing = await requireOrderDb(env).prepare(`
-      SELECT id FROM asset_manifests
-      WHERE id = ? AND shop_id = ? AND state = 'active'
-    `).bind(assetId, shopId).first();
-    if (existing) return { state: 'existing', assetId };
+    const db = requireOrderDb(env);
+    const linkValues = {
+        lineItemId: String(candidate.lineItemId || ''),
+        designRef: String(candidate.designRef || ''),
+        role: String(candidate.role || ''),
+        side: String(candidate.side || ''),
+        sourceKey: String(candidate.previewKey || '')
+    };
+    const existingLink = await db.prepare(`
+      SELECT manifests.id
+      FROM asset_manifest_links AS links
+      JOIN asset_manifests AS manifests ON manifests.id = links.asset_id
+      WHERE manifests.shop_id = ? AND manifests.order_gid = ? AND manifests.state = 'active'
+        AND links.line_item_id = ? AND links.design_ref = ? AND links.role = ?
+        AND links.side = ? AND links.source_key = ?
+      LIMIT 1
+    `).bind(
+        shopId, gid, linkValues.lineItemId, linkValues.designRef, linkValues.role,
+        linkValues.side, linkValues.sourceKey
+    ).first();
+    if (existingLink) return { state: 'existing', assetId: existingLink.id };
 
     const sourceKey = await resolveDesignerSourceKey(env, candidate);
     if (!sourceKey) throw new Error(`Designer Studio asset was not found for ${candidate.designRef}/${candidate.rest}.`);
@@ -2997,10 +3053,25 @@ async function copyDesignerAsset(env, shopId, gid, candidate) {
         throw new Error(`Designer Studio asset size is invalid for ${candidate.name}.`);
     }
     const sha256 = bytesToHex(await crypto.subtle.digest('SHA-256', bytes));
-    const objectKey = `orders/${numericIdFromGid(gid)}/assets/${assetId}/${candidate.name}`;
     const sourceHeaders = new Headers();
     if (typeof source.writeHttpMetadata === 'function') source.writeHttpMetadata(sourceHeaders);
     const contentType = sourceHeaders.get('Content-Type') || guessContentTypeFromKey(candidate.name);
+    const existingBlob = await db.prepare(`
+      SELECT id
+      FROM asset_manifests
+      WHERE shop_id = ? AND order_gid = ? AND state = 'active'
+        AND sha256 = ? AND byte_size = ? AND content_type = ?
+      ORDER BY created_at, id
+      LIMIT 1
+    `).bind(shopId, gid, sha256, bytes.byteLength, contentType).first();
+    const now = isoNow();
+    if (existingBlob) {
+        await insertAssetManifestLink(db, existingBlob.id, linkValues, now);
+        return { state: 'existing', assetId: existingBlob.id };
+    }
+
+    const assetId = await stableAssetId(`${gid}:sha256:${sha256}:${bytes.byteLength}:${contentType}`);
+    const objectKey = `orders/${numericIdFromGid(gid)}/assets/${assetId}/${candidate.name}`;
     if (!env.R2_BUCKET) throw new Error('Private artwork storage is not configured.');
     await env.R2_BUCKET.put(objectKey, bytes, {
         httpMetadata: { contentType },
@@ -3012,8 +3083,7 @@ async function copyDesignerAsset(env, shopId, gid, candidate) {
     const storedDigest = bytesToHex(await crypto.subtle.digest('SHA-256', storedBytes));
     if (storedDigest !== sha256) throw new Error(`Private R2 checksum verification failed for ${candidate.name}.`);
 
-    const now = isoNow();
-    await requireOrderDb(env).prepare(`
+    await db.prepare(`
       INSERT INTO asset_manifests (
         id, shop_id, order_gid, object_key, filename, content_type, byte_size,
         sha256, state, source_key, created_by, created_at, updated_at,
@@ -3038,7 +3108,24 @@ async function copyDesignerAsset(env, shopId, gid, candidate) {
         sha256, sourceKey, now, now, candidate.lineItemId, candidate.designRef,
         candidate.role, candidate.side
     ).run();
+    await insertAssetManifestLink(db, assetId, linkValues, now);
     return { state: 'imported', assetId };
+}
+
+async function insertAssetManifestLink(db, assetId, values, createdAt = isoNow()) {
+    await db.prepare(`
+      INSERT OR IGNORE INTO asset_manifest_links (
+        asset_id, line_item_id, design_ref, role, side, source_key, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+        assetId,
+        String(values?.lineItemId || ''),
+        String(values?.designRef || ''),
+        String(values?.role || ''),
+        String(values?.side || ''),
+        String(values?.sourceKey || ''),
+        createdAt
+    ).run();
 }
 
 async function syncDesignerStudioAssetsForSummary(env, shopId, summary) {
@@ -3086,12 +3173,31 @@ async function refreshSummaries(env, gids, graphQL = coordinatorGraphQL) {
         const chunk = valid.slice(index, index + 20);
         const result = await graphQL(env, ORDER_SUMMARIES_QUERY, { ids: chunk }, 'PrintMOOrderSummaries');
         const data = requireShopifyData(result, 'PrintMOOrderSummaries');
-        for (const node of data.nodes || []) {
-            if (node?.id) summaries.push(await normalizeShopifySummary(env, node, result.errors || [], graphQL));
+        for (const [nodeIndex, node] of (data.nodes || []).entries()) {
+            if (node?.id) {
+                const nodeErrors = (result.errors || []).filter(error => {
+                    const path = Array.isArray(error?.path) ? error.path : null;
+                    if (!path || path[0] !== 'nodes' || !Number.isInteger(path[1])) return true;
+                    return path[1] === nodeIndex;
+                });
+                summaries.push(await normalizeShopifySummary(env, node, nodeErrors, graphQL));
+            }
         }
     }
     const shop = await d1Shop(env);
+    const projected = new Set();
+    for (let index = 0; index < summaries.length; index += 50) {
+        const ids = summaries.slice(index, index + 50).map(summary => summary.id);
+        if (!ids.length) continue;
+        const placeholders = ids.map(() => '?').join(', ');
+        const rows = await requireOrderDb(env).prepare(`
+          SELECT order_gid FROM order_projection
+          WHERE shop_id = ? AND order_gid IN (${placeholders})
+        `).bind(shop.id, ...ids).all();
+        for (const row of rows.results || []) projected.add(row.order_gid);
+    }
     for (const summary of summaries) {
+        if (!projected.has(summary.id)) continue;
         const assetSync = await syncDesignerStudioAssetsForSummary(env, shop.id, summary);
         summary.sync.assetSync = {
             candidates: assetSync.candidates,
@@ -4329,14 +4435,14 @@ async function handleV1AssetReadTicket(request, env, allowOrigin, reqAllowHeader
         const assetId = assetIdFromPath(new URL(request.url).pathname);
         const shop = await d1Shop(env);
         const asset = await requireOrderDb(env).prepare(`
-          SELECT id, object_key
+          SELECT id
           FROM asset_manifests
           WHERE id = ? AND shop_id = ? AND state = 'active'
         `).bind(assetId, shop.id).first();
         if (!asset) {
             return v1Error({ code: 'ASSET_NOT_FOUND', message: 'Asset manifest was not found.' }, allowOrigin, reqAllowHeaders, 404);
         }
-        const ticket = await signAssetTicket({ assetId, key: asset.object_key, exp: Math.floor(Date.now() / 1000) + 60 }, env);
+        const ticket = await signAssetTicket({ assetId, exp: Math.floor(Date.now() / 1000) + 60 }, env);
         return jsonResponse({ assetId, url: `/order-manager/v1/assets/${encodeURIComponent(assetId)}/read?ticket=${encodeURIComponent(ticket)}`, expiresIn: 60 }, allowOrigin, reqAllowHeaders);
     } catch (error) {
         return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
@@ -4350,7 +4456,14 @@ async function handleV1AssetRead(request, env, allowOrigin, reqAllowHeaders) {
         const ticket = await verifyAssetTicket(url.searchParams.get('ticket'), env);
         if (!ticket || ticket.assetId !== assetId) return v1Error({ code: 'INVALID_ASSET_TICKET', message: 'Asset ticket is invalid or expired' }, allowOrigin, reqAllowHeaders, 401);
         if (!env.R2_BUCKET) return v1Error({ code: 'R2_NOT_CONFIGURED', message: 'Private artwork storage is not configured' }, allowOrigin, reqAllowHeaders, 503);
-        const object = await env.R2_BUCKET.get(ticket.key);
+        const shop = await d1Shop(env);
+        const asset = await requireOrderDb(env).prepare(`
+          SELECT object_key
+          FROM asset_manifests
+          WHERE id = ? AND shop_id = ? AND state = 'active'
+        `).bind(assetId, shop.id).first();
+        if (!asset) return v1Error({ code: 'ASSET_NOT_FOUND', message: 'Asset manifest was not found' }, allowOrigin, reqAllowHeaders, 404);
+        const object = await env.R2_BUCKET.get(asset.object_key);
         if (!object) return v1Error({ code: 'ASSET_NOT_FOUND', message: 'Asset object was not found' }, allowOrigin, reqAllowHeaders, 404);
         const headers = new Headers();
         object.writeHttpMetadata(headers);
@@ -4384,6 +4497,54 @@ async function forwardPaidWebhookToLegacyQueue(request, rawBytes, env) {
     if (!response.ok) {
         throw Object.assign(new Error(`Legacy queue ingestion failed with HTTP ${response.status}`), { status: 502 });
     }
+}
+
+async function handleV1AssetReadTickets(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const body = await request.json().catch(() => ({}));
+        const assetIds = [...new Set((Array.isArray(body.assetIds) ? body.assetIds : [])
+            .map(value => String(value || '').trim())
+            .filter(value => value && value.length <= 200))].slice(0, 50);
+        if (!assetIds.length) {
+            return v1Error({ code: 'ASSET_IDS_REQUIRED', message: 'At least one asset ID is required.' }, allowOrigin, reqAllowHeaders, 400);
+        }
+        const shop = await d1Shop(env);
+        const placeholders = assetIds.map(() => '?').join(', ');
+        const result = await requireOrderDb(env).prepare(`
+          SELECT id
+          FROM asset_manifests
+          WHERE shop_id = ? AND state = 'active' AND id IN (${placeholders})
+        `).bind(shop.id, ...assetIds).all();
+        const expiresIn = 60;
+        const exp = Math.floor(Date.now() / 1000) + expiresIn;
+        const tickets = await Promise.all((result.results || []).map(async asset => ({
+            assetId: asset.id,
+            url: `/order-manager/v1/assets/${encodeURIComponent(asset.id)}/read?ticket=${encodeURIComponent(
+                await signAssetTicket({ assetId: asset.id, exp }, env)
+            )}`,
+            expiresIn
+        })));
+        return jsonResponse({ tickets }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+function orderCanEnterCandidateBoard(order = {}) {
+    const fulfillmentStatus = String(order.fulfillment_status || order.displayFulfillmentStatus || '')
+        .trim().toLowerCase();
+    if (fulfillmentStatus === 'fulfilled') return false;
+    if (order.cancelled_at || order.cancelledAt || order.closed_at || order.closedAt) return false;
+    return true;
+}
+
+function webhookConfirmsPayment(topic, payload) {
+    if (!orderCanEnterCandidateBoard(payload)) return false;
+    if (topic === 'orders/paid') return true;
+    if (topic !== 'orders/updated') return false;
+    const financialStatus = String(payload?.financial_status || payload?.display_financial_status || '')
+        .trim().toLowerCase();
+    return financialStatus === 'paid';
 }
 
 async function handleShopifyWebhook(request, env, allowOrigin, reqAllowHeaders, ctx) {
@@ -4423,7 +4584,9 @@ async function handleShopifyWebhook(request, env, allowOrigin, reqAllowHeaders, 
             return jsonResponse({ ok: true }, allowOrigin, reqAllowHeaders);
         }
         if (gid) {
-            if (topic === 'orders/paid') await ensureCandidateOrder(env, gid, 'shopify-webhook');
+            if (webhookConfirmsPayment(topic, payload)) {
+                await ensureCandidateOrder(env, gid, 'shopify-webhook');
+            }
             await requireOrderDb(env).prepare(`
               UPDATE order_projection
               SET stale_at = ?, updated_at = ?
@@ -4747,6 +4910,11 @@ async function migrateLegacyAssets(env, shopId, gid, legacy, execute) {
             asset.contentType || 'application/octet-stream', asset.byteSize,
             asset.sha256, asset.sourceKey || asset.objectKey, now, now
         )));
+        for (const asset of manifests) {
+            await insertAssetManifestLink(db, asset.assetId, {
+                sourceKey: asset.sourceKey || asset.objectKey
+            }, now);
+        }
     }
     return manifests;
 }
@@ -5017,7 +5185,7 @@ export class OrderSyncCoordinator {
             for (const order of connection.nodes || []) {
                 gids.push(order.id);
                 newest = Math.max(newest, Date.parse(order.updatedAt) || newest);
-                if (order.displayFinancialStatus === 'PAID') {
+                if (order.displayFinancialStatus === 'PAID' && orderCanEnterCandidateBoard(order)) {
                     await ensureCandidateOrder(
                         this.env,
                         order.id,
@@ -5030,8 +5198,21 @@ export class OrderSyncCoordinator {
         } while (after);
         if (gids.length) await this.refresh(gids);
         const completedAt = isoNow();
+        const staleReceiptCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        const recoveredReceipts = await db.prepare(`
+          UPDATE webhook_receipts
+          SET state = 'processed', error_code = 'RECONCILED_BY_INCREMENTAL', updated_at = ?
+          WHERE shop_id = ? AND state = 'received'
+            AND topic IN ('orders/paid', 'orders/updated')
+            AND received_at < ?
+        `).bind(completedAt, shop.id, staleReceiptCutoff).run();
         const nextCheckpoint = new Date(newest).toISOString();
-        const result = { ok: true, refreshed: gids.length, checkpoint: nextCheckpoint };
+        const result = {
+            ok: true,
+            refreshed: gids.length,
+            recoveredReceipts: Number(recoveredReceipts.meta?.changes || 0),
+            checkpoint: nextCheckpoint
+        };
         await db.prepare(`
           INSERT INTO reconciliation_checkpoints (
             shop_id, name, checkpoint, last_started_at, last_completed_at, last_result_json
@@ -5128,4 +5309,10 @@ export class OrderSyncCoordinator {
         }
     }
 }
-export { selectOperationalCustomerName };
+export {
+    copyDesignerAsset,
+    designerAssetCandidates,
+    orderCanEnterCandidateBoard,
+    selectOperationalCustomerName,
+    webhookConfirmsPayment
+};
