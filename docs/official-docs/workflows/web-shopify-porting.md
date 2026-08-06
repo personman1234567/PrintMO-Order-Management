@@ -70,7 +70,9 @@ The normal header and mobile surface expose only the **Shopify board**. Both ada
 - Manual invoice mockups remain in the dedicated R2 manual-mockup manifest. Shopify board cards hydrate those manifests after the first card paint, and the order detail upload, paste, preview, and removal controls merge manual mockups with Designer Studio assets.
 - **In S&S Cart** and **Ordered** are keyboard-accessible views over the same blanks workflow. They filter on canonical `blanks_cart`/`blanks_ordered` state while keeping both counts visible. A drop into the blanks section persists the currently selected view as the destination stage; selecting a tab alone remains a read-only view change.
 - A confirmed S&S submission always enters `blanks_cart` (**In S&S Cart**). The operator-controlled Mark Ordered action is the transition to `blanks_ordered`; later reconciliation preserves that advancement.
-- Ready to Print exposes **To Print** and **Printed** tabs over the canonical `print` and `completed` stages. Reaching the nonzero garment total through the board saves `printed_count` and `stage: completed` atomically; lowering a completed count reverses the stage to `print`. Active completed orders stay in Printed even when Shopify reports fulfillment; the Admin block's manual customer-handoff action archives them, and its Reopen action returns them to the board.
+- Production & Fulfillment exposes **To Print** and **Printed** tabs in its top-level panel header over the canonical `print` and `completed` stages. The Shopify desktop board has no redundant Ready to Print subsection: `#col-print` is the panel's direct queue scroller, and an explicit view change resets that scroller before the newly selected queue is used. Reaching the nonzero garment total through the board saves `printed_count` and `stage: completed` atomically; lowering a completed count reverses the stage to `print`. Active completed orders stay in Printed even when Shopify reports fulfillment; the Admin block's manual customer-handoff action archives them, and its Reopen action returns them to the board.
+- Print-count validation reads SKU on the first production-state line-item page and every pagination page before applying the non-print garment cap. Order Detail receiving edits use an inline per-garment stepper; the aggregate Receive Batches modal remains available without becoming inert when it opens above Order Detail.
+- Receiving-manifest correction is explicit: **Add Orders** shows eligible In S&S Cart and Ordered orders, identifies orders that will move from another batch, and calls the Worker `assign-orders` action. The Worker rejects duplicate create membership and removes an emptied accidental source batch from the active index.
 - Shopify moves are optimistic and atomic: the card repaints immediately, one production-metafield mutation persists the complete resulting stage, and a failed save restores the prior card. Per-order requests are serialized; one `VERSION_CONFLICT` is reconciled and retried at most once.
 - In normal operation Shopify remains selected even while navigating between app views. In explicit debug mode, a failed source switch restores the previous source and keeps its last rendered board. The Worker also rejects a false authoritative empty candidate until initial migration/reconciliation completes.
 - Shopify commerce fields remain read-only. Production fields are changed through `PATCH /order-manager/v1/orders/:gid/production` with expected revision and idempotency key.
@@ -94,6 +96,7 @@ The normal header and mobile surface expose only the **Shopify board**. Both ada
 | `GET /order-manager/v1/orders/:gid/production` | `PrintMOProductionState` | Canonical stage/revision/readiness/bundle/notes/progress/batch refs | Shopify metafield plus D1 asset manifests |
 | `PATCH /order-manager/v1/orders/:gid/production` | `metafieldsSet` with `compareDigest` | Committed production revision or conflict/sync-pending state | D1 idempotency/audit; no Redis |
 | `POST /order-manager/v1/batches/commit` | Production reads during validation/commit | Durable batch/S&S result and metadata repair list | D1 state machine; stateless supplier gateway |
+| `GET/POST/PATCH /order-manager/blanks-batches` | None | Private receiving index/manifests, quantity updates, and add/transfer results | Authenticated R2 compatibility store; unique order membership enforced by Worker |
 
 The detail response is grouped under these stable UI-facing properties:
 
@@ -113,6 +116,10 @@ The source adapter is `order-manager-web/web-shim.js`; Shopify-first source cont
 **Order-detail recovery release (2026-07-26):** Pages deployment `8aa312c1` restores the shared detail DOM/controller contract, featured mockup selection, accessible tabs, paired ordered-to-ready production states, expanded design-file workspace, inline mutation feedback, and the single-scroll-owner mobile workbench. Worker, Shopify app, supplier gateway, and cutover state are unchanged. Workflow acceptance remains owner-tested.
 
 **Canonical detail workbench release (2026-07-26):** Worker `1552669a-4003-4f2a-8e27-45b8480165e1` and production Pages deployment `a708cc2c` connect the shared Shopify-board detail to the on-demand canonical order endpoint while preserving bounded board first paint and Legacy Redis isolation. The canonical query uses direct Order and LineItem fields rather than customer/product relations; shared detail now renders Shopify timeline and a separate PrintMO production history, conversion, checkout shipping/delivery windows, grouped collapsible tax detail, actual shipping or local-pickup labels, and design-file-linked size metadata. SKU is a separate line-item column and internal asset metadata stays out of the normal item table. Shopify scopes, app version, supplier gateway, and cutover state are unchanged. Workflow acceptance remains owner-tested.
+
+**Dashboard workflow-foundation release (2026-08-06):** Production Pages release `1786040513631` removes the unfinished Bundle and Fullscreen entry points from the web dashboard, flattens the Shopify desktop Production & Fulfillment queue under its top-level To Print/Printed header, resets print scroll on explicit view changes, and gives candidate cards one stable preview/status anatomy with a quiet No preview state. Mobile retains separate Print and Blanks stages, its existing one-column phone/two-column wider-iframe card geometry, and 44px print tabs. Worker, database, authentication, Shopify permissions, Electron/Legacy renderer hooks, and private-preview loading boundaries are unchanged. Automated contract acceptance passed; owner visual acceptance remains manual.
+
+**Production-count and receiving-correction release (2026-08-06):** Worker `989a3f57-1632-4cbe-b810-8f7916693529` and production Pages deployment `f00284c1` (release marker `1786045361453`) restore first-page SKU input to the printed-count garment cap, replace ordinary order-detail receiving modal stacking with inline quantity controls, register dynamic receiving/correction dialogs in the shared focus stack, and add explicit order selection with unique cross-batch transfer. Already-received quantity follows a moved order, and an emptied accidental source batch leaves the active index. No database migration, Shopify scope/app release, authentication, or supplier-gateway change was required. Automated contract acceptance passed; owner workflow acceptance remains manual.
 
 #### Shopify access requirements and current limitation
 
@@ -136,6 +143,9 @@ The web port must operate within constrained Shopify Admin viewports as well as 
 - `mobile.css`: Responsive mobile and constrained iframe styles enforcing min 44x44px touch targets and full operational capabilities across columns.
 - `dashboard-triage-enhancements.js` assigns the candidate-only `pipeline-main-card` and `production-card` contracts used by the final layout rules. A selector for either class is ineffective unless the renderer actually assigns it.
 - Shopify-only repair rules are scoped under `body[data-order-source="shopify"]`; candidate acceptance must not change the Legacy Redis presentation.
+- `.workflow-card-grid` is the stable queue-layout contract for the relocated Supplies and Production queues. Do not couple future layout rules to `.fulfillment .sub-section`: Shopify desktop reparents Blanks into Supplies and intentionally keeps the print queue flat under Production & Fulfillment.
+- Every Shopify order tile owns a stable preview slot and `.production-card-statuses` row. Missing or unavailable artwork replaces the preview content with a quiet **No preview** state instead of removing its geometry; accounting and production badges use the shared status row so card anatomy does not vary by workflow stage.
+- The web dashboard intentionally withholds the unfinished Bundle and Fullscreen entry points. The guarded shared renderer hooks and existing-bundle display contract remain compatible with Electron/Legacy surfaces, but those secondary actions must not be restored to Shopify headers without a separate interaction design and regression review.
 
 ### Shopify Embedded Mobile Interaction Contract
 
@@ -156,6 +166,10 @@ active queue, detail view, or workflow sheet owns vertical scrolling.
   Production cards use a one-column phone grid and become two columns only at
   wider embedded widths; never combine a multi-column grid with a one-third
   inherited card width.
+- The mobile Print stage reuses the top-level Production header as a compact
+  **Print** header with full-width, 44px **To Print** and **Printed** tabs. The
+  mobile Blanks stage retains its own dedicated header and workflow controls;
+  flattening the desktop print section must not merge those mobile stages.
 - `#detail-content` is the explicit vertical scroll owner for the mobile detail
   overlay. Its inner detail columns must remain intrinsic-height
   (`flex: 0 0 auto; height: auto; overflow: visible`) so their complete height

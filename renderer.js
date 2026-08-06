@@ -198,9 +198,15 @@ function syncPrintViewUi() {
 
 function setActivePrintView(view, { render = true } = {}) {
   if (!isShopifyBoardView()) return;
-  activePrintView = PRINT_VIEWS.includes(view) ? view : PRINT_VIEWS[0];
+  const nextView = PRINT_VIEWS.includes(view) ? view : PRINT_VIEWS[0];
+  const viewChanged = nextView !== activePrintView;
+  activePrintView = nextView;
   syncPrintViewUi();
   if (render) renderStatusColumn('print');
+  if (viewChanged) {
+    const container = document.getElementById('col-print');
+    if (container) container.scrollTop = 0;
+  }
 }
 
 function initPrintTabs() {
@@ -669,6 +675,8 @@ function makeCard(o, style = 'default') {
   });
   const firstMockupUrl = getFirstMockupUrl(o);
   const hasMockup = !!firstMockupUrl;
+  const showBoardPreview = hasMockup || Boolean(o._candidate);
+  const boardPreviewState = getProductionMockupState(o, hasMockup);
   const productionCompleteBadge = o.productionStage === 'completed'
     ? '<span class="card-status-badge production-complete">Production complete</span>'
     : '';
@@ -682,12 +690,9 @@ function makeCard(o, style = 'default') {
         ${productionCompleteBadge}
         <span class="time-ago-pill">${timeAgo(o.receivedAt)}</span>
       </div>
-      <div class="card-body ${hasMockup ? 'has-mockup' : 'no-mockup'}">
-        ${hasMockup ? `
-          <div class="mockup-slot">
-            <img src="${firstMockupUrl}" alt="Mockup preview" loading="eager" decoding="async" fetchpriority="high" />
-          </div>
-        ` : ''}
+      <div class="card-body ${showBoardPreview ? 'has-mockup' : 'no-mockup'} production-preview-${boardPreviewState}">
+        ${showBoardPreview ? productionMockupSlotMarkup(firstMockupUrl, boardPreviewState, orderNum) : ''}
+        <div class="production-card-statuses"></div>
         <div class="cust-name">${custName}</div>
         <div class="counts">
           <span class="apparel-count"><img class="count-icon" src="${o.blanksOrdered ? APPAREL_ICON_GREEN : APPAREL_ICON}" alt="" /> ${apparel}</span>
@@ -728,7 +733,7 @@ function makeCard(o, style = 'default') {
       <div class="card-body ${showProductionPreview ? 'has-mockup' : 'no-mockup'} production-preview-${productionMockupState}">
         ${showProductionPreview ? productionMockupSlotMarkup(firstMockupUrl, productionMockupState, orderNum) : ''}
         <div class="print-card-details">
-          <div class="print-card-statuses">
+          <div class="print-card-statuses production-card-statuses">
             ${productionCompleteBadge}
           </div>
           <div class="progress-view">
@@ -1195,10 +1200,10 @@ function productionMockupSlotMarkup(url, state, orderNumber) {
       </div>
     `;
   }
-  const label = state === 'loading' ? 'Loading preview' : 'No mockup';
+  const label = state === 'loading' ? 'Loading preview' : 'No preview';
   const ariaLabel = state === 'loading'
-    ? `Mockup preview for order ${orderNumber} is loading`
-    : `No mockup preview is available for order ${orderNumber}`;
+    ? `Preview image for order ${orderNumber} is loading`
+    : `No preview image is available for order ${orderNumber}`;
   return `
     <div class="mockup-slot mockup-slot-${state}" aria-label="${ariaLabel}">
       <span class="mockup-placeholder-label" aria-hidden="true">${label}</span>
@@ -1268,12 +1273,12 @@ function updateBoardMockupPreview(order, { resolvePlaceholder = false } = {}) {
     } else {
       const loading = state === 'loading';
       slot.setAttribute('aria-label', loading
-        ? `Mockup preview for order ${orderNumber} is loading`
-        : `No mockup preview is available for order ${orderNumber}`);
+        ? `Preview image for order ${orderNumber} is loading`
+        : `No preview image is available for order ${orderNumber}`);
       const label = document.createElement('span');
       label.className = 'mockup-placeholder-label';
       label.setAttribute('aria-hidden', 'true');
-      label.textContent = loading ? 'Loading preview' : 'No mockup';
+      label.textContent = loading ? 'Loading preview' : 'No preview';
       slot.replaceChildren(label);
       updated = true;
     }
@@ -1827,7 +1832,7 @@ function openDetail(o) {
     if (o.progress < totalApparel) {
       progressPlusOne.disabled = true;
       try {
-        await saveProductionProgress(o, o.progress + 1, updateProgressUI);
+        return await saveProductionProgress(o, o.progress + 1, updateProgressUI);
       } finally {
         progressPlusOne.disabled = false;
       }
@@ -2264,6 +2269,16 @@ function showProductionNotice(message, tone = 'success') {
   showProductionNotice.timer = window.setTimeout(() => notice.classList.remove('visible'), 4200);
 }
 
+function productionProgressErrorMessage(error) {
+  if (error?.code === 'INVALID_PRINTED_COUNT') {
+    return 'The print count is higher than Shopify’s current garment total. Refresh Shopify and try again.';
+  }
+  if (error?.code === 'GARMENT_COUNT_UNAVAILABLE' || error?.code === 'GARMENT_COUNT_INCOMPLETE') {
+    return 'Shopify’s garment total is temporarily unavailable. Refresh Shopify and try again.';
+  }
+  return 'Print progress could not be saved. Please try again.';
+}
+
 async function saveProductionProgress(order, nextProgress, updateFn) {
   const previousProgress = Number(order.progress || 0);
   const previousStage = order.productionStage || '';
@@ -2296,6 +2311,7 @@ async function saveProductionProgress(order, nextProgress, updateFn) {
     }
     return true;
   } catch (error) {
+    console.error('Unable to save print progress', error);
     order.progress = previousProgress;
     order.productionStage = previousStage;
     updateFn();
@@ -2308,7 +2324,7 @@ async function saveProductionProgress(order, nextProgress, updateFn) {
     } else {
       await renderBoardFromLocalState([order.status || 'received']);
     }
-    showProductionNotice(`Could not save print progress. ${error?.message || error}`, 'error');
+    showProductionNotice(productionProgressErrorMessage(error), 'error');
     return false;
   }
 }

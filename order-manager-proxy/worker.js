@@ -612,6 +612,7 @@ function buildBlanksBatch(body) {
         const name = safeText(rawOrder?.name, 240);
         if (!name) return;
 
+        const orderId = safeText(rawOrder?.orderId || rawOrder?.gid || rawOrder?.id, 240);
         const parts = batchOrderParts(name);
         const orderNumber = safeText(rawOrder?.orderNumber, 80) || parts.number;
         const customer = safeText(rawOrder?.customer, 160) || parts.customer;
@@ -648,6 +649,7 @@ function buildBlanksBatch(body) {
             const manifestLine = manifestByKey.get(itemKey);
             manifestLine.expectedQty += qty;
             manifestLine.orderLines.push({
+                orderId,
                 orderName: name,
                 orderNumber,
                 customer,
@@ -661,6 +663,7 @@ function buildBlanksBatch(body) {
         });
 
         orders.push({
+            orderId,
             name,
             orderNumber,
             customer,
@@ -691,6 +694,7 @@ function buildBlanksBatch(body) {
         createdAt: nowIso,
         updatedAt: nowIso,
         orderNames: orders.map(order => order.name),
+        orderIds: orders.map(order => order.orderId).filter(Boolean),
         orders,
         manifest,
         totals: {
@@ -714,12 +718,49 @@ function blanksBatchIndexEntry(batch) {
         createdAt: batch.createdAt,
         updatedAt: batch.updatedAt,
         orderNames: Array.isArray(batch.orderNames) ? batch.orderNames : [],
+        orderIds: Array.isArray(batch.orderIds)
+            ? batch.orderIds
+            : (Array.isArray(batch.orders) ? batch.orders.map(order => order?.orderId).filter(Boolean) : []),
         orderCount: batch.totals?.orderCount || 0,
         manifestLineCount: batch.totals?.manifestLineCount || 0,
         expectedGarments: batch.totals?.expectedGarments || 0,
         receivedGarments: batch.totals?.receivedGarments || 0,
         missingGarments: batch.totals?.missingGarments || 0,
     };
+}
+
+function blanksBatchOrderIdentity(order) {
+    const orderId = safeText(order?.orderId || order?.gid || order?.id, 240);
+    if (orderId) return `id:${orderId}`;
+    const name = safeText(order?.name || order?.orderName, 240);
+    return name ? `name:${name}` : "";
+}
+
+function blanksBatchOrderIdentities(orders) {
+    return new Set((Array.isArray(orders) ? orders : [])
+        .map(blanksBatchOrderIdentity)
+        .filter(Boolean));
+}
+
+function batchContainsIncomingOrder(batch, incomingOrder) {
+    const incomingIdentity = blanksBatchOrderIdentity(incomingOrder);
+    if (!incomingIdentity) return false;
+    return (Array.isArray(batch?.orders) ? batch.orders : []).some(order => {
+        const storedIdentity = blanksBatchOrderIdentity(order);
+        if (storedIdentity === incomingIdentity) return true;
+        if (storedIdentity.startsWith("id:") && incomingIdentity.startsWith("id:")) return false;
+        // Batch records created before orderId existed still match by order name.
+        return safeText(order?.name, 240) === safeText(incomingOrder?.name || incomingOrder?.orderName, 240);
+    });
+}
+
+function indexEntryContainsIncomingOrder(entry, incomingOrder) {
+    const orderId = safeText(incomingOrder?.orderId || incomingOrder?.gid || incomingOrder?.id, 240);
+    const name = safeText(incomingOrder?.name || incomingOrder?.orderName, 240);
+    return Boolean(
+        (orderId && (Array.isArray(entry?.orderIds) ? entry.orderIds : []).includes(orderId))
+        || (name && (Array.isArray(entry?.orderNames) ? entry.orderNames : []).includes(name))
+    );
 }
 
 function batchOrderSortValue(batch, orderName) {
@@ -900,31 +941,9 @@ function orderNamesFromBody(body) {
 function removeOrdersFromBatch(batch, body) {
     const orderNames = orderNamesFromBody(body);
     if (!orderNames.length) return { ok: false, error: "No order names provided" };
-
-    const removeSet = new Set(orderNames);
-    const beforeCount = Array.isArray(batch.orders) ? batch.orders.length : 0;
-    batch.orders = (Array.isArray(batch.orders) ? batch.orders : [])
-        .filter(order => !removeSet.has(order?.name));
-    const removedCount = beforeCount - batch.orders.length;
-    if (!removedCount) return { ok: false, error: "No matching batch orders found" };
-
-    batch.orderNames = batch.orders.map(order => order.name).filter(Boolean);
-    batch.manifest = (Array.isArray(batch.manifest) ? batch.manifest : [])
-        .map(line => {
-            const orderLines = (Array.isArray(line.orderLines) ? line.orderLines : [])
-                .filter(orderLine => !removeSet.has(orderLine?.orderName));
-            const expectedQty = orderLines.reduce((sum, orderLine) => {
-                return sum + (Math.max(0, Number(orderLine?.expectedQty) || 0));
-            }, 0);
-            return {
-                ...line,
-                expectedQty,
-                orderLines,
-            };
-        })
-        .filter(line => (Number(line.expectedQty) || 0) > 0);
-
-    return { ok: true, batch: applyOldestFirstAllocation(batch), removedCount };
+    const result = removeIncomingOrdersFromBatch(batch, orderNames.map(name => ({ name })));
+    if (!result.removedCount) return { ok: false, error: "No matching batch orders found" };
+    return { ok: true, batch: result.batch, removedCount: result.removedCount };
 }
 
 function addOrdersToBatch(batch, body) {
@@ -937,22 +956,20 @@ function addOrdersToBatch(batch, body) {
         return { ok: false, error: "Orders have no garment line items" };
     }
 
-    const existingOrderNames = new Set((Array.isArray(batch.orders) ? batch.orders : [])
-        .map(order => order?.name)
-        .filter(Boolean));
-    const incomingNames = new Set(addBatch.orders.map(order => order.name));
-    const duplicateNames = Array.from(incomingNames).filter(name => existingOrderNames.has(name));
-    if (duplicateNames.length === incomingNames.size) {
+    const duplicateOrders = addBatch.orders.filter(order => batchContainsIncomingOrder(batch, order));
+    if (duplicateOrders.length === addBatch.orders.length) {
         return { ok: false, error: "All provided orders are already in this batch" };
     }
 
-    const allowedNames = new Set(Array.from(incomingNames).filter(name => !existingOrderNames.has(name)));
-    const incomingOrders = addBatch.orders.filter(order => allowedNames.has(order.name));
+    const duplicateIdentities = blanksBatchOrderIdentities(duplicateOrders);
+    const incomingOrders = addBatch.orders.filter(order => !duplicateIdentities.has(blanksBatchOrderIdentity(order)));
+    const allowedNames = new Set(incomingOrders.map(order => order.name));
     batch.orders = [
         ...(Array.isArray(batch.orders) ? batch.orders : []),
         ...incomingOrders,
     ];
     batch.orderNames = batch.orders.map(order => order.name).filter(Boolean);
+    batch.orderIds = batch.orders.map(order => order.orderId).filter(Boolean);
 
     const manifestByKey = new Map((Array.isArray(batch.manifest) ? batch.manifest : [])
         .map(line => [line.itemKey, { ...line, orderLines: Array.isArray(line.orderLines) ? line.orderLines.slice() : [] }]));
@@ -990,8 +1007,152 @@ function addOrdersToBatch(batch, body) {
         ok: true,
         batch: applyOldestFirstAllocation(batch),
         addedCount: incomingOrders.length,
-        duplicateNames,
+        duplicateNames: duplicateOrders.map(order => order.name),
     };
+}
+
+function cloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
+function removeIncomingOrdersFromBatch(batch, incomingOrders) {
+    const matchingOrders = (Array.isArray(batch?.orders) ? batch.orders : [])
+        .filter(order => incomingOrders.some(incoming => batchContainsIncomingOrder({ orders: [order] }, incoming)));
+    if (!matchingOrders.length) return { batch, removedCount: 0, movedReceivedByItemKey: new Map() };
+
+    const identities = blanksBatchOrderIdentities(matchingOrders);
+    const names = new Set(matchingOrders.map(order => order.name).filter(Boolean));
+    const matchesStoredOrder = value => {
+        const identity = blanksBatchOrderIdentity(value);
+        return Boolean((identity && identities.has(identity)) || names.has(value?.name || value?.orderName));
+    };
+    const movedReceivedByItemKey = new Map();
+
+    batch.orders = (Array.isArray(batch.orders) ? batch.orders : []).filter(order => !matchesStoredOrder(order));
+    batch.orderNames = batch.orders.map(order => order.name).filter(Boolean);
+    batch.orderIds = batch.orders.map(order => order.orderId).filter(Boolean);
+    batch.manifest = (Array.isArray(batch.manifest) ? batch.manifest : []).map(line => {
+        const orderLines = Array.isArray(line.orderLines) ? line.orderLines : [];
+        const removedLines = orderLines.filter(orderLine => matchesStoredOrder({
+            orderId: orderLine?.orderId,
+            name: orderLine?.orderName,
+        }));
+        const movedReceived = removedLines.reduce((sum, orderLine) => {
+            return sum + Math.max(0, Number(orderLine?.accountedQty) || 0);
+        }, 0);
+        if (movedReceived) {
+            movedReceivedByItemKey.set(line.itemKey, (movedReceivedByItemKey.get(line.itemKey) || 0) + movedReceived);
+        }
+        const keptLines = orderLines.filter(orderLine => !removedLines.includes(orderLine));
+        return {
+            ...line,
+            expectedQty: keptLines.reduce((sum, orderLine) => sum + Math.max(0, Number(orderLine?.expectedQty) || 0), 0),
+            receivedQty: Math.max(0, (Number(line.receivedQty) || 0) - movedReceived),
+            orderLines: keptLines,
+        };
+    }).filter(line => (Number(line.expectedQty) || 0) > 0);
+
+    return {
+        batch: applyOldestFirstAllocation(batch),
+        removedCount: matchingOrders.length,
+        movedReceivedByItemKey,
+    };
+}
+
+function applyTransferredReceiving(batch, movedReceivedByItemKey, incomingOrders) {
+    const incomingBatch = buildBlanksBatch({ orders: incomingOrders });
+    const incomingExpectedByKey = new Map((incomingBatch.manifest || []).map(line => [
+        line.itemKey,
+        Math.max(0, Number(line.expectedQty) || 0),
+    ]));
+    batch.manifest = (Array.isArray(batch.manifest) ? batch.manifest : []).map(line => {
+        const transferred = Math.min(
+            incomingExpectedByKey.get(line.itemKey) || 0,
+            movedReceivedByItemKey.get(line.itemKey) || 0
+        );
+        return transferred ? { ...line, receivedQty: (Number(line.receivedQty) || 0) + transferred } : line;
+    });
+    return applyOldestFirstAllocation(batch);
+}
+
+async function assignOrdersToBatch(env, targetBatch, body) {
+    const incomingOrders = Array.isArray(body?.orders) ? body.orders : [];
+    const incomingBatch = buildBlanksBatch({
+        orders: incomingOrders,
+        source: "manual-batch-assignment",
+    });
+    if (!incomingBatch.orders.length) return { ok: false, error: "At least one order is required" };
+    if (!incomingBatch.manifest.length || !incomingBatch.totals.expectedGarments) {
+        return { ok: false, error: "Orders have no garment line items" };
+    }
+
+    const newOrders = incomingOrders.filter(order => !batchContainsIncomingOrder(targetBatch, order));
+    if (!newOrders.length) return { ok: false, error: "All provided orders are already in this batch" };
+
+    const originalIndex = await readBlanksBatchIndex(env);
+    const sourceEntries = originalIndex.batches.filter(entry => {
+        return entry?.id !== targetBatch.id && newOrders.some(order => indexEntryContainsIncomingOrder(entry, order));
+    });
+    const sources = [];
+    for (const entry of sourceEntries) {
+        const source = await readBlanksBatch(env, entry.id);
+        if (source && newOrders.some(order => batchContainsIncomingOrder(source, order))) sources.push(source);
+    }
+
+    const originals = new Map([[targetBatch.id, cloneJson(targetBatch)]]);
+    sources.forEach(source => originals.set(source.id, cloneJson(source)));
+    const movedReceivedByItemKey = new Map();
+    const affectedBatches = [];
+    const emptiedBatchIds = [];
+
+    sources.forEach(source => {
+        const result = removeIncomingOrdersFromBatch(source, newOrders);
+        result.movedReceivedByItemKey.forEach((quantity, itemKey) => {
+            movedReceivedByItemKey.set(itemKey, (movedReceivedByItemKey.get(itemKey) || 0) + quantity);
+        });
+        if (result.removedCount) {
+            if (result.batch.orders.length) affectedBatches.push(result.batch);
+            else emptiedBatchIds.push(result.batch.id);
+        }
+    });
+
+    const added = addOrdersToBatch(targetBatch, { orders: newOrders });
+    if (!added.ok) return added;
+    const updatedTarget = applyTransferredReceiving(added.batch, movedReceivedByItemKey, newOrders);
+    const changedBatches = [updatedTarget, ...affectedBatches];
+    const changedIds = new Set(changedBatches.map(batch => batch.id));
+    const removedIds = new Set(emptiedBatchIds);
+    const nextIndex = {
+        ...originalIndex,
+        batches: originalIndex.batches
+            .filter(entry => !changedIds.has(entry?.id) && !removedIds.has(entry?.id))
+            .concat(changedBatches.map(blanksBatchIndexEntry))
+            .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || ""))),
+    };
+
+    try {
+        for (const batch of changedBatches) await writeBlanksBatch(env, batch);
+        const writtenIndex = await writeBlanksBatchIndex(env, nextIndex);
+        for (const batchId of emptiedBatchIds) {
+            if (typeof env.PREVIEWS.delete === "function") await env.PREVIEWS.delete(blanksBatchKey(batchId));
+        }
+        return {
+            ok: true,
+            batch: updatedTarget,
+            affectedBatches,
+            removedBatchIds: emptiedBatchIds,
+            movedFromBatchIds: sources.map(source => source.id),
+            indexUpdatedAt: writtenIndex.updatedAt,
+        };
+    } catch (error) {
+        try {
+            for (const original of originals.values()) await writeBlanksBatch(env, original);
+            await writeBlanksBatchIndex(env, originalIndex);
+        } catch (rollbackError) {
+            console.error("Blanks batch assignment rollback failed", rollbackError);
+        }
+        throw error;
+    }
 }
 
 function applyBatchOrderAction(batch, body) {
@@ -1257,6 +1418,7 @@ function isFileLike(value) {
 //  - { id, updates: [{ itemKey, receivedQty }] }
 //  - { id, action: "remove-orders", orderNames: [] }
 //  - { id, action: "add-orders", orders: [] }
+//  - { id, action: "assign-orders", orders: [] }
 //  - updates receiving or batch membership and recalculates oldest-first allocation
 // -----------------------------
 async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
@@ -1302,6 +1464,20 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
             return jsonResponse({ error: "Batch has no garment line items" }, allowOrigin, reqAllowHeaders, 400);
         }
 
+        const currentIndex = await readBlanksBatchIndex(env);
+        const duplicateEntries = currentIndex.batches.filter(entry => {
+            return batch.orders.some(order => indexEntryContainsIncomingOrder(entry, order));
+        });
+        if (duplicateEntries.length) {
+            return jsonResponse({
+                error: {
+                    code: "ORDER_ALREADY_BATCHED",
+                    message: "One or more orders already belong to a receiving batch. Add or move them from the existing batch instead.",
+                    batchIds: duplicateEntries.map(entry => entry.id),
+                },
+            }, allowOrigin, reqAllowHeaders, 409);
+        }
+
         const { key } = await writeBlanksBatch(env, batch);
         const index = await upsertBlanksBatchIndexEntry(env, batch);
 
@@ -1342,9 +1518,16 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
             return jsonResponse({ error: "Not Found", id: batchId }, allowOrigin, reqAllowHeaders, 404);
         }
 
-        const result = applyBatchOrderAction(batch, body);
+        const action = safeText(body?.action, 80);
+        const result = action === "assign-orders"
+            ? await assignOrdersToBatch(env, batch, body)
+            : applyBatchOrderAction(batch, body);
         if (!result.ok) {
             return jsonResponse({ error: result.error }, allowOrigin, reqAllowHeaders, 400);
+        }
+
+        if (action === "assign-orders") {
+            return jsonResponse(result, allowOrigin, reqAllowHeaders, 200);
         }
 
         const { key } = await writeBlanksBatch(env, result.batch);
@@ -2254,7 +2437,7 @@ const PRODUCTION_STATE_QUERY = `query PrintMOProductionState($id: ID!) {
     id name createdAt updatedAt
     lineItems(first: 50) {
       nodes {
-        id title quantity currentQuantity
+        id sku title quantity currentQuantity
       }
       pageInfo { hasNextPage endCursor }
     }

@@ -3855,6 +3855,86 @@
   border-color: #cbd5e1;
 }
 
+.blanks-receive-order-picker {
+  display: grid;
+  gap: 12px;
+  margin: 0 12px 12px;
+  padding: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.blanks-receive-order-picker[hidden] {
+  display: none;
+}
+
+.blanks-receive-order-picker h3,
+.blanks-receive-order-picker p {
+  margin: 0;
+}
+
+.blanks-receive-order-picker p {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 0.76rem;
+}
+
+.blanks-receive-order-options {
+  display: grid;
+  max-height: 32dvh;
+  overflow: auto;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.blanks-receive-order-option {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 52px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.blanks-receive-order-option:last-child {
+  border-bottom: 0;
+}
+
+.blanks-receive-order-option input {
+  width: 20px;
+  height: 20px;
+}
+
+.blanks-receive-order-option > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.blanks-receive-order-option span span {
+  color: #64748b;
+  font-size: 0.72rem;
+}
+
+.blanks-receive-order-picker-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.blanks-receive-order-picker-actions button {
+  min-height: 44px;
+}
+
+.blanks-receive-order-picker-message {
+  grid-column: 1 / -1;
+  color: #b91c1c;
+  font-size: 0.74rem;
+}
+
 .blanks-receive-list {
   display: grid;
   gap: 10px;
@@ -6406,4 +6486,202 @@ body.mobile-mode[data-order-source="shopify"] .production-card.print-card .print
 
 body.mobile-mode[data-order-source="shopify"] #print-section.fullscreen .print-view-tabs button {
   display: inline-flex;
+}
+
+/* Shopify mobile compatibility for the flattened desktop production panel.
+   Mobile keeps its own stage navigation and horizontal card anatomy. */
+body.mobile-mode[data-order-source="shopify"] {
+  --board-action: #1a73e8;
+  --board-ink: #0f172a;
+  --board-muted: #64748b;
+  --board-canvas: #f8fafc;
+  --board-surface: #ffffff;
+  --board-surface-muted: #f1f5f9;
+  --board-border: #cbd5e1;
+  --board-success-soft: #dcfce7;
+  --board-success-text: #166534;
+  --board-warning-soft: #fef3c7;
+  --board-warning-text: #92400e;
+  --board-space-xs: 4px;
+  --board-space-sm: 8px;
+  --board-space-md: 12px;
+  --board-radius-card: 8px;
+  --board-radius-control: 10px;
+  --board-radius-panel: 22px;
+}
+
+body.mobile-mode[data-order-source="shopify"] .panel {
+  border-radius: var(--board-radius-panel);
+}
+
+body.mobile-mode[data-order-source="shopify"] .panel.fulfillment {
+  gap: 0;
+  padding: 0;
+}
+
+body.mobile-mode[data-order-source="shopify"][data-active-tab="readyToPrint"] .panel.fulfillment > .production-panel-header {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--board-space-sm);
+  min-height: 0;
+  padding: var(--board-space-sm) var(--board-space-md);
+}
+
+body.mobile-mode[data-order-source="shopify"][data-active-tab="blanksOrdered"] .panel.fulfillment > .production-panel-header {
+  display: none;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-panel-header .panel-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-panel-header .print-workflow-controls {
+  display: flex;
+  flex: 1 1 100%;
+  min-width: 0;
+  order: 3;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-panel-header .print-view-tabs {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-radius: var(--board-radius-control);
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-panel-header .print-view-tab {
+  min-width: 0;
+  min-height: 44px;
+  border-radius: 7px;
+}
+
+body.mobile-mode[data-order-source="shopify"] .panel.fulfillment > .fulfillment-board {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body.mobile-mode[data-order-source="shopify"] #print-section {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: var(--board-surface);
+  box-shadow: none;
+}
+
+body.mobile-mode[data-order-source="shopify"] #print-section .print-stage-header {
+  display: none;
+}
+
+body.mobile-mode[data-order-source="shopify"] .workflow-card-grid,
+body.mobile-mode[data-order-source="shopify"] #print-section .workflow-card-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: max-content;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: start;
+  align-items: start;
+  justify-content: stretch;
+  gap: var(--board-space-sm);
+  padding: var(--board-space-sm);
+  padding-bottom: var(--mobile-dock-scroll-inset);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (min-width: 560px) and (max-width: 900px) {
+  body.mobile-mode[data-order-source="shopify"] .workflow-card-grid,
+  body.mobile-mode[data-order-source="shopify"] #print-section .workflow-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card-statuses {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--board-space-xs);
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card-statuses:empty {
+  display: none;
+}
+
+body.mobile-mode[data-order-source="shopify"] .production-card-statuses .card-status-badge,
+body.mobile-mode[data-order-source="shopify"] .production-card-statuses .blanks-accounting-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.mobile-mode[data-order-source="shopify"] .mockup-slot-unavailable {
+  border-style: dashed !important;
+  border-color: var(--board-border) !important;
+  background: var(--board-canvas) !important;
+}
+
+body.mobile-mode[data-order-source="shopify"] .mockup-placeholder-label {
+  color: var(--board-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+body.mobile-mode[data-order-source="shopify"] .mockup-slot-loading {
+  animation: none !important;
+  background: var(--board-surface-muted) !important;
+}
+
+body.mobile-mode[data-order-source="shopify"] .shopify-board-card::before {
+  content: none;
+  animation: none;
+}
+
+body.mobile-mode[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) {
+  border-radius: var(--board-radius-card);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+body.mobile-mode[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) .card-header,
+body.mobile-mode[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) .card-footer {
+  border-color: var(--board-border);
+  background: var(--board-surface-muted);
+  color: var(--board-ink);
+}
+
+body.mobile-mode[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) .card-header.status-yellow,
+body.mobile-mode[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) .card-footer.status-yellow {
+  background: var(--board-warning-soft) !important;
+  color: var(--board-warning-text) !important;
+}
+
+body.mobile-mode[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) .card-header.status-green,
+body.mobile-mode[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) .card-footer.status-green {
+  background: var(--board-success-soft) !important;
+  color: var(--board-success-text) !important;
+}
+
+body.mobile-mode[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) .time-ago-pill {
+  background: rgba(15, 23, 42, 0.08);
+  color: inherit;
 }

@@ -1247,7 +1247,12 @@
       status?.classList.remove('is-success', 'is-error');
       if (status) status.textContent = 'Saving print count...';
       try {
-        await originalClick.call(this, event);
+        const saved = await originalClick.call(this, event);
+        if (saved === false) {
+          status?.classList.add('is-error');
+          if (status) status.textContent = 'Print progress could not be saved. Please try again.';
+          return;
+        }
         status?.classList.add('is-success');
         if (status) status.textContent = 'Print count saved.';
       } catch (error) {
@@ -1260,7 +1265,11 @@
           if (progressBar) progressBar.style.width = `${apparel ? Math.min(100, (previousProgress / apparel) * 100) : 0}%`;
         }
         status?.classList.add('is-error');
-        if (status) status.textContent = `Could not save print count: ${error?.message || error}`;
+        if (status) {
+          status.textContent = typeof productionProgressErrorMessage === 'function'
+            ? productionProgressErrorMessage(error)
+            : 'Print progress could not be saved. Please try again.';
+        }
       } finally {
         delete button.dataset.saving;
         button.disabled = false;

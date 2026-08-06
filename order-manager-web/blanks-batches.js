@@ -41,6 +41,7 @@
   let activeBlanksView = 'cart';
   let activeSuppliesView = 'cart';
   let suppliesHoverTimer = null;
+  const inlineReceivingMutations = new Map();
 
   function currentOrders() {
     try {
@@ -387,6 +388,7 @@
       .map(lineItemPayload);
 
     return {
+      orderId: cleanText(order?._gid || order?.id),
       name: cleanText(order?.name),
       orderNumber: parts.number,
       customer: parts.customer,
@@ -518,6 +520,81 @@
     return orderAccountingByName.get(orderName) || null;
   }
 
+  function manifestLineForAccounting(accountingLine) {
+    const batch = batchDetailsById.get(accountingLine?.batchId);
+    return (batch?.manifest || []).find(line => line.itemKey === accountingLine?.itemKey) || null;
+  }
+
+  async function refreshAccountingAfterReceiving(batch) {
+    if (batch?.id) {
+      batchDetailsById.set(batch.id, batch);
+      if (activeBatch?.id === batch.id) activeBatch = batch;
+    }
+    await loadBatchIndex();
+    buildOrderAccounting();
+    annotateAccountingCards();
+    renderDetailAccounting(detailAccountingOrderName || currentDetailOrderName());
+    if (isReceiveOverlayOpen() && activeBatch?.id) {
+      draftReceived = new Map((activeBatch.manifest || []).map(line => [
+        line.itemKey,
+        Number(line.receivedQty) || 0
+      ]));
+      dirty = false;
+      renderBatchDetail();
+    }
+  }
+
+  async function saveInlineReceivingLine(accountingLine, desiredOrderQty, control) {
+    const manifestLine = manifestLineForAccounting(accountingLine);
+    if (!manifestLine || !window.api || typeof window.api.updateBlanksBatchReceiving !== 'function') {
+      throw new Error('The receiving record is not available yet. Refresh batches and try again.');
+    }
+
+    const desired = Math.min(
+      Math.max(0, parseInt(desiredOrderQty, 10) || 0),
+      Math.max(0, Number(accountingLine.expectedQty) || 0)
+    );
+    const currentForOrder = Math.max(0, Number(accountingLine.accountedQty) || 0);
+    const currentForBatch = Math.max(0, Number(manifestLine.receivedQty) || 0);
+    const nextForBatch = Math.max(0, currentForBatch + (desired - currentForOrder));
+    if (nextForBatch === currentForBatch) return;
+
+    const mutationKey = `${accountingLine.batchId}::${accountingLine.itemKey}`;
+    if (inlineReceivingMutations.has(mutationKey)) return inlineReceivingMutations.get(mutationKey);
+
+    control?.classList.add('is-saving');
+    control?.querySelectorAll('button, input').forEach(element => { element.disabled = true; });
+    const message = control?.querySelector('.inline-accounting-message');
+    if (message) {
+      message.textContent = 'Saving…';
+      message.dataset.tone = 'neutral';
+    }
+
+    const mutation = (async () => {
+      try {
+        const result = await window.api.updateBlanksBatchReceiving(accountingLine.batchId, [{
+          itemKey: accountingLine.itemKey,
+          receivedQty: nextForBatch
+        }]);
+        await refreshAccountingAfterReceiving(result?.batch);
+      } catch (error) {
+        console.error('Unable to update inline garment receiving', error);
+        control?.classList.remove('is-saving');
+        control?.querySelectorAll('button, input').forEach(element => { element.disabled = false; });
+        if (message) {
+          message.textContent = `Could not save receiving. ${error?.message || error}`;
+          message.dataset.tone = 'error';
+          message.setAttribute('role', 'alert');
+        }
+        throw error;
+      } finally {
+        inlineReceivingMutations.delete(mutationKey);
+      }
+    })();
+    inlineReceivingMutations.set(mutationKey, mutation);
+    return mutation;
+  }
+
   function currentDetailOrderName() {
     try {
       if (detailOrder?.name) return detailOrder.name;
@@ -627,7 +704,7 @@
       ? 'All garments are accounted for in the S&S batch'
       : `${accounting.missingGarments} garment${accounting.missingGarments === 1 ? '' : 's'} still missing`;
 
-    const statusRegion = card.querySelector('.print-card-statuses');
+    const statusRegion = card.querySelector('.production-card-statuses');
     const body = card.querySelector('.compact-body') || card.querySelector('.card-body') || card;
     const anchor = body.querySelector('.card-status-badge');
     if (!existing) {
@@ -755,40 +832,74 @@
       const actionCell = document.createElement('td');
       actionCell.colSpan = cells.length;
 
-      const control = document.createElement('button');
-      control.type = 'button';
+      const control = document.createElement('div');
       control.className = `inline-accounting-control ${complete ? 'is-complete' : 'is-missing'}`;
-      control.title = complete
-        ? 'Open the supplier batch receiving record'
-        : `Receive this garment in its supplier batch (${match.expectedQty - match.accountedQty} still needed)`;
-      control.setAttribute('aria-label', control.title);
 
       const label = document.createElement('span');
       label.className = 'inline-accounting-label';
       label.textContent = 'Garment receiving';
 
-      const status = document.createElement('span');
-      status.className = 'inline-accounting-status';
-      status.textContent = complete
-        ? `Received ${match.accountedQty}/${match.expectedQty}`
-        : `Receive ${match.accountedQty}/${match.expectedQty}`;
-
-      const arrow = document.createElement('span');
-      arrow.className = 'inline-accounting-arrow';
-      arrow.setAttribute('aria-hidden', 'true');
-      arrow.textContent = '\u203a';
-
       const result = document.createElement('span');
       result.className = 'inline-accounting-result';
-      result.append(status, arrow);
-      control.append(label, result);
-      control.addEventListener('click', () => {
+      const status = document.createElement('span');
+      status.className = 'inline-accounting-status';
+      status.textContent = `${match.accountedQty}/${match.expectedQty} received`;
+      result.appendChild(status);
+
+      if (match.lines.length === 1) {
         const [line] = match.lines;
-        openBatchForAccountingLine(detailAccountingOrderName || currentDetailOrderName(), line).catch(error => {
-          console.error('Unable to open garment receiving record', error);
-          alert(`Could not open receiving: ${error?.message || error}`);
+        const stepper = document.createElement('span');
+        stepper.className = 'inline-accounting-stepper';
+        const decrement = document.createElement('button');
+        decrement.type = 'button';
+        decrement.textContent = '−';
+        decrement.setAttribute('aria-label', 'Decrease received garment count');
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '0';
+        input.max = String(match.expectedQty);
+        input.inputMode = 'numeric';
+        input.value = String(match.accountedQty);
+        input.setAttribute('aria-label', `Received quantity for ${title}`);
+        const increment = document.createElement('button');
+        increment.type = 'button';
+        increment.textContent = '+';
+        increment.setAttribute('aria-label', 'Increase received garment count');
+        const save = document.createElement('button');
+        save.type = 'button';
+        save.className = 'inline-accounting-save';
+        save.textContent = 'Save';
+
+        const commit = value => {
+          saveInlineReceivingLine(line, value, control).catch(() => {});
+        };
+        decrement.addEventListener('click', () => commit(Math.max(0, (parseInt(input.value, 10) || 0) - 1)));
+        increment.addEventListener('click', () => commit(Math.min(match.expectedQty, (parseInt(input.value, 10) || 0) + 1)));
+        save.addEventListener('click', () => commit(input.value));
+        input.addEventListener('keydown', event => {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          commit(input.value);
         });
-      });
+        stepper.append(decrement, input, increment, save);
+        result.appendChild(stepper);
+      } else {
+        const manage = document.createElement('button');
+        manage.type = 'button';
+        manage.className = 'inline-accounting-manage';
+        manage.textContent = 'Manage batches';
+        manage.addEventListener('click', () => {
+          openBatchForOrder(detailAccountingOrderName || currentDetailOrderName()).catch(error => {
+            console.error('Unable to open garment receiving records', error);
+          });
+        });
+        result.appendChild(manage);
+      }
+
+      const message = document.createElement('span');
+      message.className = 'inline-accounting-message';
+      message.setAttribute('aria-live', 'polite');
+      control.append(label, result, message);
       actionCell.appendChild(control);
       actionRow.appendChild(actionCell);
       row.classList.add('has-accounting-action');
@@ -1162,10 +1273,22 @@
         <div class="manual-add-actions blanks-receive-actions">
           <button id="blanks-receive-back" class="manual-add-action manual-add-action-secondary hidden" type="button">Back</button>
           <button id="blanks-receive-refresh" class="manual-add-action" type="button">Refresh</button>
-          <button id="blanks-receive-add-cart" class="manual-add-action hidden" type="button">Add In-Cart Orders</button>
+          <button id="blanks-receive-add-cart" class="manual-add-action hidden" type="button">Add Orders</button>
           <button id="blanks-receive-mark-all" class="manual-add-action hidden" type="button">Mark All Received</button>
           <button id="blanks-receive-save" class="manual-add-action blanks-receive-save hidden" type="button" disabled>Save Receiving</button>
         </div>
+        <section id="blanks-receive-order-picker" class="blanks-receive-order-picker" hidden aria-labelledby="blanks-receive-order-picker-title">
+          <div>
+            <h3 id="blanks-receive-order-picker-title">Add or move orders</h3>
+            <p>Select only the orders that belong in this batch. Orders already in another batch will be moved here.</p>
+          </div>
+          <div id="blanks-receive-order-options" class="blanks-receive-order-options"></div>
+          <div class="blanks-receive-order-picker-actions">
+            <span id="blanks-receive-order-picker-message" class="blanks-receive-order-picker-message" aria-live="polite"></span>
+            <button id="blanks-receive-order-cancel" class="manual-add-action manual-add-action-secondary" type="button">Cancel</button>
+            <button id="blanks-receive-order-confirm" class="manual-add-action" type="button" disabled>Add selected</button>
+          </div>
+        </section>
         <div class="manual-add-body">
           <div id="blanks-receive-list" class="blanks-receive-list"></div>
           <div id="blanks-receive-empty" class="manual-add-empty" hidden>
@@ -1182,7 +1305,10 @@
     overlay.querySelector('#blanks-receive-close')?.addEventListener('click', closeReceiveOverlay);
     overlay.querySelector('#blanks-receive-back')?.addEventListener('click', showBatchList);
     overlay.querySelector('#blanks-receive-refresh')?.addEventListener('click', refreshReceiveOverlay);
-    overlay.querySelector('#blanks-receive-add-cart')?.addEventListener('click', addCurrentCartOrdersToActiveBatch);
+    overlay.querySelector('#blanks-receive-add-cart')?.addEventListener('click', openOrderPicker);
+    overlay.querySelector('#blanks-receive-order-cancel')?.addEventListener('click', closeOrderPicker);
+    overlay.querySelector('#blanks-receive-order-confirm')?.addEventListener('click', assignSelectedOrdersToActiveBatch);
+    overlay.querySelector('#blanks-receive-order-options')?.addEventListener('change', syncOrderPickerSelection);
     overlay.querySelector('#blanks-receive-mark-all')?.addEventListener('click', markAllManifestReceived);
     overlay.querySelector('#blanks-receive-save')?.addEventListener('click', saveReceiving);
     overlay.addEventListener('click', handleReceiveClick);
@@ -1217,6 +1343,7 @@
 
   function closeReceiveOverlay() {
     if (!confirmDiscardDraft()) return;
+    closeOrderPicker({ focus: false });
     document.getElementById('blanks-receive-overlay')?.classList.add('hidden');
     document.body.classList.remove('blanks-receive-open', 'manual-add-open');
     document.getElementById('blanks-receive-batches-btn')?.focus();
@@ -1268,6 +1395,7 @@
 
   function showBatchList() {
     if (!confirmDiscardDraft()) return;
+    closeOrderPicker({ focus: false });
     activeBatch = null;
     draftReceived = new Map();
     dirty = false;
@@ -1351,6 +1479,7 @@
   }
 
   function renderBatchDetail() {
+    closeOrderPicker({ focus: false });
     setHeaderMode('detail');
     const list = document.getElementById('blanks-receive-list');
     const empty = document.getElementById('blanks-receive-empty');
@@ -1369,72 +1498,159 @@
     syncAddCartOrdersState();
   }
 
-  function currentCartOrdersForActiveBatch() {
+  function availableOrdersForActiveBatch() {
     if (!activeBatch) return [];
-    const existing = new Set(Array.isArray(activeBatch.orderNames) ? activeBatch.orderNames : []);
+    const existingNames = new Set(Array.isArray(activeBatch.orderNames) ? activeBatch.orderNames : []);
+    const existingIds = new Set(Array.isArray(activeBatch.orderIds) ? activeBatch.orderIds : []);
     return currentOrders().filter(order => {
-      return order?.status === 'blanks' && !isOrdered(order) && !existing.has(order.name);
+      const payload = orderPayload(order);
+      return order?.status === 'blanks'
+        && payload.items.length > 0
+        && !existingNames.has(payload.name)
+        && !(payload.orderId && existingIds.has(payload.orderId));
     });
   }
 
   function syncAddCartOrdersState() {
     const button = document.getElementById('blanks-receive-add-cart');
     if (!button || button.classList.contains('hidden')) return;
-    const count = currentCartOrdersForActiveBatch().length;
+    const count = availableOrdersForActiveBatch().length;
     button.disabled = !activeBatch || dirty || count === 0;
-    button.textContent = count ? `Add In-Cart (${count})` : 'Add In-Cart Orders';
+    button.textContent = count ? `Add Orders (${count})` : 'Add Orders';
     button.title = dirty
       ? 'Save or discard receiving changes before adding orders to this batch'
-      : 'Add current In S&S Cart orders to this batch';
+      : 'Select unbatched orders or move orders here from another receiving batch';
   }
 
-  async function addCurrentCartOrdersToActiveBatch() {
-    if (!activeBatch || dirty) return;
-    if (!window.api || typeof window.api.addOrdersToBlanksBatch !== 'function') return;
-    const orders = currentCartOrdersForActiveBatch();
-    if (!orders.length) {
-      alert('No In S&S Cart orders are available to add to this batch.');
-      return;
-    }
-    const label = activeBatch.label || activeBatch.id;
-    const message = `Add ${orders.length} In S&S Cart order${orders.length === 1 ? '' : 's'} to ${label}? This will mark them Ordered and recalculate the batch.`;
-    if (!window.confirm(message)) return;
+  function closeOrderPicker({ focus = true } = {}) {
+    const picker = document.getElementById('blanks-receive-order-picker');
+    if (!picker || picker.hidden) return;
+    picker.hidden = true;
+    const message = document.getElementById('blanks-receive-order-picker-message');
+    if (message) message.textContent = '';
+    if (focus) document.getElementById('blanks-receive-add-cart')?.focus();
+  }
 
-    const button = document.getElementById('blanks-receive-add-cart');
-    if (button) {
-      button.disabled = true;
-      button.textContent = 'Adding...';
+  function orderPickerMembership(order) {
+    const accounting = accountingForOrder(order?.name);
+    if (!accounting?.batches?.size) return isOrdered(order) ? 'Ordered · no saved batch' : 'In S&S Cart';
+    const sourceLabels = Array.from(accounting.batches.entries())
+      .filter(([batchId]) => batchId !== activeBatch?.id)
+      .map(([, label]) => label);
+    return sourceLabels.length ? `Move from ${sourceLabels.join(', ')}` : 'Already in this batch';
+  }
+
+  function syncOrderPickerSelection() {
+    const selected = document.querySelectorAll('#blanks-receive-order-options input[type="checkbox"]:checked').length;
+    const confirm = document.getElementById('blanks-receive-order-confirm');
+    if (confirm) {
+      confirm.disabled = selected === 0;
+      confirm.textContent = selected ? `Add selected (${selected})` : 'Add selected';
     }
+  }
+
+  function openOrderPicker() {
+    if (!activeBatch || dirty) return;
+    const picker = document.getElementById('blanks-receive-order-picker');
+    const options = document.getElementById('blanks-receive-order-options');
+    if (!picker || !options) return;
+    const orders = availableOrdersForActiveBatch();
+    options.replaceChildren();
+    orders.forEach((order, index) => {
+      const option = document.createElement('label');
+      option.className = 'blanks-receive-order-option';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.dataset.orderIndex = String(index);
+      const copy = document.createElement('span');
+      const name = document.createElement('strong');
+      name.textContent = order.name || 'Unnamed order';
+      const state = document.createElement('span');
+      state.textContent = orderPickerMembership(order);
+      copy.append(name, state);
+      option.append(checkbox, copy);
+      options.appendChild(option);
+    });
+    picker.hidden = false;
+    picker.dataset.orderCount = String(orders.length);
+    syncOrderPickerSelection();
+    picker.querySelector('input')?.focus();
+  }
+
+  async function assignSelectedOrdersToActiveBatch() {
+    if (!activeBatch || dirty || !window.api || typeof window.api.assignOrdersToBlanksBatch !== 'function') return;
+    const available = availableOrdersForActiveBatch();
+    const selected = Array.from(document.querySelectorAll('#blanks-receive-order-options input[type="checkbox"]:checked'))
+      .map(input => available[Number(input.dataset.orderIndex)])
+      .filter(Boolean);
+    if (!selected.length) return;
+
+    const confirm = document.getElementById('blanks-receive-order-confirm');
+    const cancel = document.getElementById('blanks-receive-order-cancel');
+    const message = document.getElementById('blanks-receive-order-picker-message');
+    if (confirm) {
+      confirm.disabled = true;
+      confirm.textContent = 'Updating batch…';
+    }
+    if (cancel) cancel.disabled = true;
+    if (message) message.textContent = '';
 
     try {
-      const payload = buildBlanksBatchPayload(orders);
-      const result = await window.api.addOrdersToBlanksBatch(activeBatch.id, payload.orders);
+      const payload = buildBlanksBatchPayload(selected);
+      const result = await window.api.assignOrdersToBlanksBatch(activeBatch.id, payload.orders);
       activeBatch = result?.batch || activeBatch;
       if (activeBatch?.id) batchDetailsById.set(activeBatch.id, activeBatch);
+      (result?.affectedBatches || []).forEach(batch => {
+        if (batch?.id) batchDetailsById.set(batch.id, batch);
+      });
+      (result?.removedBatchIds || []).forEach(batchId => batchDetailsById.delete(batchId));
 
-      const orderNames = orders.map(order => order.name).filter(Boolean);
-      if (typeof applyOptimisticOrderUpdate === 'function') {
-        await applyOptimisticOrderUpdate(
-          orderNames,
-          { status: 'blanks', blanksOrdered: 1 },
-          names => updateBlanksOrderedForOrders(names, true),
-          'Batch was updated, but orders could not be marked ordered'
-        );
-      } else if (typeof updateBlanksOrderedForOrders === 'function') {
-        await updateBlanksOrderedForOrders(orderNames, true);
-        if (typeof renderBoard === 'function') await renderBoard();
+      const newlyOrderedNames = selected.filter(order => !isOrdered(order)).map(order => order.name).filter(Boolean);
+      let orderingWarning = '';
+      try {
+        if (newlyOrderedNames.length && typeof applyOptimisticOrderUpdate === 'function') {
+          await applyOptimisticOrderUpdate(
+            newlyOrderedNames,
+            { status: 'blanks', blanksOrdered: 1 },
+            names => updateBlanksOrderedForOrders(names, true),
+            'Batch was updated, but orders could not be marked ordered'
+          );
+        } else if (newlyOrderedNames.length && typeof updateBlanksOrderedForOrders === 'function') {
+          await updateBlanksOrderedForOrders(newlyOrderedNames, true);
+          if (typeof renderBoard === 'function') await renderBoard();
+        }
+      } catch (error) {
+        orderingWarning = ` Batch membership was saved, but the order stage was not updated: ${error?.message || error}`;
+        console.error('Batch assignment saved but order stage update failed', error);
       }
 
+      draftReceived = new Map((activeBatch?.manifest || []).map(line => [line.itemKey, Number(line.receivedQty) || 0]));
+      dirty = false;
+      closeOrderPicker({ focus: false });
       await loadBatchIndex();
       buildOrderAccounting();
       annotateAccountingCards();
       renderDetailAccounting(detailAccountingOrderName || currentDetailOrderName());
       renderBatchDetail();
+      if (orderingWarning) {
+        if (typeof showMoveNotice === 'function') showMoveNotice(orderingWarning.trim());
+        else console.warn(orderingWarning.trim());
+      }
     } catch (error) {
-      console.error('Unable to add in-cart orders to batch', error);
-      alert(`Could not add orders to batch: ${error?.message || error}`);
-      syncAddCartOrdersState();
+      console.error('Unable to assign orders to batch', error);
+      if (message) {
+        message.textContent = `Could not update batch. ${error?.message || error}`;
+        message.setAttribute('role', 'alert');
+      }
+      if (confirm) confirm.disabled = false;
+      if (cancel) cancel.disabled = false;
+      syncOrderPickerSelection();
     }
+  }
+
+  async function addCurrentCartOrdersToActiveBatch() {
+    // Kept as a compatibility hook for older callers; the picker now requires an explicit selection.
+    openOrderPicker();
   }
 
   function renderManifestLine(line) {

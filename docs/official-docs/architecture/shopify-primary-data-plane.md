@@ -26,10 +26,10 @@
 
 ## Current Release Boundary
 
-Candidate deployment on 2026-07-26:
+Candidate deployment on 2026-08-06:
 
-- Worker version: `1552669a-4003-4f2a-8e27-45b8480165e1`
-- Pages deployment: `a708cc2c.print-mo-order-manager.pages.dev`
+- Worker version: `989a3f57-1632-4cbe-b810-8f7916693529`
+- Pages deployment: `f00284c1.print-mo-order-manager.pages.dev` (release marker `1786045361453`)
 - Shopify app version: `designer-assets-idempotency-2026-07-23`
 - Stateless supplier gateway commit: `420ff72`
 
@@ -79,7 +79,9 @@ The Admin order block presents five operator-facing stages by grouping
 Its production DTO also returns a read-only `garmentCount`, calculated from all
 paginated current line-item quantities that have a supplier SKU after excluding
 known print-service lines. The Worker rejects `printedCount` values above that
-current garment total.
+current garment total. `PrintMOProductionState` must request `sku` on its first
+50 line items as well as on pagination; omitting it makes valid first-page
+garments indistinguishable from non-supplier lines and falsely reduces the cap.
 
 `completed` means manufacturing is finished, not that pickup or delivery has
 finished. The Ready to Print workspace renders `print` under **To Print** and
@@ -149,6 +151,8 @@ Candidate mutations are serialized per order in the browser. A board move sends 
 7. advances Shopify production state only after supplier confirmation.
 
 An ambiguous supplier result becomes `unknown` and cannot be blindly retried. Nightly reconciliation repairs post-confirmation Shopify metadata if the supplier succeeded but a subsequent metadata write failed.
+
+The separate `/order-manager/blanks-batches` compatibility surface records manual receiving manifests in the private `PREVIEWS` R2 binding. New records carry immutable Shopify order GIDs with name fallback for older manifests. The Worker enforces one active receiving-manifest membership per order: create rejects duplicates, while `assign-orders` can add an unbatched order or remove it from another manifest and place it in the selected target. Transfer preserves attributable received quantity, recalculates oldest-first allocation, and removes an emptied source from the active index. This R2 compatibility path does not replace the D1 supplier-batch state machine; normalized D1 receiving entities remain the target for fully transactional receiving history.
 
 ## Assets and Migration
 

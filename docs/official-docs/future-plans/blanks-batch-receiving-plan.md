@@ -1,6 +1,6 @@
 # Blanks Batch Receiving Workflow Plan
 
-- **Status**: `[Draft / Idea]`
+- **Status**: `[Implemented Candidate]`
 - **Owner / Target Milestone**: `v1.4 Backlog`
 
 ---
@@ -13,11 +13,11 @@ Provide a receiving workflow for incoming blank-apparel shipments from S&S Activ
 
 ## Current Continuation State
 
-- **Current state**: Draft requirements and the Shopify/D1 target boundary are recorded; no receiving implementation has shipped.
-- **Next safe action**: Resolve the scan/manual and partial-shipment choices, then define D1 entities and canonical production-state effects.
-- **Remaining blockers**: Receiving identity, partial quantity semantics, and relationship to in-house inventory.
+- **Current state**: A production candidate supports authenticated R2 receiving manifests, aggregate expected/received quantities, inline order-detail edits, full-batch receiving, stable Shopify GID membership, and explicit add/transfer correction with one active batch per order.
+- **Next safe action**: Complete owner acceptance of inline edits and add/transfer behavior, then design the normalized D1 migration for audit history, scanning, damage, and partial-shipment events.
+- **Remaining blockers**: Normalized D1 receiving entities, idempotent/audited quantity mutations, barcode input, damage handling, and relationship to in-house inventory.
 - **Owner / external actions**: Choose the preferred shop-floor input method and partial-shipment presentation.
-- **Last verified evidence**: Plan direction was aligned to the Shopify/D1 Worker boundary on 2026-07-23.
+- **Last verified evidence**: Phase 2 Worker/client contracts covered quantity validation, inline controls, dialog stacking, unique membership, and transfer behavior on 2026-08-06; owner browser acceptance remains manual.
 
 ## Open Questions & Brainstorming
 
@@ -33,10 +33,12 @@ Provide a receiving workflow for incoming blank-apparel shipments from S&S Activ
 - [ ] Add normalized shipment and received-item tables in D1, linked to the canonical Shopify order GID and confirmed batch records.
 - [ ] Add authenticated Worker endpoints with idempotency and audit events; clients must not write receiving state directly.
 
-### Phase 2: UI UI Receiving Overlay
-- [ ] Add receiving modal to `Blanks Ordered` column cards.
-- [ ] Display checklist of expected SKUs vs received quantities.
-- [ ] Add "Mark Fully Received" CTA button.
+### Phase 2: UI Receiving Foundation
+- [x] Add authenticated receiving modal for ordered blanks batches.
+- [x] Display expected, received, accounted, and missing SKU quantities.
+- [x] Add "Mark All Received" action.
+- [x] Add inline order-detail quantity controls without stacking the full modal.
+- [x] Add explicit order selection and cross-batch transfer correction.
 
 ---
 
@@ -44,3 +46,4 @@ Provide a receiving workflow for incoming blank-apparel shipments from S&S Activ
 
 - **2026-07-21**: Feature converted from legacy markdown plan into Stage 1 `[Draft / Idea]` in `future-plans/`.
 - **2026-07-23**: Replaced the obsolete Redis queue/IPC direction with the Shopify/D1 Worker data plane required after Redis-free cutover.
+- **2026-08-06**: Promoted the shipped receiving foundation to `[Implemented Candidate]`; added stable order identity, unique active membership, received-quantity-preserving transfer, inline detail edits, and accessible modal stacking. Normalized D1 receiving history remains follow-up work.

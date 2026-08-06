@@ -1007,6 +1007,15 @@ window.api.addOrdersToBlanksBatch = async (id, orders = []) => {
   });
 };
 
+window.api.assignOrdersToBlanksBatch = async (id, orders = []) => {
+  if (!id) throw new Error("Batch ID is required");
+  const cleanOrders = Array.isArray(orders) ? orders.filter(Boolean) : [];
+  return apiFetch("/order-manager/blanks-batches", {
+    method: "PATCH",
+    body: JSON.stringify({ id, action: "assign-orders", orders: cleanOrders }),
+  });
+};
+
 window.api.listStorageObjects = async ({ prefix, cursor, limit, delimiter } = {}) => {
   const query = buildQuery({ prefix, cursor, limit, delimiter });
   return apiFetch(`/order-manager/storage/list${query}`, { method: "GET" });

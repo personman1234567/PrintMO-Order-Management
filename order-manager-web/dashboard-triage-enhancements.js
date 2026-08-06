@@ -226,8 +226,13 @@
     let mockupSlot = body.querySelector('.mockup-slot');
     if (!mockupSlot && triage.missingMockup) {
       mockupSlot = document.createElement('div');
-      mockupSlot.className = 'mockup-slot dashboard-mockup-placeholder';
-      mockupSlot.setAttribute('aria-label', 'No mockup preview available');
+      mockupSlot.className = 'mockup-slot mockup-slot-unavailable dashboard-mockup-placeholder';
+      mockupSlot.setAttribute('aria-label', 'No preview image is available');
+      const placeholder = document.createElement('span');
+      placeholder.className = 'mockup-placeholder-label';
+      placeholder.setAttribute('aria-hidden', 'true');
+      placeholder.textContent = 'No preview';
+      mockupSlot.appendChild(placeholder);
       body.insertBefore(mockupSlot, body.firstChild);
       body.classList.remove('no-mockup');
       body.classList.add('has-mockup', 'dashboard-generated-mockup-slot');

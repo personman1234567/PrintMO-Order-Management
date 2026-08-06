@@ -4144,6 +4144,82 @@
       border-color: #cbd5e1;
     }
 
+    .blanks-receive-order-picker {
+      display: grid;
+      gap: 12px;
+      margin: 0 18px 14px;
+      padding: 14px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+
+    .blanks-receive-order-picker[hidden] {
+      display: none;
+    }
+
+    .blanks-receive-order-picker h3,
+    .blanks-receive-order-picker p {
+      margin: 0;
+    }
+
+    .blanks-receive-order-picker p {
+      margin-top: 3px;
+      color: #64748b;
+      font-size: 0.78rem;
+    }
+
+    .blanks-receive-order-options {
+      display: grid;
+      max-height: min(34vh, 340px);
+      overflow: auto;
+      border: 1px solid #dbe3ee;
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .blanks-receive-order-option {
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr);
+      gap: 10px;
+      align-items: center;
+      min-height: 48px;
+      padding: 8px 10px;
+      border-bottom: 1px solid #e2e8f0;
+      cursor: pointer;
+    }
+
+    .blanks-receive-order-option:last-child {
+      border-bottom: 0;
+    }
+
+    .blanks-receive-order-option > span {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .blanks-receive-order-option span span {
+      overflow: hidden;
+      color: #64748b;
+      font-size: 0.74rem;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .blanks-receive-order-picker-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .blanks-receive-order-picker-message {
+      flex: 1;
+      color: #b91c1c;
+      font-size: 0.76rem;
+    }
+
     .blanks-receive-list {
       display: grid;
       gap: 12px;
@@ -6000,5 +6076,223 @@ body[data-order-source="shopify"] #print-section.fullscreen .print-header-title 
 @media (prefers-reduced-motion: reduce) {
   body[data-order-source="shopify"] .print-view-tab {
     transition: none;
+  }
+}
+
+/* Shopify workflow foundation: one panel header, one queue scroller, and one
+   stable card anatomy. Keep Legacy Redis on its existing presentation. */
+body[data-order-source="shopify"] {
+  --board-action: #1a73e8;
+  --board-action-hover: #1765c1;
+  --board-ink: #0f172a;
+  --board-text: #334155;
+  --board-muted: #64748b;
+  --board-canvas: #f8fafc;
+  --board-surface: #ffffff;
+  --board-surface-muted: #f1f5f9;
+  --board-border: #cbd5e1;
+  --board-success-soft: #dcfce7;
+  --board-success-text: #166534;
+  --board-warning-soft: #fef3c7;
+  --board-warning-text: #92400e;
+  --board-space-xs: 4px;
+  --board-space-sm: 8px;
+  --board-space-md: 12px;
+  --board-space-lg: 16px;
+  --board-radius-card: 8px;
+  --board-radius-control: 10px;
+  --board-radius-section: 12px;
+  --board-radius-panel: 22px;
+}
+
+body[data-order-source="shopify"] .panel {
+  border-radius: var(--board-radius-panel);
+}
+
+body[data-order-source="shopify"] .panel.fulfillment {
+  gap: 0;
+  padding: 0;
+}
+
+body[data-order-source="shopify"] .production-panel-header {
+  flex: 0 0 auto;
+  justify-content: space-between;
+  gap: var(--board-space-md);
+  padding: var(--board-space-md) var(--board-space-lg);
+}
+
+body[data-order-source="shopify"] .production-panel-header .panel-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+body[data-order-source="shopify"] .production-panel-header .print-workflow-controls {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  margin-left: auto;
+}
+
+body[data-order-source="shopify"] .panel.fulfillment > .fulfillment-board {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body[data-order-source="shopify"] .panel.fulfillment #print-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: var(--board-surface);
+  box-shadow: none;
+}
+
+body[data-order-source="shopify"] #print-section .print-stage-header {
+  display: none;
+}
+
+body[data-order-source="shopify"] .workflow-card-grid,
+body[data-order-source="shopify"] .panel.fulfillment #print-section .workflow-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: max-content;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: start;
+  align-items: start;
+  justify-content: stretch;
+  gap: var(--board-space-md);
+  padding: var(--board-space-md);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+body[data-order-source="shopify"] .workflow-card-grid:empty {
+  min-height: 76px;
+  place-items: center;
+  border: 1px dashed var(--board-border);
+  border-radius: var(--board-radius-control);
+  background: var(--board-canvas);
+  color: var(--board-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+body[data-order-source="shopify"] .production-card-statuses {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--board-space-xs);
+}
+
+body[data-order-source="shopify"] .production-card-statuses:empty {
+  display: none;
+}
+
+body[data-order-source="shopify"] .production-card-statuses .card-status-badge,
+body[data-order-source="shopify"] .production-card-statuses .blanks-accounting-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body[data-order-source="shopify"] .mockup-slot-unavailable {
+  border-style: dashed !important;
+  border-color: var(--board-border) !important;
+  background: var(--board-canvas) !important;
+}
+
+body[data-order-source="shopify"] .mockup-placeholder-label {
+  color: var(--board-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+body[data-order-source="shopify"] .mockup-slot-loading {
+  animation: none !important;
+  background: var(--board-surface-muted) !important;
+}
+
+body[data-order-source="shopify"] .shopify-board-card::before {
+  content: none;
+  animation: none;
+}
+
+body[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) {
+  border-radius: var(--board-radius-card);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+body[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) .card-header,
+body[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) .card-footer {
+  border-color: var(--board-border);
+  background: var(--board-surface-muted);
+  color: var(--board-ink);
+}
+
+body[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) .card-header.status-yellow,
+body[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) .card-footer.status-yellow {
+  background: var(--board-warning-soft) !important;
+  color: var(--board-warning-text) !important;
+}
+
+body[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) .card-header.status-green,
+body[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) .card-footer.status-green {
+  background: var(--board-success-soft) !important;
+  color: var(--board-success-text) !important;
+}
+
+body[data-order-source="shopify"] .shopify-board-card:not(.bundle-card) .time-ago-pill {
+  background: rgba(15, 23, 42, 0.08);
+  color: inherit;
+}
+
+body[data-order-source="shopify"] .dashboard-filter,
+body[data-order-source="shopify"] .dashboard-sort-control select,
+body[data-order-source="shopify"] .supplies-tab,
+body[data-order-source="shopify"] .print-view-tab,
+body[data-order-source="shopify"] .section-actions button,
+body[data-order-source="shopify"] .panel-header button {
+  min-height: 44px;
+}
+
+body[data-order-source="shopify"] .print-view-tabs {
+  border-radius: var(--board-radius-control);
+}
+
+body[data-order-source="shopify"] .print-view-tab {
+  min-height: 44px;
+  border-radius: 7px;
+  padding: var(--board-space-sm) var(--board-space-md);
+}
+
+body[data-order-source="shopify"] .pipeline-card .delete-btn {
+  width: 28px;
+  height: 28px;
+}
+
+body[data-order-source="shopify"] .pipeline-card .delete-btn::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+}
+
+@media (hover: hover) {
+  body[data-order-source="shopify"] .pipeline .cards .dashboard-triaged:hover {
+    transform: translateY(-1px);
   }
 }

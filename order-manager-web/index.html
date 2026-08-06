@@ -130,9 +130,6 @@
           <span class="panel-title-mobile">Orders</span>
         </h2>
         <span id="pipeline-count">0</span>
-        <button id="received-bundle-start" class="bundle-btn">Bundle</button>
-        <button id="received-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
-        <button id="received-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
         <button id="mobile-selection-toggle" class="mobile-select-toggle" type="button" aria-pressed="false" title="Toggle selection mode">Select</button>
       </div>
       <div id="pipeline-selection-shell" class="mobile-selection-shell" aria-hidden="true">
@@ -203,8 +200,25 @@
 
     <!-- RIGHT: Fulfillment -->
     <div class="panel fulfillment">
-      <div class="panel-header">PRODUCTION &amp; FULFILLMENT</div>
-      <div class="panel-body" style="display:flex; flex-direction:column;">
+      <div class="panel-header production-panel-header">
+        <h2 class="panel-title">
+          <span class="panel-title-desktop">PRODUCTION &amp; FULFILLMENT</span>
+          <span class="panel-title-mobile">Print</span>
+        </h2>
+        <div class="print-workflow-controls">
+          <div class="print-view-tabs" role="tablist" aria-label="Production status view">
+            <button id="print-view-to-print" class="print-view-tab active" type="button" role="tab" aria-selected="true" aria-controls="col-print">
+              <span>To Print</span>
+              <span id="print-to-print-count" class="print-view-count">0</span>
+            </button>
+            <button id="print-view-printed" class="print-view-tab" type="button" role="tab" aria-selected="false" aria-controls="col-print" tabindex="-1">
+              <span>Printed</span>
+              <span id="print-printed-count" class="print-view-count">0</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="panel-body fulfillment-board">
         <div class="sub-section" id="blanks-section">
           <div class="section-header">
             <h3 class="blanks-header-title">Blanks</h3>
@@ -222,37 +236,15 @@
             </div>
             <div class="section-actions">
               <button id="blanks-mark-ordered-btn" class="fullscreen-btn blanks-mark-ordered" type="button">Mark In Cart Ordered</button>
-              <button id="blanks-fullscreen-btn" class="fullscreen-btn">Fullscreen</button>
-              <button id="blanks-bundle-start" class="bundle-btn">Bundle</button>
-              <button id="blanks-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
-              <button id="blanks-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
             </div>
           </div>
-          <div class="cards" id="col-blanks"></div>
+          <div class="cards workflow-card-grid" id="col-blanks"></div>
         </div>
-        <div class="sub-section" id="print-section">
-          <div class="section-header">
-            <h3 class="print-header-title">Ready To Print</h3>
-            <div class="print-workflow-controls">
-              <div class="print-view-tabs" role="tablist" aria-label="Ready to Print status view">
-                <button id="print-view-to-print" class="print-view-tab active" type="button" role="tab" aria-selected="true" aria-controls="col-print">
-                  <span>To Print</span>
-                  <span id="print-to-print-count" class="print-view-count">0</span>
-                </button>
-                <button id="print-view-printed" class="print-view-tab" type="button" role="tab" aria-selected="false" aria-controls="col-print" tabindex="-1">
-                  <span>Printed</span>
-                  <span id="print-printed-count" class="print-view-count">0</span>
-                </button>
-              </div>
-            </div>
-            <div class="section-actions">
-              <button id="print-fullscreen-btn" class="fullscreen-btn">Fullscreen</button>
-              <button id="print-bundle-start" class="bundle-btn">Bundle</button>
-              <button id="print-bundle-confirm" class="bundle-confirm hidden">Confirm</button>
-              <button id="print-bundle-cancel" class="bundle-cancel hidden">Cancel</button>
-            </div>
+        <div class="production-stage" id="print-section">
+          <div class="section-header print-stage-header">
+            <h3>Ready To Print</h3>
           </div>
-          <div class="cards" id="col-print" role="tabpanel" aria-labelledby="print-view-to-print" data-empty-message="No orders waiting to be printed"></div>
+          <div class="cards workflow-card-grid" id="col-print" role="tabpanel" aria-labelledby="print-view-to-print" data-empty-message="No orders waiting to be printed"></div>
         </div>
       </div>
     </div>
@@ -725,9 +717,6 @@
       <div id="asset-viewer-caption" class="asset-viewer-caption"></div>
     </div>
   </div>
-
-<div id="blanks-overlay" class="hidden"></div>
-<div id="print-overlay" class="hidden"></div>
 
     <div id="mobile-selection-actions" class="mobile-selection-actions" aria-label="Selection actions">
     <button id="mobile-selection-add" class="mobile-primary" type="button" disabled aria-disabled="true">Add (0) to Blanks Cart</button>

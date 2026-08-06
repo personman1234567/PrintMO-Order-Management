@@ -216,8 +216,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
   width: 100%;
-  min-height: 36px;
+  min-height: 40px;
   margin: 0;
   padding: 4px 8px;
   border: 0;
@@ -229,7 +231,6 @@
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
   white-space: nowrap;
-  cursor: pointer;
 }
 
 #detail-items .detail-accounting-action-row td {
@@ -249,17 +250,12 @@
 .inline-accounting-result {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .inline-accounting-status {
   font-weight: 800;
-}
-
-.inline-accounting-arrow {
-  color: #64748b;
-  font-size: 1rem;
-  line-height: 1;
 }
 
 .inline-accounting-control.is-complete .inline-accounting-status {
@@ -270,11 +266,70 @@
   color: #92400e;
 }
 
-.inline-accounting-control:hover {
-  background: #eef2f7;
+.inline-accounting-stepper {
+  display: inline-grid;
+  grid-template-columns: 36px 48px 36px auto;
+  align-items: center;
+  gap: 4px;
 }
 
-.inline-accounting-control:focus-visible {
+.inline-accounting-stepper button,
+.inline-accounting-stepper input,
+.inline-accounting-manage {
+  min-height: 36px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--detail-ink);
+  font: inherit;
+  font-weight: 750;
+}
+
+.inline-accounting-stepper button,
+.inline-accounting-manage {
+  cursor: pointer;
+}
+
+.inline-accounting-stepper button:not(:disabled):hover,
+.inline-accounting-manage:not(:disabled):hover {
+  border-color: #94a3b8;
+  background: #f1f5f9;
+}
+
+.inline-accounting-stepper input {
+  width: 48px;
+  padding: 0 4px;
+  text-align: center;
+}
+
+.inline-accounting-save,
+.inline-accounting-manage {
+  padding-inline: 10px;
+}
+
+.inline-accounting-control.is-saving {
+  opacity: 0.72;
+}
+
+.inline-accounting-message {
+  flex-basis: 100%;
+  min-height: 0;
+  color: #64748b;
+  font-size: 0.68rem;
+  white-space: normal;
+}
+
+.inline-accounting-message:empty {
+  display: none;
+}
+
+.inline-accounting-message[data-tone="error"] {
+  color: #b91c1c;
+}
+
+.inline-accounting-stepper button:focus-visible,
+.inline-accounting-stepper input:focus-visible,
+.inline-accounting-manage:focus-visible {
   outline: 2px solid var(--detail-action);
   outline-offset: 2px;
 }
@@ -2409,6 +2464,21 @@
     padding: 6px 10px;
     background: var(--detail-canvas);
   }
+
+  .inline-accounting-result {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .inline-accounting-stepper {
+    grid-template-columns: 44px 52px 44px auto;
+  }
+
+  .inline-accounting-stepper button,
+  .inline-accounting-stepper input,
+  .inline-accounting-manage {
+    min-height: 44px;
+  }
 }
 
 @media (max-width: 900px) and (max-height: 700px) {
@@ -2424,6 +2494,12 @@
   #detail-overlay .btn-secondary-action,
   #detail-overlay .detail-asset-preview,
   #detail-overlay .detail-asset-download {
+    min-height: 44px;
+  }
+
+  .inline-accounting-stepper button,
+  .inline-accounting-stepper input,
+  .inline-accounting-manage {
     min-height: 44px;
   }
 }

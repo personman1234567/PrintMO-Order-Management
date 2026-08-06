@@ -161,7 +161,9 @@
     { root: '#progress-overlay', content: '#progress-modal', close: '#progress-cancel', initial: '#progress-input' },
     { root: '#view-notes-overlay', content: '#view-notes-modal', close: '#view-notes-close' },
     { root: '#asset-viewer', content: '.viewer-content', close: '#asset-viewer-close' },
-    { root: '#storage-detail-overlay', content: '.storage-detail-card', close: '#storage-detail-close' }
+    { root: '#storage-detail-overlay', content: '.storage-detail-card', close: '#storage-detail-close' },
+    { root: '#blanks-receive-overlay', content: '.blanks-receive-dialog', close: '#blanks-receive-close' },
+    { root: '#batch-correction-overlay', content: '.batch-correction-dialog', initial: '[data-batch-choice="remove"]' }
   ];
   let lastExternalFocus = null;
 
@@ -256,15 +258,24 @@
 
   function initDialogs() {
     lastExternalFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    dialogConfigs.forEach(config => {
+    const registerDialog = config => {
+      if (config.rootElement?.isConnected) return;
       config.rootElement = document.querySelector(config.root);
       if (!config.rootElement) return;
       config.contentElement = config.rootElement.querySelector(config.content);
+      if (config.contentElement && !config.contentElement.hasAttribute('tabindex')) {
+        config.contentElement.tabIndex = -1;
+      }
       config.wasOpen = false;
       syncDialog(config);
       const observer = new MutationObserver(() => syncDialog(config));
       observer.observe(config.rootElement, { attributes: true, attributeFilter: ['class'] });
-    });
+      config.observer = observer;
+    };
+    dialogConfigs.forEach(registerDialog);
+
+    const dynamicDialogObserver = new MutationObserver(() => dialogConfigs.forEach(registerDialog));
+    dynamicDialogObserver.observe(document.body, { childList: true, subtree: true });
 
     document.addEventListener('focusin', event => {
       const target = event.target instanceof HTMLElement ? event.target : null;

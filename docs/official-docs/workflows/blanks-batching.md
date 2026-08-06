@@ -12,6 +12,7 @@
 - [Blanks Batching Sequence](#blanks-batching-sequence)
 - [SKU Aggregation Algorithm](#sku-aggregation-algorithm)
 - [Batch Submission & State Update](#batch-submission--state-update)
+- [Receiving Manifest and Batch Correction](#receiving-manifest-and-batch-correction)
 - [Common Failure Modes & Recovery](#common-failure-modes--recovery)
 
 ---
@@ -70,6 +71,19 @@ Confirmed batches leave `readiness.blanksOrdered` false so newly submitted cards
 
 Legacy Redis mode continues using its existing process-batch route until final cutover; candidate mode never calls it.
 
+## Receiving Manifest and Batch Correction
+
+After **Mark In Cart Ordered**, the browser records an authenticated receiving manifest through `/order-manager/blanks-batches`. This compatibility manifest currently lives in the private `PREVIEWS` R2 binding; it is separate from the durable supplier-order state machine in D1. Each new manifest stores both the immutable Shopify order GID and the display name so legacy name-only manifests remain readable while new membership checks use stable identity.
+
+The receiving UI has two levels:
+
+1. The normal order-detail garment sub-row exposes `−`, quantity, `+`, and **Save** controls. It updates the matching batch manifest line without opening another modal over Order Detail.
+2. **Receive Batches** remains the aggregate manifest workspace for full-batch receiving, multiple historical memberships, and **Add Orders** correction.
+
+**Add Orders** always requires an explicit checkbox selection. An unbatched In S&S Cart order is added and advanced to Ordered. An order already in another receiving batch is transferred in one Worker request: the source membership is removed, already-received quantity follows the order up to its expected quantity, the target is recalculated oldest-first, and an emptied accidental batch is removed from the active index. Creating a second active manifest for an already-batched order returns `409 ORDER_ALREADY_BATCHED`.
+
+The one-active-receiving-batch rule is enforced by the Worker, not only by hidden or disabled controls. The current R2 operation uses a bounded multi-object write with best-effort rollback; migrating this compatibility manifest into normalized D1 receiving tables remains the route to database transactions and audit history.
+
 ---
 
 ## Common Failure Modes & Recovery
@@ -79,3 +93,6 @@ Legacy Redis mode continues using its existing process-batch route until final c
 | Batch submit button disabled | Selected orders contain missing or empty SKUs | Inspect order items in detail modal; assign supplier SKU before batching. |
 | API Error 400 invalid SKU payload | SKU format mismatch in S&S catalog | Verify SKU string against S&S catalog convention (e.g. `STYLE-COLOR-SIZE`). |
 | Duplicate S&S orders placed | Network retry on timeout without idempotent key | Verify S&S dashboard before re-submitting failed batch calls. |
+| Print count says the garment total is `0` | `PrintMOProductionState` omitted `sku`, while validation excludes lines without a supplier SKU | Keep `sku` in the production-state query and its regression contract; refresh Shopify after deploying the Worker. |
+| Receive Batches appears above Order Detail but cannot be clicked | A dynamically created overlay was omitted from the shared focus/inert dialog stack | Keep `#blanks-receive-overlay` and `#batch-correction-overlay` registered by `accessibility-hardening.js`. |
+| A missed order creates a second receiving batch | The order was submitted through create instead of explicit add/transfer | Open the intended batch, choose **Add Orders**, select the missed order, and let the Worker transfer any existing membership. |

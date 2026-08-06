@@ -153,6 +153,10 @@ async function run() {
   });
   const designerSourceKey = 'orders/1001_fixture-customer/fixture-design-ref/mockup_side.png';
   const designerBytes = new TextEncoder().encode('designer-studio-preview');
+  const previewObjects = new Map([[
+    designerSourceKey,
+    { bytes: designerBytes, contentType: 'image/png' }
+  ]]);
   const privateObjects = new Map([
     ['orders/60129381/assets/asset-1/art.png', { bytes: new TextEncoder().encode('private-artwork'), contentType: 'image/png' }],
   ]);
@@ -163,6 +167,7 @@ async function run() {
     async arrayBuffer() {
       return record.bytes.buffer.slice(record.bytes.byteOffset, record.bytes.byteOffset + record.bytes.byteLength);
     },
+    async text() { return new TextDecoder().decode(record.bytes); },
     writeHttpMetadata(headers) { headers.set('Content-Type', record.contentType); },
   } : null;
   const env = {
@@ -172,11 +177,24 @@ async function run() {
     MIGRATION_UPSTREAM_ENABLED: '1',
     ORDER_DB: createD1(schema),
     PREVIEWS: {
-      async head(key) { return key === designerSourceKey ? { key, size: designerBytes.byteLength } : null; },
-      async get(key) { return key === designerSourceKey ? r2Object({ bytes: designerBytes, contentType: 'image/png' }) : null; },
+      async head(key) {
+        const record = previewObjects.get(key);
+        return record ? { key, size: record.bytes.byteLength } : null;
+      },
+      async get(key) { return r2Object(previewObjects.get(key)); },
+      async put(key, value, options = {}) {
+        const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : new Uint8Array(value);
+        previewObjects.set(key, {
+          bytes,
+          contentType: options.httpMetadata?.contentType || 'application/octet-stream'
+        });
+      },
+      async delete(key) { previewObjects.delete(key); },
       async list({ prefix }) {
         return {
-          objects: designerSourceKey.startsWith(prefix) ? [{ key: designerSourceKey, size: designerBytes.byteLength }] : [],
+          objects: Array.from(previewObjects.entries())
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, record]) => ({ key, size: record.bytes.byteLength })),
           truncated: false,
           cursor: null,
         };
@@ -215,6 +233,7 @@ async function run() {
     if (target.includes('/graphql.json')) {
       const request = JSON.parse(options.body);
       if (request.query.includes('PrintMOProductionState')) {
+        assert(request.query.includes('sku'), 'production validation must request SKU before counting garments');
         return Response.json({
           data: {
             order: {
@@ -601,6 +620,66 @@ async function run() {
     }), env);
     assert.equal(invalidPrintedCount.status, 400, 'printed count above the paginated garment total must be rejected');
     assert.equal((await invalidPrintedCount.json()).error.code, 'INVALID_PRINTED_COUNT');
+
+    const blanksOrder = (orderId, name, receivedAt, qty) => ({
+      orderId,
+      name,
+      orderNumber: name.replace(/\D/g, ''),
+      customer: `Customer ${name}`,
+      receivedAt,
+      items: [{
+        id: `line-${orderId}`,
+        title: 'Fixture Shirt',
+        variantTitle: 'Black / M',
+        sku: 'FIXTURE-A',
+        qty,
+      }],
+    });
+    const firstBatchOrder = blanksOrder('gid://shopify/Order/2001', '#2001', '2026-07-20T10:00:00Z', 2);
+    const missedBatchOrder = blanksOrder('gid://shopify/Order/2002', '#2002', '2026-07-20T11:00:00Z', 1);
+    const createBatch = async order => worker.fetch(new Request('https://worker.test/order-manager/blanks-batches', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ orders: [order], source: 'phase2-fixture' })
+    }), env);
+    const firstBatchResponse = await createBatch(firstBatchOrder);
+    assert.equal(firstBatchResponse.status, 201, 'first receiving batch must be created');
+    const firstBatch = (await firstBatchResponse.json()).batch;
+    assert.equal(firstBatch.orderIds[0], firstBatchOrder.orderId, 'batch identity must retain the immutable Shopify order GID');
+    const secondBatchResponse = await createBatch(missedBatchOrder);
+    assert.equal(secondBatchResponse.status, 201, 'a separately created missed-order batch must be represented before transfer');
+    const secondBatch = (await secondBatchResponse.json()).batch;
+
+    const duplicateBatchResponse = await createBatch(firstBatchOrder);
+    assert.equal(duplicateBatchResponse.status, 409, 'an order must not be created in a second active receiving batch');
+    assert.equal((await duplicateBatchResponse.json()).error.code, 'ORDER_ALREADY_BATCHED');
+
+    const receiveSecondBatch = await worker.fetch(new Request('https://worker.test/order-manager/blanks-batches', {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        id: secondBatch.id,
+        updates: [{ itemKey: secondBatch.manifest[0].itemKey, receivedQty: 1 }]
+      })
+    }), env);
+    assert.equal(receiveSecondBatch.status, 200, 'source batch receiving must be saved before transfer');
+
+    const assignMissedOrder = await worker.fetch(new Request('https://worker.test/order-manager/blanks-batches', {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ id: firstBatch.id, action: 'assign-orders', orders: [missedBatchOrder] })
+    }), env);
+    assert.equal(assignMissedOrder.status, 200, 'a missed order must be assignable to the intended existing batch');
+    const assignment = await assignMissedOrder.json();
+    assert.equal(assignment.batch.orders.length, 2, 'the intended batch must contain both orders after transfer');
+    assert.equal(assignment.batch.totals.receivedGarments, 1, 'received inventory must move with the transferred order');
+    assert.deepEqual(assignment.removedBatchIds, [secondBatch.id], 'an emptied accidental batch must leave the active index');
+
+    const batchIndexResponse = await worker.fetch(new Request('https://worker.test/order-manager/blanks-batches', { headers }), env);
+    assert.equal(batchIndexResponse.status, 200);
+    const receivingBatchIndex = await batchIndexResponse.json();
+    assert.equal(receivingBatchIndex.batches.length, 1, 'unique batch membership must leave one active receiving batch');
+    assert.equal(receivingBatchIndex.batches[0].id, firstBatch.id);
 
     const completedMutation = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
       method: 'PATCH',
@@ -1101,18 +1180,35 @@ async function run() {
   );
   assert(blanksFoundation.includes('applyOptimisticOrderUpdate'), 'Shopify moves must render optimistically and roll back on failure');
   assert(
-    blanksFoundation.includes("card.querySelector('.print-card-statuses')")
+    blanksFoundation.includes("card.querySelector('.production-card-statuses')")
       && blanksFoundation.includes('statusRegion.appendChild(chip)')
       && blanksFoundation.includes('patchRenderStatusColumnForAccounting'),
-    'garment accounting must mount inside the dedicated print-card status region and survive direct print-tab rerenders'
+    'garment accounting must mount inside the shared production-card status region and survive direct print-tab rerenders'
   );
   assert(
     blanksFoundation.includes("actionRow.className = `detail-accounting-action-row")
+      && blanksFoundation.includes('function saveInlineReceivingLine(')
+      && blanksFoundation.includes("stepper.className = 'inline-accounting-stepper'")
       && blanksFoundation.includes("document.addEventListener('printmo:detail-items-rendered'")
       && detailEnhancements.includes("document.dispatchEvent(new CustomEvent('printmo:detail-items-rendered'")
       && /\.inline-accounting-control\s*\{[\s\S]*?width:\s*100%;/.test(detailCss)
       && /@media \(max-width: 600px\)[\s\S]*?\.inline-accounting-control\s*\{[\s\S]*?min-height:\s*44px;/.test(detailCss),
     'garment receiving must render as a resilient desktop/mobile action sub-row with an accessible phone target'
+  );
+  const accessibilityHardening = fs.readFileSync(path.join(root, 'order-manager-web', 'accessibility-hardening.js'), 'utf8');
+  assert(
+    accessibilityHardening.includes("root: '#blanks-receive-overlay'")
+      && accessibilityHardening.includes('dynamicDialogObserver')
+      && accessibilityHardening.includes("root: '#batch-correction-overlay'"),
+    'dynamic receiving dialogs must participate in the shared focus and inert stack'
+  );
+  assert(
+    blanksFoundation.includes('function assignSelectedOrdersToActiveBatch()')
+      && blanksFoundation.includes('window.api.assignOrdersToBlanksBatch')
+      && webShim.includes('action: "assign-orders"')
+      && source.includes('async function assignOrdersToBatch(')
+      && source.includes('ORDER_ALREADY_BATCHED'),
+    'receiving batches must use explicit selection, transfer existing membership, and reject duplicate creation'
   );
   assert(
     blanksFoundation.includes('function setupMarkInCartOrdered()')
@@ -1157,6 +1253,44 @@ async function run() {
       && previewHtml.includes('role="tabpanel"')
       && previewHtml.includes('No orders waiting to be printed'),
     'Ready to Print markup must expose accessible To Print and Printed tabs with a named panel'
+  );
+  assert(
+    previewHtml.includes('class="panel-header production-panel-header"')
+      && previewHtml.includes('class="production-stage" id="print-section"')
+      && previewHtml.includes('class="cards workflow-card-grid" id="col-print"')
+      && previewHtml.indexOf('id="print-view-to-print"') < previewHtml.indexOf('id="print-section"')
+      && !previewHtml.includes('class="sub-section" id="print-section"'),
+    'Shopify production markup must keep its view tabs in the main panel header and expose a flat direct queue stage'
+  );
+  assert(
+    !previewHtml.includes('id="received-bundle-start"')
+      && !previewHtml.includes('id="blanks-bundle-start"')
+      && !previewHtml.includes('id="print-bundle-start"')
+      && !previewHtml.includes('id="blanks-fullscreen-btn"')
+      && !previewHtml.includes('id="print-fullscreen-btn"'),
+    'obsolete Bundle and Fullscreen entry points must remain absent from the web dashboard'
+  );
+  assert(
+    sharedRenderer.includes("const showBoardPreview = hasMockup || Boolean(o._candidate);")
+      && sharedRenderer.includes('class="production-card-statuses"')
+      && sharedRenderer.includes("label.textContent = loading ? 'Loading preview' : 'No preview';")
+      && sharedRenderer.includes('if (container) container.scrollTop = 0;'),
+    'candidate cards must keep stable preview/status anatomy and explicit print-view scroll reset behavior'
+  );
+  assert(
+    desktopCss.includes('Shopify workflow foundation')
+      && desktopCss.includes('.workflow-card-grid')
+      && desktopCss.includes('.production-panel-header .print-workflow-controls')
+      && desktopCss.includes('.shopify-board-card::before')
+      && desktopCss.includes('animation: none !important;'),
+    'desktop Shopify workflow foundation must own the flat production queue, stable card grid, and quiet loading treatment'
+  );
+  assert(
+    mobileCss.includes('Shopify mobile compatibility for the flattened desktop production panel')
+      && mobileCss.includes('[data-active-tab="readyToPrint"] .panel.fulfillment > .production-panel-header')
+      && mobileCss.includes('#print-section .workflow-card-grid')
+      && mobileCss.includes('grid-template-columns: minmax(0, 1fr);'),
+    'mobile must preserve its stage-specific header and phone card geometry after desktop production flattening'
   );
   const triageController = fs.readFileSync(path.join(root, 'order-manager-web', 'dashboard-triage-enhancements.js'), 'utf8');
   assert(triageController.includes("card.classList.add('production-card')"), 'fulfillment cards must receive the production layout contract');
