@@ -108,11 +108,11 @@ Below is the complete inventory of all 10 modal overlays and secondary screens e
     - **Customer & Shop Instructions** (`#detail-notes-wrapper`): Customer name, compact instructions preview, inline desktop editor, and the expanded notes viewer. This production-critical context remains visible while other tabs change.
   - **Tabbed Workspace (~61% desktop)** (`#detail-right-pane`):
     - **Accessible Tabs** (`#detail-tabs-header`): Action Blue active line, click navigation, arrow-key navigation, and synchronized `tab`/`tabpanel` ARIA state.
-      1. `Items & financials` (`#tab-items`, default): Line items, custom attributes, discount, and order total.
+      1. `Items & financials` (`#tab-items`, default): Presentation-consolidated line items, custom attributes, discount, order total, and a SKU-gated garment accounting control. Selecting `Receive n/n` opens the canonical supplier-batch receiving record at the matching SKU line; increment, typed quantity, and All actions remain batch-authoritative and retain oldest-first order allocation.
       2. `Production` (`#tab-production`): Customer checkout note banner and the full-width Design Files workspace (`#detail-design-panel`), grouped into `Front prints`, `Back prints`, and `Extras`.
       3. `Fulfillment` (`#tab-logistics`): Shipping address and tracking.
       4. `Customer & history` (`#tab-customer`): Customer email/phone with protected-data fallback states and the order event timeline.
-  - **Mobile adaptation**: `#detail-content` is the sole vertical scroll owner. Both panes become intrinsic-height blocks, tabs scroll horizontally and remain sticky within the workbench, design groups collapse to one column, controls retain at least 44px touch targets, and safe-area padding is honored.
+  - **Mobile adaptation**: `#detail-content` is the sole vertical scroll owner and resets to its top whenever a detail opens. The header retains a labeled `Close` control, both panes become intrinsic-height blocks, tabs scroll horizontally and remain sticky within the workbench, readiness milestones become full-width sequence rows rather than compressed side-by-side labels, design groups collapse to one column, controls retain at least 44px touch targets, and safe-area padding is honored.
   - **Surface-specific file access**: The desktop detail retains the legacy aggregate `#detail-files-btn` and attachments modal. The Shopify web detail intentionally omits that button because mockups and design files render inline. Shared renderer code treats `#detail-files-btn` as optional.
 
 ### 2. Batch Order Summary Drawer (`.summary`)

@@ -724,6 +724,9 @@
     renderCustomerAndOrder(order, result);
     renderActivityAndExceptions(order, result);
     enhanceItemsTable(order);
+    document.dispatchEvent(new CustomEvent('printmo:detail-items-rendered', {
+      detail: { orderName: order?.name || '' }
+    }));
     enhanceDesignFilesPanel();
     const partial = Boolean(result?.detail?.partial || result?.sync?.partial);
     const hasOptionalPermissionGap = dedupeDetailErrors([
@@ -799,10 +802,11 @@
     return (order.items || []).reduce((totals, item) => {
       const qty = Number(item.qty) || 0;
       if (typeof isPrintItem === 'function' && isPrintItem(item)) totals.prints += qty;
-      else totals.apparel += qty;
+      else if (typeof isGarmentItem === 'function' && isGarmentItem(item)) totals.apparel += qty;
+      else totals.other += qty;
       totals.all += qty;
       return totals;
-    }, { all: 0, apparel: 0, prints: 0 });
+    }, { all: 0, apparel: 0, prints: 0, other: 0 });
   }
 
   function orderContextParts(name) {
@@ -870,7 +874,7 @@
       received.title = order.receivedAt ? new Date(order.receivedAt).toLocaleString() : '';
     }
     if (items) {
-      items.textContent = `${counts.apparel} apparel / ${counts.prints} prints`;
+      items.textContent = `${counts.apparel} garments / ${counts.prints} prints${counts.other ? ` / ${counts.other} other` : ''}`;
       items.title = `${counts.all} total line-item quantity`;
     }
   }
@@ -1294,7 +1298,7 @@
     const recipient = document.getElementById('detail-cust-name');
     if (recipient && customerName) recipient.textContent = customerName;
     if (pieces) {
-      pieces.textContent = `${counts.apparel} apparel / ${counts.prints} prints`;
+      pieces.textContent = `${counts.apparel} garments / ${counts.prints} prints${counts.other ? ` / ${counts.other} other` : ''}`;
       pieces.title = `${counts.all} total line-item quantity`;
     }
     if (total) total.textContent = money(order.total, order.currencyCode);
@@ -1864,8 +1868,12 @@
       const isPrint = typeof isPrintItem === 'function'
         ? isPrintItem({ title: description })
         : /print/i.test(description);
+      const isGarment = typeof isGarmentItem === 'function'
+        ? isGarmentItem({ title: description, sku: skuText })
+        : !isPrint && Boolean(skuText && !/^[â€“â€”-]$/.test(skuText));
       row.classList.toggle('is-print-item', isPrint);
-      row.classList.toggle('is-apparel-item', !isPrint);
+      row.classList.toggle('is-apparel-item', isGarment);
+      row.classList.toggle('is-other-item', !isPrint && !isGarment);
 
       if (cells[0]) cells[0].title = `Quantity ${cellText(cells[0]) || '0'}`;
       if (cells[4]) cells[4].title = cellText(cells[4]);

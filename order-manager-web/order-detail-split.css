@@ -201,6 +201,91 @@
   cursor: pointer;
 }
 
+.detail-close-icon {
+  font-size: 1.2em;
+  line-height: 1;
+}
+
+.detail-close-label {
+  display: none;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.inline-accounting-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 36px;
+  margin: 0;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--detail-muted);
+  font: inherit;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#detail-items .detail-accounting-action-row td {
+  width: auto;
+  min-width: 0;
+  padding: 0 8px 6px !important;
+  border-bottom: 1px solid var(--detail-border);
+  background: #f8fafc;
+  text-align: start;
+}
+
+.inline-accounting-label {
+  color: #475569;
+  font-weight: 700;
+}
+
+.inline-accounting-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.inline-accounting-status {
+  font-weight: 800;
+}
+
+.inline-accounting-arrow {
+  color: #64748b;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.inline-accounting-control.is-complete .inline-accounting-status {
+  color: #166534;
+}
+
+.inline-accounting-control.is-missing .inline-accounting-status {
+  color: #92400e;
+}
+
+.inline-accounting-control:hover {
+  background: #eef2f7;
+}
+
+.inline-accounting-control:focus-visible {
+  outline: 2px solid var(--detail-action);
+  outline-offset: 2px;
+}
+
+.other-count {
+  color: #475569;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 #detail-close:hover {
   background: #e2e8f0;
   color: var(--detail-ink);
@@ -1772,7 +1857,7 @@
 
   #detail-header-bar {
     min-height: 62px;
-    grid-template-columns: minmax(0, 1fr) 44px;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
     padding: 8px 8px 8px 12px;
   }
@@ -1821,12 +1906,24 @@
 
   body.mobile-mode #detail-overlay.mobile-fullscreen-detail #detail-close {
     position: static;
-    width: 44px;
+    width: auto;
     height: 44px;
+    min-width: 76px;
+    padding: 0 10px;
     border: 0;
     border-radius: 10px;
-    background: transparent;
-    color: var(--detail-muted);
+    background: #eef5ff;
+    color: #175bb4;
+    font-size: 0.8rem;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .detail-close-label {
+    display: inline;
   }
 
   #detail-content,
@@ -1972,11 +2069,40 @@
   }
 
   .readiness-sequence {
-    min-height: 82px;
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+    gap: 6px;
+    padding: 9px;
+  }
+
+  .readiness-sequence-arrow {
+    min-height: 12px;
+    transform: rotate(90deg);
   }
 
   #ready-controls label.production-step {
-    min-height: 60px;
+    min-height: 56px;
+    grid-template-columns: 22px minmax(0, 1fr);
+    padding: 8px 10px;
+  }
+
+  #ready-controls .production-step-copy {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  #ready-controls .production-step-title {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  #ready-controls .production-step-state {
+    overflow: hidden;
+    text-align: end;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   body.mobile-mode:not(.mobile-production-expanded) #detail-overlay #ready-controls .production-step {
@@ -2133,7 +2259,7 @@
 
   .detail-table .detail-item-row {
     display: grid;
-    grid-template-columns: 36px minmax(0, 1fr) max-content;
+    grid-template-columns: 52px minmax(0, 1fr) max-content;
     grid-template-areas:
       "quantity description total"
       "quantity variant total"
@@ -2160,6 +2286,10 @@
     border-bottom: 0;
   }
 
+  .detail-table .detail-item-row.has-accounting-action {
+    border-bottom: 0;
+  }
+
   #detail-items.detail-table .detail-item-row td::before {
     display: none;
   }
@@ -2170,7 +2300,7 @@
     display: inline-flex !important;
     align-items: center;
     justify-content: center;
-    min-width: 36px;
+    min-width: 52px;
     min-height: 30px;
     padding: 4px 6px !important;
     border-radius: 8px;
@@ -2179,6 +2309,8 @@
     font-size: 0.78rem;
     font-weight: 800;
     font-variant-numeric: tabular-nums;
+    overflow-wrap: normal;
+    white-space: nowrap;
   }
 
   #detail-items .detail-item-row .detail-item-qty-cell::before {
@@ -2257,6 +2389,25 @@
     padding: 8px 10px;
     border-radius: 0 0 10px 10px;
     background: #eef2f7;
+  }
+
+  .detail-accounting-action-row {
+    display: block;
+    margin: -4px 0 0;
+    border-bottom: 1px solid var(--detail-border);
+  }
+
+  #detail-items .detail-accounting-action-row td {
+    display: block;
+    padding: 0 2px 8px !important;
+    border: 0;
+    background: transparent;
+  }
+
+  .inline-accounting-control {
+    min-height: 44px;
+    padding: 6px 10px;
+    background: var(--detail-canvas);
   }
 }
 

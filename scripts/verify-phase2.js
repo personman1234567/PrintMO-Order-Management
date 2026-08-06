@@ -858,6 +858,13 @@ async function run() {
   const webShim = fs.readFileSync(path.join(root, 'order-manager-web', 'web-shim.js'), 'utf8');
   assert(webShim.includes('apiErrorMessage'), 'web errors must render structured Worker errors instead of [object Object]');
   assert(
+    webShim.includes('shopifyIdTokenCache')
+      && webShim.includes('getShopifyIdToken')
+      && webShim.includes('expiresAt: Math.min(safeDeclaredExpiry, now + 30000)')
+      && webShim.includes('if (res.status === 401)'),
+    'adjacent queue and private-ticket requests must reuse only a short-lived Shopify token and refresh once on 401'
+  );
+  assert(
     webShim.includes('window.api.getOrderDetail')
       && webShim.includes('`/order-manager/v1/orders/${encodeURIComponent(orderId)}`'),
     'shared Shopify workbench must hydrate from the canonical on-demand detail endpoint'
@@ -888,6 +895,13 @@ async function run() {
       && webShim.includes('candidateRecordBelongsToActiveMobileTab')
       && webShim.includes('.mobile-tab[data-tab]'),
     'mobile board hydration must defer hidden-stage mockups until their tab becomes active'
+  );
+  assert(
+    webShim.includes('const ASSET_HYDRATION_CONCURRENCY = 6')
+      && webShim.includes('runWithConcurrency(assets, ASSET_HYDRATION_CONCURRENCY')
+      && !webShim.includes('waitForCandidatePreviewBytes')
+      && !webShim.includes('BOARD_PREVIEW_STREAM_TIMEOUT_MS'),
+    'visible dashboard previews must not wait behind a detached-image timeout before later cards receive their URLs'
   );
   const processBatchSource = webShim.slice(
     webShim.indexOf('window.api.processBatch'),
@@ -932,6 +946,73 @@ async function run() {
   const webRenderer = fs.readFileSync(path.join(root, 'order-manager-web', 'renderer.js'), 'utf8');
   assert(webRenderer.includes('assetId'), 'shared web renderer must recognize private manifest assets without public /orders/ URLs');
   const sharedRenderer = fs.readFileSync(path.join(root, 'renderer.js'), 'utf8');
+  const desktopDragPolish = fs.readFileSync(path.join(root, 'order-manager-web', 'desktop-drag-polish.js'), 'utf8');
+  const auxiliaryQueueReaders = fs.readdirSync(path.join(root, 'order-manager-web'))
+    .filter(name => name.endsWith('.js') && name !== 'renderer.js')
+    .filter(name => fs.readFileSync(path.join(root, 'order-manager-web', name), 'utf8').includes('window.api.getQueue('));
+  assert.deepEqual(
+    auxiliaryQueueReaders,
+    [],
+    'only the shared renderer may read the board queue; auxiliary browser scripts must consume its snapshot'
+  );
+  assert(
+    sharedRenderer.includes('window.getOrderManagerBoardSnapshot = () => {')
+      && sharedRenderer.includes('const snapshot = allOrders.slice()')
+      && desktopDragPolish.includes('window.getOrderManagerBoardSnapshot()')
+      && !desktopDragPolish.includes('window.api.getQueue('),
+    'desktop drag metadata must read the current renderer snapshot without racing the initial board request'
+  );
+  const assetFingerprintStart = sharedRenderer.indexOf('function candidateAssetRenderFingerprint');
+  const assetFingerprintEnd = sharedRenderer.indexOf('\nfunction candidateOrderRenderFingerprint', assetFingerprintStart);
+  const assetFingerprintSource = sharedRenderer.slice(assetFingerprintStart, assetFingerprintEnd);
+  assert(
+    assetFingerprintStart >= 0
+      && assetFingerprintEnd > assetFingerprintStart
+      && !assetFingerprintSource.includes('url:'),
+    'rotating private ticket URLs must not make unchanged orders rebuild their cards'
+  );
+  assert(
+    sharedRenderer.includes('mockupSlot.dataset.assetId = mockupAssetIdentity')
+      && sharedRenderer.includes('existingIdentity === assetIdentity')
+      && sharedRenderer.includes("existingImage.dataset.previewLoadFailed !== 'true'")
+      && sharedRenderer.includes("window.orderManagerPerformanceDebug?.log?.('tile-preview-source-preserved'")
+      && sharedRenderer.includes("if (image.getAttribute('src') !== url) {")
+      && sharedRenderer.includes("image.setAttribute('src', url)"),
+    'tile hydration must preserve a healthy image for the same asset while refreshing missing, changed, or failed sources'
+  );
+  assert(
+    sharedRenderer.includes('function updateBoardMockupPreview(order, { resolvePlaceholder = false } = {})')
+      && sharedRenderer.includes("document.querySelectorAll('.card[data-order-id]')")
+      && sharedRenderer.includes('slot.className = `mockup-slot mockup-slot-${renderedState}`')
+      && sharedRenderer.includes('window.updateBoardMockupPreview = updateBoardMockupPreview')
+      && webShim.includes('window.updateBoardMockupPreview(current, { resolvePlaceholder: true })'),
+    'resolved Designer mockups must patch their visible card directly instead of waiting for a board poll'
+  );
+  assert(
+    webShim.includes('async function loadCandidateQueue({ refresh = false, onPage } = {})')
+      && webShim.includes('await onPage(mapped, {')
+      && webShim.includes('hydrationChain = hydrationChain.catch(() => {}).then(async () => {')
+      && !webShim.includes('await primeCandidateBoardMockups')
+      && webShim.includes('const CANDIDATE_TICKET_BATCH_TIMEOUT_MS = 1500')
+      && webShim.includes('withCandidateTicketBatchTimeout')
+      && !webShim.includes('const pendingStatuses = new Set()'),
+    'order pages must paint progressively before bounded private preview hydration begins'
+  );
+  assert(
+    sharedRenderer.includes('const allowProgressivePaint = isShopifyBoardView() && !boardHasRendered')
+      && sharedRenderer.includes('onPage: allowProgressivePaint')
+      && sharedRenderer.includes('applyQueueSnapshot(pageOrders, pageInfo)')
+      && sharedRenderer.includes('hydrateManualMockupsForOrders(pageOrders, { refresh: true })')
+      && sharedRenderer.includes('window.orderManagerPerformanceDebug?.log?.("board-snapshot-painted"'),
+    'the initial Shopify board must paint page snapshots without dropping the stable refresh view'
+  );
+  assert(
+    sharedRenderer.includes('function reconcileManualMockupCard(order, changed, wasHydrated)')
+      && sharedRenderer.includes("window.updateBoardMockupPreview(order, { resolvePlaceholder: true })")
+      && !sharedRenderer.includes('scheduleManualMockupRepaint')
+      && !sharedRenderer.includes('pendingManualMockupStatuses'),
+    'manual mockup hydration must reconcile one card without rebuilding status columns over Designer previews'
+  );
   const consolidatorStart = sharedRenderer.indexOf('function consolidateLineItemsForDisplay');
   const consolidatorEnd = sharedRenderer.indexOf('\nfunction openDetail', consolidatorStart);
   assert(consolidatorStart >= 0 && consolidatorEnd > consolidatorStart, 'shared renderer must expose display-only line consolidation');
@@ -1026,6 +1107,14 @@ async function run() {
     'garment accounting must mount inside the dedicated print-card status region and survive direct print-tab rerenders'
   );
   assert(
+    blanksFoundation.includes("actionRow.className = `detail-accounting-action-row")
+      && blanksFoundation.includes("document.addEventListener('printmo:detail-items-rendered'")
+      && detailEnhancements.includes("document.dispatchEvent(new CustomEvent('printmo:detail-items-rendered'")
+      && /\.inline-accounting-control\s*\{[\s\S]*?width:\s*100%;/.test(detailCss)
+      && /@media \(max-width: 600px\)[\s\S]*?\.inline-accounting-control\s*\{[\s\S]*?min-height:\s*44px;/.test(detailCss),
+    'garment receiving must render as a resilient desktop/mobile action sub-row with an accessible phone target'
+  );
+  assert(
     blanksFoundation.includes('function setupMarkInCartOrdered()')
       && blanksFoundation.includes("document.getElementById('blanks-mark-ordered-btn')")
       && blanksFoundation.includes("applyBatchAwareOrderMove(orderNames, 'blanks', { blanksOrdered: 1 })")
@@ -1086,8 +1175,9 @@ async function run() {
     webShimCode.includes('candidateQueueLoadGeneration')
       && webShimCode.includes('applyCandidateCachedAssetUrls')
       && webShimCode.includes('window.api.invalidateQueueLoads')
-      && webShimCode.includes('renderBoardFromLocalState(changedStatuses, { invalidateQueueLoads: false })'),
-    'candidate polling and preview hydration must preserve cached assets and repaint only affected columns'
+      && webShimCode.includes('await onPage(mapped, {')
+      && webShimCode.includes('window.updateBoardMockupPreview(current, { resolvePlaceholder: true })'),
+    'candidate polling must publish progressive pages while preview hydration preserves cached assets and reconciles only affected cards'
   );
   assert(
     webShimCode.includes('payload.stage === "print" || payload.stage === "completed"')
@@ -1101,6 +1191,21 @@ async function run() {
   });
   vm.runInContext(webShimCode, shimContext);
   const { candidateLineItem, candidateOrderToBoard } = shimContext;
+  shimContext.atob = value => Buffer.from(value, 'base64').toString('binary');
+  const tokenPayload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 60 })).toString('base64url');
+  const reusableToken = `header.${tokenPayload}.signature`;
+  let idTokenCalls = 0;
+  shimContext.window.shopify = {
+    async idToken() {
+      idTokenCalls += 1;
+      return reusableToken;
+    },
+  };
+  assert.equal(await shimContext.getShopifyIdToken(), reusableToken);
+  assert.equal(await shimContext.getShopifyIdToken(), reusableToken);
+  assert.equal(idTokenCalls, 1, 'adjacent authenticated requests must share one fresh App Bridge token');
+  assert.equal(await shimContext.getShopifyIdToken({ force: true }), reusableToken);
+  assert.equal(idTokenCalls, 2, 'forced auth recovery must obtain a new App Bridge token');
 
   // 1. Price mapping
   const testLineItem = candidateLineItem({ unitPrice: '12.50', currentQuantity: 3 });

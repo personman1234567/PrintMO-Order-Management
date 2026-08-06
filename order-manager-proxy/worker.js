@@ -588,6 +588,10 @@ function isBatchPrintItem(item) {
     return PRINT_TITLES.has(item?.title);
 }
 
+function isBatchGarmentItem(item) {
+    return !isBatchPrintItem(item) && Boolean(safeText(item?.sku, 120));
+}
+
 function makeBlanksBatchLabel(now) {
     const day = now.toISOString().slice(0, 10);
     return `S&S Batch ${day}`;
@@ -616,7 +620,7 @@ function buildBlanksBatch(body) {
 
         const items = Array.isArray(rawOrder?.items) ? rawOrder.items : [];
         items.forEach((item, index) => {
-            if (!item || isBatchPrintItem(item)) return;
+            if (!item || !isBatchGarmentItem(item)) return;
 
             const qty = Math.max(0, Number(item.qty) || 0);
             if (!qty) return;
@@ -2856,7 +2860,7 @@ async function completeLineItems(env, orderId, connection, graphQL = coordinator
 
 function garmentCountFromLineItems(items = []) {
     return items.reduce((total, item) => {
-        if (PRINT_TITLES.has(item?.title)) return total;
+        if (PRINT_TITLES.has(item?.title) || !safeText(item?.sku, 120)) return total;
         const quantity = Number(item?.currentQuantity ?? item?.quantity ?? 0);
         return total + (Number.isInteger(quantity) && quantity > 0 ? quantity : 0);
     }, 0);
@@ -4468,7 +4472,10 @@ async function handleV1AssetRead(request, env, allowOrigin, reqAllowHeaders) {
         const headers = new Headers();
         object.writeHttpMetadata(headers);
         headers.set('ETag', object.httpEtag);
-        headers.set('Cache-Control', 'private, no-store');
+        // The short-lived signed URL remains the authorization boundary. Let a
+        // browser reuse bytes while that ticket is valid so a board repaint
+        // does not re-download the same private mockup.
+        headers.set('Cache-Control', 'private, max-age=55');
         for (const [key, value] of Object.entries(corsHeaders(allowOrigin, reqAllowHeaders))) headers.set(key, value);
         return new Response(object.body, { headers });
     } catch (error) {

@@ -4,6 +4,13 @@ let allOrders = [];
 let renderTimer = null;
 let boardFetchGeneration = 0;
 let boardHasRendered = false;
+window.getOrderManagerBoardSnapshot = () => {
+  const snapshot = allOrders.slice();
+  window.orderManagerPerformanceDebug?.log?.('board-snapshot-read', {
+    orders: snapshot.length
+  });
+  return snapshot;
+};
 function scheduleRender() {
   if (renderTimer) return;
   renderTimer = setTimeout(async () => {
@@ -21,9 +28,7 @@ const detailAssetBlobUrls = new Set();
 const manualMockupsByOrderNumber = new Map();
 const manualMockupsHydratedOrderNumbers = new Set();
 const manualMockupsHydratingOrderNumbers = new Set();
-const pendingManualMockupStatuses = new Set();
 let manualMockupHydrationRun = 0;
-let manualMockupRepaintFrame = null;
 let activeCardDrag = null;
 
 const APPAREL_ICON = typeof window.getAssetPath === 'function'
@@ -41,6 +46,14 @@ const PRINT_ICON_GREEN   = typeof window.getAssetPath === 'function'
 // utility to detect “print” items by SKU or title
 function isPrintItem(li) {
   return PRINT_TITLES.has(li.title);
+}
+
+function hasSupplierSku(li) {
+  return Boolean(String(li?.sku || '').trim());
+}
+
+function isGarmentItem(li) {
+  return !isPrintItem(li) && hasSupplierSku(li);
 }
 
 const PRINT_TITLES = new Set([
@@ -295,8 +308,7 @@ function candidateAssetRenderFingerprint(asset) {
     lineItemId: asset.lineItemId || '',
     role: asset.role || '',
     side: asset.side || '',
-    state: asset.state || '',
-    url: asset.url || ''
+    state: asset.state || ''
   };
 }
 
@@ -649,10 +661,11 @@ function makeCard(o, style = 'default') {
   const custName = custNameRaw || '';
 
   // count apparel vs prints
-  let apparel = 0, prints = 0;
+  let apparel = 0, prints = 0, other = 0;
   (o.items || []).forEach(it => {
     if (isPrintItem(it)) prints += it.qty;
-    else apparel += it.qty;
+    else if (isGarmentItem(it)) apparel += it.qty;
+    else other += it.qty;
   });
   const firstMockupUrl = getFirstMockupUrl(o);
   const hasMockup = !!firstMockupUrl;
@@ -672,13 +685,14 @@ function makeCard(o, style = 'default') {
       <div class="card-body ${hasMockup ? 'has-mockup' : 'no-mockup'}">
         ${hasMockup ? `
           <div class="mockup-slot">
-            <img src="${firstMockupUrl}" alt="Mockup preview" loading="lazy" />
+            <img src="${firstMockupUrl}" alt="Mockup preview" loading="eager" decoding="async" fetchpriority="high" />
           </div>
         ` : ''}
         <div class="cust-name">${custName}</div>
         <div class="counts">
           <span class="apparel-count"><img class="count-icon" src="${o.blanksOrdered ? APPAREL_ICON_GREEN : APPAREL_ICON}" alt="" /> ${apparel}</span>
           <span class="prints-count"><img class="count-icon" src="${o.printsOrdered ? PRINT_ICON_GREEN : PRINT_ICON}" alt="" /> ${prints}</span>
+          ${other ? `<span class="other-count">Other ${other}</span>` : ''}
         </div>
       </div>
       <div class="card-footer">
@@ -700,7 +714,7 @@ function makeCard(o, style = 'default') {
     }
   } else if (style === 'printProgress') {
     // Ready to Print style with progress percentage
-    const totalApparel = (o.items || []).reduce((sum, it) => sum + (isPrintItem(it) ? 0 : it.qty), 0);
+    const totalApparel = (o.items || []).reduce((sum, it) => sum + (isGarmentItem(it) ? it.qty : 0), 0);
     const prog = typeof o.progress === 'number' ? o.progress : 0;
     const pct = totalApparel ? Math.round((prog / totalApparel) * 100) : 0;
     const showProductionPreview = Boolean(o._candidate);
@@ -730,6 +744,7 @@ function makeCard(o, style = 'default') {
           <div class="counts">
             <span class="apparel-count"><img class="count-icon" src="${o.blanksOrdered ? APPAREL_ICON_GREEN : APPAREL_ICON}" alt="" /> ${apparel}</span>
             <span class="prints-count"><img class="count-icon" src="${o.printsOrdered ? PRINT_ICON_GREEN : PRINT_ICON}" alt="" /> ${prints}</span>
+            ${other ? `<span class="other-count">Other ${other}</span>` : ''}
           </div>
         </div>
       </div>
@@ -781,6 +796,11 @@ function makeCard(o, style = 'default') {
       card.querySelectorAll('.order-cust').forEach(shortenNameIfWrapped);
     });
   }
+
+  const mockupSlot = card.querySelector('.mockup-slot');
+  const mockupAssetIdentity = getFirstMockupAssetIdentity(o);
+  if (mockupSlot && mockupAssetIdentity) mockupSlot.dataset.assetId = mockupAssetIdentity;
+  trackBoardMockupImage(mockupSlot?.querySelector('img'));
 
   card.style.position = 'relative';
 
@@ -837,7 +857,7 @@ function makeBundleCard(name, orders, style = 'pipeline') {
   if (style === 'picked') {
     let apparel = 0;
     orders.forEach(o => (o.items || []).forEach(it => {
-      if (!isPrintItem(it)) apparel += it.qty;
+      if (isGarmentItem(it)) apparel += it.qty;
     }));
     bodyHtml = `<div class="counts"><strong>${apparel}</strong></div>`;
   }
@@ -1014,15 +1034,15 @@ async function refreshManualMockupsForOrder(order) {
   return setManualMockups(orderNumber, manifest?.assets || []);
 }
 
-function scheduleManualMockupRepaint(status) {
-  if (status) pendingManualMockupStatuses.add(status);
-  if (manualMockupRepaintFrame !== null) return;
-  manualMockupRepaintFrame = requestAnimationFrame(() => {
-    manualMockupRepaintFrame = null;
-    const statuses = new Set(pendingManualMockupStatuses);
-    pendingManualMockupStatuses.clear();
-    if (statuses.size) void renderBoardFromLocalState(statuses, { invalidateQueueLoads: false });
-  });
+function reconcileManualMockupCard(order, changed, wasHydrated) {
+  if (!order || (!changed && wasHydrated)) return;
+  if (typeof window.updateBoardMockupPreview === 'function') {
+    window.updateBoardMockupPreview(order, { resolvePlaceholder: true });
+    return;
+  }
+  // Compatibility fallback for hosts that have not loaded the shared card
+  // updater. Only actual asset changes warrant rebuilding a status column.
+  if (changed) void renderBoardFromLocalState([order.status || 'received'], { invalidateQueueLoads: false });
 }
 
 async function hydrateManualMockupsForOrders(orders, { refresh = false } = {}) {
@@ -1049,22 +1069,18 @@ async function hydrateManualMockupsForOrders(orders, { refresh = false } = {}) {
         manualMockupsHydratedOrderNumbers.add(orderNumber);
         manualMockupsHydratingOrderNumbers.delete(orderNumber);
         const order = ordersByNumber.get(orderNumber);
-        if (changed || !wasHydrated) scheduleManualMockupRepaint(order?.status || 'received');
+        reconcileManualMockupCard(order, changed, wasHydrated);
       }
     });
     if (run !== manualMockupHydrationRun) return;
-    const changedStatuses = new Set();
     (orders || []).forEach(order => {
       const orderNumber = orderNumberFromOrder(order);
       const wasHydrated = manualMockupsHydratedOrderNumbers.has(orderNumber);
-      if (setManualMockups(orderNumber, result?.orders?.[orderNumber]?.assets || [])) {
-        changedStatuses.add(order.status || 'received');
-      }
+      const changed = setManualMockups(orderNumber, result?.orders?.[orderNumber]?.assets || []);
       manualMockupsHydratedOrderNumbers.add(orderNumber);
       manualMockupsHydratingOrderNumbers.delete(orderNumber);
-      if (!wasHydrated) changedStatuses.add(order.status || 'received');
+      reconcileManualMockupCard(order, changed, wasHydrated);
     });
-    changedStatuses.forEach(scheduleManualMockupRepaint);
   } catch (err) {
     console.warn('Unable to load manual mockups', err);
   } finally {
@@ -1140,6 +1156,28 @@ function candidateMockupManifests(order) {
   });
 }
 
+function getFirstMockupAssetIdentity(order) {
+  const manual = getManualMockupsForOrder(order)[0];
+  if (manual?.url) {
+    const manualIdentity = manual.id || manual.key || manual.uploadedAt || manual.filename || manual.name;
+    return manualIdentity ? `manual:${manualIdentity}` : '';
+  }
+  const asset = candidateMockupManifests(order)[0];
+  return String(asset?.assetId || asset?.id || '');
+}
+
+function trackBoardMockupImage(image) {
+  if (!image || image.dataset.previewLoadTracked === 'true') return;
+  image.dataset.previewLoadTracked = 'true';
+  image.addEventListener('load', () => {
+    delete image.dataset.previewLoadFailed;
+  });
+  image.addEventListener('error', () => {
+    image.dataset.previewLoadFailed = 'true';
+    window.orderManagerPerformanceDebug?.log?.('tile-image-failed');
+  });
+}
+
 function getProductionMockupState(order, hasMockup) {
   if (hasMockup) return 'ready';
   if (!order?._candidate) return 'unavailable';
@@ -1153,7 +1191,7 @@ function productionMockupSlotMarkup(url, state, orderNumber) {
   if (state === 'ready' && url) {
     return `
       <div class="mockup-slot mockup-slot-ready">
-        <img src="${url}" alt="Mockup preview for order ${orderNumber}" loading="eager" fetchpriority="high" />
+        <img src="${url}" alt="Mockup preview for order ${orderNumber}" loading="eager" decoding="async" fetchpriority="high" />
       </div>
     `;
   }
@@ -1167,6 +1205,94 @@ function productionMockupSlotMarkup(url, state, orderNumber) {
     </div>
   `;
 }
+
+function updateBoardMockupPreview(order, { resolvePlaceholder = false } = {}) {
+  if (!order?.name) return false;
+  const url = getFirstMockupUrl(order);
+  if (!url && !resolvePlaceholder) return false;
+  const orderNumber = String(order.orderNumber || order.name.match(/^#?(\d+)/)?.[1] || order.name).replace(/^#/, '');
+  const state = getProductionMockupState(order, Boolean(url));
+  const assetIdentity = getFirstMockupAssetIdentity(order);
+  let updated = false;
+  let preservedSources = 0;
+
+  document.querySelectorAll('.card[data-order-id]').forEach(card => {
+    if (card.dataset.orderId !== order.name) return;
+    const body = card.querySelector('.card-body');
+    if (!body) return;
+    if (!url && !card.classList.contains('print-card')) return;
+
+    let slot = body.querySelector('.mockup-slot');
+    if (!slot) {
+      slot = document.createElement('div');
+      body.insertBefore(slot, body.firstChild);
+      updated = true;
+    }
+    const existingImage = slot.querySelector('img');
+    const existingSource = existingImage?.getAttribute('src') || '';
+    const existingIdentity = slot.dataset.assetId || '';
+    const preserveExistingSource = Boolean(
+      existingImage
+      && existingSource
+      && assetIdentity
+      && existingIdentity === assetIdentity
+      && existingImage.dataset.previewLoadFailed !== 'true'
+    );
+    const renderedState = preserveExistingSource ? 'ready' : state;
+    slot.className = `mockup-slot mockup-slot-${renderedState}`;
+    if (assetIdentity) slot.dataset.assetId = assetIdentity;
+    else delete slot.dataset.assetId;
+
+    if (preserveExistingSource) {
+      slot.removeAttribute('aria-label');
+      trackBoardMockupImage(existingImage);
+      existingImage.setAttribute('alt', `Mockup preview for order ${orderNumber}`);
+      if (url && existingSource !== url) preservedSources += 1;
+    } else if (url) {
+      slot.removeAttribute('aria-label');
+      let image = existingImage;
+      if (!image) {
+        image = document.createElement('img');
+        slot.replaceChildren(image);
+        updated = true;
+      }
+      trackBoardMockupImage(image);
+      if (image.getAttribute('src') !== url) {
+        image.setAttribute('src', url);
+        updated = true;
+      }
+      image.setAttribute('alt', `Mockup preview for order ${orderNumber}`);
+      image.setAttribute('loading', 'eager');
+      image.setAttribute('decoding', 'async');
+      image.setAttribute('fetchpriority', 'high');
+    } else {
+      const loading = state === 'loading';
+      slot.setAttribute('aria-label', loading
+        ? `Mockup preview for order ${orderNumber} is loading`
+        : `No mockup preview is available for order ${orderNumber}`);
+      const label = document.createElement('span');
+      label.className = 'mockup-placeholder-label';
+      label.setAttribute('aria-hidden', 'true');
+      label.textContent = loading ? 'Loading preview' : 'No mockup';
+      slot.replaceChildren(label);
+      updated = true;
+    }
+
+    body.classList.remove('no-mockup', 'production-preview-ready', 'production-preview-loading', 'production-preview-unavailable');
+    body.classList.add('has-mockup');
+    if (card.classList.contains('print-card')) body.classList.add(`production-preview-${renderedState}`);
+  });
+
+  if (preservedSources) {
+    window.orderManagerPerformanceDebug?.log?.('tile-preview-source-preserved', {
+      count: preservedSources
+    });
+  }
+
+  return updated;
+}
+
+window.updateBoardMockupPreview = updateBoardMockupPreview;
 
 function addCacheBustParam(url, attempt) {
   const sep = url.includes('?') ? '&' : '?';
@@ -1685,7 +1811,7 @@ function openDetail(o) {
   }
 
   // progress
-  const totalApparel = (o.items || []).reduce((sum, it) => sum + (isPrintItem(it) ? 0 : it.qty), 0);
+  const totalApparel = (o.items || []).reduce((sum, it) => sum + (isGarmentItem(it) ? it.qty : 0), 0);
   o.totalApparel = totalApparel;
   if (typeof o.progress !== 'number') o.progress = 0;
   const progressText = document.getElementById('progress-text');
@@ -1828,6 +1954,11 @@ function openDetail(o) {
   const detailFilesBtn = document.getElementById('detail-files-btn');
   if (detailFilesBtn) detailFilesBtn.onclick = () => openFilesModal(o);
 
+  // The mobile detail is a fixed app viewport. Reset its only scroll owner
+  // before opening, then once again after layout has settled.
+  const detailContent = document.getElementById('detail-content');
+  detailContent?.scrollTo({ top: 0, behavior: 'auto' });
+
   // show overlay
   document.getElementById('detail-overlay')
     .classList.replace('hidden', 'visible');
@@ -1836,6 +1967,7 @@ function openDetail(o) {
   document.body.classList.add('detail-open');
 
   document.querySelector('.pipeline').classList.add('no-delete');
+  requestAnimationFrame(() => detailContent?.scrollTo({ top: 0, behavior: 'auto' }));
 
   const notesWrapper = document.getElementById('detail-notes-wrapper');
   const detailCard = document.getElementById('detail-card');
@@ -2207,6 +2339,8 @@ window.addEventListener('blur', () => finishCardDrag());
 async function renderBoard(options = {}) {
   const { useLocalOrders = false, statuses = null, invalidateQueueLoads = true } = options;
   let statusesToRender = normalizeBoardStatuses(statuses);
+  let renderedAnySnapshot = false;
+  const renderedStatuses = new Set();
   if (useLocalOrders) {
     // A local mutation or asset hydration is newer than any queue read that
     // started before it. Prevent that older response from repainting stale data.
@@ -2216,34 +2350,70 @@ async function renderBoard(options = {}) {
     }
   } else {
     const fetchGeneration = ++boardFetchGeneration;
-    const nextOrders = await window.api.getQueue();
+    const allowProgressivePaint = isShopifyBoardView() && !boardHasRendered;
+    const applyQueueSnapshot = (nextOrders, { page = null, hasMore = false } = {}) => {
+      if (fetchGeneration !== boardFetchGeneration) return false;
+      const changedStatuses = changedCandidateBoardStatuses(allOrders, nextOrders);
+      allOrders = nextOrders;
+      const snapshotStatuses = statuses
+        ? normalizeBoardStatuses(statuses)
+        : normalizeBoardStatuses(changedStatuses);
+      if (boardHasRendered && snapshotStatuses.length === 0) {
+        refreshVisibleRelativeTimes();
+        return false;
+      }
+      snapshotStatuses.forEach(status => {
+        renderStatusColumn(status);
+        renderedStatuses.add(status);
+      });
+      boardHasRendered = true;
+      renderedAnySnapshot = true;
+      refreshOpenBundleModal();
+      window.orderManagerPerformanceDebug?.log?.("board-snapshot-painted", {
+        generation: fetchGeneration,
+        page,
+        hasMore,
+        orders: nextOrders.length,
+        statuses: snapshotStatuses,
+      });
+      return true;
+    };
+
+    const nextOrders = await window.api.getQueue({
+      onPage: allowProgressivePaint
+        ? (pageOrders, pageInfo) => {
+          const painted = applyQueueSnapshot(pageOrders, pageInfo);
+          if (painted) void hydrateManualMockupsForOrders(pageOrders, { refresh: true });
+          return painted;
+        }
+        : undefined,
+    });
     if (fetchGeneration !== boardFetchGeneration) {
       return { rendered: false, stale: true, statuses: [] };
     }
-    const changedStatuses = changedCandidateBoardStatuses(allOrders, nextOrders);
-    allOrders = nextOrders;
-    if (!statuses) statusesToRender = normalizeBoardStatuses(changedStatuses);
-    if (boardHasRendered && statusesToRender.length === 0) {
-      refreshVisibleRelativeTimes();
-      return { rendered: false, stale: false, statuses: [] };
-    }
+    applyQueueSnapshot(nextOrders);
+    if (!allowProgressivePaint) void hydrateManualMockupsForOrders(allOrders, { refresh: true });
+    return {
+      rendered: renderedAnySnapshot,
+      stale: false,
+      statuses: Array.from(renderedStatuses),
+    };
   }
 
   statusesToRender.forEach(renderStatusColumn);
   boardHasRendered = true;
   refreshOpenBundleModal();
-  if (!useLocalOrders) void hydrateManualMockupsForOrders(allOrders, { refresh: true });
   return { rendered: true, stale: false, statuses: statusesToRender };
 }
 
 // recalc summary from “toOrder” items
 function updateSummary() {
   const picks = allOrders.filter(x => x.status === 'toOrder' && orderIsVisibleOnOperationalBoard(x));
-  const summary = { Apparel: 0, Prints: 0 };
+  const summary = { Garments: 0, Prints: 0 };
   picks.forEach(o =>
     (o.items || []).forEach(it => {
       if (isPrintItem(it)) summary.Prints += it.qty;
-      else summary.Apparel += it.qty;
+      else if (isGarmentItem(it)) summary.Garments += it.qty;
     })
   );
   const ul = document.getElementById('summary-list');
@@ -2251,7 +2421,7 @@ function updateSummary() {
     .map(([k, v]) => `<li>${k}: ${v}</li>`)
     .join('');
   document.getElementById('cart-total').textContent =
-    `Total items: ${summary.Apparel}`;
+    `Total garments: ${summary.Garments}`;
 }
 
 function startBundle(status) {

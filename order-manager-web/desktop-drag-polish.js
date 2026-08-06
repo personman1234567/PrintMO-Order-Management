@@ -27,7 +27,6 @@
   let layoutAnimationFrame = 0;
   let activeDropAccepted = false;
   let orderMetaByKey = new Map();
-  let orderMetaPromise = null;
   let orderMetaLastRefresh = 0;
   let pointerDrag = null;
   let suppressNextClick = false;
@@ -81,59 +80,51 @@
   function refreshOrderMetadata({ force = false } = {}) {
     const now = Date.now();
     if (!force && orderMetaByKey.size && now - orderMetaLastRefresh < metadataRefreshMs) {
-      return orderMetaPromise || Promise.resolve(orderMetaByKey);
+      return Promise.resolve(orderMetaByKey);
     }
-    if (orderMetaPromise) return orderMetaPromise;
-    if (!window.api || typeof window.api.getQueue !== 'function') {
+    if (typeof window.getOrderManagerBoardSnapshot !== 'function') {
       return Promise.resolve(orderMetaByKey);
     }
 
-    orderMetaPromise = window.api.getQueue()
-      .then(orders => {
-        const next = new Map();
-        const bundleTimes = new Map();
-        (orders || []).forEach(order => {
-          if (!order?.name) return;
-          const sortTime = parseSortTime(order.receivedAt);
-          next.set(`order:${order.name}`, {
-            group: 1,
-            sortTime,
-            status: order.status || '',
-            bundle: order.bundle || ''
-          });
-
-          if (order.bundle) {
-            const bundleKey = String(order.bundle);
-            const current = bundleTimes.get(bundleKey) ?? Number.POSITIVE_INFINITY;
-            bundleTimes.set(bundleKey, Math.min(current, sortTime));
-          }
-        });
-
-        bundleTimes.forEach((sortTime, name) => {
-          next.set(`bundle:${name}`, {
-            group: 0,
-            sortTime,
-            status: '',
-            bundle: name
-          });
-        });
-
-        orderMetaByKey = next;
-        orderMetaLastRefresh = Date.now();
-        if (activeDragCard && lastDropZone) {
-          setDropZone(lastDropZone, { forcePlaceholder: true });
-        }
-        return orderMetaByKey;
-      })
-      .catch(error => {
-        console.warn('Unable to refresh drag sort metadata', error);
-        return orderMetaByKey;
-      })
-      .finally(() => {
-        orderMetaPromise = null;
+    const orders = window.getOrderManagerBoardSnapshot();
+    const next = new Map();
+    const bundleTimes = new Map();
+    (orders || []).forEach(order => {
+      if (!order?.name) return;
+      const sortTime = parseSortTime(order.receivedAt);
+      next.set(`order:${order.name}`, {
+        group: 1,
+        sortTime,
+        status: order.status || '',
+        bundle: order.bundle || ''
       });
 
-    return orderMetaPromise;
+      if (order.bundle) {
+        const bundleKey = String(order.bundle);
+        const current = bundleTimes.get(bundleKey) ?? Number.POSITIVE_INFINITY;
+        bundleTimes.set(bundleKey, Math.min(current, sortTime));
+      }
+    });
+
+    bundleTimes.forEach((sortTime, name) => {
+      next.set(`bundle:${name}`, {
+        group: 0,
+        sortTime,
+        status: '',
+        bundle: name
+      });
+    });
+
+    orderMetaByKey = next;
+    orderMetaLastRefresh = Date.now();
+    window.orderManagerPerformanceDebug?.log?.('drag-metadata-refreshed', {
+      orders: orders.length,
+      bundles: bundleTimes.size
+    });
+    if (activeDragCard && lastDropZone) {
+      setDropZone(lastDropZone, { forcePlaceholder: true });
+    }
+    return Promise.resolve(orderMetaByKey);
   }
 
   function captureLayout() {

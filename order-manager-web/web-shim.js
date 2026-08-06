@@ -1,6 +1,52 @@
 // web-shim.js — backed by your Cloudflare Worker proxy (NO admin key in client)
 const API_BASE = "https://order-manager-proxy.printmobusiness.workers.dev";
 
+let shopifyIdTokenCache = null;
+let shopifyIdTokenLoad = null;
+
+function shopifyIdTokenExpiry(token) {
+  try {
+    const payload = String(token || "").split(".")[1] || "";
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const claims = JSON.parse(atob(padded));
+    const expiresAt = Number(claims?.exp) * 1000;
+    return Number.isFinite(expiresAt) ? expiresAt : 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+async function getShopifyIdToken({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && shopifyIdTokenCache?.value && shopifyIdTokenCache.expiresAt > now) {
+    return shopifyIdTokenCache.value;
+  }
+  if (shopifyIdTokenLoad) return shopifyIdTokenLoad;
+  if (!window.shopify || typeof window.shopify.idToken !== "function") {
+    throw new Error("Shopify authentication is unavailable. Open PrintMO from Shopify Admin.");
+  }
+  shopifyIdTokenLoad = (async () => {
+    const token = await window.shopify.idToken();
+    if (!token) throw new Error("Shopify authentication did not return an ID token.");
+    const declaredExpiry = shopifyIdTokenExpiry(token);
+    const safeDeclaredExpiry = declaredExpiry > now ? declaredExpiry - 10000 : now + 15000;
+    shopifyIdTokenCache = {
+      value: token,
+      // Reuse the queue token only for its immediate follow-up ticket calls.
+      // This removes a second App Bridge readiness round-trip without keeping
+      // a bearer token near its one-minute expiry.
+      expiresAt: Math.min(safeDeclaredExpiry, now + 30000),
+    };
+    return token;
+  })();
+  try {
+    return await shopifyIdTokenLoad;
+  } finally {
+    shopifyIdTokenLoad = null;
+  }
+}
+
 function apiErrorMessage(value) {
   if (value === undefined || value === null) return "";
   if (typeof value === "string") return value;
@@ -21,16 +67,19 @@ async function apiFetch(path, opts = {}) {
   if (!isFormData && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  if (!window.shopify || typeof window.shopify.idToken !== "function") {
-    throw new Error("Shopify authentication is unavailable. Open PrintMO from Shopify Admin.");
+  const request = async (forceToken = false) => {
+    const token = await getShopifyIdToken({ force: forceToken });
+    headers.set("Authorization", `Bearer ${token}`);
+    return fetch(`${API_BASE}${path}`, {
+      ...rest,
+      headers,
+    });
+  };
+  let res = await request();
+  if (res.status === 401) {
+    shopifyIdTokenCache = null;
+    res = await request(true);
   }
-  const token = await window.shopify.idToken();
-  if (!token) throw new Error("Shopify authentication did not return an ID token.");
-  headers.set("Authorization", `Bearer ${token}`);
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...rest,
-    headers,
-  });
 
   const parseErrorBody = async () => {
     try {
@@ -97,13 +146,75 @@ const candidateOrdersByName = new Map();
 const candidateAssetObjectUrls = new Map();
 const candidateAssetObjectUrlLoads = new Map();
 const candidateMutationChains = new Map();
-const ASSET_HYDRATION_CONCURRENCY = 4;
+// Visible mockups receive their signed URLs immediately; the browser owns
+// HTTP scheduling and decoding instead of a detached-image timeout queue.
+const ASSET_HYDRATION_CONCURRENCY = 6;
+const CANDIDATE_TICKET_BATCH_TIMEOUT_MS = 1500;
 const CANDIDATE_ASSET_OBJECT_URL_LIMIT = 100;
+const CANDIDATE_PERF_DEBUG_KEY = "printmo:order-manager:performance-debug";
 let candidateForceRefreshOnce = false;
 let candidateAssetHydrationRun = 0;
 let candidateQueueLoadGeneration = 0;
 let candidateBoardHydrationRecords = [];
 let candidateBoardMockupRepaint = null;
+let candidatePerfImageObserverInstalled = false;
+
+function candidatePerfNow() {
+  return typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+}
+
+function candidatePerfDebugEnabled() {
+  try {
+    return window.localStorage?.getItem(CANDIDATE_PERF_DEBUG_KEY) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function candidatePerfLog(event, detail = {}) {
+  if (!candidatePerfDebugEnabled()) return;
+  console.info(`[OrderManagerPerf] ${event}`, {
+    atMs: Math.round(candidatePerfNow()),
+    ...detail,
+  });
+}
+
+function installCandidatePerfImageObserver() {
+  if (candidatePerfImageObserverInstalled || typeof document?.addEventListener !== "function") return;
+  candidatePerfImageObserverInstalled = true;
+  document.addEventListener("load", (event) => {
+    const image = event.target;
+    if (!candidatePerfDebugEnabled() || image?.tagName !== "IMG" || !image.closest?.(".card .mockup-slot")) return;
+    const rect = image.getBoundingClientRect();
+    candidatePerfLog("tile-image-loaded", {
+      visible: rect.bottom >= 0
+        && rect.right >= 0
+        && rect.top <= (window.innerHeight || document.documentElement.clientHeight)
+        && rect.left <= (window.innerWidth || document.documentElement.clientWidth),
+      naturalWidth: Number(image.naturalWidth || 0),
+      naturalHeight: Number(image.naturalHeight || 0),
+    });
+  }, true);
+}
+
+window.orderManagerPerformanceDebug = Object.freeze({
+  enable() {
+    try { window.localStorage?.setItem(CANDIDATE_PERF_DEBUG_KEY, "1"); } catch (_) {}
+    installCandidatePerfImageObserver();
+    candidatePerfLog("debug-enabled");
+    return true;
+  },
+  disable() {
+    try { window.localStorage?.removeItem(CANDIDATE_PERF_DEBUG_KEY); } catch (_) {}
+    return false;
+  },
+  enabled: candidatePerfDebugEnabled,
+  log: candidatePerfLog,
+});
+
+if (candidatePerfDebugEnabled()) installCandidatePerfImageObserver();
 
 async function runWithConcurrency(items, limit, worker) {
   const queue = Array.isArray(items) ? items : [];
@@ -119,6 +230,23 @@ async function runWithConcurrency(items, limit, worker) {
     }
   );
   await Promise.all(runners);
+}
+
+async function withCandidateTicketBatchTimeout(promise) {
+  let timeoutId = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeoutId = window.setTimeout(
+          () => reject(new Error("Private preview ticket batch timed out")),
+          CANDIDATE_TICKET_BATCH_TIMEOUT_MS
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== null) window.clearTimeout(timeoutId);
+  }
 }
 
 function isShopifyCandidateView() {
@@ -321,6 +449,26 @@ function candidateRecordBelongsToActiveMobileTab(record) {
   return false;
 }
 
+function waitForCandidateBoardPaint() {
+  if (typeof requestAnimationFrame !== "function") return Promise.resolve();
+  return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}
+
+function candidateRecordIsVisibleInBoard(record) {
+  if (typeof document === "undefined") return false;
+  const displayName = record?.displayName || record?.id || "Shopify order";
+  const customer = selectOperationalCustomerName(record) || "Name unavailable";
+  const orderName = `${displayName} – ${customer}`;
+  const card = Array.from(document.querySelectorAll(".card[data-order-id]")).find(node => node.dataset.orderId === orderName);
+  if (!card) return false;
+  const rect = card.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0
+    && rect.bottom >= 0
+    && rect.right >= 0
+    && rect.top <= (window.innerHeight || document.documentElement.clientHeight)
+    && rect.left <= (window.innerWidth || document.documentElement.clientWidth);
+}
+
 function candidateAssetHydrationQueue(records, { boardVisibleOnly = false } = {}) {
   const firstMockups = [];
   const remainingMockups = [];
@@ -344,25 +492,40 @@ function candidateAssetHydrationQueue(records, { boardVisibleOnly = false } = {}
 }
 
 async function hydrateCandidateAssets(records, { onMockupChange, boardVisibleOnly = false } = {}) {
+  // Yield after the page snapshot is applied so layout can identify visible
+  // cards before preview sources are prioritized.
+  if (boardVisibleOnly) await waitForCandidateBoardPaint();
   const assets = candidateAssetHydrationQueue(records, { boardVisibleOnly });
+  assets.sort((left, right) => {
+    const leftVisible = candidateRecordIsVisibleInBoard(left.record) ? 0 : 1;
+    const rightVisible = candidateRecordIsVisibleInBoard(right.record) ? 0 : 1;
+    return leftVisible - rightVisible;
+  });
   const changedOrderIds = new Set();
   try {
-    await prefetchCandidateAssetTickets(assets.map(entry => entry.asset));
+    await withCandidateTicketBatchTimeout(
+      prefetchCandidateAssetTickets(assets.map(entry => entry.asset))
+    );
   } catch (error) {
     console.warn("Unable to batch private asset tickets; using per-asset fallback", error);
   }
   await runWithConcurrency(assets, ASSET_HYDRATION_CONCURRENCY, async ({ asset, record, isMockup }) => {
+    let repainted = false;
     try {
       const previousUrl = asset.url || "";
       const nextUrl = await candidateAssetObjectUrl(asset);
       asset.url = nextUrl;
       asset._previewState = "ready";
       if (nextUrl && nextUrl !== previousUrl) changedOrderIds.add(record.id);
+      if (isMockup && typeof onMockupChange === "function") {
+        onMockupChange(record);
+        repainted = true;
+      }
     } catch (error) {
       asset._previewState = "failed";
       console.warn("Unable to hydrate private Designer Studio asset", asset?.assetId, error);
     } finally {
-      if (isMockup && typeof onMockupChange === "function") onMockupChange(record);
+      if (!repainted && isMockup && typeof onMockupChange === "function") onMockupChange(record);
     }
   });
   return changedOrderIds;
@@ -377,56 +540,87 @@ function applyCandidateCachedAssetUrls(records) {
   });
 }
 
-async function loadCandidateQueue({ refresh = false } = {}) {
+async function loadCandidateQueue({ refresh = false, onPage } = {}) {
   const loadGeneration = ++candidateQueueLoadGeneration;
+  const loadStartedAt = candidatePerfNow();
   const records = [];
-  let cursor = "";
-  do {
-    const query = buildQuery({ limit: 50, cursor, refresh: refresh ? 1 : undefined });
-    const page = await apiFetch(`/order-manager/v1/orders${query}`, { method: "GET" });
-    records.push(...(Array.isArray(page?.data) ? page.data : []));
-    cursor = page?.pageInfo?.nextCursor || "";
-  } while (cursor && records.length < 500);
-  applyCandidateCachedAssetUrls(records);
-  const mapped = records.map(record => candidateOrderToBoard(record, { register: false }));
-  if (loadGeneration !== candidateQueueLoadGeneration) return mapped;
-  candidateOrdersByName.clear();
-  mapped.forEach(order => candidateOrdersByName.set(order.name, order));
-
-  // Private Designer Studio previews are useful but must not hold the board
-  // hostage. Hydrate them after commerce + production metadata has rendered.
   const hydrationRun = ++candidateAssetHydrationRun;
-  const pendingStatuses = new Set();
-  let repaintFrame = null;
+  let hydrationChain = Promise.resolve();
+  let pageIndex = 0;
+  let cursor = "";
+
   const scheduleMockupRepaint = (record) => {
     if (hydrationRun !== candidateAssetHydrationRun || !isShopifyCandidateView()) return;
     const displayName = record.displayName || record.id || "Shopify order";
     const customer = selectOperationalCustomerName(record) || "Name unavailable";
     const key = `${displayName} \u2013 ${customer}`;
     const current = candidateOrdersByName.get(key);
-    if (!current) return;
-    pendingStatuses.add(current.status || "received");
-    if (repaintFrame !== null) return;
-    repaintFrame = requestAnimationFrame(() => {
-      repaintFrame = null;
-      if (hydrationRun !== candidateAssetHydrationRun || !isShopifyCandidateView()) return;
-      const changedStatuses = new Set(pendingStatuses);
-      pendingStatuses.clear();
-      if (!changedStatuses.size) return;
-      if (typeof window.renderBoardFromLocalState === "function") {
-        void window.renderBoardFromLocalState(changedStatuses, { invalidateQueueLoads: false });
-      } else if (typeof window.renderStatusColumn === "function") {
-        changedStatuses.forEach((status) => window.renderStatusColumn(status));
-      }
-    });
+    if (!current || typeof window.updateBoardMockupPreview !== "function") return;
+    const updated = window.updateBoardMockupPreview(current, { resolvePlaceholder: true });
+    if (updated) candidatePerfLog("tile-preview-source-attached");
   };
+
   candidateBoardHydrationRecords = records;
   candidateBoardMockupRepaint = scheduleMockupRepaint;
-  void hydrateCandidateAssets(records, {
-    onMockupChange: scheduleMockupRepaint,
-    boardVisibleOnly: true,
-  }).catch((error) => {
-    console.warn("Unable to hydrate Shopify board previews", error);
+  candidatePerfLog("queue-load-start", { generation: loadGeneration, refresh: Boolean(refresh) });
+
+  do {
+    const pageStartedAt = candidatePerfNow();
+    const query = buildQuery({ limit: 50, cursor, refresh: refresh ? 1 : undefined });
+    const page = await apiFetch(`/order-manager/v1/orders${query}`, { method: "GET" });
+    if (loadGeneration !== candidateQueueLoadGeneration) return [];
+    const pageRecords = Array.isArray(page?.data) ? page.data : [];
+    records.push(...pageRecords);
+    cursor = page?.pageInfo?.nextCursor || "";
+    pageIndex += 1;
+    const pageNumber = pageIndex;
+
+    applyCandidateCachedAssetUrls(pageRecords);
+    const mapped = records.map(record => candidateOrderToBoard(record, { register: false }));
+    candidateOrdersByName.clear();
+    mapped.forEach(order => candidateOrdersByName.set(order.name, order));
+
+    const hasMore = Boolean(cursor && records.length < 500);
+    candidatePerfLog("queue-page-ready", {
+      generation: loadGeneration,
+      page: pageNumber,
+      pageRecords: pageRecords.length,
+      accumulatedRecords: records.length,
+      requestMs: Math.round(candidatePerfNow() - pageStartedAt),
+      hasMore,
+    });
+
+    if (typeof onPage === "function") {
+      await onPage(mapped, {
+        generation: loadGeneration,
+        page: pageNumber,
+        hasMore,
+        accumulatedRecords: records.length,
+        totalRecords: Number(page?.pageInfo?.total || records.length),
+      });
+      if (loadGeneration !== candidateQueueLoadGeneration) return [];
+    }
+
+    // Page hydration is deliberately detached from queue enumeration and card
+    // rendering. Serialize pages so the first visible cards receive image
+    // sources before later pages compete for browser/network attention.
+    hydrationChain = hydrationChain.catch(() => {}).then(async () => {
+      if (hydrationRun !== candidateAssetHydrationRun) return;
+      candidatePerfLog("preview-page-hydration-start", { page: pageNumber, records: pageRecords.length });
+      await hydrateCandidateAssets(pageRecords, {
+        onMockupChange: scheduleMockupRepaint,
+        boardVisibleOnly: true,
+      });
+      candidatePerfLog("preview-page-hydration-complete", { page: pageNumber, records: pageRecords.length });
+    }).catch(error => console.warn("Unable to hydrate Shopify board previews", error));
+  } while (cursor && records.length < 500);
+
+  const mapped = records.map(record => candidateOrderToBoard(record, { register: false }));
+  candidatePerfLog("queue-load-complete", {
+    generation: loadGeneration,
+    pages: pageIndex,
+    records: records.length,
+    elapsedMs: Math.round(candidatePerfNow() - loadStartedAt),
   });
   return mapped;
 }
@@ -522,11 +716,11 @@ function updateCandidateOrder(name, patch) {
 }
 
 // 1) Populate dashboard
-window.api.getQueue = async () => {
+window.api.getQueue = async ({ onPage } = {}) => {
   if (isShopifyCandidateView()) {
     const refresh = candidateForceRefreshOnce;
     candidateForceRefreshOnce = false;
-    return loadCandidateQueue({ refresh });
+    return loadCandidateQueue({ refresh, onPage });
   }
   const data = await apiFetch("/order-manager/v1/legacy/queue", { method: "GET" });
   return Array.isArray(data) ? data : (data?.orders || []);

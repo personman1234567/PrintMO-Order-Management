@@ -77,9 +77,9 @@ Allowed stages are `received`, `to_order`, `blanks_cart`, `blanks_ordered`, `pri
 The Admin order block presents five operator-facing stages by grouping
 `blanks_cart` and `blanks_ordered` under **Blanks** with a required substage.
 Its production DTO also returns a read-only `garmentCount`, calculated from all
-paginated current line-item quantities after excluding known print-service
-lines. The Worker rejects `printedCount` values above that current garment
-total.
+paginated current line-item quantities that have a supplier SKU after excluding
+known print-service lines. The Worker rejects `printedCount` values above that
+current garment total.
 
 `completed` means manufacturing is finished, not that pickup or delivery has
 finished. The Ready to Print workspace renders `print` under **To Print** and
@@ -119,7 +119,7 @@ The Worker binding is `ORDER_DB`. The production database is `printmo-order-mana
 
 `GET /order-manager/v1/orders/:gid` loads rich Shopify detail on demand and merges it with the canonical production metafield and D1 asset manifests.
 
-`order-manager-web/web-shim.js` maps the candidate DTO into the existing board renderer. Source-aware mutation methods route only the Shopify view to canonical endpoints; the legacy branch retains its existing URLs and payloads. Candidate queue loads are generation-guarded, cached private preview URLs are preserved between polls, and the shared renderer discards superseded responses and repaints only columns whose render-relevant order data changed.
+`order-manager-web/web-shim.js` maps the candidate DTO into the existing board renderer. Source-aware mutation methods route only the Shopify view to canonical endpoints; the legacy branch retains its existing URLs and payloads. The shared renderer is the sole browser owner of queue reads and exposes a shallow, read-only board snapshot for drag metadata and other presentation-only consumers. Candidate queue loads are generation-guarded, cached private preview URLs are preserved between polls, and the shared renderer discards superseded responses and repaints only columns whose render-relevant order data changed.
 
 Summary identity uses the fulfillment recipient from shipping name, then billing name, falling back to `Name unavailable` when neither is returned. The routine board query intentionally avoids the protected `customer` relation and the product-gated `variant` relation; rich detail uses its separately approved direct Order fields. Candidate detail commerce includes exact Shopify subtotal, discount, and total values from `currentSubtotalPriceSet`, `currentTotalDiscountsSet`, and `currentTotalPriceSet`. A manual **Refresh Shopify** request bypasses the 60-second summary TTL for the currently paged projection so newly returned identity fields can be reprojected immediately.
 
@@ -141,7 +141,7 @@ Candidate mutations are serialized per order in the browser. A board move sends 
 `POST /order-manager/v1/batches/commit`:
 
 1. validates selected active projections and their stages;
-2. aggregates non-print garment SKUs;
+2. aggregates non-print line items with a supplier SKU;
 3. stores a D1 `prepared` batch and selected order revisions;
 4. makes the single allowed transition to `submitting`;
 5. calls `/order-manager/v1/supplier/ss/commit` on the stateless Render gateway;
@@ -165,7 +165,9 @@ The first release runs a bounded active-order backfill of at most 50 orders and 
 
 Production backfill evidence on 2026-07-23: 12 active orders scanned, 12 candidates resolved, 12 active `designer-studio-sync` manifests, zero failures, checkpoint `2026-07-24T03:28:53.220Z` (UTC).
 
-Board DTOs include at most one representative asset per order and never private object keys. `web-shim.js` renders commerce/production cards first, requests all needed signed 60-second URLs through one authenticated batch-ticket call, and lets image elements stream those private responses directly instead of buffering every full file into JavaScript blobs. Ticket payloads contain only opaque manifest IDs; the read route resolves R2 keys server-side after signature verification. On mobile, only the active workflow tab is hydrated, and selecting another tab triggers its deferred previews. Opening an order loads the complete linked asset set on demand, with requests deduplicated by asset ID and signed URLs held in a bounded, expiry-aware cache. Artwork latency therefore cannot block the operational board or make hidden-stage/design files part of initial mobile hydration. Asset role, side, line-item ID, and filename—not a public URL shape—drive mockup/design placement.
+Board DTOs include at most one representative asset per order and never private object keys. On the initial Shopify-board load, `web-shim.js` maps and publishes each 50-order page as soon as it arrives; the shared renderer paints the first page immediately and merges later pages while their requests continue. Presentation helpers consume the renderer's current snapshot rather than starting competing queue requests, so a metadata read cannot cancel the initial paint. Existing cards remain visible during later polling or manual refreshes, so a partial refresh response never temporarily removes later-page orders. Private preview hydration starts only after a page's cards are usable, reuses the fresh queue bearer for batch-ticket requests, and requests signed 60-second URLs without placing ticket or image work on the queue promise. As each URL resolves, the shared renderer patches the matching card's reserved mockup slot directly. Mockup slots retain the stable opaque asset ID, while render fingerprints exclude the expiring signed URL; ticket rotation for the same healthy image therefore preserves the existing element and source instead of rebuilding or visibly reloading it. Missing, changed, or failed images still receive a fresh source. Neither later queue pages nor the periodic board poll is a preview-rendering dependency. Image elements stream private responses without buffering every full file into JavaScript blobs. Ticket payloads contain only opaque manifest IDs; the read route resolves R2 keys server-side after signature verification. On mobile, only the active workflow tab is hydrated, and selecting another tab triggers its deferred previews. Opening an order loads the complete linked asset set on demand, with requests deduplicated by asset ID and signed URLs held in a bounded, expiry-aware cache. Artwork latency therefore cannot block the operational board or make hidden-stage/design files part of initial mobile hydration. Asset role, side, line-item ID, and filename—not a public URL shape—drive mockup/design placement.
+
+Aggregate timing diagnostics are off by default and retain no order or customer identifiers. In the embedded app frame's browser console, run `window.orderManagerPerformanceDebug.enable()` and reload to log queue-page readiness, board snapshot paint/read counts, drag-metadata refreshes, preview-source attachment/preservation, and image-load dimensions or failures. Run `window.orderManagerPerformanceDebug.disable()` to remove the local browser flag.
 
 ## Environment Flags
 

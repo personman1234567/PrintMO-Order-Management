@@ -58,10 +58,21 @@
   function syncBlanksViewUi() {
     if (!isShopifyBoard()) return;
     const blanksOrders = currentOrders().filter(order => (order.status || 'received') === 'blanks');
-    const cartCount = blanksOrders.filter(order => !isOrdered(order)).length;
-    const orderedCount = blanksOrders.length - cartCount;
+    const operationalBlanks = blanksOrders.filter(order => {
+      try {
+        return typeof orderIsVisibleOnOperationalBoard !== 'function' || orderIsVisibleOnOperationalBoard(order);
+      } catch (error) {
+        return true;
+      }
+    });
+    const excludedFulfilled = blanksOrders.length - operationalBlanks.length;
+    const cartCount = operationalBlanks.filter(order => !isOrdered(order)).length;
+    const orderedCount = operationalBlanks.length - cartCount;
     const section = document.getElementById('blanks-section');
-    if (section) section.dataset.blanksView = activeBlanksView;
+    if (section) {
+      section.dataset.blanksView = activeBlanksView;
+      section.dataset.excludedFulfilled = String(excludedFulfilled);
+    }
     [
       ['blanks-view-cart', 'cart'],
       ['blanks-view-ordered', 'ordered'],
@@ -83,7 +94,7 @@
     if (ordered) ordered.textContent = String(orderedCount);
     if (suppliesCart) suppliesCart.textContent = String(cartCount);
     if (suppliesOrdered) suppliesOrdered.textContent = String(orderedCount);
-    if (total) total.textContent = String(blanksOrders.length);
+    if (total) total.textContent = String(operationalBlanks.length);
     syncSuppliesLayout();
   }
 
@@ -335,6 +346,15 @@
     return PRINT_TITLE_FALLBACK.has(item?.title);
   }
 
+  function isGarmentLineItem(item) {
+    try {
+      if (typeof isGarmentItem === 'function') return isGarmentItem(item);
+    } catch (error) {
+      // Fall through to the local conservative rule.
+    }
+    return !isPrintLineItem(item) && Boolean(cleanText(item?.sku));
+  }
+
   function orderParts(orderName) {
     const [number, customer = ''] = String(orderName || '').split(' \u2013 ');
     return {
@@ -363,7 +383,7 @@
   function orderPayload(order) {
     const parts = orderParts(order?.name);
     const items = (Array.isArray(order?.items) ? order.items : [])
-      .filter(item => item && !isPrintLineItem(item) && Number(item.qty) > 0)
+      .filter(item => item && isGarmentLineItem(item) && Number(item.qty) > 0)
       .map(lineItemPayload);
 
     return {
@@ -684,53 +704,106 @@
         : `${accounting.accountedGarments}/${accounting.expectedGarments} accounted · ${accounting.missingGarments} missing`;
     }
 
-    // --- Inject accounting pills into each item row ---
+    // --- Add a dedicated receiving action beneath each garment row ---
     const tbody = document.querySelector('#detail-items tbody');
     if (!tbody) return;
 
-    // Remove any previously injected pills
-    tbody.querySelectorAll('.inline-accounting-pill').forEach(el => el.remove());
+    tbody.querySelectorAll('.detail-accounting-action-row').forEach(row => row.remove());
+    tbody.querySelectorAll('.detail-item-row.has-accounting-action').forEach(row => {
+      row.classList.remove('has-accounting-action');
+    });
 
     if (!accounting || !accounting.expectedGarments) return;
 
     // Build a lookup map from the accounting lines keyed by title + variant
     const accountingByKey = new Map();
     accounting.lines.forEach(line => {
-      const key = `${(line.title || '').trim().toLowerCase()}||${(line.variantTitle || '').trim().toLowerCase()}`;
+      const key = `${(line.title || '').trim().toLowerCase()}||${(line.sku || '').trim().toLowerCase()}||${(line.variantTitle || '').trim().toLowerCase()}`;
       // Aggregate in case multiple batch lines map to same item
       if (accountingByKey.has(key)) {
         const existing = accountingByKey.get(key);
         existing.accountedQty += line.accountedQty;
         existing.expectedQty += line.expectedQty;
+        existing.lines.push(line);
       } else {
         accountingByKey.set(key, {
           accountedQty: line.accountedQty,
-          expectedQty: line.expectedQty
+          expectedQty: line.expectedQty,
+          lines: [line]
         });
       }
     });
 
-    // Walk each table row and inject a pill if there's matching accounting data
+    // Keep the order data cells clean. Receiving is a secondary workflow action,
+    // so it gets a quiet, full-width sub-row that works at desktop and phone sizes.
     Array.from(tbody.rows).forEach(row => {
       const cells = row.cells;
-      if (cells.length < 3) return;
+      if (cells.length < 4) return;
       const title = (cells[1]?.textContent || '').trim().toLowerCase();
-      let variant = (cells[2]?.textContent || '').trim().toLowerCase();
+      let sku = (cells[2]?.textContent || '').trim().toLowerCase();
+      let variant = (cells[3]?.textContent || '').trim().toLowerCase();
       // Normalize dash placeholders to empty (table may show – or - for missing variants)
       if (variant === '–' || variant === '-' || variant === 'no variant') variant = '';
-      const key = `${title}||${variant}`;
+      if (!sku || sku === '-' || sku === 'no sku' || /^\W+$/.test(sku)) sku = '';
+      const key = `${title}||${sku}||${variant}`;
       const match = accountingByKey.get(key);
       if (!match) return;
 
-      const pill = document.createElement('span');
-      pill.className = `inline-accounting-pill ${match.accountedQty >= match.expectedQty ? 'is-complete' : 'is-missing'}`;
-      pill.textContent = `${match.accountedQty}/${match.expectedQty}`;
-      pill.title = match.accountedQty >= match.expectedQty
-        ? 'All garments accounted for'
-        : `${match.expectedQty - match.accountedQty} still missing from batch`;
+      const complete = match.accountedQty >= match.expectedQty;
+      const actionRow = document.createElement('tr');
+      actionRow.className = `detail-accounting-action-row ${complete ? 'is-complete' : 'is-missing'}`;
+      const actionCell = document.createElement('td');
+      actionCell.colSpan = cells.length;
 
-      // Append the pill to the variant cell (3rd column)
-      cells[2].appendChild(pill);
+      const control = document.createElement('button');
+      control.type = 'button';
+      control.className = `inline-accounting-control ${complete ? 'is-complete' : 'is-missing'}`;
+      control.title = complete
+        ? 'Open the supplier batch receiving record'
+        : `Receive this garment in its supplier batch (${match.expectedQty - match.accountedQty} still needed)`;
+      control.setAttribute('aria-label', control.title);
+
+      const label = document.createElement('span');
+      label.className = 'inline-accounting-label';
+      label.textContent = 'Garment receiving';
+
+      const status = document.createElement('span');
+      status.className = 'inline-accounting-status';
+      status.textContent = complete
+        ? `Received ${match.accountedQty}/${match.expectedQty}`
+        : `Receive ${match.accountedQty}/${match.expectedQty}`;
+
+      const arrow = document.createElement('span');
+      arrow.className = 'inline-accounting-arrow';
+      arrow.setAttribute('aria-hidden', 'true');
+      arrow.textContent = '\u203a';
+
+      const result = document.createElement('span');
+      result.className = 'inline-accounting-result';
+      result.append(status, arrow);
+      control.append(label, result);
+      control.addEventListener('click', () => {
+        const [line] = match.lines;
+        openBatchForAccountingLine(detailAccountingOrderName || currentDetailOrderName(), line).catch(error => {
+          console.error('Unable to open garment receiving record', error);
+          alert(`Could not open receiving: ${error?.message || error}`);
+        });
+      });
+      actionCell.appendChild(control);
+      actionRow.appendChild(actionCell);
+      row.classList.add('has-accounting-action');
+      row.insertAdjacentElement('afterend', actionRow);
+    });
+  }
+
+  async function openBatchForAccountingLine(orderName, line) {
+    if (!line?.batchId) return openBatchForOrder(orderName);
+    await openReceiveOverlay();
+    await openBatchFromList(line.batchId);
+    window.requestAnimationFrame(() => {
+      const target = document.querySelector(`.blanks-receive-line[data-item-key="${cssEscape(line.itemKey)}"]`);
+      target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      target?.querySelector('[data-receive-input]')?.focus({ preventScroll: true });
     });
   }
 
@@ -1590,6 +1663,10 @@
     hydrateAccounting: hydrateAccountingForCurrentOrders,
     accountingForOrder
   };
+
+  document.addEventListener('printmo:detail-items-rendered', event => {
+    renderDetailAccounting(event.detail?.orderName || detailAccountingOrderName || currentDetailOrderName());
+  });
 
   patchRenderBoardForAccounting();
   patchRenderStatusColumnForAccounting();

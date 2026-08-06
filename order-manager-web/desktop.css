@@ -2944,11 +2944,14 @@
     }
     #detail-items th:first-child,
     #detail-items td:first-child {
-      width: 42px;
+      width: 58px;
+      min-width: 58px;
       text-align: center;
       color: #334155;
       font-weight: 800;
       font-variant-numeric: tabular-nums;
+      overflow-wrap: normal;
+      white-space: nowrap;
     }
     #detail-items th:last-child,
     #detail-items td:last-child {
