@@ -33,7 +33,7 @@ node --check order-manager-web/web-shim.js
 node --check order-manager-web/shopify-preview.js
 npm run verify:phase2
 cd order-manager-proxy && npm test && npm run build
-npx wrangler deploy --dry-run
+npx wrangler deploy --dry-run --keep-vars
 ```
 
 The Render repository must also pass `npm test`.
@@ -47,6 +47,7 @@ The Render repository must also pass `npm test`.
 5. Confirm `PREVIEWS` resolves to the Designer Studio source bucket and remote migration `0002_designer_asset_metadata.sql` is applied before deploying Worker code that selects its columns.
 6. Keep `SS_TEST_ORDER=1`.
 7. Confirm the stateless supplier gateway deployment contains `/order-manager/v1/supplier/ss/commit`.
+8. Deploy this Worker with `--keep-vars`. Production has dashboard-managed variables that are intentionally absent from `wrangler.jsonc`; deploying without this flag deletes them before applying local variables.
 
 ## Shopify Release Gate
 
@@ -158,6 +159,7 @@ Do not delete Redis or enable live S&S ordering as part of the same unobserved c
 | Failure | Cause | Recovery |
 |---|---|---|
 | Migration execute targets the wrong shop | Target confirmation was weak | Use the registered migration command; require exact `--shop` and `--confirm-shop`. |
+| Worker loses dashboard-managed production variables | Wrangler deploy ran without `--keep-vars` | Roll back to the immediately preceding healthy Worker version, verify the restored bindings, and redeploy the same tested code with `--keep-vars`. |
 | Cutover proceeds with incomplete evidence | Candidate deployment was confused with acceptance | Complete every acceptance/security gate and obtain owner go/no-go. |
 | Supplier order is resent after an ambiguous result | `unknown` was treated as failure | Reconcile externally; never resubmit blindly. |
 | Redis is deleted during the same unobserved change | Retirement and cutover risks were combined | Retain the approved export and observe candidate operation before separate deletion approval. |

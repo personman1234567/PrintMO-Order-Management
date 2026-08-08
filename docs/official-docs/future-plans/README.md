@@ -33,6 +33,7 @@
 | Shopify Board UI Audit and Blueprint | `[Spec Ready]` | v1.4 polish | `reference/ui-containers-and-views.md` | [shopify-board-ui-audit-and-blueprint.md](shopify-board-ui-audit-and-blueprint.md) |
 | In-House Blank Inventory and Digital Whiteboard | `[Spec Ready]` | v1.5 Backlog | `features/in-house-inventory.md` | [in-house-inventory-blanks-tracking-plan.md](in-house-inventory-blanks-tracking-plan.md) |
 | Supplies Column and Dashboard Layout Redesign | `[In Progress]` | v1.5 Backlog | `reference/ui-containers-and-views.md` | [supplies-dashboard-layout-redesign-plan.md](supplies-dashboard-layout-redesign-plan.md) |
+| Etsy Order Source Integration | `[In Progress]` | Etsy connection proof, then provider-aware rollout | Worker/D1 connection proof and owner acceptance | [etsy-order-source-integration-plan.md](etsy-order-source-integration-plan.md) |
 
 
 Graduated historical example: Web UI Storage and Decoupling is documented in [../workflows/web-shopify-porting.md](../workflows/web-shopify-porting.md); its old plan is quarantined under `legacy/`.

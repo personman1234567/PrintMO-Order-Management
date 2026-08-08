@@ -120,13 +120,61 @@ function shopifyDetailNode() {
   };
 }
 
+function etsyReceiptFixture({ receiptId = 7001, shipped = false } = {}) {
+  return {
+    receipt_id: receiptId,
+    status: 'paid',
+    is_paid: true,
+    is_canceled: false,
+    is_shipped: shipped,
+    create_timestamp: 1750000000,
+    update_timestamp: 1750000100,
+    name: 'Protected Fixture Buyer',
+    first_line: 'Do not return this address',
+    buyer_email: 'private@example.test',
+    message_from_buyer: 'Private production note',
+    grandtotal: { amount: 3275, divisor: 100, currency_code: 'USD' },
+  };
+}
+
+function etsyTransactionFixtures(receiptId = 7001) {
+  if (receiptId === 7002) {
+    return [{
+      transaction_id: 8201,
+      receipt_id: 7002,
+      listing_id: 9201,
+      title: 'Already shipped fixture',
+      quantity: 1,
+      sku: 'SHIPPED-1',
+      variations: [],
+      price: { amount: 3275, divisor: 100, currency_code: 'USD' },
+    }];
+  }
+  return [
+    {
+      transaction_id: 8001, receipt_id: 7001, listing_id: 9001,
+      title: 'Fixture garment', quantity: 2, sku: 'B001',
+      variations: [
+        { property_id: 100, value_id: 200, formatted_name: 'Size', formatted_value: 'Large' },
+        { property_id: 101, value_id: null, formatted_name: 'Personalization', formatted_value: 'Private custom text' }
+      ],
+      price: { amount: 1250, divisor: 100, currency_code: 'USD' }
+    },
+    {
+      transaction_id: 8002, receipt_id: 7001, listing_id: 9002,
+      title: 'Fixture print', quantity: 1, sku: '', variations: [],
+      price: { amount: 775, divisor: 100, currency_code: 'USD' }
+    }
+  ];
+}
+
 async function run() {
   console.log('=== Running Phase 2 Shadow Data Plane Verification ===');
   await require('./verify-phase1.js').run();
 
   const root = path.join(__dirname, '..');
   const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8');
-  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql']
+  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql']
     .map(file => fs.readFileSync(path.join(root, 'order-manager-proxy', 'migrations', file), 'utf8'))
     .join('\n');
   const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
@@ -143,6 +191,72 @@ async function run() {
     module.webhookConfirmsPayment('orders/paid', { financial_status: 'paid', cancelled_at: '2024-01-01T00:00:00Z' }),
     false,
     'cancelled orders must not enter the active board even when a paid webhook is replayed'
+  );
+
+  const etsyContract = module.normalizeEtsyOrderContract({
+    providerAccountId: 98765,
+    fetchedAt: '2026-08-08T22:00:00.000Z',
+    receipt: {
+      receipt_id: 7001,
+      status: 'paid',
+      is_paid: true,
+      is_shipped: false,
+      create_timestamp: 1750000000,
+      update_timestamp: 1750000100,
+      name: 'Fixture Recipient',
+      message_from_buyer: 'Private instructions',
+      subtotal: { amount: 2500, divisor: 100, currency_code: 'USD' },
+      discount_amt: { amount: 250, divisor: 100, currency_code: 'USD' },
+      grandtotal: { amount: 3275, divisor: 100, currency_code: 'USD' },
+      refunds: [],
+      shipments: [],
+      transactions: [{
+        transaction_id: 8001,
+        receipt_id: 7001,
+        listing_id: 9001,
+        listing_image_id: 9101,
+        title: 'Fixture garment',
+        quantity: 2,
+        sku: 'B001',
+        price: { amount: 1250, divisor: 100, currency_code: 'USD' },
+        variations: [
+          { property_id: 100, value_id: 200, question_id: null, formatted_name: 'Size', formatted_value: 'Large' },
+          { property_id: 101, value_id: 201, question_id: 301, formatted_name: 'Name', formatted_value: 'Private custom text' }
+        ],
+        product_data: [{ property_id: 100, property_name: 'Size', value_ids: [200], values: ['Large'] }]
+      }]
+    },
+    transactions: [{
+      transaction_id: 8001,
+      receipt_id: 7001,
+      listing_id: 9001,
+      title: 'Fixture garment',
+      quantity: 2,
+      sku: 'B001',
+      product_data: null
+    }]
+  });
+  assert.equal(etsyContract.orderKey, 'etsy:98765:7001');
+  assert.equal(etsyContract.source.provider, 'etsy');
+  assert.equal(etsyContract.source.externalOrderId, '7001');
+  assert.equal(etsyContract.commerce.lineItems[0].id, 'etsy:98765:7001:8001');
+  assert.equal(etsyContract.commerce.lineItems[0].quantity, 2);
+  assert.equal(etsyContract.commerce.lineItems[0].unitPrice, 12.5);
+  assert.equal(etsyContract.commerce.lineItems[0].variations.length, 2);
+  assert.equal(etsyContract.commerce.lineItems[0].personalization.length, 1);
+  assert.equal(etsyContract.commerce.lineItems[0].listingImageIsProductionArtwork, false);
+  assert.equal(etsyContract.commerce.hasBuyerMessage, true);
+  assert.equal(etsyContract.productionRef.authority, 'printmo-d1');
+  assert.equal(etsyContract.capabilities.productionWrite, false, 'Etsy production writes stay disabled before the D1 state contract ships');
+  assert(!Object.prototype.hasOwnProperty.call(etsyContract.commerce, 'shippingAddress'), 'bounded Etsy board contract must omit full addresses');
+  assert.deepEqual(module.etsyShadowEligibility({ is_paid: true, is_shipped: false }), { eligible: true, reason: 'PAID_UNSHIPPED' });
+  assert.deepEqual(module.etsyShadowEligibility({ is_paid: false, is_shipped: false }), { eligible: false, reason: 'NOT_PAID' });
+  assert.deepEqual(module.etsyShadowEligibility({ is_paid: true, is_canceled: true }), { eligible: false, reason: 'CANCELED' });
+  assert.deepEqual(module.etsyShadowEligibility({ is_paid: true, is_shipped: true }), { eligible: false, reason: 'ALREADY_SHIPPED' });
+  assert.throws(
+    () => module.normalizeEtsyOrderContract({ providerAccountId: 'bad:id', receipt: { receipt_id: 7001 } }),
+    /shop ID is invalid/,
+    'provider identity must reject ambiguous or delimiter-bearing Etsy shop IDs'
   );
 
   const secret = 'phase2-test-secret';
@@ -175,6 +289,9 @@ async function run() {
     SHOPIFY_SHOP_DOMAIN: 'printmo-test.myshopify.com', PARTNER_USER_IDS: 'partner-1',
     UPSTREAM_BASE: 'https://render.example.test', ORDER_MANAGER_ADMIN_KEY: 'render-admin-key',
     MIGRATION_UPSTREAM_ENABLED: '1',
+    ETSY_API_KEY: 'etsy-fixture-key', ETSY_SHARED_SECRET: 'etsy-fixture-secret',
+    ETSY_REDIRECT_URI: 'https://worker.test/order-manager/v1/oauth/etsy/callback',
+    ETSY_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64url'),
     ORDER_DB: createD1(schema),
     PREVIEWS: {
       async head(key) {
@@ -227,6 +344,54 @@ async function run() {
   globalThis.fetch = async (url, options = {}) => {
     const target = String(url);
     calls.push({ target, options });
+    if (target === 'https://api.etsy.com/v3/application/openapi-ping') {
+      assert.equal(options.headers['x-api-key'], `${env.ETSY_API_KEY}:${env.ETSY_SHARED_SECRET}`);
+      assert.equal(options.headers.Authorization, undefined, 'Etsy API-key preflight must not send an OAuth token');
+      return Response.json({ application_id: env.ETSY_API_KEY });
+    }
+    if (target === 'https://api.etsy.com/v3/public/oauth/token') {
+      const request = new URLSearchParams(String(options.body || ''));
+      if (request.get('grant_type') === 'authorization_code') {
+        assert(request.get('code_verifier'), 'Etsy authorization exchange must include the PKCE verifier');
+        assert.equal(request.get('redirect_uri'), env.ETSY_REDIRECT_URI, 'Etsy token exchange must retain the exact callback URL');
+        return Response.json({
+          access_token: '12345.initial-access', refresh_token: '12345.initial-refresh',
+          token_type: 'Bearer', expires_in: 3600, scope: 'transactions_r'
+        });
+      }
+      if (request.get('grant_type') === 'refresh_token') {
+        assert.equal(request.get('refresh_token'), '12345.initial-refresh');
+        return Response.json({
+          access_token: '12345.refreshed-access', refresh_token: '12345.refreshed-refresh',
+          token_type: 'Bearer', expires_in: 3600, scope: 'transactions_r'
+        });
+      }
+      throw new Error(`Unexpected Etsy token grant: ${request.get('grant_type')}`);
+    }
+    if (target === 'https://api.etsy.com/v3/application/users/12345/shops') {
+      assert.equal(options.headers.Authorization, 'Bearer 12345.initial-access', 'shop identity lookup must remain bound to the authorized owner token');
+      return Response.json({ shop_id: 98765, user_id: 12345, shop_name: 'PrintMOFixture' });
+    }
+    if (target === 'https://api.etsy.com/v3/application/shops/98765/receipts?limit=1&offset=0') {
+      assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
+      return Response.json({ count: 1, results: [etsyReceiptFixture()] });
+    }
+    if (target === 'https://api.etsy.com/v3/application/shops/98765/receipts/7001') {
+      assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
+      return Response.json(etsyReceiptFixture());
+    }
+    if (target === 'https://api.etsy.com/v3/application/shops/98765/receipts/7002') {
+      assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
+      return Response.json(etsyReceiptFixture({ receiptId: 7002, shipped: true }));
+    }
+    if (target === 'https://api.etsy.com/v3/application/shops/98765/receipts/7001/transactions') {
+      assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
+      return Response.json({ count: 2, results: etsyTransactionFixtures() });
+    }
+    if (target === 'https://api.etsy.com/v3/application/shops/98765/receipts/7002/transactions') {
+      assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
+      return Response.json({ count: 1, results: etsyTransactionFixtures(7002) });
+    }
     if (target.endsWith('/admin/oauth/access_token')) {
       return Response.json({ access_token: 'runtime-token', expires_in: 86399 });
     }
@@ -390,6 +555,188 @@ async function run() {
   };
 
   try {
+    const disconnectedEtsyStatus = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/integrations/etsy/status', { headers }),
+      env
+    );
+    assert.equal(disconnectedEtsyStatus.status, 200);
+    assert.equal((await disconnectedEtsyStatus.json()).connected, false, 'Etsy must begin disconnected');
+
+    const etsyConnect = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/integrations/etsy/connect', { method: 'POST', headers }),
+      env
+    );
+    assert.equal(etsyConnect.status, 201, 'authenticated owner must be able to start Etsy OAuth');
+    assert(calls.some(call => call.target === 'https://api.etsy.com/v3/application/openapi-ping'), 'Etsy OAuth must preflight the configured key before creating a session');
+    const etsyConnectJson = await etsyConnect.json();
+    const etsyAuthorizationUrl = new URL(etsyConnectJson.authorizationUrl);
+    assert.equal(etsyAuthorizationUrl.origin, 'https://www.etsy.com');
+    assert.equal(etsyAuthorizationUrl.searchParams.get('scope'), 'transactions_r', 'Etsy proof must request read-only transactions only');
+    assert.equal(etsyAuthorizationUrl.searchParams.get('code_challenge_method'), 'S256');
+    assert.equal(etsyConnectJson.callbackUrl, env.ETSY_REDIRECT_URI);
+    const etsyState = etsyAuthorizationUrl.searchParams.get('state');
+    assert(etsyState, 'Etsy OAuth start must issue single-use state');
+    const etsySession = await env.ORDER_DB.prepare('SELECT * FROM etsy_oauth_sessions').first();
+    assert(etsySession, 'Etsy OAuth start must persist its short-lived server-side session');
+    assert(!JSON.stringify(etsySession).includes(etsyState), 'raw Etsy OAuth state must not be stored in D1');
+
+    const etsyCallback = await worker.fetch(new Request(
+      `${env.ETSY_REDIRECT_URI}?code=fixture-code&state=${encodeURIComponent(etsyState)}`
+    ), env);
+    assert.equal(etsyCallback.status, 200, 'valid Etsy state and PKCE exchange must connect the shop');
+    assert((await etsyCallback.text()).includes('PrintMOFixture'));
+    const connectedRow = await env.ORDER_DB.prepare('SELECT * FROM etsy_connections WHERE id = ?').bind('primary').first();
+    assert.equal(connectedRow.etsy_shop_id, '98765');
+    assert(!connectedRow.token_ciphertext.includes('initial-access'), 'Etsy access token must be encrypted at rest');
+    assert(!connectedRow.token_ciphertext.includes('initial-refresh'), 'Etsy refresh token must be encrypted at rest');
+
+    const replayedEtsyCallback = await worker.fetch(new Request(
+      `${env.ETSY_REDIRECT_URI}?code=replayed-code&state=${encodeURIComponent(etsyState)}`
+    ), env);
+    assert.equal(replayedEtsyCallback.status, 400, 'Etsy OAuth state must be single-use');
+
+    const etsyRead = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/test-read',
+      { method: 'POST', headers, body: JSON.stringify({ forceRefresh: true, includeFieldShape: true }) }
+    ), env);
+    assert.equal(etsyRead.status, 200, 'Etsy connection proof must read a bounded receipt and its transactions');
+    const etsyReadText = await etsyRead.text();
+    assert(!etsyReadText.includes('Protected Fixture Buyer'), 'Etsy proof response must not expose buyer identity');
+    assert(!etsyReadText.includes('private@example.test'), 'Etsy proof response must not expose buyer email');
+    assert(!etsyReadText.includes('Do not return this address'), 'Etsy proof response must not expose buyer address');
+    assert(!etsyReadText.includes('Private production note'), 'Etsy field inventory must not expose buyer messages');
+    assert(!etsyReadText.includes('Private custom text'), 'Etsy field inventory must not expose personalization values');
+    assert(!etsyReadText.includes('refreshed-access'), 'Etsy proof response must not expose OAuth tokens');
+    const etsyReadJson = JSON.parse(etsyReadText);
+    assert.equal(etsyReadJson.tokenRefreshed, true, 'forced proof must verify the refresh-token path');
+    assert.equal(etsyReadJson.receiptRead.transactionCount, 2);
+    assert.equal(etsyReadJson.customerDataRetained, false);
+    assert.equal(etsyReadJson.boardChanged, false);
+    assert.equal(etsyReadJson.fieldShape.schemaVersion, 1);
+    assert.equal(etsyReadJson.fieldShape.customerValuesIncluded, false);
+    assert.equal(etsyReadJson.fieldShape.receipt.valuesIncluded, false);
+    assert.equal(etsyReadJson.fieldShape.transactions.valuesIncluded, false);
+    assert(
+      etsyReadJson.fieldShape.receipt.fields.some(field => field.path === 'buyer_email' && field.types.includes('string')),
+      'Etsy field inventory must retain receipt field names and types without their values'
+    );
+    assert(
+      etsyReadJson.fieldShape.transactions.fields.some(
+        field => field.path === '$[].variations[].formatted_value' && field.types.includes('string')
+      ),
+      'Etsy field inventory must retain nested variation and personalization field shape'
+    );
+    assert(
+      etsyReadJson.fieldShape.transactions.fields.some(
+        field => field.path === '$[].variations[].value_id' && field.types.includes('integer') && field.types.includes('null')
+      ),
+      'Etsy field inventory must preserve observed nullable type unions'
+    );
+
+    const connectedEtsyStatus = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/integrations/etsy/status', { headers }),
+      env
+    );
+    const connectedEtsyStatusJson = await connectedEtsyStatus.json();
+    assert.equal(connectedEtsyStatusJson.connected, true);
+    assert.equal(connectedEtsyStatusJson.shop.name, 'PrintMOFixture');
+    assert(!JSON.stringify(connectedEtsyStatusJson).includes('refreshed-refresh'), 'Etsy status must not expose refresh tokens');
+
+    const untargetedShadowSync = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/shadow-sync',
+      { method: 'POST', headers, body: '{}' }
+    ), env);
+    assert.equal(untargetedShadowSync.status, 400, 'shadow persistence must require an explicit receipt ID');
+    assert.equal((await untargetedShadowSync.json()).error.code, 'ETSY_SHADOW_TARGET_REQUIRED');
+
+    const latestShadowDryRun = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/shadow-sync',
+      { method: 'POST', headers, body: JSON.stringify({ latest: true, dryRun: true }) }
+    ), env);
+    assert.equal(latestShadowDryRun.status, 200, 'latest-receipt checks may run only as a non-persisting dry run');
+    const latestShadowJson = await latestShadowDryRun.json();
+    assert.equal(latestShadowJson.eligible, true);
+    assert.equal(latestShadowJson.persisted, false);
+    assert.equal(latestShadowJson.boardChanged, false);
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT COUNT(*) AS count FROM provider_order_projection').first()).count,
+      0,
+      'dry-run receipt checks must not create provider rows'
+    );
+
+    const orderProjectionCountBeforeShadow = (
+      await env.ORDER_DB.prepare('SELECT COUNT(*) AS count FROM order_projection').first()
+    ).count;
+    const shadowSync = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/shadow-sync',
+      { method: 'POST', headers, body: JSON.stringify({ receiptId: '7001' }) }
+    ), env);
+    assert.equal(shadowSync.status, 200, 'an explicit paid and unshipped receipt must persist to the hidden provider shadow');
+    const shadowSyncText = await shadowSync.text();
+    assert(!shadowSyncText.includes('Protected Fixture Buyer'), 'shadow response must not expose buyer identity');
+    assert(!shadowSyncText.includes('private@example.test'), 'shadow response must not expose buyer email');
+    assert(!shadowSyncText.includes('Do not return this address'), 'shadow response must not expose buyer address');
+    assert(!shadowSyncText.includes('Private production note'), 'shadow response must not expose buyer messages');
+    assert(!shadowSyncText.includes('Private custom text'), 'shadow response must not expose personalization values');
+    const shadowSyncJson = JSON.parse(shadowSyncText);
+    assert.equal(shadowSyncJson.persisted, true);
+    assert.equal(shadowSyncJson.orderKey, 'etsy:98765:7001');
+    assert.equal(shadowSyncJson.enrollmentState, 'shadow');
+    assert.equal(shadowSyncJson.productionRevision, 0);
+    assert.equal(shadowSyncJson.boardChanged, false);
+    const shadowProjection = await env.ORDER_DB.prepare(`
+      SELECT order_key, enrollment_state, board_enrolled, commerce_json
+      FROM provider_order_projection
+      WHERE order_key = ?
+    `).bind('etsy:98765:7001').first();
+    assert.equal(shadowProjection.enrollment_state, 'shadow');
+    assert.equal(shadowProjection.board_enrolled, 0);
+    assert(!shadowProjection.commerce_json.includes('private@example.test'), 'shadow commerce projection must omit buyer email');
+    assert(!shadowProjection.commerce_json.includes('Do not return this address'), 'shadow commerce projection must omit full address values');
+    assert(!shadowProjection.commerce_json.includes('Private production note'), 'shadow commerce projection must retain only the presence of a buyer message');
+    const shadowProduction = await env.ORDER_DB.prepare(`
+      SELECT revision, state_json
+      FROM provider_production_state
+      WHERE order_key = ?
+    `).bind('etsy:98765:7001').first();
+    assert.equal(shadowProduction.revision, 0, 'provider production state must begin at revision zero');
+    assert.equal(JSON.parse(shadowProduction.state_json).revision, 0);
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT COUNT(*) AS count FROM order_projection').first()).count,
+      orderProjectionCountBeforeShadow,
+      'Etsy shadow persistence must not write Shopify board projections'
+    );
+
+    const repeatedShadowSync = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/shadow-sync',
+      { method: 'POST', headers, body: JSON.stringify({ receiptId: 7001 }) }
+    ), env);
+    assert.equal(repeatedShadowSync.status, 200, 'repeated receipt shadow sync must be idempotent');
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT COUNT(*) AS count FROM provider_order_projection WHERE order_key = ?').bind('etsy:98765:7001').first()).count,
+      1
+    );
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT COUNT(*) AS count FROM provider_production_state WHERE order_key = ?').bind('etsy:98765:7001').first()).count,
+      1
+    );
+
+    const shippedShadowSync = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/shadow-sync',
+      { method: 'POST', headers, body: JSON.stringify({ receiptId: 7002 }) }
+    ), env);
+    assert.equal(shippedShadowSync.status, 200, 'ineligible receipts should return a safe no-op result');
+    const shippedShadowJson = await shippedShadowSync.json();
+    assert.equal(shippedShadowJson.eligible, false);
+    assert.equal(shippedShadowJson.reason, 'ALREADY_SHIPPED');
+    assert.equal(shippedShadowJson.persisted, false);
+    assert.equal(shippedShadowJson.boardChanged, false);
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT COUNT(*) AS count FROM provider_order_projection WHERE order_key = ?').bind('etsy:98765:7002').first()).count,
+      0,
+      'already-shipped receipts must not enter the provider shadow'
+    );
+
     failBootstrap = true;
     const failedBootstrap = await worker.fetch(
       new Request('https://worker.test/order-manager/v1/orders', { headers }),
