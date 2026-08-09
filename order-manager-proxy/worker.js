@@ -191,6 +191,10 @@ export default {
             return handleEtsyShadowSync(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
         }
 
+        if (url.pathname === "/order-manager/v1/integrations/etsy/synthetic-order" && ["POST", "DELETE"].includes(request.method)) {
+            return handleEtsySyntheticOrder(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
+        }
+
         // -----------------------------
         // AUTHENTICATED R2 STORAGE ENDPOINTS
         // -----------------------------
@@ -2506,6 +2510,9 @@ const ETSY_FIELD_SHAPE_MAX_DEPTH = 8;
 const ETSY_FIELD_SHAPE_MAX_ENTRIES = 300;
 const ETSY_FIELD_SHAPE_ARRAY_SAMPLE = 5;
 const SAFE_JSON_FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const ETSY_SYNTHETIC_EXTERNAL_ID = 'synthetic-pilot-1';
+const ETSY_SYNTHETIC_CONFIRM_CREATE = 'CREATE_LIVE_ETSY_TEST_ORDER';
+const ETSY_SYNTHETIC_CONFIRM_DELETE = 'DELETE_LIVE_ETSY_TEST_ORDER';
 
 function etsyConfig(env) {
     const keystring = String(env.ETSY_API_KEY || '').trim();
@@ -3337,6 +3344,206 @@ async function handleEtsyShadowSync(request, env, allowOrigin, reqAllowHeaders, 
     }
 }
 
+function etsySyntheticOrderKey(providerAccountId) {
+    return `etsy-synthetic:${etsyNumericIdentity(providerAccountId, 'shop ID')}:${ETSY_SYNTHETIC_EXTERNAL_ID}`;
+}
+
+function syntheticEtsyOrderContract(providerAccountId, fetchedAt = isoNow()) {
+    const accountId = etsyNumericIdentity(providerAccountId, 'shop ID');
+    const orderKey = etsySyntheticOrderKey(accountId);
+    return {
+        id: orderKey,
+        orderKey,
+        displayName: '#ETSY-TEST-001',
+        createdAt: fetchedAt,
+        sourceUpdatedAt: fetchedAt,
+        source: {
+            provider: 'etsy',
+            label: 'Etsy',
+            providerAccountId: accountId,
+            externalOrderId: ETSY_SYNTHETIC_EXTERNAL_ID,
+            displayNumber: 'ETSY-TEST-001',
+            adminUrl: null,
+            synthetic: true
+        },
+        customer: { displayName: 'Etsy test order' },
+        commerce: {
+            paid: true,
+            canceled: false,
+            shipped: false,
+            delivered: false,
+            synthetic: true,
+            financialStatus: 'paid',
+            fulfillmentStatus: 'unshipped',
+            currencyCode: 'USD',
+            subtotal: 53.75,
+            discount: 4.25,
+            total: 58.13,
+            lineItems: [
+                {
+                    id: `${orderKey}:line-1`,
+                    externalLineId: 'synthetic-line-1',
+                    listingId: null,
+                    title: 'Comfort Colors 1717 T-Shirt',
+                    sku: '1717-BLACK-L',
+                    quantity: 2,
+                    currentQuantity: 2,
+                    unitPrice: 18.5,
+                    currencyCode: 'USD',
+                    variations: [
+                        { propertyId: '100', valueId: '200', questionId: null, name: 'Color', value: 'Black' },
+                        { propertyId: '101', valueId: '201', questionId: null, name: 'Size', value: 'Large' }
+                    ],
+                    personalization: [],
+                    expectedShipAt: null,
+                    listingImageId: null,
+                    listingImageIsProductionArtwork: false
+                },
+                {
+                    id: `${orderKey}:line-2`,
+                    externalLineId: 'synthetic-line-2',
+                    listingId: null,
+                    title: 'Gildan 18500 Hoodie',
+                    sku: '18500-SAND-M',
+                    quantity: 1,
+                    currentQuantity: 1,
+                    unitPrice: 21,
+                    currencyCode: 'USD',
+                    variations: [
+                        { propertyId: '100', valueId: '202', questionId: null, name: 'Color', value: 'Sand' },
+                        { propertyId: '101', valueId: '203', questionId: null, name: 'Size', value: 'Medium' },
+                        { propertyId: '102', valueId: null, questionId: 'fixture-question-1', name: 'Personalization', value: 'PRINTMO TEST' }
+                    ],
+                    personalization: [
+                        { propertyId: '102', valueId: null, questionId: 'fixture-question-1', name: 'Personalization', value: 'PRINTMO TEST' }
+                    ],
+                    expectedShipAt: null,
+                    listingImageId: null,
+                    listingImageIsProductionArtwork: false
+                }
+            ],
+            hasBuyerMessage: false,
+            isGift: false,
+            hasGiftMessage: false,
+            refundCount: 0,
+            shipmentCount: 0
+        },
+        productionRef: {
+            authority: 'printmo-d1',
+            provider: 'etsy',
+            orderKey,
+            revision: 0
+        },
+        capabilities: {
+            commerceWrite: false,
+            fulfillmentWrite: false,
+            productionWrite: true,
+            supplierBatch: false,
+            artworkUpload: false
+        },
+        sync: {
+            fetchedAt,
+            freshUntil: null,
+            stale: false,
+            partial: false,
+            synthetic: true,
+            errors: []
+        }
+    };
+}
+
+async function handleEtsySyntheticOrder(request, env, allowOrigin, reqAllowHeaders, identity) {
+    try {
+        const body = await request.json().catch(() => ({}));
+        const connection = await loadEtsyConnection(env);
+        const contract = syntheticEtsyOrderContract(connection.etsy_shop_id);
+        const orderKey = contract.orderKey;
+        const db = requireOrderDb(env);
+        const shop = await d1Shop(env);
+        if (request.method === 'DELETE') {
+            if (body.confirm !== ETSY_SYNTHETIC_CONFIRM_DELETE) {
+                throw Object.assign(new Error('Deleting the live Etsy test order requires the exact confirmation phrase.'), {
+                    code: 'ETSY_SYNTHETIC_CONFIRMATION_REQUIRED',
+                    status: 400
+                });
+            }
+            const removed = await db.prepare(`
+              DELETE FROM provider_order_projection
+              WHERE shop_id = ? AND order_key = ? AND enrollment_state = 'pilot'
+            `).bind(shop.id, orderKey).run();
+            return jsonResponse({
+                ok: true,
+                source: 'etsy',
+                synthetic: true,
+                orderKey,
+                removed: Boolean(removed.meta?.changes)
+            }, allowOrigin, reqAllowHeaders);
+        }
+        if (body.confirm !== ETSY_SYNTHETIC_CONFIRM_CREATE) {
+            throw Object.assign(new Error('Creating the live Etsy test order requires the exact confirmation phrase.'), {
+                code: 'ETSY_SYNTHETIC_CONFIRMATION_REQUIRED',
+                status: 400
+            });
+        }
+        const existing = await db.prepare(`
+          SELECT order_key FROM provider_order_projection
+          WHERE shop_id = ? AND order_key = ?
+        `).bind(shop.id, orderKey).first();
+        const actor = `${identity?.kind || 'unknown'}:${identity?.subject || 'unknown'}`;
+        const production = defaultProductionState(actor);
+        const now = isoNow();
+        await db.batch([
+            db.prepare(`
+              INSERT INTO provider_order_projection (
+                shop_id, provider, provider_account_id, external_order_id, order_key,
+                source_display_number, source_created_at, source_updated_at, commerce_json,
+                eligibility_state, enrollment_state, board_enrolled, fetched_at, stale_at,
+                last_error, created_at, updated_at
+              ) VALUES (?, 'etsy', ?, ?, ?, ?, ?, ?, ?, 'SYNTHETIC_PILOT', 'pilot', 1, ?, NULL, NULL, ?, ?)
+              ON CONFLICT(shop_id, provider, provider_account_id, external_order_id) DO UPDATE SET
+                order_key = excluded.order_key,
+                source_display_number = excluded.source_display_number,
+                source_created_at = excluded.source_created_at,
+                source_updated_at = excluded.source_updated_at,
+                commerce_json = excluded.commerce_json,
+                eligibility_state = excluded.eligibility_state,
+                enrollment_state = 'pilot',
+                board_enrolled = 1,
+                fetched_at = excluded.fetched_at,
+                stale_at = NULL,
+                last_error = NULL,
+                updated_at = excluded.updated_at
+            `).bind(
+                shop.id, contract.source.providerAccountId, contract.source.externalOrderId, orderKey,
+                contract.source.displayNumber, contract.createdAt, contract.sourceUpdatedAt,
+                JSON.stringify(contract), contract.sync.fetchedAt, now, now
+            ),
+            db.prepare(`
+              INSERT INTO provider_production_state (
+                shop_id, order_key, provider, provider_account_id, external_order_id,
+                revision, last_mutation_id, state_json, created_at, updated_at
+              ) VALUES (?, ?, 'etsy', ?, ?, 0, NULL, ?, ?, ?)
+              ON CONFLICT(shop_id, order_key) DO NOTHING
+            `).bind(
+                shop.id, orderKey, contract.source.providerAccountId,
+                contract.source.externalOrderId, JSON.stringify(production), now, now
+            )
+        ]);
+        return jsonResponse({
+            ok: true,
+            source: 'etsy',
+            synthetic: true,
+            created: !existing,
+            orderKey,
+            displayName: contract.displayName,
+            boardEnrolled: true,
+            cleanupConfirmation: ETSY_SYNTHETIC_CONFIRM_DELETE
+        }, allowOrigin, reqAllowHeaders, existing ? 200 : 201);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
 async function d1Shop(env, { allowUninstalled = false } = {}) {
     const db = requireOrderDb(env);
     const shop = shopDomain(env);
@@ -3717,6 +3924,7 @@ function d1ProjectionRecord(row) {
         summary.sync = { ...summary.sync, stale };
     }
     return {
+        kind: 'shopify',
         gid: row.order_gid,
         production: productionForClient(row.order_gid, production, row.production_digest),
         summary,
@@ -4801,6 +5009,7 @@ async function handleShopifyPreviewOrderDetailGet(request, env, allowOrigin, req
 }
 
 function boardDto(record) {
+    if (record?.kind === 'provider') return providerBoardDto(record);
     const production = record.production || { stage: 'received', version: 0, assets: [] };
     const summary = record.summary;
     if (!summary) {
@@ -4824,35 +5033,151 @@ function boardDto(record) {
     };
 }
 
+function providerProjectionRecord(row) {
+    let contract = null;
+    let production = defaultProductionState();
+    try { contract = row.commerce_json ? JSON.parse(row.commerce_json) : null; } catch (_) {}
+    try { production = normalizeProductionState(JSON.parse(row.state_json || '{}')); } catch (_) {}
+    return {
+        kind: 'provider',
+        orderKey: row.order_key,
+        provider: row.provider,
+        contract,
+        production,
+        enrollmentState: row.enrollment_state,
+        staleAt: row.stale_at,
+        lastError: row.last_error
+    };
+}
+
+function providerGarmentCount(contract) {
+    return garmentCountFromLineItems(contract?.commerce?.lineItems || []);
+}
+
+function providerBoardDto(record) {
+    const contract = record.contract || {};
+    const production = productionForClient(
+        record.orderKey,
+        record.production,
+        null,
+        [],
+        providerGarmentCount(contract)
+    );
+    const source = {
+        provider: record.provider || contract?.source?.provider || 'unknown',
+        label: contract?.source?.label || record.provider || 'Unknown',
+        providerAccountId: contract?.source?.providerAccountId || null,
+        externalOrderId: contract?.source?.externalOrderId || null,
+        displayNumber: contract?.source?.displayNumber || contract?.displayName || record.orderKey,
+        adminUrl: contract?.source?.adminUrl || null,
+        synthetic: Boolean(contract?.source?.synthetic)
+    };
+    const errors = [...(Array.isArray(contract?.sync?.errors) ? contract.sync.errors : [])];
+    if (record.lastError) errors.push({ code: 'PROVIDER_PROJECTION_ERROR', message: record.lastError });
+    return {
+        ...contract,
+        id: record.orderKey,
+        orderKey: record.orderKey,
+        source,
+        production,
+        productionRef: {
+            authority: 'printmo-d1',
+            provider: source.provider,
+            orderKey: record.orderKey,
+            revision: production.revision
+        },
+        attention: record.production.attention,
+        capabilities: {
+            ...(contract?.capabilities || {}),
+            productionWrite: record.enrollmentState === 'pilot'
+        },
+        sync: {
+            ...(contract?.sync || {}),
+            stale: Boolean(record.staleAt || contract?.sync?.stale),
+            partial: Boolean(record.lastError || contract?.sync?.partial),
+            errors
+        }
+    };
+}
+
 async function loadDataPage(env, stage, limit, offset) {
     const shop = await d1Shop(env);
     const db = requireOrderDb(env);
-    const where = ['shop_id = ?', 'active = 1'];
-    const values = [shop.id];
     if (stage) {
         if (!PRODUCTION_STAGES.has(stage)) throw Object.assign(new Error('Stage filter is invalid.'), { code: 'INVALID_STAGE', status: 400 });
-        where.push('stage = ?');
-        values.push(stage);
     }
-    const clause = where.join(' AND ');
-    const rows = await db.prepare(`
-      SELECT *
-      FROM order_projection
-      WHERE ${clause}
-      ORDER BY created_at ASC, order_gid ASC
+    const shopifyStage = stage ? ' AND stage = ?' : '';
+    const providerStage = stage ? ` AND json_extract(ps.state_json, '$.stage') = ?` : '';
+    const shopifyValues = [shop.id, ...(stage ? [stage] : [])];
+    const providerValues = [shop.id, ...(stage ? [stage] : [])];
+    const refs = await db.prepare(`
+      SELECT source_kind, source_id, source_created_at
+      FROM (
+        SELECT 'shopify' AS source_kind, order_gid AS source_id, created_at AS source_created_at
+        FROM order_projection
+        WHERE shop_id = ? AND active = 1${shopifyStage}
+        UNION ALL
+        SELECT 'provider' AS source_kind, p.order_key AS source_id,
+               COALESCE(p.source_created_at, p.created_at) AS source_created_at
+        FROM provider_order_projection p
+        JOIN provider_production_state ps
+          ON ps.shop_id = p.shop_id AND ps.order_key = p.order_key
+        WHERE p.shop_id = ? AND p.board_enrolled = 1
+          AND json_extract(ps.state_json, '$.archivedAt') IS NULL${providerStage}
+      )
+      ORDER BY source_created_at ASC, source_id ASC
       LIMIT ? OFFSET ?
-    `).bind(...values, limit, offset).all();
-    const count = await db.prepare(`SELECT COUNT(*) AS count FROM order_projection WHERE ${clause}`)
-        .bind(...values).first();
-    const total = Number(count?.count || 0);
-    const rowList = rows.results || [];
-    const assetsByOrder = await d1AssetsForOrders(env, shop.id, rowList.map(row => row.order_gid));
+    `).bind(...shopifyValues, ...providerValues, limit, offset).all();
+    const [shopifyCount, providerCount] = await Promise.all([
+        db.prepare(`
+          SELECT COUNT(*) AS count FROM order_projection
+          WHERE shop_id = ? AND active = 1${shopifyStage}
+        `).bind(...shopifyValues).first(),
+        db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM provider_order_projection p
+          JOIN provider_production_state ps
+            ON ps.shop_id = p.shop_id AND ps.order_key = p.order_key
+          WHERE p.shop_id = ? AND p.board_enrolled = 1
+            AND json_extract(ps.state_json, '$.archivedAt') IS NULL${providerStage}
+        `).bind(...providerValues).first()
+    ]);
+    const shopifyTotal = Number(shopifyCount?.count || 0);
+    const providerTotal = Number(providerCount?.count || 0);
+    const total = shopifyTotal + providerTotal;
+    const refList = refs.results || [];
+    const shopifyIds = refList.filter(ref => ref.source_kind === 'shopify').map(ref => ref.source_id);
+    const providerIds = refList.filter(ref => ref.source_kind === 'provider').map(ref => ref.source_id);
+    const [shopifyRows, providerRows] = await Promise.all([
+        shopifyIds.length
+            ? db.prepare(`SELECT * FROM order_projection WHERE shop_id = ? AND order_gid IN (${shopifyIds.map(() => '?').join(',')})`)
+                .bind(shop.id, ...shopifyIds).all()
+            : Promise.resolve({ results: [] }),
+        providerIds.length
+            ? db.prepare(`
+                SELECT p.*, ps.revision, ps.last_mutation_id, ps.state_json,
+                       ps.created_at AS production_created_at, ps.updated_at AS production_updated_at
+                FROM provider_order_projection p
+                JOIN provider_production_state ps
+                  ON ps.shop_id = p.shop_id AND ps.order_key = p.order_key
+                WHERE p.shop_id = ? AND p.order_key IN (${providerIds.map(() => '?').join(',')})
+              `).bind(shop.id, ...providerIds).all()
+            : Promise.resolve({ results: [] })
+    ]);
+    const shopifyById = new Map((shopifyRows.results || []).map(row => [row.order_gid, row]));
+    const providerById = new Map((providerRows.results || []).map(row => [row.order_key, row]));
+    const assetsByOrder = await d1AssetsForOrders(env, shop.id, shopifyIds);
+    const records = refList.map(ref => {
+        if (ref.source_kind === 'provider') return providerProjectionRecord(providerById.get(ref.source_id) || {});
+        const row = shopifyById.get(ref.source_id) || {};
+        const record = d1ProjectionRecord(row);
+        record.production.assets = assetsByOrder.get(row.order_gid) || [];
+        return record;
+    });
     return {
-        records: rowList.map(row => {
-            const record = d1ProjectionRecord(row);
-            record.production.assets = assetsByOrder.get(row.order_gid) || [];
-            return record;
-        }),
+        records,
+        shopifyTotal,
+        providerTotal,
         total,
         nextOffset: offset + limit < total ? offset + limit : null
     };
@@ -4867,7 +5192,7 @@ async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders, ctx
         const filter = JSON.stringify({ stage, limit });
         const offset = await decodeSignedCursor(url.searchParams.get('cursor'), filter, env);
         let page = await loadDataPage(env, stage, limit, offset);
-        if (page.total === 0 && offset === 0) {
+        if (page.shopifyTotal === 0 && offset === 0) {
             const shop = await d1Shop(env);
             const initialized = await requireOrderDb(env).prepare(`
               SELECT 1 AS ready
@@ -4889,6 +5214,7 @@ async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders, ctx
             }
         }
         const staleGids = (page.records || []).filter(record => {
+            if (record.kind !== 'shopify') return false;
             if (forceRefresh) return true;
             const summary = record.summary;
             return !summary || summary.sync?.stale || !summary.sync?.freshUntil || Date.parse(summary.sync.freshUntil) <= Date.now();
@@ -4922,6 +5248,290 @@ async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders, ctx
 function orderIdFromV1Path(pathname) {
     const raw = pathname.replace(/^\/order-manager\/v1\/orders\//, '').replace(/\/production$/, '');
     try { return canonicalOrderGid(decodeURIComponent(raw)); } catch { return null; }
+}
+
+function providerOrderKeyFromV1Path(pathname) {
+    const raw = pathname.replace(/^\/order-manager\/v1\/orders\//, '').replace(/\/production$/, '');
+    try {
+        const decoded = decodeURIComponent(raw);
+        return /^etsy(?:-synthetic)?:[A-Za-z0-9._-]{1,80}:[A-Za-z0-9._-]{1,120}$/.test(decoded)
+            ? decoded
+            : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function orderIdentityFromV1Path(pathname) {
+    const providerKey = providerOrderKeyFromV1Path(pathname);
+    if (providerKey) return { provider: 'etsy', id: providerKey };
+    const gid = orderIdFromV1Path(pathname);
+    return gid ? { provider: 'shopify', id: gid } : null;
+}
+
+async function readProviderOrder(env, orderKey) {
+    const shop = await d1Shop(env);
+    const row = await requireOrderDb(env).prepare(`
+      SELECT p.*, ps.revision, ps.last_mutation_id, ps.state_json,
+             ps.created_at AS production_created_at, ps.updated_at AS production_updated_at
+      FROM provider_order_projection p
+      JOIN provider_production_state ps
+        ON ps.shop_id = p.shop_id AND ps.order_key = p.order_key
+      WHERE p.shop_id = ? AND p.order_key = ? AND p.board_enrolled = 1
+    `).bind(shop.id, orderKey).first();
+    if (!row) {
+        throw Object.assign(new Error('Provider order not found on the active board.'), {
+            code: 'ORDER_NOT_FOUND',
+            status: 404
+        });
+    }
+    return { shop, row, record: providerProjectionRecord(row) };
+}
+
+function providerDetailLineItems(contract) {
+    const currencyCode = contract?.commerce?.currencyCode || 'USD';
+    return (contract?.commerce?.lineItems || []).map(item => {
+        const variations = Array.isArray(item.variations) ? item.variations : [];
+        const variantTitle = variations
+            .filter(variation => !variation?.questionId && !/personal/i.test(String(variation?.name || '')))
+            .map(variation => variation?.value)
+            .filter(Boolean)
+            .join(' / ');
+        const quantity = Math.max(0, Number(item.currentQuantity ?? item.quantity ?? 0));
+        const unitPrice = Number(item.unitPrice || 0);
+        return {
+            ...item,
+            quantity,
+            currentQuantity: quantity,
+            unfulfilledQuantity: contract?.commerce?.shipped ? 0 : quantity,
+            variantTitle,
+            customAttributes: variations
+                .filter(variation => variation?.name && variation?.value)
+                .map(variation => ({ key: variation.name, value: variation.value })),
+            unitPrice: { amount: unitPrice, currencyCode: item.currencyCode || currencyCode },
+            currentTotal: { amount: unitPrice * quantity, currencyCode: item.currencyCode || currencyCode },
+            discountAllocations: [],
+            requiresShipping: true
+        };
+    });
+}
+
+async function providerProductionEvents(env, shopId, orderKey) {
+    const result = await requireOrderDb(env).prepare(`
+      SELECT actor_id, old_revision, new_revision, changed_fields_json, outcome, created_at
+      FROM provider_production_events
+      WHERE shop_id = ? AND order_key = ?
+      ORDER BY created_at DESC
+      LIMIT 25
+    `).bind(shopId, orderKey).all();
+    return (result.results || []).map(row => {
+        let fields = [];
+        try {
+            const parsed = JSON.parse(row.changed_fields_json || '{}');
+            fields = Array.isArray(parsed) ? parsed : Object.keys(parsed);
+        } catch (_) {}
+        return {
+            action: 'provider.production.patch',
+            actor: row.actor_id || null,
+            fields,
+            outcome: row.outcome || null,
+            oldRevision: row.old_revision,
+            newRevision: row.new_revision,
+            createdAt: row.created_at || null
+        };
+    });
+}
+
+async function handleProviderOrderDetailGet(env, orderKey, allowOrigin, reqAllowHeaders) {
+    const { shop, record } = await readProviderOrder(env, orderKey);
+    const dto = providerBoardDto(record);
+    const lineItems = providerDetailLineItems(dto);
+    const productionEvents = await providerProductionEvents(env, shop.id, orderKey);
+    const synthetic = Boolean(dto.source?.synthetic);
+    return jsonResponse({
+        ...dto,
+        productionEvents,
+        detail: {
+            id: orderKey,
+            provider: dto.source?.provider || 'etsy',
+            fetchedAt: dto.sync?.fetchedAt || isoNow(),
+            partial: Boolean(dto.sync?.partial),
+            errors: dto.sync?.errors || [],
+            orderNote: null,
+            customer: { displayName: dto.customer?.displayName || null, email: null, phone: null },
+            lineItems,
+            data: {
+                source: dto.source,
+                customer: { displayName: dto.customer?.displayName || null, email: null, phone: null },
+                commerce: { ...dto.commerce, lineItems },
+                delivery: {
+                    shippingAddress: null,
+                    billingAddress: null,
+                    shippingLines: [],
+                    fulfillmentOrders: [],
+                    fulfillments: []
+                },
+                discounts: [],
+                timeline: [{
+                    id: `${orderKey}:enrolled`,
+                    type: synthetic ? 'SYNTHETIC_PILOT' : 'ETSY_RECEIPT',
+                    createdAt: dto.createdAt,
+                    action: 'provider.enrolled',
+                    message: synthetic ? 'Synthetic Etsy pilot order created' : 'Etsy receipt enrolled',
+                    author: 'PrintMO Order Manager'
+                }]
+            }
+        }
+    }, allowOrigin, reqAllowHeaders);
+}
+
+async function handleProviderProductionGet(env, orderKey, allowOrigin, reqAllowHeaders) {
+    const { record } = await readProviderOrder(env, orderKey);
+    const dto = providerBoardDto(record);
+    return jsonResponse({
+        orderKey,
+        canonicalSource: 'printmo-d1-provider-production',
+        production: dto.production
+    }, allowOrigin, reqAllowHeaders);
+}
+
+async function completeProviderMutation(env, shopId, requestRow, record, nextState, patch) {
+    const db = requireOrderDb(env);
+    const contract = record.contract || {};
+    const production = productionForClient(
+        requestRow.order_key,
+        nextState,
+        null,
+        [],
+        providerGarmentCount(contract)
+    );
+    const result = {
+        ok: true,
+        canonicalSource: 'printmo-d1-provider-production',
+        syncPending: false,
+        production
+    };
+    const now = isoNow();
+    const changedFields = Object.fromEntries(Object.keys(patch).map(key => [key, true]));
+    await db.batch([
+        db.prepare(`
+          INSERT OR IGNORE INTO provider_production_events (
+            id, shop_id, order_key, mutation_request_id, actor_id,
+            old_revision, new_revision, changed_fields_json, outcome, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'committed', ?)
+        `).bind(
+            `event:${requestRow.id}`, shopId, requestRow.order_key, requestRow.id,
+            requestRow.actor_id, Number(requestRow.expected_revision || 0), nextState.revision,
+            JSON.stringify(changedFields), now
+        ),
+        db.prepare(`
+          UPDATE provider_mutation_requests
+          SET state = 'complete', result_revision = ?, result_json = ?, error_code = NULL, updated_at = ?
+          WHERE id = ?
+        `).bind(nextState.revision, JSON.stringify(result), now, requestRow.id)
+    ]);
+    return result;
+}
+
+async function handleProviderProductionPatch(request, env, orderKey, allowOrigin, reqAllowHeaders, identity) {
+    const body = await request.json().catch(() => ({}));
+    const expectedVersion = Number(body.expectedVersion);
+    if (!Number.isInteger(expectedVersion) || expectedVersion < 0) {
+        return v1Error({ code: 'EXPECTED_VERSION_REQUIRED', message: 'A non-negative expectedVersion is required.' }, allowOrigin, reqAllowHeaders, 400);
+    }
+    const idempotencyKey = String(body.idempotencyKey || '').trim();
+    if (!/^[A-Za-z0-9._:-]{8,200}$/.test(idempotencyKey)) {
+        return v1Error({ code: 'IDEMPOTENCY_KEY_REQUIRED', message: 'A valid idempotency key is required.' }, allowOrigin, reqAllowHeaders, 400);
+    }
+    let patch;
+    try {
+        patch = normalizeProductionPatch(body.patch);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 400);
+    }
+    if (!Object.keys(patch).length) {
+        return v1Error({ code: 'EMPTY_PATCH', message: 'At least one production field must change.' }, allowOrigin, reqAllowHeaders, 400);
+    }
+    const actor = `${identity?.kind || 'unknown'}:${identity?.subject || 'unknown'}`;
+    const { shop, record } = await readProviderOrder(env, orderKey);
+    if (record.enrollmentState !== 'pilot') {
+        return v1Error({
+            code: 'PROVIDER_PRODUCTION_WRITE_DISABLED',
+            message: 'Production updates are disabled for this provider order.'
+        }, allowOrigin, reqAllowHeaders, 409);
+    }
+    const db = requireOrderDb(env);
+    const requestId = crypto.randomUUID();
+    const patchJson = JSON.stringify(patch);
+    const now = isoNow();
+    await db.prepare(`
+      INSERT INTO provider_mutation_requests (
+        id, shop_id, order_key, actor_id, idempotency_key, expected_revision,
+        patch_json, state, result_revision, result_json, error_code, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, ?)
+      ON CONFLICT(shop_id, actor_id, idempotency_key) DO NOTHING
+    `).bind(requestId, shop.id, orderKey, actor, idempotencyKey, expectedVersion, patchJson, now, now).run();
+    const requestRow = await db.prepare(`
+      SELECT * FROM provider_mutation_requests
+      WHERE shop_id = ? AND actor_id = ? AND idempotency_key = ?
+    `).bind(shop.id, actor, idempotencyKey).first();
+    if (!requestRow) throw Object.assign(new Error('Unable to persist the provider mutation request.'), { code: 'MUTATION_REQUEST_FAILED', status: 503 });
+    if (
+        requestRow.order_key !== orderKey
+        || requestRow.patch_json !== patchJson
+        || Number(requestRow.expected_revision) !== expectedVersion
+    ) {
+        return v1Error({ code: 'IDEMPOTENCY_KEY_REUSE', message: 'This idempotency key was already used for a different request.' }, allowOrigin, reqAllowHeaders, 409);
+    }
+    if (requestRow.state === 'complete' && requestRow.result_json) {
+        return jsonResponse(JSON.parse(requestRow.result_json), allowOrigin, reqAllowHeaders);
+    }
+    const currentRead = await readProviderOrder(env, orderKey);
+    const current = currentRead.record.production;
+    const garmentCount = providerGarmentCount(currentRead.record.contract);
+    if ('printedCount' in patch && patch.printedCount > garmentCount) {
+        await db.prepare(`
+          UPDATE provider_mutation_requests
+          SET state = 'failed', error_code = 'INVALID_PRINTED_COUNT', updated_at = ?
+          WHERE id = ?
+        `).bind(isoNow(), requestRow.id).run();
+        return v1Error({
+            code: 'INVALID_PRINTED_COUNT',
+            message: `Printed count cannot exceed the current garment count of ${garmentCount}.`
+        }, allowOrigin, reqAllowHeaders, 400);
+    }
+    if (current.lastMutationId === requestRow.id) {
+        const repaired = await completeProviderMutation(env, shop.id, requestRow, currentRead.record, current, patch);
+        return jsonResponse(repaired, allowOrigin, reqAllowHeaders);
+    }
+    if (current.revision !== expectedVersion) {
+        return v1Error({
+            code: 'VERSION_CONFLICT',
+            message: 'Production metadata changed on another client.'
+        }, allowOrigin, reqAllowHeaders, 409, {
+            currentVersion: current.revision,
+            current: productionForClient(orderKey, current, null, [], garmentCount)
+        });
+    }
+    const next = applyProductionPatch(current, patch, actor, requestRow.id);
+    const saved = await db.prepare(`
+      UPDATE provider_production_state
+      SET revision = ?, last_mutation_id = ?, state_json = ?, updated_at = ?
+      WHERE shop_id = ? AND order_key = ? AND revision = ?
+    `).bind(next.revision, next.lastMutationId, JSON.stringify(next), next.updatedAt, shop.id, orderKey, expectedVersion).run();
+    if (!saved.meta?.changes) {
+        const conflictRead = await readProviderOrder(env, orderKey);
+        const conflict = conflictRead.record.production;
+        return v1Error({
+            code: 'VERSION_CONFLICT',
+            message: 'Production metadata changed on another client.'
+        }, allowOrigin, reqAllowHeaders, 409, {
+            currentVersion: conflict.revision,
+            current: productionForClient(orderKey, conflict, null, [], providerGarmentCount(conflictRead.record.contract))
+        });
+    }
+    const result = await completeProviderMutation(env, shop.id, requestRow, currentRead.record, next, patch);
+    return jsonResponse(result, allowOrigin, reqAllowHeaders);
 }
 
 async function fetchOrderDetail(env, gid) {
@@ -5073,8 +5683,12 @@ async function d1ProductionEventsForOrder(env, shopId, gid) {
 
 async function handleV1OrderDetailGet(request, env, allowOrigin, reqAllowHeaders) {
     try {
-        const gid = orderIdFromV1Path(new URL(request.url).pathname);
-        if (!gid) return v1Error({ code: 'INVALID_ORDER_ID', message: 'Invalid Shopify order GID' }, allowOrigin, reqAllowHeaders, 400);
+        const orderIdentity = orderIdentityFromV1Path(new URL(request.url).pathname);
+        if (!orderIdentity) return v1Error({ code: 'INVALID_ORDER_ID', message: 'Invalid order identity' }, allowOrigin, reqAllowHeaders, 400);
+        if (orderIdentity.provider === 'etsy') {
+            return await handleProviderOrderDetailGet(env, orderIdentity.id, allowOrigin, reqAllowHeaders);
+        }
+        const gid = orderIdentity.id;
         const [detail, productionRead] = await Promise.all([
             fetchOrderDetail(env, gid),
             readProductionMetafield(env, gid)
@@ -5105,8 +5719,12 @@ async function handleV1OrderDetailGet(request, env, allowOrigin, reqAllowHeaders
 
 async function handleV1ProductionGet(request, env, allowOrigin, reqAllowHeaders) {
     try {
-        const gid = orderIdFromV1Path(new URL(request.url).pathname);
-        if (!gid) return v1Error({ code: 'INVALID_ORDER_ID', message: 'Invalid Shopify order GID' }, allowOrigin, reqAllowHeaders, 400);
+        const orderIdentity = orderIdentityFromV1Path(new URL(request.url).pathname);
+        if (!orderIdentity) return v1Error({ code: 'INVALID_ORDER_ID', message: 'Invalid order identity' }, allowOrigin, reqAllowHeaders, 400);
+        if (orderIdentity.provider === 'etsy') {
+            return await handleProviderProductionGet(env, orderIdentity.id, allowOrigin, reqAllowHeaders);
+        }
+        const gid = orderIdentity.id;
         const productionRead = await readProductionMetafield(env, gid);
         const shop = await d1Shop(env);
         const [assets, garmentCount] = await Promise.all([
@@ -5176,8 +5794,12 @@ async function d1FinalizeProductionMutation(env, shopId, requestRow, gid, state,
 
 async function handleV1ProductionPatch(request, env, allowOrigin, reqAllowHeaders, identity) {
     try {
-        const gid = orderIdFromV1Path(new URL(request.url).pathname);
-        if (!gid) return v1Error({ code: 'INVALID_ORDER_ID', message: 'Invalid Shopify order GID' }, allowOrigin, reqAllowHeaders, 400);
+        const orderIdentity = orderIdentityFromV1Path(new URL(request.url).pathname);
+        if (!orderIdentity) return v1Error({ code: 'INVALID_ORDER_ID', message: 'Invalid order identity' }, allowOrigin, reqAllowHeaders, 400);
+        if (orderIdentity.provider === 'etsy') {
+            return await handleProviderProductionPatch(request, env, orderIdentity.id, allowOrigin, reqAllowHeaders, identity);
+        }
+        const gid = orderIdentity.id;
         const body = await request.json().catch(() => ({}));
         const expectedVersion = Number(body.expectedVersion);
         if (!Number.isInteger(expectedVersion) || expectedVersion < 0) {

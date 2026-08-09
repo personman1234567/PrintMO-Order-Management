@@ -321,6 +321,8 @@ function candidateAssetRenderFingerprint(asset) {
 function candidateOrderRenderFingerprint(order) {
   return JSON.stringify({
     id: order._gid || order.name || '',
+    provider: order._provider || 'shopify',
+    synthetic: Boolean(order._synthetic),
     name: order.name || '',
     receivedAt: order.receivedAt || '',
     status: order.status || 'received',
@@ -655,12 +657,23 @@ function formatCardMoney(value) {
   return Number.isFinite(amount) ? amount.toFixed(2) : '0.00';
 }
 
+function sourceBadgeMarkup(order) {
+  const provider = String(order?._provider || order?.source?.provider || 'shopify').toLowerCase();
+  const label = provider === 'etsy' ? 'Etsy' : 'PrintMO';
+  const test = order?._synthetic ? '<span class="order-test-badge">TEST</span>' : '';
+  return `<span class="source-badge-group"><span class="order-source-badge source-${provider}">${label}</span>${test}</span>`;
+}
+
 // build a card from the record’s `items` array
 function makeCard(o, style = 'default') {
   const card = document.createElement('div');
   card.className   = 'card';
   card.draggable   = true;
   card.dataset.orderId = o.name;
+  card.dataset.orderKey = o._orderKey || o._gid || o.name;
+  card.dataset.provider = o._provider || 'shopify';
+  card.classList.add(`source-${o._provider || 'shopify'}`);
+  if (o._synthetic) card.classList.add('synthetic-order');
 
   // split “#1234 – John Smith”
   const [orderNum, custNameRaw] = o.name.split(' – ');
@@ -687,6 +700,7 @@ function makeCard(o, style = 'default') {
     card.innerHTML = `
       <div class="card-header">
         <span class="order-number">${orderNum}</span>
+        ${sourceBadgeMarkup(o)}
         ${productionCompleteBadge}
         <span class="time-ago-pill">${timeAgo(o.receivedAt)}</span>
       </div>
@@ -728,6 +742,7 @@ function makeCard(o, style = 'default') {
     card.innerHTML = `
       <div class="card-header">
         <span class="order-number">${orderNum}</span>
+        ${sourceBadgeMarkup(o)}
         <span class="time-ago-pill">${timeAgo(o.receivedAt)}</span>
       </div>
       <div class="card-body ${showProductionPreview ? 'has-mockup' : 'no-mockup'} production-preview-${productionMockupState}">
@@ -774,7 +789,7 @@ function makeCard(o, style = 'default') {
     // picked card style for middle section
     card.classList.add('pipeline-card');
     card.innerHTML = `
-      <div class="card-header"><span class="cust-name">${custName}</span></div>
+      <div class="card-header"><span class="cust-name">${custName}</span>${sourceBadgeMarkup(o)}</div>
       <div class="card-body picked-body">
         <div class="counts"><strong>${apparel}</strong></div>
       </div>
@@ -794,6 +809,7 @@ function makeCard(o, style = 'default') {
     // DEFAULT style (your existing square card)
     card.innerHTML = `
       <div class="order-number">${orderNum}</div>
+      ${sourceBadgeMarkup(o)}
       <div class="order-cust">${custName}</div>
       <div class="counts">Apparel: ${apparel}, Prints: ${prints}</div>
     `;
@@ -1664,6 +1680,10 @@ function renderOrderAssets(order) {
 
 async function uploadManualMockupFiles(files) {
   const order = detailOrder;
+  if (order?._capabilities?.artworkUpload === false) {
+    alert('Artwork uploads are unavailable for this Etsy test order.');
+    return;
+  }
   const orderNumber = orderNumberFromOrder(order);
   const accepted = Array.from(files || []).filter(file =>
     ['image/png', 'image/jpeg', 'image/webp'].includes(String(file?.type || '').toLowerCase())
@@ -1784,15 +1804,29 @@ function consolidateLineItemsForDisplay(items = []) {
 function openDetail(o) {
   detailOrder = o;
   renderOrderAssets(o);
-  refreshManualMockupsForOrder(o).then(changed => {
-    if (changed && detailOrder === o) renderOrderAssets(o);
-  }).catch(err => console.warn('Unable to refresh manual mockups', err));
+  if (o?._capabilities?.artworkUpload !== false) {
+    refreshManualMockupsForOrder(o).then(changed => {
+      if (changed && detailOrder === o) renderOrderAssets(o);
+    }).catch(err => console.warn('Unable to refresh manual mockups', err));
+  }
   // fill header & badges
   document.getElementById('detail-timestamp').textContent = new Date(o.receivedAt || o.createdAt).toLocaleString();
   const finBadge = document.getElementById('badge-financial');
   if (finBadge) finBadge.textContent = o.displayFinancialStatus || 'PAID';
   const fulBadge = document.getElementById('badge-fulfillment');
   if (fulBadge) fulBadge.textContent = o.displayFulfillmentStatus || 'UNFULFILLED';
+  const sourceBadge = document.getElementById('badge-source');
+  const provider = String(o._provider || o.source?.provider || 'shopify').toLowerCase();
+  if (sourceBadge) {
+    sourceBadge.textContent = provider === 'etsy' ? 'Etsy' : 'PrintMO';
+    sourceBadge.className = `order-source-badge source-${provider}`;
+  }
+  const testBadge = document.getElementById('badge-test-order');
+  if (testBadge) testBadge.classList.toggle('hidden', !o._synthetic);
+  const mockupActions = document.querySelector('.manual-mockup-actions');
+  if (mockupActions) {
+    mockupActions.classList.toggle('hidden', o?._capabilities?.artworkUpload === false);
+  }
 
   // customer & notes
   const [orderNum, custName = ''] = (o.name || '').split(' – ');

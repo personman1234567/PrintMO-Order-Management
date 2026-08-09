@@ -11,9 +11,9 @@ The target experience is one operational board with source-aware commerce adapte
 
 ## Current Continuation State
 
-- **Current state**: The isolated Worker-side Etsy connection proof passed live for shop `PrintMOShirts` (`41261957`). OAuth completed with only `transactions_r`, tokens are encrypted in D1, forced refresh succeeded, and the privacy-safe live inventory observed 122 receipt paths plus 44 transaction paths without customer values. Migration `0005_provider_order_shadow.sql` and Worker `c8449123-17e6-4f6d-bf4b-a6767469d0fd` now provide a provider-aware hidden projection, revision-zero Etsy production state, and an authenticated explicit-receipt shadow route. Persistence is limited to paid, unshipped, non-canceled receipts; latest-receipt checks are dry-run only; no Etsy row has been persisted live; and board enrollment remains disabled.
-- **Next safe action**: Wait for or identify one owner-approved paid/unshipped Etsy receipt, run the latest-receipt dry run, then persist that exact receipt ID to shadow. Compare its provider key, line count, money, variations, and initial revision against Etsy while confirming both provider tables remain hidden from `/order-manager/v1/orders`. Stop before webhooks or board enrollment.
-- **Remaining blockers**: The one live receipt observed so far is already shipped and therefore correctly ineligible for shadow persistence. Live evidence still lacks an unshipped, canceled, refunded, multi-line, and non-null typed-personalization example. Those shapes remain fixture-backed and must be treated as provisional until observed. Webhooks, reconciliation, and board enrollment remain deliberately unimplemented.
+- **Current state**: The isolated Worker-side Etsy connection proof passed live for shop `PrintMOShirts` (`41261957`). Migration `0006_provider_pilot_idempotency.sql`, Worker `e0512130-4abc-4d6b-ba0b-8b89806b4b26`, and Pages release `1786233715159` now add a unified Shopify/provider board read, provider-aware details, revisioned Etsy production mutations, explicit source capabilities, and source presentation. One deterministic internal fixture, `etsy-synthetic:41261957:synthetic-pilot-1` / `#ETSY-TEST-001`, is enrolled on the live board with an Etsy orange rail plus `Etsy` and `TEST` text badges. It contains no buyer data and makes no Etsy API write.
+- **Next safe action**: Use the live synthetic card for a short owner acceptance pass across detail, drag/stage movement, refresh, and archive/cleanup. Then wait for one owner-approved paid/unshipped real receipt, prove it in hidden shadow first, and compare provider identity, lines, money, variations, and revision behavior before manually enrolling that exact receipt. Keep automatic enrollment and webhooks off.
+- **Remaining blockers**: The synthetic card proves the production board contract but not real Etsy receipt fidelity. The one live receipt observed so far is already shipped. Live evidence still lacks an eligible paid/unshipped, canceled, refunded, multi-line, and non-null typed-personalization example. Webhooks and bounded reconciliation remain unimplemented, and supplier batching/artwork upload are explicitly disabled for the Etsy pilot.
 - **Owner / external actions**: Keep the Etsy shared secret and token-encryption key out of chat, source, browser storage, and logs. Enter them only through the approved Cloudflare Worker secret path. In Etsy, register exactly `https://order-manager-proxy.printmobusiness.workers.dev/order-manager/v1/oauth/etsy/callback` with no trailing slash or query string, then approve only `transactions_r` during the connection proof.
 - **Last verified evidence**: On 2026-08-08, the final live callback identified `PrintMOShirts` (`41261957`), authenticated status returned `connected: true` with only `transactions_r`, and the forced-refresh probe returned HTTP 200 with `tokenRefreshed: true`, one paid/shipped receipt, one transaction, `customerDataRetained: false`, and `boardChanged: false`. The initial callback 403 was isolated to the owner-shop lookup; Etsy accepted the same lookup when it was bound to the freshly granted bearer token.
 
@@ -64,7 +64,7 @@ The first live inventory established these mapping anchors without retaining val
 
 ### Source badge and color treatment
 
-- Every collapsed card, compact Build Order card, bundle member, and detail header shows a text badge. The labels are `Shopify` and `Etsy`; color is reinforcement, never the only cue.
+- Every collapsed card, compact Build Order card, bundle member, and detail header shows a text badge. The labels are `PrintMO` and `Etsy`; color is reinforcement, never the only cue.
 - Etsy uses the official current orange `#F1641E` as a small source rail/accent. The readable badge uses a pale orange surface `#FFF1E8`, dark text `#7A2E0A`, and the orange border/indicator. This keeps small text above WCAG AA contrast while preserving instant Etsy recognition.
 - The whole card is not tinted. Existing header/footer readiness colors continue to communicate production state without competing with the commerce source.
 - Shopify/website orders use the existing Print-MO primary treatment so they read as Print-MO storefront orders, with the `Shopify` text badge preserving technical clarity.
@@ -136,12 +136,12 @@ Do not convert Etsy receipt IDs into `gid://shopify/Order/...`. Do not make D1 c
 
 ### 4. Shared board rollout
 
-- [ ] Normalize Shopify and Etsy through provider adapters before the renderer consumes them.
-- [ ] Preserve existing Shopify CAS, metafield, D1 projection, webhook, and reconciliation contracts.
-- [ ] Add a compact source badge and source-aware detail metadata.
-- [ ] Reuse shared cards, stages, details, artwork tickets, and blanks workflows only where the normalized contract proves parity.
-- [ ] Hide or disable unsupported source-specific actions with an explicit explanation.
-- [ ] Activate one known Etsy order manually and verify quantities, details, production moves, refresh, and archive behavior.
+- [x] Normalize Shopify and Etsy through provider adapters before the renderer consumes them.
+- [x] Preserve existing Shopify CAS, metafield, D1 projection, webhook, and reconciliation contracts.
+- [x] Add a compact source badge and source-aware detail metadata.
+- [x] Reuse shared cards, stages, and details where the normalized contract proves parity; keep supplier batching and artwork upload disabled for the Etsy pilot.
+- [x] Hide or disable unsupported source-specific actions with an explicit explanation.
+- [x] Activate one synthetic Etsy order manually and verify quantities, details, production mutation, refresh, source presentation, and deterministic cleanup through fixtures plus the live UI. A real receipt remains pending.
 - [ ] Enable automatic paid-order enrollment only after owner acceptance and rollback verification.
 
 ### Acceptance and rollback gates
@@ -161,3 +161,4 @@ Rollback before board rollout is to disable the Etsy routes/secrets and leave th
 - **2026-08-08**: Approved the provider-aware identity, split production-authority, and source-badge contract. Added a locally verified `includeFieldShape` option that returns only bounded JSON paths and observed types; fixtures prove buyer identity, address, email, messages, personalization values, and OAuth tokens never reach the response. Live deployment and inventory remain pending.
 - **2026-08-08**: Deployed Worker `59622cfc-0a96-46f3-8573-5bd71baeed4e` with `--keep-vars` and ran one authenticated bounded inventory. It returned 122 receipt paths and 44 transaction paths with no values, no truncation, no board mutation, and confirmed the receipt-nested transaction contains richer product data than the separate transaction read. Added and verified the local normalized Etsy provider contract and collision-safe identity fixture; persistence and board use remain disabled.
 - **2026-08-08**: Applied migration `0005_provider_order_shadow.sql` and deployed Worker `c8449123-17e6-4f6d-bf4b-a6767469d0fd` with a hidden provider projection, revision-zero Etsy production state, and an authenticated explicit-receipt shadow route. Phase 2 fixtures prove paid/unshipped eligibility, already-shipped rejection, idempotent repeated sync, protected-field response redaction, and no Shopify board mutation. Remote provider tables exist and remain empty; no live Etsy receipt was persisted or enrolled.
+- **2026-08-08**: Owner approved one unmistakably marked live synthetic pilot. Applied migration `0006_provider_pilot_idempotency.sql`, deployed Worker `e0512130-4abc-4d6b-ba0b-8b89806b4b26` and Pages release `1786233715159`, and enrolled `#ETSY-TEST-001`. Phase 2 proves create/delete confirmation, unified paging, detail reads, revision/idempotency/conflict behavior, and stage filtering. The live embedded app shows one orange-rail Etsy card with `Etsy` and `TEST` badges, two garment lines, hidden artwork-upload controls, and stable provider identity. No Etsy API write or buyer data is involved.

@@ -24,21 +24,25 @@
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Shopify
+    participant Commerce as Shopify / Etsy
     participant Worker
     participant Canonical as Shopify metafield
-    participant D1
+    participant D1 as D1 projections / Etsy production
     participant Legacy as Legacy adapter / Redis
 
-    Shopify->>Worker: verified orders/paid webhook
-    Worker->>D1: deduplicate delivery and schedule projection refresh
-    Worker->>Canonical: create production metafield when absent
+    Commerce->>Worker: verified source read or paid event
+    Worker->>D1: deduplicate and update source-isolated projection
+    alt Shopify order
+        Worker->>Canonical: create production metafield when absent
+    else explicitly enrolled Etsy order
+        Worker->>D1: create revisioned provider production state
+    end
     opt LEGACY_INGEST_ENABLED=1 before cutover
         Worker->>Legacy: forward isolated legacy enrollment
     end
 ```
 
-Candidate enrollment and legacy fallback ingestion may coexist before cutover, but their reads and mutations remain isolated.
+Candidate enrollment and legacy fallback ingestion may coexist before cutover, but their reads and mutations remain isolated. Automatic Etsy enrollment remains off during the synthetic/manual pilot.
 
 ## Shared Board Render and Mutation Flow
 
@@ -47,7 +51,7 @@ The desktop and embedded clients reuse the board renderer through different adap
 ```mermaid
 flowchart LR
     Legacy["Legacy Redis view"] --> LegacyAdapter["legacy window.api adapter"]
-    Candidate["Shopify board"] --> CandidateAdapter["web-shim candidate adapter"]
+    Candidate["Unified Shopify/provider page"] --> CandidateAdapter["source-aware web-shim adapter"]
     LegacyAdapter --> Renderer["shared renderBoard / openDetail"]
     CandidateAdapter --> Renderer
     Renderer --> LegacyMutation["legacy mutation route"]
@@ -55,7 +59,9 @@ flowchart LR
 ```
 
 - Legacy mode maps legacy queue objects into the renderer and persists through authenticated `/legacy/` routes.
-- Shopify mode maps bounded Worker DTOs into the renderer and persists through canonical production endpoints.
+- Candidate mode maps bounded Shopify and enrolled-provider DTOs into the renderer and persists through the same versioned production endpoint surface. Shopify writes remain canonical in its app metafield; Etsy pilot writes remain canonical in provider-owned D1 state.
+- Cards and detail headers carry an always-visible source text badge. Etsy also uses an orange rail; synthetic fixtures add a separate `TEST` badge, so color is never the only source signal.
+- Supplier batching remains Shopify-only. The adapter rejects an S&S submission containing an Etsy order, and Etsy pilot artwork upload remains disabled until a provider-safe asset contract exists.
 - Source selection is a view/adapter choice, not a copy or dual-write operation.
 - Candidate queue loads are generation-guarded and repaint only changed columns.
 - Slow private assets hydrate after commerce/production cards are usable.
@@ -95,6 +101,7 @@ Legacy status values remain compatibility data for the Legacy Redis view only.
 - `renderer.js → splitOrderAssets` normalizes legacy/manual/Designer Studio asset containers.
 - Candidate summary cards use bounded board DTOs and never fetch rich detail during initial board load.
 - Candidate rich detail is fetched on demand.
+- Provider identity uses `_orderKey`/`orderKey`; combined customer/order display names remain presentation text only.
 - Candidate source switching preserves the last usable board if the requested source fails.
 
 ## Common Failure Modes & Recovery

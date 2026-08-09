@@ -565,6 +565,8 @@
   }
 
   function renderActivityAndExceptions(order, result) {
+    const provider = String(result?.source?.provider || order?._provider || 'shopify').toLowerCase();
+    const sourceLabel = provider === 'etsy' ? 'Etsy' : 'Shopify';
     const attention = result?.attention || result?.production?.attention || {};
     const sync = result?.sync || {};
     const detail = result?.detail || {};
@@ -592,14 +594,14 @@
       const entries = [
         ...(cancelledAt
           ? [createRichListItem(
-              'Shopify order canceled',
+              `${sourceLabel} order canceled`,
               [`Canceled ${formatDetailDate(cancelledAt)}`],
               { warning: true }
             )]
           : []),
         ...reasons.map(reason => createRichListItem('Production attention', [reason], { warning: true })),
         ...actionableErrors.map(error => createRichListItem(
-          error.code || 'Shopify detail warning',
+          error.code || `${sourceLabel} detail warning`,
           [error.message || String(error)],
           { warning: true }
         ))
@@ -621,13 +623,13 @@
           title: 'Canonical detail loaded',
           meta: detail.fetchedAt || sync.fetchedAt,
           description: detail.partial || sync.partial
-            ? 'Available order data loaded with partial Shopify results.'
-            : 'Current Shopify commerce and PrintMO production data loaded.'
+            ? `Available order data loaded with partial ${sourceLabel} results.`
+            : `Current ${sourceLabel} commerce and PrintMO production data loaded.`
         },
         {
-          title: 'Shopify order updated',
+          title: `${sourceLabel} order updated`,
           meta: result?.shopifyUpdatedAt,
-          description: 'Latest Shopify order modification time.'
+          description: `Latest ${sourceLabel} order modification time.`
         },
         {
           title: 'Production state updated',
@@ -652,21 +654,21 @@
       }));
     }
     const liveTimeline = document.getElementById('timeline-stream-container');
-    const shopifyEvents = Array.isArray(detailResponseData(result)?.timeline) ? detailResponseData(result).timeline : [];
+    const sourceEvents = Array.isArray(detailResponseData(result)?.timeline) ? detailResponseData(result).timeline : [];
     if (liveTimeline) {
-      if (!shopifyEvents.length) {
+      if (!sourceEvents.length) {
         const empty = document.createElement('p');
         empty.className = 'detail-inline-empty';
-        empty.textContent = 'No Shopify timeline events were returned.';
+        empty.textContent = `No ${sourceLabel} timeline events were returned.`;
         liveTimeline.replaceChildren(empty);
-      } else liveTimeline.replaceChildren(...shopifyEvents.map(event => {
+      } else liveTimeline.replaceChildren(...sourceEvents.map(event => {
         const item = document.createElement('div');
         item.className = 'timeline-item';
         const dot = document.createElement('div');
         dot.className = 'timeline-icon-dot';
         dot.setAttribute('aria-hidden', 'true');
         const title = document.createElement('strong');
-        title.textContent = String(event.message || event.action || event.type || 'Shopify order event').replace(/<[^>]+>/g, '').trim();
+        title.textContent = String(event.message || event.action || event.type || `${sourceLabel} order event`).replace(/<[^>]+>/g, '').trim();
         const description = document.createElement('span');
         description.textContent = [
           formatDetailDate(event.createdAt),
@@ -734,11 +736,14 @@
       ...(Array.isArray(result?.detail?.errors) ? result.detail.errors : [])
     ]).some(isOptionalPermissionError);
     if (partial) {
+      const sourceLabel = String(result?.source?.provider || order?._provider || 'shopify').toLowerCase() === 'etsy'
+        ? 'Etsy'
+        : 'Shopify';
       setDetailDataState(
         'warning',
         hasOptionalPermissionGap
-          ? 'Some optional Shopify details are unavailable. Available order and production data are shown.'
-          : 'Some Shopify fields could not be loaded. Available order data is still shown.'
+          ? `Some optional ${sourceLabel} details are unavailable. Available order and production data are shown.`
+          : `Some ${sourceLabel} fields could not be loaded. Available order data is still shown.`
       );
     } else {
       setDetailDataState('ready');

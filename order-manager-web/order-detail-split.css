@@ -1,5 +1,54 @@
 /* Canonical order-detail workbench shared by the Shopify board and Electron shell. */
 
+.source-badge-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.order-source-badge,
+.order-test-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.order-source-badge.source-etsy {
+  color: #7a2e0a;
+  background: #fff1e8;
+  border-color: #f1641e;
+}
+
+.order-source-badge.source-shopify {
+  color: #0f3d2e;
+  background: #e8f5ef;
+  border-color: #4b8f71;
+}
+
+.order-test-badge {
+  color: #713f12;
+  background: #fef3c7;
+  border-color: #d97706;
+}
+
+.card.source-etsy:not(.bundle-card) {
+  border-left: 4px solid #f1641e;
+}
+
+.pipeline-card .card-header .source-badge-group {
+  margin-left: 2px;
+}
+
 #detail-overlay {
   --detail-action: #1a73e8;
   --detail-action-hover: #1765c1;

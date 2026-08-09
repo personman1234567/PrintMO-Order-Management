@@ -174,7 +174,7 @@ async function run() {
 
   const root = path.join(__dirname, '..');
   const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8');
-  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql']
+  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql']
     .map(file => fs.readFileSync(path.join(root, 'order-manager-proxy', 'migrations', file), 'utf8'))
     .join('\n');
   const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
@@ -756,6 +756,109 @@ async function run() {
       `SELECT checkpoint FROM reconciliation_checkpoints WHERE name = 'bootstrap'`
     ).first();
     assert(bootstrapCheckpoint?.checkpoint, 'successful initial Shopify read must record a bootstrap checkpoint');
+
+    const unconfirmedSynthetic = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/synthetic-order',
+      { method: 'POST', headers, body: '{}' }
+    ), env);
+    assert.equal(unconfirmedSynthetic.status, 400, 'live synthetic enrollment must require an exact confirmation phrase');
+
+    const syntheticCreate = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/synthetic-order',
+      { method: 'POST', headers, body: JSON.stringify({ confirm: 'CREATE_LIVE_ETSY_TEST_ORDER' }) }
+    ), env);
+    assert.equal(syntheticCreate.status, 201, 'an explicitly confirmed synthetic Etsy pilot may enter the live board');
+    const syntheticCreateJson = await syntheticCreate.json();
+    const syntheticOrderKey = 'etsy-synthetic:98765:synthetic-pilot-1';
+    assert.equal(syntheticCreateJson.orderKey, syntheticOrderKey);
+    assert.equal(syntheticCreateJson.synthetic, true);
+    const syntheticProjection = await env.ORDER_DB.prepare(`
+      SELECT enrollment_state, board_enrolled
+      FROM provider_order_projection
+      WHERE order_key = ?
+    `).bind(syntheticOrderKey).first();
+    assert.equal(syntheticProjection.enrollment_state, 'pilot');
+    assert.equal(syntheticProjection.board_enrolled, 1);
+
+    const combinedBoard = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/orders', { headers }),
+      env
+    );
+    const combinedBoardJson = await combinedBoard.json();
+    assert.equal(combinedBoard.status, 200);
+    assert.equal(combinedBoardJson.pageInfo.total, 2, 'the shared page must merge Shopify and enrolled provider identities once');
+    const syntheticCard = combinedBoardJson.data.find(order => order.orderKey === syntheticOrderKey);
+    assert(syntheticCard, 'the live board must include the enrolled synthetic Etsy order');
+    assert.equal(syntheticCard.source.provider, 'etsy');
+    assert.equal(syntheticCard.source.synthetic, true);
+    assert.equal(syntheticCard.capabilities.productionWrite, true);
+
+    const encodedSyntheticOrderKey = encodeURIComponent(syntheticOrderKey);
+    const syntheticDetail = await worker.fetch(
+      new Request(`https://worker.test/order-manager/v1/orders/${encodedSyntheticOrderKey}`, { headers }),
+      env
+    );
+    const syntheticDetailJson = await syntheticDetail.json();
+    assert.equal(syntheticDetail.status, 200, 'the shared detail route must read provider orders');
+    assert.equal(syntheticDetailJson.source.provider, 'etsy');
+    assert.equal(syntheticDetailJson.source.synthetic, true);
+    assert.equal(syntheticDetailJson.detail.lineItems.length, 2);
+
+    const syntheticProduction = await worker.fetch(
+      new Request(`https://worker.test/order-manager/v1/orders/${encodedSyntheticOrderKey}/production`, { headers }),
+      env
+    );
+    assert.equal((await syntheticProduction.json()).production.revision, 0);
+    const mutationBody = {
+      expectedVersion: 0,
+      idempotencyKey: 'etsy-synthetic-stage-1',
+      patch: { stage: 'to_order' }
+    };
+    const mutateSynthetic = () => worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/orders/${encodedSyntheticOrderKey}/production`,
+      { method: 'PATCH', headers, body: JSON.stringify(mutationBody) }
+    ), env);
+    const firstSyntheticMutation = await mutateSynthetic();
+    const firstSyntheticMutationJson = await firstSyntheticMutation.json();
+    assert.equal(firstSyntheticMutation.status, 200);
+    assert.equal(firstSyntheticMutationJson.production.stage, 'to_order');
+    assert.equal(firstSyntheticMutationJson.production.revision, 1);
+    const replayedSyntheticMutation = await mutateSynthetic();
+    assert.equal((await replayedSyntheticMutation.json()).production.revision, 1, 'provider mutation retries must be idempotent');
+
+    const staleSyntheticMutation = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/orders/${encodedSyntheticOrderKey}/production`,
+      {
+        method: 'PATCH', headers,
+        body: JSON.stringify({ expectedVersion: 0, idempotencyKey: 'etsy-synthetic-stage-stale', patch: { stage: 'received' } })
+      }
+    ), env);
+    assert.equal(staleSyntheticMutation.status, 409, 'stale provider revisions must not overwrite current production state');
+    assert.equal((await staleSyntheticMutation.json()).error.code, 'VERSION_CONFLICT');
+
+    const syntheticStageBoard = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/orders?stage=to_order', { headers }),
+      env
+    );
+    const syntheticStageBoardJson = await syntheticStageBoard.json();
+    assert(syntheticStageBoardJson.data.some(order => order.orderKey === syntheticOrderKey), 'stage filtering must include enrolled provider state');
+
+    const unconfirmedDelete = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/synthetic-order',
+      { method: 'DELETE', headers, body: '{}' }
+    ), env);
+    assert.equal(unconfirmedDelete.status, 400, 'synthetic cleanup must require its exact confirmation phrase');
+    const syntheticDelete = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/synthetic-order',
+      { method: 'DELETE', headers, body: JSON.stringify({ confirm: 'DELETE_LIVE_ETSY_TEST_ORDER' }) }
+    ), env);
+    assert.equal(syntheticDelete.status, 200);
+    assert.equal((await syntheticDelete.json()).removed, true);
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT COUNT(*) AS count FROM provider_order_projection WHERE order_key = ?').bind(syntheticOrderKey).first()).count,
+      0,
+      'cleanup must remove only the deterministic synthetic pilot identity'
+    );
 
     await env.ORDER_DB.prepare(`
       UPDATE order_projection

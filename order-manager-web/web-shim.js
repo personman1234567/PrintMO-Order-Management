@@ -313,19 +313,31 @@ function selectOperationalCustomerName(order = {}) {
 }
 
 function candidateLineItem(item = {}, assets = []) {
-  const properties = (item.customAttributes || []).reduce((result, attribute) => {
+  const variationAttributes = (item.variations || [])
+    .filter(variation => variation?.name && variation?.value)
+    .map(variation => ({ key: variation.name, value: variation.value }));
+  const customAttributes = Array.isArray(item.customAttributes) && item.customAttributes.length
+    ? item.customAttributes
+    : variationAttributes;
+  const properties = customAttributes.reduce((result, attribute) => {
     if (attribute?.key) result[attribute.key] = attribute.value;
     return result;
   }, {});
+  const variantTitle = item.variantTitle || (item.variations || [])
+    .filter(variation => !variation?.questionId && !/personal/i.test(String(variation?.name || "")))
+    .map(variation => variation?.value)
+    .filter(Boolean)
+    .join(" / ");
   return {
     id: item.id,
     title: item.title || "",
-    variantTitle: item.variantTitle || "",
+    variantTitle,
     sku: item.sku || "",
     qty: Number(item.currentQuantity ?? item.quantity ?? 0),
     price: Number(item.unitPrice || 0),
     unitPrice: Number(item.unitPrice || 0),
     properties,
+    customAttributes,
     assets,
   };
 }
@@ -333,7 +345,8 @@ function candidateLineItem(item = {}, assets = []) {
 function candidateOrderToBoard(order = {}, { register = true } = {}) {
   const production = order.production || {};
   const customer = selectOperationalCustomerName(order) || "Name unavailable";
-  const displayName = order.displayName || order.id || "Shopify order";
+  const provider = String(order.source?.provider || "shopify").toLowerCase();
+  const displayName = order.displayName || order.source?.displayNumber || order.id || (provider === "shopify" ? "Shopify order" : "Order");
   const name = `${displayName} \u2013 ${customer}`;
   const orderAssets = Array.isArray(production.assets) ? production.assets : [];
   const assetsByLine = new Map();
@@ -353,7 +366,12 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
   if (lineItems.length && unassignedAssets.length) lineItems[0].assets.push(...unassignedAssets);
   const mapped = {
     _candidate: true,
-    _gid: order.id,
+    _gid: order.orderKey || order.id,
+    _orderKey: order.orderKey || order.id,
+    _provider: provider,
+    _source: order.source || { provider: "shopify", label: "Shopify", synthetic: false },
+    _synthetic: Boolean(order.source?.synthetic || order.commerce?.synthetic),
+    _capabilities: order.capabilities || {},
     _version: Number(production.version || 0),
     productionStage: production.stage || "received",
     name,
@@ -371,8 +389,10 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
     printsStatus: Number(production.printsStatus || 0),
     blanksOrdered: Number(production.blanksOrdered ?? (production.stage === "blanks_ordered" ? 1 : 0)),
     printsOrdered: Number(production.printsOrdered || 0),
+    displayFinancialStatus: order.commerce?.financialStatus || "",
     displayFulfillmentStatus: order.commerce?.fulfillmentStatus || "",
-    shopify: order,
+    source: order.source || null,
+    canonical: order,
     assets: production.assets || [],
   };
   if (register) candidateOrdersByName.set(name, mapped);
@@ -638,7 +658,7 @@ document.addEventListener?.("click", (event) => {
 
 function candidateByName(name) {
   const order = candidateOrdersByName.get(name);
-  if (!order) throw new Error("The Shopify order is no longer in the current board view. Refresh and try again.");
+  if (!order) throw new Error("The order is no longer in the current board view. Refresh and try again.");
   return order;
 }
 
@@ -756,12 +776,12 @@ window.api.getShopifyPreviewOrderDetail = async (orderId, { refresh = false } = 
   );
 };
 
-// Canonical on-demand detail for the operational Shopify workbench. The
+// Canonical on-demand detail for the operational multi-source workbench. The
 // bounded board payload remains responsible for first paint; this request
 // hydrates commerce, delivery, attention, production, and private asset
 // metadata only after an operator opens an order.
 window.api.getOrderDetail = async (orderId, { signal } = {}) => {
-  if (!orderId) throw new Error("A Shopify order ID is required");
+  if (!orderId) throw new Error("An order ID is required");
   const result = await apiFetch(
     `/order-manager/v1/orders/${encodeURIComponent(orderId)}`,
     {
@@ -774,11 +794,11 @@ window.api.getOrderDetail = async (orderId, { signal } = {}) => {
   return result;
 };
 
-// Production metadata is separate from the Shopify commerce response. These
-// endpoints update the canonical app-owned Shopify production metafield; the
-// D1 board projection is rebuildable and candidate edits remain Redis-free.
+// Production metadata is separate from commerce. Shopify state remains in its
+// canonical metafield; explicitly enrolled provider pilots use provider-owned
+// D1 state. Candidate edits remain Redis-free in both cases.
 window.api.getProductionMetadata = async (orderId) => {
-  if (!orderId) throw new Error("A Shopify order ID is required");
+  if (!orderId) throw new Error("An order ID is required");
   return apiFetch(
     `/order-manager/v1/orders/${encodeURIComponent(orderId)}/production`,
     { method: "GET" }
@@ -786,7 +806,7 @@ window.api.getProductionMetadata = async (orderId) => {
 };
 
 window.api.updateProductionMetadata = async (orderId, payload = {}) => {
-  if (!orderId) throw new Error("A Shopify order ID is required");
+  if (!orderId) throw new Error("An order ID is required");
   return apiFetch(
     `/order-manager/v1/orders/${encodeURIComponent(orderId)}/production`,
     {
@@ -896,7 +916,7 @@ window.api.updateProgress = async (a, b) => {
 window.api.updateName = async (a, b) => {
   const payload = (a && typeof a === "object") ? a : { name: a, newName: b };
   if (isShopifyCandidateView()) {
-    throw new Error("Customer names come from Shopify and cannot be changed from the production board.");
+    throw new Error("Customer names come from the commerce source and cannot be changed from the production board.");
   }
   return apiFetch("/order-manager/v1/legacy/queue/mutate", {
     method: "POST",
@@ -908,7 +928,7 @@ window.api.deleteOrder = async (a) => {
   const payload = (a && typeof a === "object") ? a : { name: a };
   if (isShopifyCandidateView()) {
     const now = new Date().toISOString();
-    return updateCandidateOrder(payload.name, { archived_at: now, archived_by: "shopify-admin" });
+    return updateCandidateOrder(payload.name, { archived_at: now });
   }
   return apiFetch("/order-manager/v1/legacy/queue/item", {
     method: "DELETE",
@@ -939,6 +959,10 @@ window.api.processBatch = async (orderIds) => {
   const names = Array.isArray(orderIds) ? orderIds : [];
   if (isShopifyCandidateView()) {
     const orders = names.map(candidateByName);
+    const unsupported = orders.filter(order => order._provider !== "shopify");
+    if (unsupported.length) {
+      throw new Error("Etsy orders cannot be submitted to S&S yet. Move the Etsy test card out of Build Order and submit Shopify orders separately.");
+    }
     const result = await apiFetch("/order-manager/v1/batches/commit", {
       method: "POST",
       body: JSON.stringify({

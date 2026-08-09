@@ -181,11 +181,11 @@
     },
     {
       "id": "etsy-integration",
-      "description": "Etsy Seller App OAuth, bounded receipt proof, provider-aware order planning, webhooks, and staged rollout",
+      "description": "Etsy Seller App OAuth, bounded receipt proof, provider shadow, synthetic shared-board pilot, production state, webhooks, and staged rollout",
       "taskTypes": ["planning", "implementation", "diagnosis", "security"],
-      "keywords": ["etsy", "seller app", "pkce", "etsy oauth", "etsy receipt", "order.paid", "second commerce source", "provider adapter"],
-      "paths": ["order-manager-proxy/worker.js", "order-manager-proxy/migrations/0004_etsy_connection_probe.sql", "order-manager-proxy/migrations/0005_provider_order_shadow.sql", "docs/official-docs/future-plans/etsy-order-source-integration-plan.md"],
-      "symbols": ["handleEtsyConnect", "handleEtsyOauthCallback", "handleEtsyStatus", "handleEtsyTestRead", "redactedJsonFieldShape", "normalizeEtsyOrderContract", "etsyShadowEligibility", "handleEtsyShadowSync"],
+      "keywords": ["etsy", "seller app", "pkce", "etsy oauth", "etsy receipt", "synthetic Etsy order", "order.paid", "second commerce source", "provider adapter"],
+      "paths": ["order-manager-proxy/worker.js", "order-manager-proxy/migrations/0004_etsy_connection_probe.sql", "order-manager-proxy/migrations/0005_provider_order_shadow.sql", "order-manager-proxy/migrations/0006_provider_pilot_idempotency.sql", "order-manager-web/web-shim.js", "renderer.js", "docs/official-docs/future-plans/etsy-order-source-integration-plan.md"],
+      "symbols": ["handleEtsyConnect", "handleEtsyOauthCallback", "handleEtsyStatus", "handleEtsyTestRead", "normalizeEtsyOrderContract", "handleEtsyShadowSync", "handleEtsySyntheticOrder", "providerBoardDto", "handleProviderOrderDetailGet", "handleProviderProductionPatch", "candidateOrderToBoard", "sourceBadgeMarkup"],
       "errors": ["ETSY_NOT_CONFIGURED", "ETSY_OAUTH_STATE_INVALID", "ETSY_NOT_CONNECTED", "ETSY_SCOPE_MISSING", "ETSY_SHADOW_TARGET_REQUIRED", "ETSY_SHADOW_TARGET_INVALID"],
       "read": [
         {
@@ -194,13 +194,16 @@
         }
       ],
       "inspect": [
-        {"path": "order-manager-proxy/worker.js", "symbols": ["handleEtsyConnect", "handleEtsyOauthCallback", "handleEtsyTestRead", "redactedJsonFieldShape", "normalizeEtsyOrderContract", "etsyShadowEligibility", "handleEtsyShadowSync"]},
+        {"path": "order-manager-proxy/worker.js", "symbols": ["handleEtsyConnect", "handleEtsyOauthCallback", "handleEtsyShadowSync", "handleEtsySyntheticOrder", "providerBoardDto", "handleProviderOrderDetailGet", "handleProviderProductionPatch"]},
         {"path": "order-manager-proxy/migrations/0004_etsy_connection_probe.sql", "symbols": ["etsy_oauth_sessions", "etsy_connections"]},
-        {"path": "order-manager-proxy/migrations/0005_provider_order_shadow.sql", "symbols": ["provider_order_projection", "provider_production_state", "provider_mutation_requests", "provider_production_events"]}
+        {"path": "order-manager-proxy/migrations/0005_provider_order_shadow.sql", "symbols": ["provider_order_projection", "provider_production_state", "provider_mutation_requests", "provider_production_events"]},
+        {"path": "order-manager-proxy/migrations/0006_provider_pilot_idempotency.sql", "symbols": ["result_json"]},
+        {"path": "order-manager-web/web-shim.js", "symbols": ["candidateOrderToBoard", "processBatch"]},
+        {"path": "renderer.js", "symbols": ["sourceBadgeMarkup", "makeCard", "openDetail"]}
       ],
       "tools": ["verify-phase2"],
       "verify": ["node --check order-manager-proxy/worker.js", "npm run verify:phase2", "npm run docs:check"],
-      "stop": ["Stop before Etsy secret entry, callback registration, Worker/D1 deployment, webhook subscription, write scopes, or automatic board enrollment unless the owner has authorized that external step."]
+      "stop": ["Stop before real-receipt enrollment, webhook subscription, write scopes, automatic board enrollment, or mixed-source supplier batching unless the owner has authorized that external step."]
     },
     {
       "id": "shopify-data-plane",
