@@ -18,29 +18,6 @@ function configuredIds(value) {
     return new Set(String(value || "").split(",").map(v => v.trim()).filter(Boolean));
 }
 
-async function verifyShopifyWebhookHmac(rawBody, hmacHeader, secret) {
-    if (!hmacHeader || !secret) return false;
-    try {
-        const key = await crypto.subtle.importKey(
-            "raw",
-            new TextEncoder().encode(secret),
-            { name: "HMAC", hash: "SHA-256" },
-            false,
-            ["sign"]
-        );
-        const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBody));
-        const bytes = new Uint8Array(signature);
-        let binary = '';
-        for (let i = 0; i < bytes.byteLength; i++) {
-            binary += String.fromCharCode(bytes[i]);
-        }
-        const expected = btoa(binary);
-        return expected === hmacHeader;
-    } catch (_) {
-        return false;
-    }
-}
-
 function validateJwtTimes(payload) {
     const now = Math.floor(Date.now() / 1000);
     if (!Number.isFinite(payload.exp) || payload.exp < now - 10) throw new Error("Bearer token expired");
@@ -144,9 +121,16 @@ export default {
             });
         }
 
-        // EARLY UNAUTHENTICATED ROUTE: Shopify Webhook signature verification (HMAC)
+        // EARLY UNAUTHENTICATED ROUTES: provider signatures are the only
+        // authorization. Neither route accepts browser bearer credentials.
         if (url.pathname === "/order-manager/v1/webhooks/shopify" && request.method === "POST") {
             return handleShopifyWebhook(request, env, allowOrigin || origin || "*", reqAllowHeaders, ctx);
+        }
+        if (url.pathname === ETSY_WEBHOOK_PATH) {
+            if (request.method !== "POST") {
+                return etsyWebhookResponse({ ok: false, error: { code: 'METHOD_NOT_ALLOWED' } }, 405, { Allow: 'POST' });
+            }
+            return handleEtsyWebhook(request, env, ctx);
         }
 
         // EARLY UNAUTHENTICATED ROUTE: Etsy returns the OAuth authorization
@@ -181,6 +165,10 @@ export default {
 
         if (url.pathname === "/order-manager/v1/integrations/etsy/status" && request.method === "GET") {
             return handleEtsyStatus(env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
+        if (url.pathname === "/order-manager/v1/integrations/etsy/webhook-status" && request.method === "GET") {
+            return handleEtsyWebhookStatus(request, env, allowOrigin || origin || "*", reqAllowHeaders);
         }
 
         if (url.pathname === "/order-manager/v1/integrations/etsy/test-read" && request.method === "POST") {
@@ -432,22 +420,40 @@ export default {
                 ctx.waitUntil(coordinator.fetch(new Request("https://internal/reconcile-integrity")).catch(err => console.error("Cron integrity error:", err)));
             }
         }
+        if (event.cron === "*/5 * * * *") {
+            ctx.waitUntil(runEtsyWebhookMaintenance(env, 'incremental').catch(err => {
+                console.error('Etsy webhook maintenance error:', String(err?.code || 'ETSY_MAINTENANCE_FAILED'));
+            }));
+        } else if (event.cron === "0 2 * * *") {
+            ctx.waitUntil(runEtsyWebhookMaintenance(env, 'integrity').catch(err => {
+                console.error('Etsy webhook integrity error:', String(err?.code || 'ETSY_INTEGRITY_FAILED'));
+            }));
+        }
     }
 };
 
 function pickAllowOrigin(origin, env) {
     if (!origin) return ""; // curl/server-to-server has no Origin
 
-    if (origin === "https://extensions.shopifycdn.com") return origin;
+    let parsedOrigin;
+    try { parsedOrigin = new URL(origin); } catch (_) { return ""; }
+    if (parsedOrigin.protocol !== 'https:' || parsedOrigin.username || parsedOrigin.password
+        || parsedOrigin.pathname !== '/' || parsedOrigin.search || parsedOrigin.hash) return "";
+    const normalizedOrigin = parsedOrigin.origin;
+
+    if (normalizedOrigin === "https://extensions.shopifycdn.com") return normalizedOrigin;
 
     const exact = (env.ALLOW_ORIGIN_EXACT || "").replace(/\/+$/, "");
-    const suffix = (env.ALLOW_ORIGIN_SUFFIX || "").trim();
+    const suffix = (env.ALLOW_ORIGIN_SUFFIX || "").trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^\./, '');
 
     // exact allow
-    if (exact && origin === exact) return origin;
+    if (exact && normalizedOrigin === exact) return normalizedOrigin;
 
-    // suffix allow (e.g. any deployment subdomain)
-    if (suffix && origin.endsWith(suffix)) return origin;
+    // Hostname-boundary suffix allow (e.g. an explicitly configured Pages
+    // project family). Raw string suffix matching can accept attacker-owned
+    // lookalike hosts such as evil-example.pages.dev.
+    const hostname = parsedOrigin.hostname.toLowerCase();
+    if (suffix && (hostname === suffix || hostname.endsWith(`.${suffix}`))) return normalizedOrigin;
 
     return "";
 }
@@ -2513,6 +2519,131 @@ const SAFE_JSON_FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 const ETSY_SYNTHETIC_EXTERNAL_ID = 'synthetic-pilot-1';
 const ETSY_SYNTHETIC_CONFIRM_CREATE = 'CREATE_LIVE_ETSY_TEST_ORDER';
 const ETSY_SYNTHETIC_CONFIRM_DELETE = 'DELETE_LIVE_ETSY_TEST_ORDER';
+const ETSY_WEBHOOK_PATH = '/order-manager/v1/webhooks/etsy';
+const ETSY_WEBHOOK_EVENT = 'order.paid';
+const ETSY_WEBHOOK_MAX_BODY_BYTES = 64 * 1024;
+const ETSY_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS = 300;
+const ETSY_WEBHOOK_MAX_ATTEMPTS = 8;
+const ETSY_WEBHOOK_PROCESSING_LEASE_MS = 10 * 60 * 1000;
+const ETSY_WEBHOOK_RETRY_DELAYS_SECONDS = Object.freeze([300, 900, 1800, 7200, 18000, 36000, 36000, 86400]);
+const ETSY_RECONCILIATION_CHECKPOINT = 'etsy-webhook-reconciliation-v1';
+const ETSY_RECONCILIATION_LIMIT = 25;
+const ETSY_RECONCILIATION_OVERLAP_SECONDS = 15 * 60;
+const ETSY_RECONCILIATION_INITIAL_SECONDS = 24 * 60 * 60;
+const ETSY_RECONCILIATION_INTEGRITY_SECONDS = 30 * 24 * 60 * 60;
+const ETSY_WEBHOOK_ALLOWED_HOSTS = new Set(['api.etsy.com', 'openapi.etsy.com']);
+
+function etsyWebhookError(code, message, status = 400) {
+    return Object.assign(new Error(message), { code, status });
+}
+
+function etsyWebhookResponse(body, status = 200, extraHeaders = {}) {
+    return new Response(JSON.stringify(body), {
+        status,
+        headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+            'X-Content-Type-Options': 'nosniff',
+            'Referrer-Policy': 'no-referrer',
+            ...extraHeaders
+        }
+    });
+}
+
+function decodeBase64Standard(value, code = 'ETSY_WEBHOOK_SECRET_INVALID') {
+    const normalized = String(value || '').trim();
+    if (!normalized || !/^[A-Za-z0-9+/]+={0,2}$/.test(normalized)) {
+        throw etsyWebhookError(code, 'Etsy webhook base64 material is invalid.', 503);
+    }
+    try {
+        const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+        return Uint8Array.from(atob(padded), character => character.charCodeAt(0));
+    } catch (_) {
+        throw etsyWebhookError(code, 'Etsy webhook base64 material is invalid.', 503);
+    }
+}
+
+function etsyWebhookSecretBytes(value) {
+    const encoded = String(value || '').trim();
+    if (!encoded.startsWith('whsec_')) {
+        throw etsyWebhookError('ETSY_WEBHOOK_SECRET_INVALID', 'Etsy webhook signing secret is invalid.', 503);
+    }
+    const bytes = decodeBase64Standard(encoded.slice('whsec_'.length));
+    if (bytes.byteLength < 16 || bytes.byteLength > 128) {
+        throw etsyWebhookError('ETSY_WEBHOOK_SECRET_INVALID', 'Etsy webhook signing secret has an invalid length.', 503);
+    }
+    return bytes;
+}
+
+function etsyWebhookSecrets(env, { required = true } = {}) {
+    const current = String(env.ETSY_WEBHOOK_SECRET || '').trim();
+    const previous = String(env.ETSY_WEBHOOK_SECRET_PREVIOUS || '').trim();
+    if (!current) {
+        if (!required) return [];
+        throw etsyWebhookError('ETSY_WEBHOOK_NOT_CONFIGURED', 'Etsy webhook signing is not configured.', 503);
+    }
+    return [current, previous].filter(Boolean).map(etsyWebhookSecretBytes);
+}
+
+function etsyWebhookSignatureValues(header) {
+    return String(header || '').trim().split(/\s+/).map(entry => {
+        const match = /^v1,([A-Za-z0-9+/]+={0,2})$/.exec(entry);
+        if (!match) return null;
+        try { return decodeBase64Standard(match[1], 'ETSY_WEBHOOK_SIGNATURE_INVALID'); } catch (_) { return null; }
+    }).filter(Boolean);
+}
+
+async function sha256BytesHex(bytes) {
+    return bytesToHex(await crypto.subtle.digest('SHA-256', bytes));
+}
+
+async function verifyEtsyWebhookSignature(rawBytes, headers, env, nowSeconds = Math.floor(Date.now() / 1000)) {
+    const webhookId = String(headers.get('webhook-id') || '').trim();
+    const timestampValue = String(headers.get('webhook-timestamp') || '').trim();
+    if (!/^[A-Za-z0-9_-]{8,200}$/.test(webhookId)) {
+        throw etsyWebhookError('ETSY_WEBHOOK_ID_INVALID', 'Etsy webhook delivery ID is missing or invalid.', 400);
+    }
+    if (!/^\d{10,13}$/.test(timestampValue)) {
+        throw etsyWebhookError('ETSY_WEBHOOK_TIMESTAMP_INVALID', 'Etsy webhook timestamp is missing or invalid.', 400);
+    }
+    const timestamp = Number(timestampValue);
+    if (!Number.isSafeInteger(timestamp)
+        || Math.abs(nowSeconds - timestamp) > ETSY_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS) {
+        throw etsyWebhookError('ETSY_WEBHOOK_TIMESTAMP_STALE', 'Etsy webhook timestamp is outside the replay window.', 401);
+    }
+    const signatures = etsyWebhookSignatureValues(headers.get('webhook-signature'));
+    if (!signatures.length) {
+        throw etsyWebhookError('ETSY_WEBHOOK_SIGNATURE_INVALID', 'Etsy webhook signature is missing or invalid.', 401);
+    }
+    const prefix = new TextEncoder().encode(`${webhookId}.${timestampValue}.`);
+    const signedContent = new Uint8Array(prefix.byteLength + rawBytes.byteLength);
+    signedContent.set(prefix, 0);
+    signedContent.set(rawBytes, prefix.byteLength);
+    const secrets = etsyWebhookSecrets(env);
+    for (const secret of secrets) {
+        const key = await crypto.subtle.importKey('raw', secret, { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+        for (const signature of signatures) {
+            if (await crypto.subtle.verify('HMAC', key, signature, signedContent)) {
+                return { webhookId, timestamp, timestampValue };
+            }
+        }
+    }
+    throw etsyWebhookError('ETSY_WEBHOOK_SIGNATURE_INVALID', 'Etsy webhook signature verification failed.', 401);
+}
+
+function parseEtsyWebhookResource(value, expectedShopId) {
+    let parsed;
+    try { parsed = new URL(String(value || '')); } catch (_) {}
+    if (!parsed || parsed.protocol !== 'https:' || parsed.port || parsed.username || parsed.password
+        || parsed.search || parsed.hash || !ETSY_WEBHOOK_ALLOWED_HOSTS.has(parsed.hostname.toLowerCase())) {
+        throw etsyWebhookError('ETSY_WEBHOOK_RESOURCE_INVALID', 'Etsy webhook resource URL is invalid.', 400);
+    }
+    const match = /^\/v3\/application\/shops\/(\d+)\/receipts\/(\d+)$/.exec(parsed.pathname);
+    if (!match || match[1] !== String(expectedShopId)) {
+        throw etsyWebhookError('ETSY_WEBHOOK_RESOURCE_INVALID', 'Etsy webhook resource does not match the authorized shop.', 403);
+    }
+    return { shopId: match[1], receiptId: etsyNumericIdentity(match[2], 'receipt ID') };
+}
 
 function etsyConfig(env) {
     const keystring = String(env.ETSY_API_KEY || '').trim();
@@ -2624,12 +2755,28 @@ async function verifyEtsyApiCredentials(env) {
 async function etsyJson(response, code) {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
+        const retryAfter = Number(response.headers.get('Retry-After'));
         throw Object.assign(new Error(`Etsy request failed with HTTP ${response.status}.`), {
             code,
+            upstreamStatus: response.status,
+            retryAfterSeconds: Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(Math.ceil(retryAfter), 86400) : null,
             status: response.status >= 500 ? 502 : response.status
         });
     }
     return body;
+}
+
+async function etsyAuthorizedJson(env, url, code, connection = null) {
+    let active = connection || await freshEtsyConnection(env, false);
+    const request = () => fetch(url, {
+        headers: etsyApiHeaders(etsyConfig(env), active.accessToken)
+    });
+    let response = await request();
+    if (response.status === 401) {
+        active = await freshEtsyConnection(env, true);
+        response = await request();
+    }
+    return { body: await etsyJson(response, code), connection: active };
 }
 
 async function requestEtsyToken(env, params) {
@@ -3188,35 +3335,42 @@ function etsyShadowEligibility(receipt) {
 }
 
 async function readEtsyReceiptForShadow(env, connection, { receiptId = null } = {}) {
-    const config = etsyConfig(env);
     let receipt;
+    let activeConnection = connection;
     if (receiptId) {
-        const receiptResponse = await fetch(
+        const result = await etsyAuthorizedJson(
+            env,
             `${ETSY_API_BASE_URL}/shops/${encodeURIComponent(connection.row.etsy_shop_id)}/receipts/${encodeURIComponent(receiptId)}`,
-            { headers: etsyApiHeaders(config, connection.accessToken) }
+            'ETSY_RECEIPT_READ_FAILED',
+            activeConnection
         );
-        receipt = await etsyJson(receiptResponse, 'ETSY_RECEIPT_READ_FAILED');
+        receipt = result.body;
+        activeConnection = result.connection;
     } else {
-        const receiptsResponse = await fetch(
+        const result = await etsyAuthorizedJson(
+            env,
             `${ETSY_API_BASE_URL}/shops/${encodeURIComponent(connection.row.etsy_shop_id)}/receipts?limit=1&offset=0`,
-            { headers: etsyApiHeaders(config, connection.accessToken) }
+            'ETSY_RECEIPT_READ_FAILED',
+            activeConnection
         );
-        const receipts = await etsyJson(receiptsResponse, 'ETSY_RECEIPT_READ_FAILED');
+        const receipts = result.body;
+        activeConnection = result.connection;
         receipt = Array.isArray(receipts.results) ? receipts.results[0] : null;
     }
     if (!receipt?.receipt_id) return { receipt: null, transactions: [] };
-    const transactionsResponse = await fetch(
+    const transactionResult = await etsyAuthorizedJson(
+        env,
         `${ETSY_API_BASE_URL}/shops/${encodeURIComponent(connection.row.etsy_shop_id)}/receipts/${encodeURIComponent(receipt.receipt_id)}/transactions`,
-        { headers: etsyApiHeaders(config, connection.accessToken) }
+        'ETSY_TRANSACTION_READ_FAILED',
+        activeConnection
     );
-    const transactionsPayload = await etsyJson(transactionsResponse, 'ETSY_TRANSACTION_READ_FAILED');
     return {
         receipt,
-        transactions: Array.isArray(transactionsPayload.results) ? transactionsPayload.results : []
+        transactions: Array.isArray(transactionResult.body.results) ? transactionResult.body.results : []
     };
 }
 
-async function persistEtsyShadowOrder(env, contract, eligibility, actorId) {
+async function persistEtsyShadowOrder(env, contract, eligibility, actorId, { enroll = false } = {}) {
     const db = requireOrderDb(env);
     const shop = await d1Shop(env);
     const now = isoNow();
@@ -3257,7 +3411,19 @@ async function persistEtsyShadowOrder(env, contract, eligibility, actorId) {
             source.externalOrderId, JSON.stringify(production), now, now
         )
     ]);
-    return { shopId: shop.id, revision: 0 };
+    if (enroll) {
+        await db.prepare(`
+          UPDATE provider_order_projection
+          SET enrollment_state = 'active', board_enrolled = 1, updated_at = ?
+          WHERE shop_id = ? AND order_key = ? AND eligibility_state = 'PAID_UNSHIPPED'
+        `).bind(now, shop.id, contract.orderKey).run();
+    }
+    const persistedState = await db.prepare(`
+      SELECT revision
+      FROM provider_production_state
+      WHERE shop_id = ? AND order_key = ?
+    `).bind(shop.id, contract.orderKey).first();
+    return { shopId: shop.id, revision: Number(persistedState?.revision || 0), enrolled: enroll };
 }
 
 async function handleEtsyShadowSync(request, env, allowOrigin, reqAllowHeaders, identity) {
@@ -3338,6 +3504,363 @@ async function handleEtsyShadowSync(request, env, allowOrigin, reqAllowHeaders, 
             productionRevision: persisted.revision,
             enrollmentState: 'shadow',
             boardChanged: false
+        }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+function etsyWebhookEnrollmentEnabled(env) {
+    return String(env.ETSY_WEBHOOK_ENROLLMENT_ENABLED || '0').trim() === '1';
+}
+
+function etsyWebhookReconciliationEnabled(env) {
+    return String(env.ETSY_WEBHOOK_RECONCILIATION_ENABLED || '1').trim() !== '0';
+}
+
+async function handleEtsyWebhook(request, env, ctx) {
+    try {
+        const contentType = String(request.headers.get('Content-Type') || '').toLowerCase();
+        const contentEncoding = String(request.headers.get('Content-Encoding') || '').trim().toLowerCase();
+        const declaredLength = Number(request.headers.get('Content-Length'));
+        if (!contentType.startsWith('application/json')) {
+            throw etsyWebhookError('ETSY_WEBHOOK_CONTENT_TYPE_INVALID', 'Etsy webhook content type must be JSON.', 415);
+        }
+        if (contentEncoding && contentEncoding !== 'identity') {
+            throw etsyWebhookError('ETSY_WEBHOOK_CONTENT_ENCODING_INVALID', 'Encoded Etsy webhook bodies are not accepted.', 415);
+        }
+        if (Number.isFinite(declaredLength) && declaredLength > ETSY_WEBHOOK_MAX_BODY_BYTES) {
+            throw etsyWebhookError('ETSY_WEBHOOK_BODY_TOO_LARGE', 'Etsy webhook body is too large.', 413);
+        }
+        const rawBytes = new Uint8Array(await request.arrayBuffer());
+        if (!rawBytes.byteLength || rawBytes.byteLength > ETSY_WEBHOOK_MAX_BODY_BYTES) {
+            throw etsyWebhookError('ETSY_WEBHOOK_BODY_INVALID', 'Etsy webhook body is empty or too large.', rawBytes.byteLength ? 413 : 400);
+        }
+        const verified = await verifyEtsyWebhookSignature(rawBytes, request.headers, env);
+        let payload;
+        try {
+            payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(rawBytes));
+        } catch (_) {
+            throw etsyWebhookError('ETSY_WEBHOOK_JSON_INVALID', 'Etsy webhook body is not valid JSON.', 400);
+        }
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+            throw etsyWebhookError('ETSY_WEBHOOK_PAYLOAD_INVALID', 'Etsy webhook payload is invalid.', 400);
+        }
+        if (String(payload.event_type || '') !== ETSY_WEBHOOK_EVENT) {
+            throw etsyWebhookError('ETSY_WEBHOOK_EVENT_UNSUPPORTED', 'Etsy webhook event is not supported.', 422);
+        }
+        const connection = await loadEtsyConnection(env);
+        const payloadShopId = etsyNumericIdentity(payload.shop_id, 'shop ID');
+        if (payloadShopId !== String(connection.etsy_shop_id)) {
+            throw etsyWebhookError('ETSY_WEBHOOK_SHOP_INVALID', 'Etsy webhook shop is not authorized.', 403);
+        }
+        const resource = parseEtsyWebhookResource(payload.resource_url, payloadShopId);
+        const bodyHash = await sha256BytesHex(rawBytes);
+        const shop = await d1Shop(env);
+        const now = isoNow();
+        const triggeredAt = new Date(verified.timestamp * 1000).toISOString();
+        const insert = await requireOrderDb(env).prepare(`
+          INSERT OR IGNORE INTO etsy_webhook_deliveries (
+            webhook_id, shop_id, event_type, etsy_shop_id, receipt_id, body_sha256,
+            state, outcome_code, error_code, attempt_count, triggered_at,
+            received_at, next_attempt_at, processed_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'received', NULL, NULL, 0, ?, ?, NULL, NULL, ?)
+        `).bind(
+            verified.webhookId, shop.id, ETSY_WEBHOOK_EVENT, payloadShopId, resource.receiptId,
+            bodyHash, triggeredAt, now, now
+        ).run();
+        if (!insert.meta?.changes) {
+            const existing = await requireOrderDb(env).prepare(`
+              SELECT event_type, etsy_shop_id, receipt_id, body_sha256, state
+              FROM etsy_webhook_deliveries
+              WHERE webhook_id = ?
+            `).bind(verified.webhookId).first();
+            const sameDelivery = existing
+                && existing.event_type === ETSY_WEBHOOK_EVENT
+                && existing.etsy_shop_id === payloadShopId
+                && existing.receipt_id === resource.receiptId
+                && existing.body_sha256 === bodyHash;
+            if (!sameDelivery) {
+                throw etsyWebhookError('ETSY_WEBHOOK_ID_CONFLICT', 'Etsy webhook delivery ID was reused with different content.', 409);
+            }
+            return etsyWebhookResponse({ ok: true, duplicate: true, state: existing.state }, 200);
+        }
+        const processing = processEtsyWebhookDelivery(env, verified.webhookId).catch(error => {
+            console.error('Etsy webhook processing error:', String(error?.code || 'ETSY_WEBHOOK_PROCESSING_FAILED'));
+        });
+        if (ctx?.waitUntil) ctx.waitUntil(processing);
+        else await processing;
+        return etsyWebhookResponse({ ok: true, accepted: true }, 202);
+    } catch (error) {
+        const status = Number(error?.status) || 500;
+        const code = String(error?.code || 'ETSY_WEBHOOK_FAILED');
+        if (status >= 500) console.error('Etsy webhook endpoint error:', code);
+        return etsyWebhookResponse({ ok: false, error: { code } }, status);
+    }
+}
+
+function etsyWebhookRetryAt(error, attemptCount) {
+    const providerDelay = Number(error?.retryAfterSeconds);
+    const fallback = ETSY_WEBHOOK_RETRY_DELAYS_SECONDS[
+        Math.min(Math.max(0, attemptCount - 1), ETSY_WEBHOOK_RETRY_DELAYS_SECONDS.length - 1)
+    ];
+    const delaySeconds = Number.isFinite(providerDelay) && providerDelay > 0 ? providerDelay : fallback;
+    return new Date(Date.now() + delaySeconds * 1000).toISOString();
+}
+
+async function claimEtsyWebhookDelivery(env, webhookId) {
+    const db = requireOrderDb(env);
+    const now = isoNow();
+    const leaseExpiredAt = new Date(Date.now() - ETSY_WEBHOOK_PROCESSING_LEASE_MS).toISOString();
+    const claim = await db.prepare(`
+      UPDATE etsy_webhook_deliveries
+      SET state = 'processing', attempt_count = attempt_count + 1,
+          next_attempt_at = NULL, error_code = NULL, updated_at = ?
+      WHERE webhook_id = ?
+        AND (
+          state IN ('received', 'retry')
+          OR (state = 'processing' AND updated_at <= ?)
+        )
+    `).bind(now, webhookId, leaseExpiredAt).run();
+    if (!claim.meta?.changes) return null;
+    return db.prepare('SELECT * FROM etsy_webhook_deliveries WHERE webhook_id = ?').bind(webhookId).first();
+}
+
+async function completeEtsyWebhookDelivery(env, webhookId, state, outcomeCode, errorCode = null, nextAttemptAt = null) {
+    const now = isoNow();
+    await requireOrderDb(env).prepare(`
+      UPDATE etsy_webhook_deliveries
+      SET state = ?, outcome_code = ?, error_code = ?, next_attempt_at = ?,
+          processed_at = CASE WHEN ? IN ('processed', 'ignored', 'failed') THEN ? ELSE processed_at END,
+          updated_at = ?
+      WHERE webhook_id = ?
+    `).bind(state, outcomeCode, errorCode, nextAttemptAt, state, now, now, webhookId).run();
+}
+
+async function processEtsyWebhookDelivery(env, webhookId) {
+    const delivery = await claimEtsyWebhookDelivery(env, webhookId);
+    if (!delivery) return { claimed: false };
+    try {
+        const connection = await freshEtsyConnection(env, false);
+        if (String(connection.row.etsy_shop_id) !== String(delivery.etsy_shop_id)) {
+            throw etsyWebhookError('ETSY_WEBHOOK_SHOP_INVALID', 'Stored webhook shop is not authorized.', 403);
+        }
+        const observed = await readEtsyReceiptForShadow(env, connection, { receiptId: delivery.receipt_id });
+        if (!observed.receipt) {
+            await completeEtsyWebhookDelivery(env, webhookId, 'ignored', 'NO_RECEIPT');
+            return { claimed: true, outcome: 'NO_RECEIPT' };
+        }
+        if (String(observed.receipt.receipt_id) !== String(delivery.receipt_id)) {
+            throw etsyWebhookError('ETSY_RECEIPT_ID_MISMATCH', 'Etsy returned an unexpected receipt identity.', 502);
+        }
+        const eligibility = etsyShadowEligibility(observed.receipt);
+        if (!eligibility.eligible) {
+            await completeEtsyWebhookDelivery(env, webhookId, 'ignored', eligibility.reason);
+            return { claimed: true, outcome: eligibility.reason };
+        }
+        const contract = normalizeEtsyOrderContract({
+            providerAccountId: connection.row.etsy_shop_id,
+            receipt: observed.receipt,
+            transactions: observed.transactions,
+            fetchedAt: isoNow()
+        });
+        const enroll = etsyWebhookEnrollmentEnabled(env);
+        await persistEtsyShadowOrder(env, contract, eligibility, 'etsy-webhook', { enroll });
+        const outcome = enroll ? 'BOARD_ENROLLED' : 'SHADOW_SYNCED';
+        await completeEtsyWebhookDelivery(env, webhookId, 'processed', outcome);
+        return { claimed: true, outcome };
+    } catch (error) {
+        const attemptCount = Number(delivery.attempt_count || 1);
+        const terminal = attemptCount >= ETSY_WEBHOOK_MAX_ATTEMPTS;
+        const state = terminal ? 'failed' : 'retry';
+        await completeEtsyWebhookDelivery(
+            env,
+            webhookId,
+            state,
+            terminal ? 'RETRY_EXHAUSTED' : 'RETRY_SCHEDULED',
+            String(error?.code || 'ETSY_WEBHOOK_PROCESSING_FAILED').slice(0, 120),
+            terminal ? null : etsyWebhookRetryAt(error, attemptCount)
+        );
+        throw error;
+    }
+}
+
+async function retryDueEtsyWebhookDeliveries(env) {
+    const now = isoNow();
+    const leaseExpiredAt = new Date(Date.now() - ETSY_WEBHOOK_PROCESSING_LEASE_MS).toISOString();
+    const due = await requireOrderDb(env).prepare(`
+      SELECT webhook_id
+      FROM etsy_webhook_deliveries
+      WHERE (state = 'retry' AND next_attempt_at <= ?)
+         OR (state = 'processing' AND updated_at <= ?)
+      ORDER BY COALESCE(next_attempt_at, updated_at), received_at
+      LIMIT 10
+    `).bind(now, leaseExpiredAt).all();
+    let processed = 0;
+    for (const row of due.results || []) {
+        try {
+            const result = await processEtsyWebhookDelivery(env, row.webhook_id);
+            if (result.claimed) processed += 1;
+        } catch (_) {
+            // State and redacted error code were persisted by the processor.
+        }
+    }
+    return { due: (due.results || []).length, processed };
+}
+
+async function reconcileEtsyPaidReceipts(env, mode = 'incremental') {
+    if (!etsyWebhookReconciliationEnabled(env) || !etsyWebhookSecrets(env, { required: false }).length) {
+        return { skipped: true, reason: 'NOT_ACTIVE' };
+    }
+    const db = requireOrderDb(env);
+    const shop = await d1Shop(env);
+    const now = isoNow();
+    const existing = await db.prepare(`
+      SELECT checkpoint, last_started_at, last_completed_at
+      FROM reconciliation_checkpoints
+      WHERE shop_id = ? AND name = ?
+    `).bind(shop.id, ETSY_RECONCILIATION_CHECKPOINT).first();
+    const activeStart = Date.parse(existing?.last_started_at || '');
+    const activeComplete = Date.parse(existing?.last_completed_at || '');
+    if (Number.isFinite(activeStart) && activeStart > (Number.isFinite(activeComplete) ? activeComplete : 0)
+        && activeStart > Date.now() - ETSY_WEBHOOK_PROCESSING_LEASE_MS) {
+        return { skipped: true, reason: 'ALREADY_RUNNING' };
+    }
+    await db.prepare(`
+      INSERT INTO reconciliation_checkpoints (shop_id, name, checkpoint, last_started_at, last_completed_at, last_result_json)
+      VALUES (?, ?, NULL, ?, NULL, NULL)
+      ON CONFLICT(shop_id, name) DO UPDATE SET last_started_at = excluded.last_started_at
+    `).bind(shop.id, ETSY_RECONCILIATION_CHECKPOINT, now).run();
+    try {
+        let priorCompletedAt = null;
+        try { priorCompletedAt = JSON.parse(existing?.checkpoint || '{}').lastCompletedAt || null; } catch (_) {}
+        const baseLookback = mode === 'integrity' ? ETSY_RECONCILIATION_INTEGRITY_SECONDS : ETSY_RECONCILIATION_INITIAL_SECONDS;
+        const priorSeconds = Math.floor(Date.parse(priorCompletedAt || '') / 1000);
+        const minimumSeconds = Number.isFinite(priorSeconds)
+            ? priorSeconds - ETSY_RECONCILIATION_OVERLAP_SECONDS
+            : Math.floor(Date.now() / 1000) - baseLookback;
+        const connection = await freshEtsyConnection(env, false);
+        const maxPages = mode === 'integrity' ? 4 : 2;
+        let activeConnection = connection;
+        let observed = 0;
+        let eligible = 0;
+        let persisted = 0;
+        let truncated = false;
+        for (let page = 0; page < maxPages; page += 1) {
+            const url = new URL(`${ETSY_API_BASE_URL}/shops/${encodeURIComponent(connection.row.etsy_shop_id)}/receipts`);
+            url.searchParams.set('min_last_modified', String(Math.max(946684800, minimumSeconds)));
+            url.searchParams.set('was_paid', 'true');
+            url.searchParams.set('was_shipped', 'false');
+            url.searchParams.set('sort_on', 'updated');
+            url.searchParams.set('sort_order', 'asc');
+            url.searchParams.set('limit', String(ETSY_RECONCILIATION_LIMIT));
+            url.searchParams.set('offset', String(page * ETSY_RECONCILIATION_LIMIT));
+            const pageResult = await etsyAuthorizedJson(env, url.toString(), 'ETSY_RECONCILIATION_READ_FAILED', activeConnection);
+            activeConnection = pageResult.connection;
+            const receipts = Array.isArray(pageResult.body.results) ? pageResult.body.results : [];
+            observed += receipts.length;
+            for (const receipt of receipts) {
+                const eligibility = etsyShadowEligibility(receipt);
+                if (!eligibility.eligible) continue;
+                eligible += 1;
+                const receiptId = etsyNumericIdentity(receipt.receipt_id, 'receipt ID');
+                const transactionResult = await etsyAuthorizedJson(
+                    env,
+                    `${ETSY_API_BASE_URL}/shops/${encodeURIComponent(connection.row.etsy_shop_id)}/receipts/${encodeURIComponent(receiptId)}/transactions`,
+                    'ETSY_TRANSACTION_READ_FAILED',
+                    activeConnection
+                );
+                activeConnection = transactionResult.connection;
+                const contract = normalizeEtsyOrderContract({
+                    providerAccountId: connection.row.etsy_shop_id,
+                    receipt,
+                    transactions: Array.isArray(transactionResult.body.results) ? transactionResult.body.results : [],
+                    fetchedAt: isoNow()
+                });
+                await persistEtsyShadowOrder(env, contract, eligibility, 'etsy-reconciliation', {
+                    enroll: etsyWebhookEnrollmentEnabled(env)
+                });
+                persisted += 1;
+            }
+            if (receipts.length < ETSY_RECONCILIATION_LIMIT) break;
+            if (page === maxPages - 1) truncated = true;
+        }
+        const completedAt = isoNow();
+        const result = { mode, observed, eligible, persisted, truncated, customerDataLogged: false };
+        await db.prepare(`
+          UPDATE reconciliation_checkpoints
+          SET checkpoint = ?, last_completed_at = ?, last_result_json = ?
+          WHERE shop_id = ? AND name = ?
+        `).bind(
+            JSON.stringify({ lastCompletedAt: truncated ? priorCompletedAt : completedAt }),
+            completedAt,
+            JSON.stringify(result),
+            shop.id,
+            ETSY_RECONCILIATION_CHECKPOINT
+        ).run();
+        return result;
+    } catch (error) {
+        await db.prepare(`
+          UPDATE reconciliation_checkpoints
+          SET last_result_json = ?
+          WHERE shop_id = ? AND name = ?
+        `).bind(
+            JSON.stringify({ mode, failed: true, errorCode: String(error?.code || 'ETSY_RECONCILIATION_FAILED') }),
+            shop.id,
+            ETSY_RECONCILIATION_CHECKPOINT
+        ).run();
+        throw error;
+    }
+}
+
+async function runEtsyWebhookMaintenance(env, mode = 'incremental') {
+    const retry = await retryDueEtsyWebhookDeliveries(env);
+    const reconciliation = await reconcileEtsyPaidReceipts(env, mode);
+    return { retry, reconciliation };
+}
+
+async function handleEtsyWebhookStatus(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const shop = await d1Shop(env);
+        let secretConfigured = false;
+        let secretConfigurationError = null;
+        try { secretConfigured = etsyWebhookSecrets(env, { required: false }).length > 0; }
+        catch (error) { secretConfigurationError = String(error?.code || 'ETSY_WEBHOOK_SECRET_INVALID'); }
+        const counts = await requireOrderDb(env).prepare(`
+          SELECT state, COUNT(*) AS count
+          FROM etsy_webhook_deliveries
+          WHERE shop_id = ?
+          GROUP BY state
+        `).bind(shop.id).all();
+        const latest = await requireOrderDb(env).prepare(`
+          SELECT event_type, state, outcome_code, error_code, received_at, processed_at, updated_at
+          FROM etsy_webhook_deliveries
+          WHERE shop_id = ?
+          ORDER BY received_at DESC
+          LIMIT 1
+        `).bind(shop.id).first();
+        const checkpoint = await requireOrderDb(env).prepare(`
+          SELECT last_started_at, last_completed_at, last_result_json
+          FROM reconciliation_checkpoints
+          WHERE shop_id = ? AND name = ?
+        `).bind(shop.id, ETSY_RECONCILIATION_CHECKPOINT).first();
+        let reconciliationResult = null;
+        try { reconciliationResult = checkpoint?.last_result_json ? JSON.parse(checkpoint.last_result_json) : null; } catch (_) {}
+        return jsonResponse({
+            endpoint: String(env.ETSY_WEBHOOK_CALLBACK_URL || ''),
+            event: ETSY_WEBHOOK_EVENT,
+            secretConfigured,
+            secretConfigurationError,
+            mode: etsyWebhookEnrollmentEnabled(env) ? 'automatic-enrollment' : 'shadow-only',
+            reconciliationEnabled: etsyWebhookReconciliationEnabled(env),
+            deliveries: Object.fromEntries((counts.results || []).map(row => [row.state, Number(row.count || 0)])),
+            latest: latest || null,
+            reconciliation: checkpoint ? {
+                lastStartedAt: checkpoint.last_started_at,
+                lastCompletedAt: checkpoint.last_completed_at,
+                result: reconciliationResult
+            } : null,
+            customerDataIncluded: false
         }, allowOrigin, reqAllowHeaders);
     } catch (error) {
         return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
@@ -5089,7 +5612,7 @@ function providerBoardDto(record) {
         attention: record.production.attention,
         capabilities: {
             ...(contract?.capabilities || {}),
-            productionWrite: record.enrollmentState === 'pilot'
+            productionWrite: ['pilot', 'active'].includes(record.enrollmentState)
         },
         sync: {
             ...(contract?.sync || {}),
@@ -6996,8 +7519,12 @@ export {
     designerAssetCandidates,
     normalizeEtsyOrderContract,
     orderCanEnterCandidateBoard,
+    parseEtsyWebhookResource,
+    pickAllowOrigin,
     redactedJsonFieldShape,
+    reconcileEtsyPaidReceipts,
     selectOperationalCustomerName,
     etsyShadowEligibility,
+    verifyEtsyWebhookSignature,
     webhookConfirmsPayment
 };
