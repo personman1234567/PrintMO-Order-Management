@@ -50,9 +50,10 @@ Electron calls authenticated Worker endpoints. It does not directly own Redis or
 
 | Source | Ownership | Stable entry symbols/contracts |
 |---|---|---|
-| [worker.js](../../../order-manager-proxy/worker.js) | Authenticated BFF for Shopify commerce/production state, D1, R2, webhooks, reconciliation, migration, supplier batch state, and isolated legacy routes | `/order-manager/v1/orders`, `/production`, `/batches/commit`, `BOARD_NOT_INITIALIZED`, `VERSION_CONFLICT` |
+| [worker.js](../../../order-manager-proxy/worker.js) | Authenticated BFF for Shopify commerce/production state, provider-aware Etsy OAuth/projection, D1, R2, signed webhooks, reconciliation, migration, supplier batch state, and isolated legacy routes | `/order-manager/v1/orders`, `/production`, `/webhooks/shopify`, `/webhooks/etsy`, `BOARD_NOT_INITIALIZED`, `VERSION_CONFLICT` |
 | [0001_redis_free.sql](../../../order-manager-proxy/migrations/0001_redis_free.sql) | Core candidate D1 schema | `order_projection`, `mutation_requests`, `production_events`, `batches`, `asset_manifests`, `migration_ledger` |
 | [0002_designer_asset_metadata.sql](../../../order-manager-proxy/migrations/0002_designer_asset_metadata.sql) | Designer Studio asset linkage | line item, design reference, role, side |
+| [0007_etsy_webhook_delivery.sql](../../../order-manager-proxy/migrations/0007_etsy_webhook_delivery.sql) | PII-free Etsy webhook replay, processing, retry, and recovery ledger | `etsy_webhook_deliveries` |
 | [shopify.app.toml](../../../order-manager-proxy/shopify.app.toml) | Shopify app identity, metafield definition, scopes, API version, webhook subscriptions | app-owned production metafield |
 | [wrangler.jsonc](../../../order-manager-proxy/wrangler.jsonc) | Worker, D1, R2, Durable Object, cron, and pre-cutover bindings | `ORDER_DB`, `R2_BUCKET`, `PREVIEWS` |
 | [production-client.mjs](../../../order-manager-proxy/extensions/printmo-production-status/src/production-client.mjs) | Shared Admin-block normalization, minimal patching, endpoint, auth, and error helpers | production-client exports |

@@ -168,13 +168,41 @@ function etsyTransactionFixtures(receiptId = 7001) {
   ];
 }
 
+function signedEtsyWebhookRequest({
+  secret,
+  webhookId = 'msg_fixture_delivery_1',
+  timestamp = Math.floor(Date.now() / 1000),
+  payload = {
+    event_type: 'order.paid',
+    resource_url: 'https://api.etsy.com/v3/application/shops/98765/receipts/7001',
+    shop_id: 98765,
+  },
+  signatureOverride = null,
+} = {}) {
+  const body = JSON.stringify(payload);
+  const secretBytes = Buffer.from(String(secret).replace(/^whsec_/, ''), 'base64');
+  const signature = signatureOverride || crypto.createHmac('sha256', secretBytes)
+    .update(`${webhookId}.${timestamp}.${body}`)
+    .digest('base64');
+  return new Request('https://worker.test/order-manager/v1/webhooks/etsy', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'webhook-id': webhookId,
+      'webhook-timestamp': String(timestamp),
+      'webhook-signature': `v1,${signature}`,
+    },
+    body,
+  });
+}
+
 async function run() {
   console.log('=== Running Phase 2 Shadow Data Plane Verification ===');
   await require('./verify-phase1.js').run();
 
   const root = path.join(__dirname, '..');
   const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8');
-  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql']
+  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql', '0007_etsy_webhook_delivery.sql']
     .map(file => fs.readFileSync(path.join(root, 'order-manager-proxy', 'migrations', file), 'utf8'))
     .join('\n');
   const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
@@ -292,6 +320,10 @@ async function run() {
     ETSY_API_KEY: 'etsy-fixture-key', ETSY_SHARED_SECRET: 'etsy-fixture-secret',
     ETSY_REDIRECT_URI: 'https://worker.test/order-manager/v1/oauth/etsy/callback',
     ETSY_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64url'),
+    ETSY_WEBHOOK_CALLBACK_URL: 'https://worker.test/order-manager/v1/webhooks/etsy',
+    ETSY_WEBHOOK_SECRET: `whsec_${Buffer.alloc(32, 9).toString('base64')}`,
+    ETSY_WEBHOOK_ENROLLMENT_ENABLED: '0',
+    ETSY_WEBHOOK_RECONCILIATION_ENABLED: '1',
     ORDER_DB: createD1(schema),
     PREVIEWS: {
       async head(key) {
@@ -339,6 +371,8 @@ async function run() {
   let failBootstrap = false;
   let holdSummaryRefresh = false;
   let heldSummaryRefresh = Promise.resolve();
+  let etsyReconciliationReceipts = [];
+  let etsyTransientReceiptFailures = 0;
   const calls = [];
   const nativeFetch = globalThis.fetch;
   globalThis.fetch = async (url, options = {}) => {
@@ -376,6 +410,19 @@ async function run() {
       assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
       return Response.json({ count: 1, results: [etsyReceiptFixture()] });
     }
+    if (target.startsWith('https://api.etsy.com/v3/application/shops/98765/receipts?')) {
+      const parsed = new URL(target);
+      if (parsed.searchParams.has('min_last_modified')) {
+        assert.equal(parsed.searchParams.get('was_paid'), 'true');
+        assert.equal(parsed.searchParams.get('was_shipped'), 'false');
+        assert.equal(parsed.searchParams.get('sort_on'), 'updated');
+        const offset = Number(parsed.searchParams.get('offset') || 0);
+        return Response.json({
+          count: etsyReconciliationReceipts.length,
+          results: offset === 0 ? etsyReconciliationReceipts : [],
+        });
+      }
+    }
     if (target === 'https://api.etsy.com/v3/application/shops/98765/receipts/7001') {
       assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
       return Response.json(etsyReceiptFixture());
@@ -384,6 +431,18 @@ async function run() {
       assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
       return Response.json(etsyReceiptFixture({ receiptId: 7002, shipped: true }));
     }
+    if (target === 'https://api.etsy.com/v3/application/shops/98765/receipts/7004') {
+      assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
+      if (etsyTransientReceiptFailures > 0) {
+        etsyTransientReceiptFailures -= 1;
+        return Response.json({ error: 'temporary fixture failure' }, { status: 503, headers: { 'Retry-After': '1' } });
+      }
+      return Response.json(etsyReceiptFixture({ receiptId: 7004 }));
+    }
+    if (target === 'https://api.etsy.com/v3/application/shops/98765/receipts/7005') {
+      assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
+      return Response.json(etsyReceiptFixture({ receiptId: 7005 }));
+    }
     if (target === 'https://api.etsy.com/v3/application/shops/98765/receipts/7001/transactions') {
       assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
       return Response.json({ count: 2, results: etsyTransactionFixtures() });
@@ -391,6 +450,14 @@ async function run() {
     if (target === 'https://api.etsy.com/v3/application/shops/98765/receipts/7002/transactions') {
       assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
       return Response.json({ count: 1, results: etsyTransactionFixtures(7002) });
+    }
+    if (target === 'https://api.etsy.com/v3/application/shops/98765/receipts/7004/transactions') {
+      assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
+      return Response.json({ count: 2, results: etsyTransactionFixtures(7004) });
+    }
+    if (target === 'https://api.etsy.com/v3/application/shops/98765/receipts/7005/transactions') {
+      assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
+      return Response.json({ count: 2, results: etsyTransactionFixtures(7005) });
     }
     if (target.endsWith('/admin/oauth/access_token')) {
       return Response.json({ access_token: 'runtime-token', expires_in: 86399 });
@@ -642,6 +709,240 @@ async function run() {
     assert.equal(connectedEtsyStatusJson.shop.name, 'PrintMOFixture');
     assert(!JSON.stringify(connectedEtsyStatusJson).includes('refreshed-refresh'), 'Etsy status must not expose refresh tokens');
 
+    const webhookTasks = [];
+    const validEtsyWebhook = await worker.fetch(
+      signedEtsyWebhookRequest({ secret: env.ETSY_WEBHOOK_SECRET }),
+      env,
+      { waitUntil(promise) { webhookTasks.push(promise); } }
+    );
+    assert.equal(validEtsyWebhook.status, 202, 'a valid Etsy signature must durably accept order.paid without bearer auth');
+    assert.deepEqual(await validEtsyWebhook.json(), { ok: true, accepted: true });
+    await Promise.all(webhookTasks);
+    const webhookDelivery = await env.ORDER_DB.prepare(`
+      SELECT event_type, etsy_shop_id, receipt_id, state, outcome_code, error_code, attempt_count
+      FROM etsy_webhook_deliveries
+      WHERE webhook_id = ?
+    `).bind('msg_fixture_delivery_1').first();
+    assert.equal(webhookDelivery.event_type, 'order.paid');
+    assert.equal(webhookDelivery.etsy_shop_id, '98765');
+    assert.equal(webhookDelivery.receipt_id, '7001');
+    assert.equal(webhookDelivery.state, 'processed');
+    assert.equal(webhookDelivery.outcome_code, 'SHADOW_SYNCED');
+    assert.equal(webhookDelivery.error_code, null);
+    assert.equal(webhookDelivery.attempt_count, 1);
+    const webhookProjection = await env.ORDER_DB.prepare(`
+      SELECT enrollment_state, board_enrolled, commerce_json
+      FROM provider_order_projection
+      WHERE order_key = 'etsy:98765:7001'
+    `).first();
+    assert.equal(webhookProjection.enrollment_state, 'shadow', 'webhooks must default to hidden shadow persistence');
+    assert.equal(webhookProjection.board_enrolled, 0, 'automatic enrollment must remain off by default');
+    assert(!webhookProjection.commerce_json.includes('private@example.test'), 'webhook projection must omit buyer email');
+    const webhookLedgerJson = JSON.stringify(await env.ORDER_DB.prepare(
+      'SELECT * FROM etsy_webhook_deliveries WHERE webhook_id = ?'
+    ).bind('msg_fixture_delivery_1').first());
+    assert(!webhookLedgerJson.includes('Protected Fixture Buyer'), 'webhook ledger must not retain raw customer payloads');
+    assert(!webhookLedgerJson.includes('private@example.test'), 'webhook ledger must not retain buyer email');
+
+    const duplicateEtsyWebhook = await worker.fetch(
+      signedEtsyWebhookRequest({ secret: env.ETSY_WEBHOOK_SECRET }),
+      env,
+      { waitUntil() { throw new Error('duplicate Etsy deliveries must not schedule processing'); } }
+    );
+    assert.equal(duplicateEtsyWebhook.status, 200);
+    assert.equal((await duplicateEtsyWebhook.json()).duplicate, true);
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT COUNT(*) AS count FROM etsy_webhook_deliveries').first()).count,
+      1,
+      'same webhook-id replay must remain a single durable delivery'
+    );
+
+    const invalidEtsySignature = await worker.fetch(
+      signedEtsyWebhookRequest({ secret: env.ETSY_WEBHOOK_SECRET, webhookId: 'msg_invalid_signature', signatureOverride: 'invalidsignature==' }),
+      env
+    );
+    assert.equal(invalidEtsySignature.status, 401, 'forged Etsy signatures must fail closed');
+    assert.equal((await invalidEtsySignature.json()).error.code, 'ETSY_WEBHOOK_SIGNATURE_INVALID');
+
+    const staleEtsyWebhook = await worker.fetch(
+      signedEtsyWebhookRequest({
+        secret: env.ETSY_WEBHOOK_SECRET,
+        webhookId: 'msg_stale_delivery_1',
+        timestamp: Math.floor(Date.now() / 1000) - 301,
+      }),
+      env
+    );
+    assert.equal(staleEtsyWebhook.status, 401, 'signed Etsy deliveries outside the replay window must be rejected');
+    assert.equal((await staleEtsyWebhook.json()).error.code, 'ETSY_WEBHOOK_TIMESTAMP_STALE');
+
+    const wrongShopWebhook = await worker.fetch(
+      signedEtsyWebhookRequest({
+        secret: env.ETSY_WEBHOOK_SECRET,
+        webhookId: 'msg_wrong_shop_1',
+        payload: {
+          event_type: 'order.paid',
+          resource_url: 'https://api.etsy.com/v3/application/shops/99999/receipts/7001',
+          shop_id: 99999,
+        },
+      }),
+      env
+    );
+    assert.equal(wrongShopWebhook.status, 403, 'a valid signature for another Etsy shop must not cross the owner boundary');
+    assert.equal((await wrongShopWebhook.json()).error.code, 'ETSY_WEBHOOK_SHOP_INVALID');
+
+    const unsafeResourceWebhook = await worker.fetch(
+      signedEtsyWebhookRequest({
+        secret: env.ETSY_WEBHOOK_SECRET,
+        webhookId: 'msg_unsafe_resource_1',
+        payload: {
+          event_type: 'order.paid',
+          resource_url: 'https://attacker.example.test/v3/application/shops/98765/receipts/7001',
+          shop_id: 98765,
+        },
+      }),
+      env
+    );
+    assert.equal(unsafeResourceWebhook.status, 400, 'webhook resource URLs must not become arbitrary server-side fetches');
+    assert.equal((await unsafeResourceWebhook.json()).error.code, 'ETSY_WEBHOOK_RESOURCE_INVALID');
+
+    const conflictingEtsyWebhook = await worker.fetch(
+      signedEtsyWebhookRequest({
+        secret: env.ETSY_WEBHOOK_SECRET,
+        payload: {
+          event_type: 'order.paid',
+          resource_url: 'https://api.etsy.com/v3/application/shops/98765/receipts/7002',
+          shop_id: 98765,
+        },
+      }),
+      env
+    );
+    assert.equal(conflictingEtsyWebhook.status, 409, 'a reused webhook-id with changed content must be treated as a conflict');
+    assert.equal((await conflictingEtsyWebhook.json()).error.code, 'ETSY_WEBHOOK_ID_CONFLICT');
+
+    const unconfiguredEtsyWebhook = await worker.fetch(
+      signedEtsyWebhookRequest({ secret: env.ETSY_WEBHOOK_SECRET, webhookId: 'msg_unconfigured_1' }),
+      { ...env, ETSY_WEBHOOK_SECRET: '' }
+    );
+    assert.equal(unconfiguredEtsyWebhook.status, 503, 'the public endpoint must fail closed before its signing secret is installed');
+    assert.equal((await unconfiguredEtsyWebhook.json()).error.code, 'ETSY_WEBHOOK_NOT_CONFIGURED');
+
+    etsyTransientReceiptFailures = 1;
+    const transientTasks = [];
+    const transientEtsyWebhook = await worker.fetch(
+      signedEtsyWebhookRequest({
+        secret: env.ETSY_WEBHOOK_SECRET,
+        webhookId: 'msg_transient_delivery_1',
+        payload: {
+          event_type: 'order.paid',
+          resource_url: 'https://api.etsy.com/v3/application/shops/98765/receipts/7004',
+          shop_id: 98765,
+        },
+      }),
+      env,
+      { waitUntil(promise) { transientTasks.push(promise); } }
+    );
+    assert.equal(transientEtsyWebhook.status, 202);
+    await Promise.all(transientTasks);
+    const retryingDelivery = await env.ORDER_DB.prepare(`
+      SELECT state, outcome_code, error_code, attempt_count, next_attempt_at
+      FROM etsy_webhook_deliveries
+      WHERE webhook_id = 'msg_transient_delivery_1'
+    `).first();
+    assert.equal(retryingDelivery.state, 'retry');
+    assert.equal(retryingDelivery.outcome_code, 'RETRY_SCHEDULED');
+    assert.equal(retryingDelivery.error_code, 'ETSY_RECEIPT_READ_FAILED');
+    assert.equal(retryingDelivery.attempt_count, 1);
+    assert(retryingDelivery.next_attempt_at, 'temporary Etsy failures must receive a durable retry time');
+    await env.ORDER_DB.prepare(`
+      UPDATE etsy_webhook_deliveries
+      SET next_attempt_at = ?
+      WHERE webhook_id = 'msg_transient_delivery_1'
+    `).bind(new Date(Date.now() - 1000).toISOString()).run();
+    const maintenanceTasks = [];
+    await worker.scheduled(
+      { cron: '*/5 * * * *' },
+      env,
+      { waitUntil(promise) { maintenanceTasks.push(promise); } }
+    );
+    await Promise.all(maintenanceTasks);
+    const recoveredDelivery = await env.ORDER_DB.prepare(`
+      SELECT state, outcome_code, error_code, attempt_count
+      FROM etsy_webhook_deliveries
+      WHERE webhook_id = 'msg_transient_delivery_1'
+    `).first();
+    assert.equal(recoveredDelivery.state, 'processed', 'scheduled maintenance must recover a due Etsy delivery');
+    assert.equal(recoveredDelivery.outcome_code, 'SHADOW_SYNCED');
+    assert.equal(recoveredDelivery.error_code, null);
+    assert.equal(recoveredDelivery.attempt_count, 2);
+
+    const webhookStatus = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/webhook-status', { headers }
+    ), env);
+    assert.equal(webhookStatus.status, 200);
+    const webhookStatusJson = await webhookStatus.json();
+    assert.equal(webhookStatusJson.secretConfigured, true);
+    assert.equal(webhookStatusJson.mode, 'shadow-only');
+    assert.equal(webhookStatusJson.deliveries.processed, 2);
+    assert.equal(webhookStatusJson.customerDataIncluded, false);
+
+    const enrollmentTasks = [];
+    const enrollmentWebhook = await worker.fetch(
+      signedEtsyWebhookRequest({
+        secret: env.ETSY_WEBHOOK_SECRET,
+        webhookId: 'msg_enrollment_gate_1',
+        payload: {
+          event_type: 'order.paid',
+          resource_url: 'https://api.etsy.com/v3/application/shops/98765/receipts/7005',
+          shop_id: 98765,
+        },
+      }),
+      { ...env, ETSY_WEBHOOK_ENROLLMENT_ENABLED: '1' },
+      { waitUntil(promise) { enrollmentTasks.push(promise); } }
+    );
+    assert.equal(enrollmentWebhook.status, 202);
+    await Promise.all(enrollmentTasks);
+    const enrolledWebhookProjection = await env.ORDER_DB.prepare(`
+      SELECT enrollment_state, board_enrolled
+      FROM provider_order_projection
+      WHERE order_key = 'etsy:98765:7005'
+    `).first();
+    assert.equal(enrolledWebhookProjection.enrollment_state, 'active', 'the explicit rollout flag must promote eligible receipts');
+    assert.equal(enrolledWebhookProjection.board_enrolled, 1);
+    const enrolledWebhookBoard = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/orders', { headers }),
+      env
+    );
+    const enrolledWebhookCard = (await enrolledWebhookBoard.json()).data.find(order => order.orderKey === 'etsy:98765:7005');
+    assert(enrolledWebhookCard, 'a flag-enabled eligible receipt must enter the shared board');
+    assert.equal(enrolledWebhookCard.capabilities.productionWrite, true, 'active real Etsy orders must use revisioned D1 production state');
+    await env.ORDER_DB.prepare("DELETE FROM provider_order_projection WHERE order_key = 'etsy:98765:7005'").run();
+    await env.ORDER_DB.prepare("DELETE FROM etsy_webhook_deliveries WHERE webhook_id = 'msg_enrollment_gate_1'").run();
+
+    etsyReconciliationReceipts = [etsyReceiptFixture()];
+    const etsyReconciliation = await module.reconcileEtsyPaidReceipts(env, 'incremental');
+    etsyReconciliationReceipts = [];
+    assert.equal(etsyReconciliation.observed, 1);
+    assert.equal(etsyReconciliation.eligible, 1);
+    assert.equal(etsyReconciliation.persisted, 1);
+    assert.equal(etsyReconciliation.customerDataLogged, false);
+    const etsyCheckpoint = await env.ORDER_DB.prepare(`
+      SELECT last_completed_at, last_result_json
+      FROM reconciliation_checkpoints
+      WHERE name = 'etsy-webhook-reconciliation-v1'
+    `).first();
+    assert(etsyCheckpoint.last_completed_at, 'bounded Etsy reconciliation must record completion');
+    assert(!etsyCheckpoint.last_result_json.includes('Protected Fixture Buyer'), 'reconciliation checkpoint must retain counts, not customer data');
+
+    assert.equal(
+      module.pickAllowOrigin('https://preview.printmo.pages.dev', { ALLOW_ORIGIN_SUFFIX: 'printmo.pages.dev' }),
+      'https://preview.printmo.pages.dev'
+    );
+    assert.equal(
+      module.pickAllowOrigin('https://evilprintmo.pages.dev', { ALLOW_ORIGIN_SUFFIX: 'printmo.pages.dev' }),
+      '',
+      'CORS suffix matching must require a hostname label boundary'
+    );
+
     const untargetedShadowSync = await worker.fetch(new Request(
       'https://worker.test/order-manager/v1/integrations/etsy/shadow-sync',
       { method: 'POST', headers, body: '{}' }
@@ -649,6 +950,9 @@ async function run() {
     assert.equal(untargetedShadowSync.status, 400, 'shadow persistence must require an explicit receipt ID');
     assert.equal((await untargetedShadowSync.json()).error.code, 'ETSY_SHADOW_TARGET_REQUIRED');
 
+    const providerCountBeforeLatestDryRun = (
+      await env.ORDER_DB.prepare('SELECT COUNT(*) AS count FROM provider_order_projection').first()
+    ).count;
     const latestShadowDryRun = await worker.fetch(new Request(
       'https://worker.test/order-manager/v1/integrations/etsy/shadow-sync',
       { method: 'POST', headers, body: JSON.stringify({ latest: true, dryRun: true }) }
@@ -660,7 +964,7 @@ async function run() {
     assert.equal(latestShadowJson.boardChanged, false);
     assert.equal(
       (await env.ORDER_DB.prepare('SELECT COUNT(*) AS count FROM provider_order_projection').first()).count,
-      0,
+      providerCountBeforeLatestDryRun,
       'dry-run receipt checks must not create provider rows'
     );
 
