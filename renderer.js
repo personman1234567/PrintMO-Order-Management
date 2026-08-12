@@ -1158,7 +1158,9 @@ function getFirstMockupUrl(order) {
   if (manual?.url) return manual.url;
   const assets = splitOrderAssets(order);
   const entry = assets.mockups[0];
-  return entry ? getAssetUrlValue(entry) : '';
+  if (entry) return getAssetUrlValue(entry);
+  const catalogPreview = (order?.items || []).map(item => item?.catalogPreview).find(preview => preview?.url);
+  return catalogPreview?.url || '';
 }
 
 function candidateMockupManifests(order) {
@@ -1184,7 +1186,9 @@ function getFirstMockupAssetIdentity(order) {
     return manualIdentity ? `manual:${manualIdentity}` : '';
   }
   const asset = candidateMockupManifests(order)[0];
-  return String(asset?.assetId || asset?.id || '');
+  if (asset?.assetId || asset?.id) return String(asset.assetId || asset.id);
+  const catalogPreview = (order?.items || []).map(item => item?.catalogPreview).find(preview => preview?.previewId);
+  return catalogPreview?.previewId ? `catalog:${catalogPreview.previewId}` : '';
 }
 
 function trackBoardMockupImage(image) {
@@ -1202,6 +1206,10 @@ function trackBoardMockupImage(image) {
 function getProductionMockupState(order, hasMockup) {
   if (hasMockup) return 'ready';
   if (!order?._candidate) return 'unavailable';
+  const catalogPreviews = (order?.items || []).map(item => item?.catalogPreview).filter(Boolean);
+  if (catalogPreviews.length) {
+    return catalogPreviews.some(preview => preview._previewState !== 'failed') ? 'loading' : 'unavailable';
+  }
   const pendingDesignerMockup = candidateMockupManifests(order)
     .some(asset => asset._previewState !== 'failed');
   const manualHydrated = manualMockupsHydratedOrderNumbers.has(orderNumberFromOrder(order));
@@ -1445,9 +1453,19 @@ function renderOrderAssets(order) {
   Object.values(groups).forEach(g => g.classList.remove('hidden'));
 
   const assets = splitOrderAssets(order);
+  const catalogPreviews = (order?.items || [])
+    .map(item => ({ preview: item?.catalogPreview, label: item?.variantTitle || item?.properties?.Color || '' }))
+    .filter(entry => entry.preview?.previewId && entry.preview?.url)
+    .map(entry => ({
+      id: `catalog:${entry.preview.previewId}`,
+      url: entry.preview.url,
+      isCatalogPreview: true,
+      catalogLabel: entry.label,
+    }));
   const mockups = [
     ...getManualMockupsForOrder(order),
-    ...assets.mockups.map(asset => ({ ...asset, isManual: false }))
+    ...assets.mockups.map(asset => ({ ...asset, isManual: false })),
+    ...catalogPreviews,
   ];
 
   if (!mockups.length) {
@@ -1473,7 +1491,10 @@ function renderOrderAssets(order) {
       if (mockupMainContent) {
         const featuredImage = document.createElement('img');
         featuredImage.src = targetUrl;
-        featuredImage.alt = `Mockup ${index + 1} of ${mockups.length}`;
+        const entry = mockups[index];
+        featuredImage.alt = entry.isCatalogPreview
+          ? `Etsy catalog preview${entry.catalogLabel ? ` — ${entry.catalogLabel}` : ''}`
+          : `Mockup ${index + 1} of ${mockups.length}`;
         mockupMainContent.replaceChildren(featuredImage);
       }
       if (mockupMain) {
@@ -1519,11 +1540,15 @@ function renderOrderAssets(order) {
       thumb.className = `mockup-thumb${isManual ? ' manual-mockup-thumb' : ''}${idx === 0 ? ' is-selected' : ''}`;
       thumb.tabIndex = 0;
       thumb.setAttribute('role', 'button');
-      thumb.setAttribute('aria-label', `Show mockup ${idx + 1} of ${mockups.length}`);
+      thumb.setAttribute('aria-label', asset.isCatalogPreview
+        ? `Show Etsy catalog preview${asset.catalogLabel ? ` — ${asset.catalogLabel}` : ''}`
+        : `Show mockup ${idx + 1} of ${mockups.length}`);
       thumb.setAttribute('aria-pressed', idx === 0 ? 'true' : 'false');
 
       const img = document.createElement('img');
-      img.alt = `Mockup ${idx + 1}`;
+      img.alt = asset.isCatalogPreview
+        ? `Etsy catalog preview${asset.catalogLabel ? ` — ${asset.catalogLabel}` : ''}`
+        : `Mockup ${idx + 1}`;
       img.loading = 'lazy';
       thumb.appendChild(img);
       thumbElements.push(thumb);

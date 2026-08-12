@@ -101,6 +101,21 @@
     return Array.isArray(summaryItems) ? summaryItems : [];
   }
 
+  function mergeCatalogPreview(existingPreview, incomingPreview) {
+    if (!incomingPreview?.previewId) return existingPreview || null;
+    const samePreview = String(existingPreview?.previewId || '') === String(incomingPreview.previewId);
+    return {
+      ...(samePreview ? existingPreview : {}),
+      ...incomingPreview,
+      // Detail reads intentionally return only opaque preview identities. Keep
+      // the still-valid signed URL already loaded for this exact card preview
+      // until the client refreshes it, so canonical detail hydration cannot
+      // make a visible catalog thumbnail flash away.
+      url: incomingPreview.url || (samePreview ? existingPreview?.url : '') || '',
+      _previewState: incomingPreview._previewState || (samePreview ? existingPreview?._previewState : '') || undefined,
+    };
+  }
+
   function isInternalItemAttribute(attribute) {
     const key = String(attribute?.key || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
     return key === 'group_id' || key === 'batch_id' || key === 'role';
@@ -183,6 +198,7 @@
           price: Number(unitPrice) || 0,
           unitPrice: Number(unitPrice) || 0,
           customAttributes,
+          catalogPreview: mergeCatalogPreview(existing.catalogPreview, item.catalogPreview),
           assets: assetsByLine.get(item.id) || existing.assets || [],
           discountAllocations: item.discountAllocations || [],
           originalQuantity: Number(item.quantity ?? existing.originalQuantity ?? 0),

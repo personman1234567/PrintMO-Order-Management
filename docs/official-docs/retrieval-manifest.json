@@ -183,10 +183,10 @@
       "id": "etsy-integration",
       "description": "Etsy Seller App OAuth, bounded receipt proof, provider shadow, synthetic shared-board pilot, production state, webhooks, and staged rollout",
       "taskTypes": ["planning", "implementation", "diagnosis", "security"],
-      "keywords": ["etsy", "seller app", "pkce", "etsy oauth", "etsy receipt", "synthetic Etsy order", "order.paid", "second commerce source", "provider adapter"],
-      "paths": ["order-manager-proxy/worker.js", "order-manager-proxy/migrations/0004_etsy_connection_probe.sql", "order-manager-proxy/migrations/0005_provider_order_shadow.sql", "order-manager-proxy/migrations/0006_provider_pilot_idempotency.sql", "order-manager-proxy/migrations/0007_etsy_webhook_delivery.sql", "order-manager-web/web-shim.js", "renderer.js", "docs/official-docs/future-plans/etsy-order-source-integration-plan.md", "docs/official-docs/runbooks/etsy-webhook-setup-and-verification.md"],
-      "symbols": ["handleEtsyConnect", "handleEtsyOauthCallback", "handleEtsyStatus", "handleEtsyTestRead", "normalizeEtsyOrderContract", "handleEtsyShadowSync", "handleEtsyWebhook", "processEtsyWebhookDelivery", "reconcileEtsyPaidReceipts", "handleEtsyWebhookStatus", "handleEtsySyntheticOrder", "providerBoardDto", "handleProviderOrderDetailGet", "handleProviderProductionPatch", "candidateOrderToBoard", "sourceBadgeMarkup"],
-      "errors": ["ETSY_NOT_CONFIGURED", "ETSY_OAUTH_STATE_INVALID", "ETSY_NOT_CONNECTED", "ETSY_SCOPE_MISSING", "ETSY_SHADOW_TARGET_REQUIRED", "ETSY_SHADOW_TARGET_INVALID", "ETSY_WEBHOOK_NOT_CONFIGURED", "ETSY_WEBHOOK_SIGNATURE_INVALID", "ETSY_WEBHOOK_TIMESTAMP_STALE", "ETSY_WEBHOOK_SHOP_INVALID", "ETSY_WEBHOOK_RESOURCE_INVALID", "ETSY_WEBHOOK_ID_CONFLICT"],
+      "keywords": ["etsy", "seller app", "pkce", "etsy oauth", "etsy receipt", "etsy preview", "catalog preview", "preview override", "synthetic Etsy order", "order.paid", "second commerce source", "provider adapter"],
+      "paths": ["order-manager-proxy/worker.js", "order-manager-proxy/migrations/0004_etsy_connection_probe.sql", "order-manager-proxy/migrations/0005_provider_order_shadow.sql", "order-manager-proxy/migrations/0006_provider_pilot_idempotency.sql", "order-manager-proxy/migrations/0007_etsy_webhook_delivery.sql", "order-manager-proxy/migrations/0008_etsy_catalog_previews.sql", "order-manager-web/web-shim.js", "renderer.js", "docs/official-docs/future-plans/etsy-order-source-integration-plan.md", "docs/official-docs/runbooks/etsy-webhook-setup-and-verification.md"],
+      "symbols": ["handleEtsyConnect", "handleEtsyOauthCallback", "handleEtsyStatus", "handleEtsyTestRead", "handleEtsyCatalogPreviewSync", "handleEtsyCatalogPreviewReadTicket", "handleEtsyCatalogPreviewRead", "normalizeEtsyOrderContract", "handleEtsyShadowSync", "handleEtsyWebhook", "processEtsyWebhookDelivery", "reconcileEtsyPaidReceipts", "handleEtsyWebhookStatus", "handleEtsySyntheticOrder", "providerBoardDto", "handleProviderOrderDetailGet", "handleProviderProductionPatch", "candidateOrderToBoard", "sourceBadgeMarkup"],
+      "errors": ["ETSY_NOT_CONFIGURED", "ETSY_OAUTH_STATE_INVALID", "ETSY_NOT_CONNECTED", "ETSY_SCOPE_MISSING", "ETSY_PREVIEW_LISTINGS_REQUIRED", "ETSY_PREVIEW_LISTING_LIMIT", "ETSY_PREVIEW_IMAGE_DOWNLOAD_FAILED", "ETSY_SHADOW_TARGET_REQUIRED", "ETSY_SHADOW_TARGET_INVALID", "ETSY_WEBHOOK_NOT_CONFIGURED", "ETSY_WEBHOOK_SIGNATURE_INVALID", "ETSY_WEBHOOK_TIMESTAMP_STALE", "ETSY_WEBHOOK_SHOP_INVALID", "ETSY_WEBHOOK_RESOURCE_INVALID", "ETSY_WEBHOOK_ID_CONFLICT"],
       "read": [
         {
           "path": "docs/official-docs/future-plans/etsy-order-source-integration-plan.md",
@@ -203,6 +203,7 @@
         {"path": "order-manager-proxy/migrations/0005_provider_order_shadow.sql", "symbols": ["provider_order_projection", "provider_production_state", "provider_mutation_requests", "provider_production_events"]},
         {"path": "order-manager-proxy/migrations/0006_provider_pilot_idempotency.sql", "symbols": ["result_json"]},
         {"path": "order-manager-proxy/migrations/0007_etsy_webhook_delivery.sql", "symbols": ["etsy_webhook_deliveries"]},
+        {"path": "order-manager-proxy/migrations/0008_etsy_catalog_previews.sql", "symbols": ["etsy_catalog_preview_blobs", "etsy_catalog_preview_mappings"]},
         {"path": "order-manager-web/web-shim.js", "symbols": ["candidateOrderToBoard", "processBatch"]},
         {"path": "renderer.js", "symbols": ["sourceBadgeMarkup", "makeCard", "openDetail"]}
       ],

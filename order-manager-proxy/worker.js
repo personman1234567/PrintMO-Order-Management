@@ -146,6 +146,13 @@ export default {
             return handleV1AssetRead(request, env, allowOrigin || origin || "*", reqAllowHeaders);
         }
 
+        // Catalog previews use the same short-lived signed-read model as
+        // order assets, but their opaque IDs intentionally live in a separate
+        // provider/listing-scoped store instead of Shopify asset manifests.
+        if (url.pathname.startsWith("/order-manager/v1/catalog-previews/") && url.pathname.endsWith("/read") && request.method === "GET") {
+            return handleEtsyCatalogPreviewRead(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
         let identity;
         try {
             identity = await authenticateRequest(request, env);
@@ -173,6 +180,18 @@ export default {
 
         if (url.pathname === "/order-manager/v1/integrations/etsy/test-read" && request.method === "POST") {
             return handleEtsyTestRead(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
+        if (url.pathname === "/order-manager/v1/integrations/etsy/listing-image-probe" && request.method === "POST") {
+            return handleEtsyListingImageProbe(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
+        if (url.pathname === "/order-manager/v1/integrations/etsy/catalog-image-probe" && request.method === "POST") {
+            return handleEtsyCatalogImageProbe(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
+        if (url.pathname === "/order-manager/v1/integrations/etsy/catalog-preview-sync" && request.method === "POST") {
+            return handleEtsyCatalogPreviewSync(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
         }
 
         if (url.pathname === "/order-manager/v1/integrations/etsy/shadow-sync" && request.method === "POST") {
@@ -334,6 +353,10 @@ export default {
 
         if (url.pathname.startsWith("/order-manager/v1/assets/") && url.pathname.endsWith("/read-ticket") && request.method === "POST") {
             return handleV1AssetReadTicket(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
+        if (url.pathname.startsWith("/order-manager/v1/catalog-previews/") && url.pathname.endsWith("/read-ticket") && request.method === "POST") {
+            return handleEtsyCatalogPreviewReadTicket(request, env, allowOrigin || origin || "*", reqAllowHeaders);
         }
 
         if (url.pathname.startsWith("/order-manager/v1/assets/") && url.pathname.endsWith("/read") && request.method === "GET") {
@@ -2519,6 +2542,9 @@ const SAFE_JSON_FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 const ETSY_SYNTHETIC_EXTERNAL_ID = 'synthetic-pilot-1';
 const ETSY_SYNTHETIC_CONFIRM_CREATE = 'CREATE_LIVE_ETSY_TEST_ORDER';
 const ETSY_SYNTHETIC_CONFIRM_DELETE = 'DELETE_LIVE_ETSY_TEST_ORDER';
+const ETSY_SYNTHETIC_FULL_RECEIPT_EXTERNAL_ID = 'synthetic-full-receipt-1';
+const ETSY_SYNTHETIC_FULL_RECEIPT_CONFIRM_CREATE = 'CREATE_LIVE_ETSY_FULL_RECEIPT_TEST_ORDER';
+const ETSY_SYNTHETIC_FULL_RECEIPT_CONFIRM_DELETE = 'DELETE_LIVE_ETSY_FULL_RECEIPT_TEST_ORDER';
 const ETSY_WEBHOOK_PATH = '/order-manager/v1/webhooks/etsy';
 const ETSY_WEBHOOK_EVENT = 'order.paid';
 const ETSY_WEBHOOK_MAX_BODY_BYTES = 64 * 1024;
@@ -2532,6 +2558,9 @@ const ETSY_RECONCILIATION_OVERLAP_SECONDS = 15 * 60;
 const ETSY_RECONCILIATION_INITIAL_SECONDS = 24 * 60 * 60;
 const ETSY_RECONCILIATION_INTEGRITY_SECONDS = 30 * 24 * 60 * 60;
 const ETSY_WEBHOOK_ALLOWED_HOSTS = new Set(['api.etsy.com', 'openapi.etsy.com']);
+const ETSY_CATALOG_PREVIEW_MAX_LISTINGS = 25;
+const ETSY_CATALOG_PREVIEW_MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const ETSY_CATALOG_PREVIEW_CONTENT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 function etsyWebhookError(code, message, status = 400) {
     return Object.assign(new Error(message), { code, status });
@@ -2777,6 +2806,16 @@ async function etsyAuthorizedJson(env, url, code, connection = null) {
         response = await request();
     }
     return { body: await etsyJson(response, code), connection: active };
+}
+
+// Listing media is a catalog read. Keep it on the app-key path so this
+// diagnostic can prove whether the existing transactions_r connection needs
+// any extra OAuth scope before we design R2 preview persistence.
+async function etsyApiKeyJson(env, url, code) {
+    const response = await fetch(url, {
+        headers: etsyApiHeaders(etsyConfig(env))
+    });
+    return etsyJson(response, code);
 }
 
 async function requestEtsyToken(env, params) {
@@ -3318,6 +3357,575 @@ async function handleEtsyTestRead(request, env, allowOrigin, reqAllowHeaders) {
           WHERE id = ?
         `).bind(testedAt, JSON.stringify(result), testedAt, ETSY_CONNECTION_ID).run();
         return jsonResponse(result, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+function etsyListingImageProbeError(code, message, status = 400) {
+    return Object.assign(new Error(message), { code, status });
+}
+
+function etsyPurchasedImageVariationEvidence(transaction, variationImages, listingImageId) {
+    const selections = (Array.isArray(transaction?.variations) ? transaction.variations : [])
+        .filter(variation => variation?.question_id == null)
+        .map(variation => ({
+            propertyId: variation?.property_id == null ? null : String(variation.property_id),
+            valueId: variation?.value_id == null ? null : String(variation.value_id)
+        }))
+        .filter(variation => /^\d+$/.test(variation.propertyId || '') && /^\d+$/.test(variation.valueId || ''));
+    const images = Array.isArray(variationImages?.results) ? variationImages.results : [];
+    const matches = selections.map(selection => {
+        const image = images.find(candidate => String(candidate?.property_id ?? '') === selection.propertyId
+            && String(candidate?.value_id ?? '') === selection.valueId);
+        return {
+            propertyId: selection.propertyId,
+            valueId: selection.valueId,
+            imageMapped: Boolean(image?.image_id),
+            transactionImageMatches: String(image?.image_id ?? '') === listingImageId
+        };
+    });
+    const mapped = matches.filter(match => match.imageMapped);
+    const matching = mapped.filter(match => match.transactionImageMatches);
+    return {
+        purchasedOptionCount: selections.length,
+        mappedOptionCount: mapped.length,
+        transactionImageMatchCount: matching.length,
+        transactionImageMatchesPurchasedVariation: matching.length > 0,
+        verdict: matching.length > 0 ? 'MATCHED' : (mapped.length > 0 ? 'DIFFERENT_IMAGE' : 'UNMAPPED'),
+        matches
+    };
+}
+
+function etsyListingImagePreview(image, listingId, listingImageId) {
+    return {
+        listingId,
+        listingImageId,
+        isProductionArtwork: false,
+        dimensions: {
+            width: Number.isFinite(Number(image?.full_width)) ? Number(image.full_width) : null,
+            height: Number.isFinite(Number(image?.full_height)) ? Number(image.full_height) : null
+        },
+        renditionsAvailable: {
+            thumbnail: Boolean(image?.url_75x75),
+            standard: Boolean(image?.url_570xN),
+            full: Boolean(image?.url_fullxfull)
+        }
+    };
+}
+
+async function handleEtsyListingImageProbe(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const body = await request.json().catch(() => ({}));
+        const receiptId = etsyNumericIdentity(body.receiptId, 'receipt ID');
+        const transactionId = etsyNumericIdentity(body.transactionId, 'transaction ID');
+        const connection = await freshEtsyConnection(env, false);
+        const observed = await readEtsyReceiptForShadow(env, connection, { receiptId });
+        if (!observed.receipt) {
+            throw etsyListingImageProbeError('ETSY_RECEIPT_NOT_FOUND', 'Etsy did not return the requested receipt.', 404);
+        }
+        const transaction = mergeEtsyTransactions(observed.receipt, observed.transactions)
+            .find(candidate => String(candidate?.transaction_id ?? '') === transactionId);
+        if (!transaction) {
+            throw etsyListingImageProbeError('ETSY_TRANSACTION_NOT_FOUND', 'The requested transaction is not in that Etsy receipt.', 404);
+        }
+        const listingId = etsyNumericIdentity(transaction.listing_id, 'listing ID');
+        const listingImageId = etsyNumericIdentity(transaction.listing_image_id, 'listing image ID');
+        const [image, variationImages] = await Promise.all([
+            etsyApiKeyJson(
+                env,
+                `${ETSY_API_BASE_URL}/listings/${encodeURIComponent(listingId)}/images/${encodeURIComponent(listingImageId)}`,
+                'ETSY_LISTING_IMAGE_READ_FAILED'
+            ),
+            etsyApiKeyJson(
+                env,
+                `${ETSY_API_BASE_URL}/shops/${encodeURIComponent(connection.row.etsy_shop_id)}/listings/${encodeURIComponent(listingId)}/variation-images`,
+                'ETSY_LISTING_VARIATION_IMAGES_READ_FAILED'
+            )
+        ]);
+        if (String(image?.listing_id ?? '') !== listingId || String(image?.listing_image_id ?? '') !== listingImageId) {
+            throw etsyListingImageProbeError('ETSY_LISTING_IMAGE_ID_MISMATCH', 'Etsy returned an image that does not match the purchased transaction.', 502);
+        }
+        const variationEvidence = etsyPurchasedImageVariationEvidence(transaction, variationImages, listingImageId);
+        return jsonResponse({
+            ok: true,
+            source: 'etsy',
+            scope: ETSY_OAUTH_SCOPE,
+            boardChanged: false,
+            imageBytesStored: false,
+            customerDataIncluded: false,
+            imageUrlIncluded: false,
+            preview: {
+                ...etsyListingImagePreview(image, listingId, listingImageId),
+                purchasedVariationEvidence: variationEvidence
+            }
+        }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+// This is deliberately catalog-only: it confirms that a known color/property
+// maps to a listing image without inventing a receipt or changing any order,
+// projection, R2 object, or board state. The selected image is still a
+// recognition preview, never production artwork.
+async function handleEtsyCatalogImageProbe(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const body = await request.json().catch(() => ({}));
+        const listingId = etsyNumericIdentity(body.listingId, 'listing ID');
+        const hasPropertyId = body.propertyId != null && String(body.propertyId).trim() !== '';
+        const hasValueId = body.valueId != null && String(body.valueId).trim() !== '';
+        if (hasPropertyId !== hasValueId) {
+            throw etsyListingImageProbeError('ETSY_VARIATION_SELECTION_INCOMPLETE', 'Select both the Etsy variation property and value IDs, or omit both to list mapped variations.');
+        }
+        const propertyId = hasPropertyId ? etsyNumericIdentity(body.propertyId, 'variation property ID') : null;
+        const valueId = hasValueId ? etsyNumericIdentity(body.valueId, 'variation value ID') : null;
+        const connection = await loadEtsyConnection(env);
+        const listing = await etsyApiKeyJson(
+            env,
+            `${ETSY_API_BASE_URL}/listings/${encodeURIComponent(listingId)}`,
+            'ETSY_CATALOG_LISTING_READ_FAILED'
+        );
+        if (String(listing?.shop_id ?? '') !== String(connection.etsy_shop_id)) {
+            throw etsyListingImageProbeError('ETSY_LISTING_NOT_IN_CONNECTED_SHOP', 'The selected listing does not belong to the connected Etsy shop.', 403);
+        }
+        const variationImages = await etsyApiKeyJson(
+            env,
+            `${ETSY_API_BASE_URL}/shops/${encodeURIComponent(connection.etsy_shop_id)}/listings/${encodeURIComponent(listingId)}/variation-images`,
+            'ETSY_LISTING_VARIATION_IMAGES_READ_FAILED'
+        );
+        const mappedVariations = (Array.isArray(variationImages?.results) ? variationImages.results : [])
+            .map(candidate => ({
+                propertyId: candidate?.property_id == null ? null : String(candidate.property_id),
+                valueId: candidate?.value_id == null ? null : String(candidate.value_id),
+                value: typeof candidate?.value === 'string' ? candidate.value : null,
+                imageId: candidate?.image_id == null ? null : String(candidate.image_id)
+            }))
+            .filter(candidate => /^\d+$/.test(candidate.propertyId || '')
+                && /^\d+$/.test(candidate.valueId || '')
+                && /^\d+$/.test(candidate.imageId || ''));
+        const responseBase = {
+            ok: true,
+            source: 'etsy',
+            catalogReadAuthorization: 'api_key',
+            connectionScope: connection.scope,
+            boardChanged: false,
+            imageBytesStored: false,
+            customerDataIncluded: false,
+            imageUrlIncluded: false
+        };
+        if (!hasPropertyId) {
+            return jsonResponse({
+                ...responseBase,
+                probe: 'catalog-variation-options',
+                listingId,
+                variationOptions: mappedVariations.map(({ propertyId: optionPropertyId, valueId: optionValueId, value }) => ({
+                    propertyId: optionPropertyId,
+                    valueId: optionValueId,
+                    value,
+                    imageMapped: true
+                }))
+            }, allowOrigin, reqAllowHeaders);
+        }
+        const selected = mappedVariations.find(candidate => (
+            candidate.propertyId === propertyId && candidate.valueId === valueId
+        ));
+        if (!selected) {
+            throw etsyListingImageProbeError('ETSY_VARIATION_IMAGE_NOT_FOUND', 'That listing variation does not have an Etsy image mapping.', 404);
+        }
+        const listingImageId = etsyNumericIdentity(selected.imageId, 'variation image ID');
+        const image = await etsyApiKeyJson(
+            env,
+            `${ETSY_API_BASE_URL}/listings/${encodeURIComponent(listingId)}/images/${encodeURIComponent(listingImageId)}`,
+            'ETSY_LISTING_IMAGE_READ_FAILED'
+        );
+        if (String(image?.listing_id ?? '') !== listingId || String(image?.listing_image_id ?? '') !== listingImageId) {
+            throw etsyListingImageProbeError('ETSY_LISTING_IMAGE_ID_MISMATCH', 'Etsy returned an image that does not match the selected listing variation.', 502);
+        }
+        return jsonResponse({
+            ...responseBase,
+            probe: 'catalog-variation-image',
+            preview: {
+                ...etsyListingImagePreview(image, listingId, listingImageId),
+                selectedVariation: {
+                    propertyId,
+                    valueId,
+                    value: selected.value,
+                    imageMapped: true
+                }
+            }
+        }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+function etsyListingIdFromCatalogInput(value) {
+    const raw = String(value ?? '').trim();
+    if (/^\d+$/.test(raw)) return etsyNumericIdentity(raw, 'listing ID');
+    let url;
+    try { url = new URL(raw); } catch (_) {
+        throw etsyListingImageProbeError('ETSY_LISTING_INPUT_INVALID', 'Provide an Etsy listing URL or numeric listing ID.');
+    }
+    const host = url.hostname.toLowerCase();
+    if (url.protocol !== 'https:' || !(host === 'etsy.com' || host.endsWith('.etsy.com'))) {
+        throw etsyListingImageProbeError('ETSY_LISTING_INPUT_INVALID', 'Provide an Etsy listing URL from etsy.com.');
+    }
+    const match = /^\/listing\/(\d+)(?:\/|$)/.exec(url.pathname);
+    if (!match) throw etsyListingImageProbeError('ETSY_LISTING_INPUT_INVALID', 'The Etsy listing URL does not contain a listing ID.');
+    return etsyNumericIdentity(match[1], 'listing ID');
+}
+
+function etsyPreviewImageSourceUrl(image) {
+    const raw = String(image?.url_570xN || '').trim();
+    let url;
+    try { url = new URL(raw); } catch (_) {
+        throw etsyListingImageProbeError('ETSY_PREVIEW_RENDITION_UNAVAILABLE', 'Etsy did not provide a standard preview image rendition.', 502);
+    }
+    const host = url.hostname.toLowerCase();
+    if (url.protocol !== 'https:' || !(host === 'etsystatic.com' || host.endsWith('.etsystatic.com'))) {
+        throw etsyListingImageProbeError('ETSY_PREVIEW_RENDITION_INVALID', 'Etsy returned an unsupported preview image host.', 502);
+    }
+    return url.toString();
+}
+
+function etsyPreviewFilename(contentType, listingId, imageId) {
+    const extension = contentType === 'image/png' ? 'png' : (contentType === 'image/webp' ? 'webp' : 'jpg');
+    return `etsy-${listingId}-${imageId}.${extension}`;
+}
+
+async function etsyCatalogPreviewMappings(env, connection, listingId) {
+    const listing = await etsyApiKeyJson(
+        env,
+        `${ETSY_API_BASE_URL}/listings/${encodeURIComponent(listingId)}`,
+        'ETSY_CATALOG_LISTING_READ_FAILED'
+    );
+    if (String(listing?.shop_id ?? '') !== String(connection.etsy_shop_id)) {
+        throw etsyListingImageProbeError('ETSY_LISTING_NOT_IN_CONNECTED_SHOP', 'The selected listing does not belong to the connected Etsy shop.', 403);
+    }
+    const variationImages = await etsyApiKeyJson(
+        env,
+        `${ETSY_API_BASE_URL}/shops/${encodeURIComponent(connection.etsy_shop_id)}/listings/${encodeURIComponent(listingId)}/variation-images`,
+        'ETSY_LISTING_VARIATION_IMAGES_READ_FAILED'
+    );
+    return (Array.isArray(variationImages?.results) ? variationImages.results : [])
+        .map(candidate => ({
+            propertyId: candidate?.property_id == null ? null : String(candidate.property_id),
+            valueId: candidate?.value_id == null ? null : String(candidate.value_id),
+            value: typeof candidate?.value === 'string' ? candidate.value : null,
+            listingImageId: candidate?.image_id == null ? null : String(candidate.image_id)
+        }))
+        .filter(candidate => /^\d+$/.test(candidate.propertyId || '')
+            && /^\d+$/.test(candidate.valueId || '')
+            && /^\d+$/.test(candidate.listingImageId || ''));
+}
+
+async function existingEtsyCatalogPreviewMapping(db, shopId, listingId, propertyId, valueId) {
+    return db.prepare(`
+      SELECT mappings.id, mappings.listing_image_id, mappings.blob_id, blobs.state AS blob_state
+      FROM etsy_catalog_preview_mappings AS mappings
+      LEFT JOIN etsy_catalog_preview_blobs AS blobs ON blobs.id = mappings.blob_id
+      WHERE mappings.shop_id = ? AND mappings.etsy_listing_id = ?
+        AND mappings.property_id = ? AND mappings.value_id = ?
+        AND mappings.source_type = 'etsy' AND mappings.resolution_mode = 'direct'
+        AND mappings.state = 'active'
+      LIMIT 1
+    `).bind(shopId, listingId, propertyId, valueId).first();
+}
+
+// Receipt transactions are authoritative for the purchased listing image.  We
+// only expose a cached catalog preview when that image and one selected Etsy
+// variation both agree with an active direct catalog mapping.
+async function attachEtsyCatalogPreviews(env, dto) {
+    if (String(dto?.source?.provider || '').toLowerCase() !== 'etsy') return dto;
+    const lineItems = Array.isArray(dto?.commerce?.lineItems) ? dto.commerce.lineItems : [];
+    const listingIds = [...new Set(lineItems
+        .map(item => String(item?.listingId || '').trim())
+        .filter(listingId => /^\d{1,30}$/.test(listingId)))];
+    if (!listingIds.length) return dto;
+
+    const shop = await d1Shop(env);
+    const mappings = await requireOrderDb(env).prepare(`
+      SELECT id, etsy_listing_id, property_id, value_id, listing_image_id
+      FROM etsy_catalog_preview_mappings
+      WHERE shop_id = ? AND state = 'active'
+        AND source_type = 'etsy' AND resolution_mode = 'direct'
+        AND etsy_listing_id IN (${listingIds.map(() => '?').join(',')})
+    `).bind(shop.id, ...listingIds).all();
+    const bySelection = new Map((mappings.results || []).map(mapping => [
+        `${mapping.etsy_listing_id}:${mapping.property_id}:${mapping.value_id}`,
+        mapping
+    ]));
+    const enrichedLines = lineItems.map(item => {
+        const listingId = String(item?.listingId || '').trim();
+        const purchasedImageId = String(item?.listingImageId || '').trim();
+        if (!listingId || !purchasedImageId) return item;
+        const match = (Array.isArray(item.variations) ? item.variations : [])
+            .map(variation => ({
+                variation,
+                mapping: bySelection.get(`${listingId}:${String(variation?.propertyId || '')}:${String(variation?.valueId || '')}`)
+            }))
+            .find(candidate => candidate.mapping
+                && String(candidate.mapping.listing_image_id) === purchasedImageId);
+        if (!match) return item;
+        return {
+            ...item,
+            catalogPreview: {
+                previewId: match.mapping.id,
+                listingId,
+                listingImageId: purchasedImageId,
+                propertyId: String(match.variation.propertyId),
+                valueId: String(match.variation.valueId),
+                source: 'etsy'
+            }
+        };
+    });
+    return {
+        ...dto,
+        commerce: { ...dto.commerce, lineItems: enrichedLines }
+    };
+}
+
+function etsyCatalogPreviewIsCurrent(existing, listingImageId) {
+    return Boolean(existing?.id
+        && existing?.blob_id
+        && existing?.blob_state === 'active'
+        && String(existing?.listing_image_id || '') === String(listingImageId));
+}
+
+async function fetchEtsyCatalogPreviewBytes(image, listingId, listingImageId) {
+    const sourceUrl = etsyPreviewImageSourceUrl(image);
+    const response = await fetch(sourceUrl);
+    if (!response.ok) {
+        throw etsyListingImageProbeError('ETSY_PREVIEW_IMAGE_DOWNLOAD_FAILED', `Etsy preview image download failed with HTTP ${response.status}.`, 502);
+    }
+    const contentType = String(response.headers.get('Content-Type') || '').split(';', 1)[0].trim().toLowerCase();
+    if (!ETSY_CATALOG_PREVIEW_CONTENT_TYPES.has(contentType)) {
+        throw etsyListingImageProbeError('ETSY_PREVIEW_IMAGE_TYPE_INVALID', 'Etsy preview image is not a supported raster format.', 502);
+    }
+    const declaredLength = Number(response.headers.get('Content-Length'));
+    if (Number.isFinite(declaredLength) && declaredLength > ETSY_CATALOG_PREVIEW_MAX_IMAGE_BYTES) {
+        throw etsyListingImageProbeError('ETSY_PREVIEW_IMAGE_TOO_LARGE', 'Etsy preview image exceeds the private-cache size limit.', 502);
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!bytes.byteLength || bytes.byteLength > ETSY_CATALOG_PREVIEW_MAX_IMAGE_BYTES) {
+        throw etsyListingImageProbeError('ETSY_PREVIEW_IMAGE_SIZE_INVALID', 'Etsy preview image has an invalid size.', 502);
+    }
+    return { bytes, contentType, filename: etsyPreviewFilename(contentType, listingId, listingImageId) };
+}
+
+async function storeEtsyCatalogPreviewBlob(env, db, shopId, source) {
+    if (!env.R2_BUCKET) {
+        throw etsyListingImageProbeError('R2_NOT_CONFIGURED', 'Private preview storage is not configured.', 503);
+    }
+    const sha256 = bytesToHex(await crypto.subtle.digest('SHA-256', source.bytes));
+    const existing = await db.prepare(`
+      SELECT id, object_key, state
+      FROM etsy_catalog_preview_blobs
+      WHERE shop_id = ? AND sha256 = ? AND byte_size = ? AND content_type = ?
+      LIMIT 1
+    `).bind(shopId, sha256, source.bytes.byteLength, source.contentType).first();
+    const blobId = existing?.id || await stableAssetId(`etsy-catalog-preview:${shopId}:${sha256}:${source.bytes.byteLength}:${source.contentType}`);
+    const objectKey = existing?.object_key || `etsy/catalog-previews/${shopId}/blobs/${blobId}/${source.filename}`;
+    const now = isoNow();
+
+    // Writing the deterministic object key is safe and repairs a missing or
+    // stale object while preserving content-addressed deduplication.
+    await env.R2_BUCKET.put(objectKey, source.bytes, {
+        httpMetadata: { contentType: source.contentType },
+        customMetadata: { sha256, source: 'etsy-catalog-preview' }
+    });
+    const stored = await env.R2_BUCKET.get(objectKey);
+    if (!stored) throw etsyListingImageProbeError('ETSY_PREVIEW_R2_VERIFY_FAILED', 'Private preview storage could not verify the cached image.', 502);
+    const storedBytes = new Uint8Array(await stored.arrayBuffer());
+    const storedDigest = bytesToHex(await crypto.subtle.digest('SHA-256', storedBytes));
+    if (storedDigest !== sha256) throw etsyListingImageProbeError('ETSY_PREVIEW_R2_CHECKSUM_FAILED', 'Private preview storage checksum verification failed.', 502);
+
+    await db.prepare(`
+      INSERT INTO etsy_catalog_preview_blobs (
+        id, shop_id, object_key, content_type, byte_size, sha256, state, created_at, updated_at, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)
+      ON CONFLICT(id) DO UPDATE SET
+        object_key = excluded.object_key,
+        content_type = excluded.content_type,
+        byte_size = excluded.byte_size,
+        sha256 = excluded.sha256,
+        state = 'active',
+        deleted_at = NULL,
+        updated_at = excluded.updated_at
+    `).bind(blobId, shopId, objectKey, source.contentType, source.bytes.byteLength, sha256, now, now).run();
+    return { blobId, sha256 };
+}
+
+async function upsertEtsyCatalogPreviewMapping(db, { shopId, etsyShopId, listingId, mapping, blobId, actor }) {
+    const previewId = await stableAssetId(`etsy-catalog-preview-mapping:${shopId}:${listingId}:${mapping.propertyId}:${mapping.valueId}:etsy:direct`);
+    const now = isoNow();
+    await db.prepare(`
+      INSERT INTO etsy_catalog_preview_mappings (
+        id, shop_id, etsy_shop_id, etsy_listing_id, property_id, value_id,
+        listing_image_id, source_type, resolution_mode, blob_id, state,
+        created_by, created_at, updated_at, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'etsy', 'direct', ?, 'active', ?, ?, ?, NULL)
+      ON CONFLICT(shop_id, etsy_listing_id, property_id, value_id, source_type, resolution_mode) DO UPDATE SET
+        etsy_shop_id = excluded.etsy_shop_id,
+        listing_image_id = excluded.listing_image_id,
+        blob_id = excluded.blob_id,
+        state = 'active',
+        created_by = excluded.created_by,
+        updated_at = excluded.updated_at,
+        deleted_at = NULL
+    `).bind(
+        previewId, shopId, etsyShopId, listingId, mapping.propertyId, mapping.valueId,
+        mapping.listingImageId, blobId, actor, now, now
+    ).run();
+    return previewId;
+}
+
+async function importEtsyCatalogPreviewMapping(env, db, shop, connection, listingId, mapping, actor, sourceCache) {
+    const imageKey = `${listingId}:${mapping.listingImageId}`;
+    let sourcePromise = sourceCache.get(imageKey);
+    if (!sourcePromise) {
+        sourcePromise = (async () => {
+            const image = await etsyApiKeyJson(
+                env,
+                `${ETSY_API_BASE_URL}/listings/${encodeURIComponent(listingId)}/images/${encodeURIComponent(mapping.listingImageId)}`,
+                'ETSY_LISTING_IMAGE_READ_FAILED'
+            );
+            if (String(image?.listing_id ?? '') !== listingId || String(image?.listing_image_id ?? '') !== mapping.listingImageId) {
+                throw etsyListingImageProbeError('ETSY_LISTING_IMAGE_ID_MISMATCH', 'Etsy returned an image that does not match the selected listing variation.', 502);
+            }
+            return fetchEtsyCatalogPreviewBytes(image, listingId, mapping.listingImageId);
+        })();
+        sourceCache.set(imageKey, sourcePromise);
+    }
+    const source = await sourcePromise;
+    const blob = await storeEtsyCatalogPreviewBlob(env, db, shop.id, source);
+    const previewId = await upsertEtsyCatalogPreviewMapping(db, {
+        shopId: shop.id,
+        etsyShopId: String(connection.etsy_shop_id),
+        listingId,
+        mapping,
+        blobId: blob.blobId,
+        actor
+    });
+    return { previewId, sha256: blob.sha256 };
+}
+
+async function activeEtsyListingIds(env, connection, offset) {
+    const response = await etsyApiKeyJson(
+        env,
+        `${ETSY_API_BASE_URL}/shops/${encodeURIComponent(connection.etsy_shop_id)}/listings/active?limit=${ETSY_CATALOG_PREVIEW_MAX_LISTINGS}&offset=${offset}`,
+        'ETSY_ACTIVE_LISTINGS_READ_FAILED'
+    );
+    const results = Array.isArray(response?.results) ? response.results : [];
+    const listingIds = results.map(listing => etsyNumericIdentity(listing?.listing_id, 'listing ID'));
+    const count = Number(response?.count);
+    return {
+        listingIds,
+        nextOffset: Number.isFinite(count) && offset + listingIds.length < count ? offset + listingIds.length : null,
+        totalActiveListings: Number.isFinite(count) ? count : null
+    };
+}
+
+async function handleEtsyCatalogPreviewSync(request, env, allowOrigin, reqAllowHeaders, identity) {
+    try {
+        const body = await request.json().catch(() => ({}));
+        const execute = body.execute === true;
+        const activeBackfill = body.activeBackfill === true;
+        const rawListings = Array.isArray(body.listings)
+            ? body.listings
+            : (Array.isArray(body.listingUrls) ? body.listingUrls : (body.listing != null ? [body.listing] : []));
+        if (activeBackfill && rawListings.length) {
+            throw etsyListingImageProbeError('ETSY_PREVIEW_SCOPE_AMBIGUOUS', 'Choose supplied listings or one active-listings page, not both.');
+        }
+        const connection = await loadEtsyConnection(env);
+        let activePage = null;
+        if (!activeBackfill && rawListings.length > ETSY_CATALOG_PREVIEW_MAX_LISTINGS) {
+            throw etsyListingImageProbeError('ETSY_PREVIEW_LISTING_LIMIT', 'Sync at most 25 listings per request.');
+        }
+        const activeOffset = Math.max(0, Math.floor(Number(body.offset) || 0));
+        const listingIds = activeBackfill
+            ? (activePage = await activeEtsyListingIds(env, connection, activeOffset)).listingIds
+            : [...new Set(rawListings.map(etsyListingIdFromCatalogInput))];
+        if (!listingIds.length) {
+            throw etsyListingImageProbeError('ETSY_PREVIEW_LISTINGS_REQUIRED', 'Provide up to 25 Etsy listing URLs or IDs, or request an active-listings page.');
+        }
+        const db = requireOrderDb(env);
+        const shop = await d1Shop(env);
+        const actor = `${identity.kind}:${identity.subject}`;
+        const report = { wouldImport: 0, imported: 0, unchanged: 0, skipped: 0, failed: 0, listings: [] };
+        const sourceCache = new Map();
+
+        for (const listingId of listingIds) {
+            try {
+                const mappings = await etsyCatalogPreviewMappings(env, connection, listingId);
+                const result = { listingId, wouldImport: 0, imported: 0, unchanged: 0, skipped: 0, failed: 0, variations: [] };
+                if (!mappings.length) {
+                    result.skipped = 1;
+                    result.variations.push({ outcome: 'skipped', reason: 'NO_DIRECT_ETSY_VARIATION_IMAGE' });
+                }
+                for (const mapping of mappings) {
+                    const existing = await existingEtsyCatalogPreviewMapping(db, shop.id, listingId, mapping.propertyId, mapping.valueId);
+                    if (etsyCatalogPreviewIsCurrent(existing, mapping.listingImageId)) {
+                        result.unchanged += 1;
+                        result.variations.push({
+                            propertyId: mapping.propertyId, valueId: mapping.valueId, value: mapping.value,
+                            listingImageId: mapping.listingImageId, previewId: existing.id, source: 'etsy', outcome: 'unchanged'
+                        });
+                        continue;
+                    }
+                    if (!execute) {
+                        result.wouldImport += 1;
+                        result.variations.push({
+                            propertyId: mapping.propertyId, valueId: mapping.valueId, value: mapping.value,
+                            listingImageId: mapping.listingImageId, source: 'etsy', outcome: 'would_import'
+                        });
+                        continue;
+                    }
+                    try {
+                        const stored = await importEtsyCatalogPreviewMapping(env, db, shop, connection, listingId, mapping, actor, sourceCache);
+                        result.imported += 1;
+                        result.variations.push({
+                            propertyId: mapping.propertyId, valueId: mapping.valueId, value: mapping.value,
+                            listingImageId: mapping.listingImageId, previewId: stored.previewId, source: 'etsy', outcome: 'imported'
+                        });
+                    } catch (error) {
+                        result.failed += 1;
+                        result.variations.push({
+                            propertyId: mapping.propertyId, valueId: mapping.valueId, value: mapping.value,
+                            source: 'etsy', outcome: 'failed', errorCode: error.code || 'ETSY_PREVIEW_IMPORT_FAILED'
+                        });
+                    }
+                }
+                report.wouldImport += result.wouldImport;
+                report.imported += result.imported;
+                report.unchanged += result.unchanged;
+                report.skipped += result.skipped;
+                report.failed += result.failed;
+                report.listings.push(result);
+            } catch (error) {
+                report.failed += 1;
+                report.listings.push({ listingId, wouldImport: 0, imported: 0, unchanged: 0, skipped: 0, failed: 1, variations: [{ outcome: 'failed', errorCode: error.code || 'ETSY_PREVIEW_LISTING_FAILED' }] });
+            }
+        }
+
+        return jsonResponse({
+            ok: true,
+            source: 'etsy',
+            mode: execute ? 'execute' : 'dry_run',
+            catalogReadAuthorization: 'api_key',
+            connectionScope: connection.scope,
+            boardChanged: false,
+            orderDataChanged: false,
+            productionArtworkChanged: false,
+            imageUrlIncluded: false,
+            customerDataIncluded: false,
+            activeBackfill: activeBackfill ? {
+                totalActiveListings: activePage.totalActiveListings,
+                nextOffset: activePage.nextOffset
+            } : null,
+            report
+        }, allowOrigin, reqAllowHeaders);
     } catch (error) {
         return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
     }
@@ -3867,8 +4475,8 @@ async function handleEtsyWebhookStatus(request, env, allowOrigin, reqAllowHeader
     }
 }
 
-function etsySyntheticOrderKey(providerAccountId) {
-    return `etsy-synthetic:${etsyNumericIdentity(providerAccountId, 'shop ID')}:${ETSY_SYNTHETIC_EXTERNAL_ID}`;
+function etsySyntheticOrderKey(providerAccountId, externalId = ETSY_SYNTHETIC_EXTERNAL_ID) {
+    return `etsy-synthetic:${etsyNumericIdentity(providerAccountId, 'shop ID')}:${externalId}`;
 }
 
 function syntheticEtsyOrderContract(providerAccountId, fetchedAt = isoNow()) {
@@ -3899,49 +4507,44 @@ function syntheticEtsyOrderContract(providerAccountId, fetchedAt = isoNow()) {
             financialStatus: 'paid',
             fulfillmentStatus: 'unshipped',
             currencyCode: 'USD',
-            subtotal: 53.75,
-            discount: 4.25,
-            total: 58.13,
+            subtotal: 37,
+            discount: 0,
+            total: 40.05,
             lineItems: [
                 {
                     id: `${orderKey}:line-1`,
                     externalLineId: 'synthetic-line-1',
-                    listingId: null,
-                    title: 'Comfort Colors 1717 T-Shirt',
+                    listingId: '4452232638',
+                    title: 'Etsy catalog preview test — Black',
                     sku: '1717-BLACK-L',
-                    quantity: 2,
-                    currentQuantity: 2,
+                    quantity: 1,
+                    currentQuantity: 1,
                     unitPrice: 18.5,
                     currencyCode: 'USD',
                     variations: [
-                        { propertyId: '100', valueId: '200', questionId: null, name: 'Color', value: 'Black' },
-                        { propertyId: '101', valueId: '201', questionId: null, name: 'Size', value: 'Large' }
+                        { propertyId: '200', valueId: '49928889190', questionId: null, name: 'Color', value: 'Black' }
                     ],
                     personalization: [],
                     expectedShipAt: null,
-                    listingImageId: null,
+                    listingImageId: '7722005927',
                     listingImageIsProductionArtwork: false
                 },
                 {
                     id: `${orderKey}:line-2`,
                     externalLineId: 'synthetic-line-2',
-                    listingId: null,
-                    title: 'Gildan 18500 Hoodie',
-                    sku: '18500-SAND-M',
+                    listingId: '4452232638',
+                    title: 'Etsy catalog preview test — Green',
+                    sku: '1717-GREEN-L',
                     quantity: 1,
                     currentQuantity: 1,
-                    unitPrice: 21,
+                    unitPrice: 18.5,
                     currencyCode: 'USD',
                     variations: [
-                        { propertyId: '100', valueId: '202', questionId: null, name: 'Color', value: 'Sand' },
-                        { propertyId: '101', valueId: '203', questionId: null, name: 'Size', value: 'Medium' },
-                        { propertyId: '102', valueId: null, questionId: 'fixture-question-1', name: 'Personalization', value: 'PRINTMO TEST' }
+                        { propertyId: '200', valueId: '49974750678', questionId: null, name: 'Color', value: 'Green' }
                     ],
-                    personalization: [
-                        { propertyId: '102', valueId: null, questionId: 'fixture-question-1', name: 'Personalization', value: 'PRINTMO TEST' }
-                    ],
+                    personalization: [],
                     expectedShipAt: null,
-                    listingImageId: null,
+                    listingImageId: '7722005929',
                     listingImageIsProductionArtwork: false
                 }
             ],
@@ -3975,16 +4578,180 @@ function syntheticEtsyOrderContract(providerAccountId, fetchedAt = isoNow()) {
     };
 }
 
+function legacySyntheticEtsyFullReceiptContract(providerAccountId, fetchedAt = isoNow()) {
+    const accountId = etsyNumericIdentity(providerAccountId, 'shop ID');
+    const orderKey = etsySyntheticOrderKey(accountId, ETSY_SYNTHETIC_FULL_RECEIPT_EXTERNAL_ID);
+    const line = ({ id, color, colorValueId, size, sizeValueId, imageId, quantity, sku, unitPrice }) => ({
+        id: `${orderKey}:${id}`,
+        externalLineId: id,
+        listingId: '4452232638',
+        title: `Synthetic Etsy receipt — ${color} / ${size}`,
+        sku,
+        quantity,
+        currentQuantity: quantity,
+        unitPrice,
+        currencyCode: 'USD',
+        variations: [
+            { propertyId: '200', valueId: colorValueId, questionId: null, name: 'Color', value: color },
+            { propertyId: '201', valueId: sizeValueId, questionId: null, name: 'Size', value: size }
+        ],
+        personalization: [],
+        expectedShipAt: '2026-08-15T00:00:00.000Z',
+        listingImageId: imageId,
+        listingImageIsProductionArtwork: false
+    });
+    const lineItems = [
+        line({ id: 'synthetic-receipt-line-1', color: 'Black', colorValueId: '49928889190', size: 'Large', sizeValueId: 'fixture-size-l', imageId: '7722005927', quantity: 2, sku: '1717-BLACK-L', unitPrice: 18.5 }),
+        line({ id: 'synthetic-receipt-line-2', color: 'White', colorValueId: '49974750696', size: 'Medium', sizeValueId: 'fixture-size-m', imageId: '7722005937', quantity: 1, sku: '1717-WHITE-M', unitPrice: 18.5 }),
+        line({ id: 'synthetic-receipt-line-3', color: 'Red', colorValueId: '52041479599', size: 'Extra Large', sizeValueId: 'fixture-size-xl', imageId: '7722005931', quantity: 1, sku: '1717-RED-XL', unitPrice: 18.5 }),
+        line({ id: 'synthetic-receipt-line-4', color: 'Green', colorValueId: '49974750678', size: 'Small', sizeValueId: 'fixture-size-s', imageId: '7722005929', quantity: 3, sku: '1717-GREEN-S', unitPrice: 18.5 })
+    ];
+    lineItems[2].variations.push({ propertyId: '202', valueId: null, questionId: 'synthetic-custom-text', name: 'Personalization', value: 'NO REAL CUSTOMER DATA' });
+    lineItems[2].personalization = [lineItems[2].variations[2]];
+    return {
+        id: orderKey,
+        orderKey,
+        displayName: '#ETSY-TEST-RECEIPT-002',
+        createdAt: fetchedAt,
+        sourceUpdatedAt: fetchedAt,
+        source: {
+            provider: 'etsy', label: 'Etsy', providerAccountId: accountId,
+            externalOrderId: ETSY_SYNTHETIC_FULL_RECEIPT_EXTERNAL_ID,
+            displayNumber: 'ETSY-TEST-RECEIPT-002', adminUrl: null, synthetic: true
+        },
+        customer: { displayName: 'Avery Example (synthetic)' },
+        commerce: {
+            paid: true, canceled: false, shipped: false, delivered: false, synthetic: true,
+            financialStatus: 'paid', fulfillmentStatus: 'unshipped', currencyCode: 'USD',
+            subtotal: 148, discount: 14.8, total: 153.02, lineItems,
+            hasBuyerMessage: true, isGift: true, hasGiftMessage: true, refundCount: 0, shipmentCount: 0
+        },
+        // Fixed `.invalid` contact data and a synthetic address exist only to
+        // exercise the complete detail UI. They never come from Etsy or a buyer.
+        syntheticDetail: {
+            orderNote: 'Synthetic receipt only — verify color/size, pricing, personalization, delivery, and detail rendering.',
+            customer: { email: 'avery.example@printmo-test.invalid', phone: '+1 555-010-2002', locale: 'en-US' },
+            delivery: {
+                shippingAddress: { name: 'Avery Example (synthetic)', address1: '2002 Test Receipt Lane', address2: 'Unit 4', city: 'Exampleton', province: 'Test State', zip: '00002', country: 'United States', countryCode: 'US' },
+                billingAddress: { name: 'Avery Example (synthetic)', address1: '2002 Test Receipt Lane', address2: null, city: 'Exampleton', province: 'Test State', zip: '00002', country: 'United States', countryCode: 'US' },
+                shippingLines: [{ id: 'synthetic-shipping-standard', title: 'Standard synthetic shipping', code: 'SYNTHETIC_STANDARD', source: 'synthetic', deliveryCategory: 'shipping', custom: false, originalPrice: { amount: 7.95, currencyCode: 'USD' }, currentPrice: { amount: 7.95, currencyCode: 'USD' } }],
+                fulfillmentOrders: [],
+                fulfillments: []
+            },
+            discounts: [{ id: 'synthetic-discount-1', title: 'SYNTHETIC15', code: 'SYNTHETIC15', amount: { amount: 14.8, currencyCode: 'USD' } }],
+            timeline: [
+                { id: `${orderKey}:created`, type: 'SYNTHETIC_RECEIPT', createdAt: fetchedAt, action: 'receipt.created', message: 'Synthetic Etsy receipt created for end-to-end UI testing', author: 'PrintMO test fixture' },
+                { id: `${orderKey}:paid`, type: 'SYNTHETIC_RECEIPT', createdAt: fetchedAt, action: 'receipt.paid', message: 'Synthetic payment captured', author: 'PrintMO test fixture' }
+            ]
+        },
+        productionRef: { authority: 'printmo-d1', provider: 'etsy', orderKey, revision: 0 },
+        capabilities: { commerceWrite: false, fulfillmentWrite: false, productionWrite: true, supplierBatch: false, artworkUpload: false },
+        sync: { fetchedAt, freshUntil: null, stale: false, partial: false, synthetic: true, errors: [] }
+    };
+}
+
+function syntheticEtsyFullReceiptContract(providerAccountId, fetchedAt = isoNow()) {
+    const accountId = etsyNumericIdentity(providerAccountId, 'shop ID');
+    const orderKey = etsySyntheticOrderKey(accountId, ETSY_SYNTHETIC_FULL_RECEIPT_EXTERNAL_ID);
+    const timestamp = Math.floor(new Date(fetchedAt).getTime() / 1000);
+    // Webhook/reconciliation processing fetches this Etsy-shaped receipt and
+    // transaction data before calling normalizeEtsyOrderContract. The fixture
+    // deliberately uses that same normalizer rather than Shopify-shaped data.
+    const money = amount => ({ amount, divisor: 100, currency_code: 'USD' });
+    const transaction = ({ transactionId, color, colorValueId, size, sizeValueId, imageId, quantity, sku, personalization = null }) => ({
+        transaction_id: transactionId,
+        listing_id: 4452232638,
+        title: `Synthetic Etsy receipt: ${color} / ${size}`,
+        sku,
+        quantity,
+        price: money(1850),
+        expected_ship_date: timestamp + (3 * 24 * 60 * 60),
+        listing_image_id: imageId,
+        variations: [
+            { property_id: 200, value_id: colorValueId, question_id: null, formatted_name: 'Color', formatted_value: color },
+            { property_id: 201, value_id: sizeValueId, question_id: null, formatted_name: 'Size', formatted_value: size },
+            ...(personalization ? [{ property_id: 202, value_id: null, question_id: 9000001, formatted_name: 'Personalization', formatted_value: personalization }] : [])
+        ]
+    });
+    const receipt = {
+        receipt_id: 9999999002,
+        create_timestamp: timestamp,
+        update_timestamp: timestamp,
+        status: 'paid', is_paid: true, is_canceled: false, is_shipped: false,
+        grandtotal: money(12450), subtotal: money(12950), discount_amt: money(1295),
+        name: 'Avery Example (synthetic)', message_from_buyer: 'Synthetic buyer message - no real customer data.',
+        is_gift: true, gift_message: 'Synthetic gift message - no real customer data.', refunds: [], shipments: []
+    };
+    const transactions = [
+        transaction({ transactionId: 9999999101, color: 'Black', colorValueId: 49928889190, size: 'Large', sizeValueId: 90000011, imageId: 7722005927, quantity: 2, sku: '1717-BLACK-L' }),
+        transaction({ transactionId: 9999999102, color: 'White', colorValueId: 49974750696, size: 'Medium', sizeValueId: 90000012, imageId: 7722005937, quantity: 1, sku: '1717-WHITE-M' }),
+        transaction({ transactionId: 9999999103, color: 'Red', colorValueId: 52041479599, size: 'Extra Large', sizeValueId: 90000013, imageId: 7722005931, quantity: 1, sku: '1717-RED-XL', personalization: 'NO REAL CUSTOMER DATA' }),
+        transaction({ transactionId: 9999999104, color: 'Green', colorValueId: 49974750678, size: 'Small', sizeValueId: 90000014, imageId: 7722005929, quantity: 3, sku: '1717-GREEN-S' })
+    ];
+    const normalized = normalizeEtsyOrderContract({ providerAccountId: accountId, receipt, transactions, fetchedAt });
+    return {
+        ...normalized,
+        id: orderKey,
+        orderKey,
+        displayName: '#ETSY-TEST-RECEIPT-002',
+        source: {
+            ...normalized.source,
+            externalOrderId: ETSY_SYNTHETIC_FULL_RECEIPT_EXTERNAL_ID,
+            displayNumber: 'ETSY-TEST-RECEIPT-002',
+            synthetic: true
+        },
+        commerce: { ...normalized.commerce, synthetic: true },
+        // Fixed `.invalid` contact data and a synthetic address exist only to
+        // exercise detail fields that are not yet authorized from live Etsy.
+        syntheticDetail: {
+            orderNote: 'Synthetic receipt only - verify color/size, pricing, personalization, delivery, and detail rendering.',
+            customer: { email: 'avery.example@printmo-test.invalid', phone: '+1 555-010-2002', locale: 'en-US' },
+            delivery: {
+                shippingAddress: { name: 'Avery Example (synthetic)', address1: '2002 Test Receipt Lane', address2: 'Unit 4', city: 'Exampleton', province: 'Test State', zip: '00002', country: 'United States', countryCode: 'US' },
+                billingAddress: { name: 'Avery Example (synthetic)', address1: '2002 Test Receipt Lane', address2: null, city: 'Exampleton', province: 'Test State', zip: '00002', country: 'United States', countryCode: 'US' },
+                shippingLines: [{ id: 'synthetic-shipping-standard', title: 'Standard synthetic shipping', code: 'SYNTHETIC_STANDARD', source: 'synthetic', deliveryCategory: 'shipping', custom: false, originalPrice: { amount: 7.95, currencyCode: 'USD' }, currentPrice: { amount: 7.95, currencyCode: 'USD' } }],
+                fulfillmentOrders: [], fulfillments: []
+            },
+            discounts: [{ id: 'synthetic-discount-1', title: 'SYNTHETIC10', code: 'SYNTHETIC10', amount: { amount: 12.95, currencyCode: 'USD' } }],
+            timeline: [
+                { id: `${orderKey}:created`, type: 'SYNTHETIC_RECEIPT', createdAt: fetchedAt, action: 'receipt.created', message: 'Synthetic Etsy receipt created for end-to-end UI testing', author: 'PrintMO test fixture' },
+                { id: `${orderKey}:paid`, type: 'SYNTHETIC_RECEIPT', createdAt: fetchedAt, action: 'receipt.paid', message: 'Synthetic payment captured', author: 'PrintMO test fixture' }
+            ]
+        },
+        productionRef: { authority: 'printmo-d1', provider: 'etsy', orderKey, revision: 0 },
+        capabilities: { commerceWrite: false, fulfillmentWrite: false, productionWrite: true, supplierBatch: false, artworkUpload: false },
+        sync: { fetchedAt, freshUntil: null, stale: false, partial: false, synthetic: true, errors: [] }
+    };
+}
+
+function syntheticEtsyScenario(body = {}) {
+    const scenario = String(body?.scenario || 'catalog_preview').trim();
+    if (scenario === 'catalog_preview') return {
+        scenario,
+        contract: syntheticEtsyOrderContract,
+        createConfirmation: ETSY_SYNTHETIC_CONFIRM_CREATE,
+        deleteConfirmation: ETSY_SYNTHETIC_CONFIRM_DELETE
+    };
+    if (scenario === 'full_receipt') return {
+        scenario,
+        contract: syntheticEtsyFullReceiptContract,
+        createConfirmation: ETSY_SYNTHETIC_FULL_RECEIPT_CONFIRM_CREATE,
+        deleteConfirmation: ETSY_SYNTHETIC_FULL_RECEIPT_CONFIRM_DELETE
+    };
+    throw Object.assign(new Error('Synthetic Etsy scenario is invalid.'), { code: 'ETSY_SYNTHETIC_SCENARIO_INVALID', status: 400 });
+}
+
 async function handleEtsySyntheticOrder(request, env, allowOrigin, reqAllowHeaders, identity) {
     try {
         const body = await request.json().catch(() => ({}));
         const connection = await loadEtsyConnection(env);
-        const contract = syntheticEtsyOrderContract(connection.etsy_shop_id);
+        const scenario = syntheticEtsyScenario(body);
+        const contract = scenario.contract(connection.etsy_shop_id);
         const orderKey = contract.orderKey;
         const db = requireOrderDb(env);
         const shop = await d1Shop(env);
         if (request.method === 'DELETE') {
-            if (body.confirm !== ETSY_SYNTHETIC_CONFIRM_DELETE) {
+            if (body.confirm !== scenario.deleteConfirmation) {
                 throw Object.assign(new Error('Deleting the live Etsy test order requires the exact confirmation phrase.'), {
                     code: 'ETSY_SYNTHETIC_CONFIRMATION_REQUIRED',
                     status: 400
@@ -4002,7 +4769,7 @@ async function handleEtsySyntheticOrder(request, env, allowOrigin, reqAllowHeade
                 removed: Boolean(removed.meta?.changes)
             }, allowOrigin, reqAllowHeaders);
         }
-        if (body.confirm !== ETSY_SYNTHETIC_CONFIRM_CREATE) {
+        if (body.confirm !== scenario.createConfirmation) {
             throw Object.assign(new Error('Creating the live Etsy test order requires the exact confirmation phrase.'), {
                 code: 'ETSY_SYNTHETIC_CONFIRMATION_REQUIRED',
                 status: 400
@@ -4056,11 +4823,12 @@ async function handleEtsySyntheticOrder(request, env, allowOrigin, reqAllowHeade
             ok: true,
             source: 'etsy',
             synthetic: true,
+            scenario: scenario.scenario,
             created: !existing,
             orderKey,
             displayName: contract.displayName,
             boardEnrolled: true,
-            cleanupConfirmation: ETSY_SYNTHETIC_CONFIRM_DELETE
+            cleanupConfirmation: scenario.deleteConfirmation
         }, allowOrigin, reqAllowHeaders, existing ? 200 : 201);
     } catch (error) {
         return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
@@ -5531,8 +6299,8 @@ async function handleShopifyPreviewOrderDetailGet(request, env, allowOrigin, req
     }
 }
 
-function boardDto(record) {
-    if (record?.kind === 'provider') return providerBoardDto(record);
+async function boardDto(env, record) {
+    if (record?.kind === 'provider') return providerBoardDto(env, record);
     const production = record.production || { stage: 'received', version: 0, assets: [] };
     const summary = record.summary;
     if (!summary) {
@@ -5577,7 +6345,7 @@ function providerGarmentCount(contract) {
     return garmentCountFromLineItems(contract?.commerce?.lineItems || []);
 }
 
-function providerBoardDto(record) {
+async function providerBoardDto(env, record) {
     const contract = record.contract || {};
     const production = productionForClient(
         record.orderKey,
@@ -5597,7 +6365,7 @@ function providerBoardDto(record) {
     };
     const errors = [...(Array.isArray(contract?.sync?.errors) ? contract.sync.errors : [])];
     if (record.lastError) errors.push({ code: 'PROVIDER_PROJECTION_ERROR', message: record.lastError });
-    return {
+    const dto = {
         ...contract,
         id: record.orderKey,
         orderKey: record.orderKey,
@@ -5621,6 +6389,7 @@ function providerBoardDto(record) {
             errors
         }
     };
+    return attachEtsyCatalogPreviews(env, dto);
 }
 
 async function loadDataPage(env, stage, limit, offset) {
@@ -5762,7 +6531,7 @@ async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders, ctx
             }));
         }
         const nextCursor = page.nextOffset === null ? null : await encodeSignedCursor({ v: 1, filter, offset: page.nextOffset }, env);
-        return jsonResponse({ data: (page.records || []).map(boardDto), pageInfo: { nextCursor, total: page.total } }, allowOrigin, reqAllowHeaders);
+        return jsonResponse({ data: await Promise.all((page.records || []).map(record => boardDto(env, record))), pageInfo: { nextCursor, total: page.total } }, allowOrigin, reqAllowHeaders);
     } catch (error) {
         return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
     }
@@ -5867,10 +6636,26 @@ async function providerProductionEvents(env, shopId, orderKey) {
 
 async function handleProviderOrderDetailGet(env, orderKey, allowOrigin, reqAllowHeaders) {
     const { shop, record } = await readProviderOrder(env, orderKey);
-    const dto = providerBoardDto(record);
+    const dto = await providerBoardDto(env, record);
     const lineItems = providerDetailLineItems(dto);
     const productionEvents = await providerProductionEvents(env, shop.id, orderKey);
     const synthetic = Boolean(dto.source?.synthetic);
+    const syntheticDetail = synthetic && dto.syntheticDetail && typeof dto.syntheticDetail === 'object'
+        ? dto.syntheticDetail
+        : null;
+    const detailCustomer = {
+        displayName: dto.customer?.displayName || null,
+        email: syntheticDetail?.customer?.email || null,
+        phone: syntheticDetail?.customer?.phone || null,
+        ...(syntheticDetail?.customer?.locale ? { locale: syntheticDetail.customer.locale } : {})
+    };
+    const detailDelivery = syntheticDetail?.delivery || {
+        shippingAddress: null,
+        billingAddress: null,
+        shippingLines: [],
+        fulfillmentOrders: [],
+        fulfillments: []
+    };
     return jsonResponse({
         ...dto,
         productionEvents,
@@ -5880,22 +6665,16 @@ async function handleProviderOrderDetailGet(env, orderKey, allowOrigin, reqAllow
             fetchedAt: dto.sync?.fetchedAt || isoNow(),
             partial: Boolean(dto.sync?.partial),
             errors: dto.sync?.errors || [],
-            orderNote: null,
-            customer: { displayName: dto.customer?.displayName || null, email: null, phone: null },
+            orderNote: syntheticDetail?.orderNote || null,
+            customer: detailCustomer,
             lineItems,
             data: {
                 source: dto.source,
-                customer: { displayName: dto.customer?.displayName || null, email: null, phone: null },
+                customer: detailCustomer,
                 commerce: { ...dto.commerce, lineItems },
-                delivery: {
-                    shippingAddress: null,
-                    billingAddress: null,
-                    shippingLines: [],
-                    fulfillmentOrders: [],
-                    fulfillments: []
-                },
-                discounts: [],
-                timeline: [{
+                delivery: detailDelivery,
+                discounts: syntheticDetail?.discounts || [],
+                timeline: syntheticDetail?.timeline || [{
                     id: `${orderKey}:enrolled`,
                     type: synthetic ? 'SYNTHETIC_PILOT' : 'ETSY_RECEIPT',
                     createdAt: dto.createdAt,
@@ -5910,7 +6689,7 @@ async function handleProviderOrderDetailGet(env, orderKey, allowOrigin, reqAllow
 
 async function handleProviderProductionGet(env, orderKey, allowOrigin, reqAllowHeaders) {
     const { record } = await readProviderOrder(env, orderKey);
-    const dto = providerBoardDto(record);
+    const dto = await providerBoardDto(env, record);
     return jsonResponse({
         orderKey,
         canonicalSource: 'printmo-d1-provider-production',
@@ -6620,6 +7399,10 @@ function assetIdFromPath(pathname) {
     return decodeURIComponent(pathname.replace(/^\/order-manager\/v1\/assets\//, '').replace(/\/(read-ticket|read)$/, ''));
 }
 
+function catalogPreviewIdFromPath(pathname) {
+    return decodeURIComponent(pathname.replace(/^\/order-manager\/v1\/catalog-previews\//, '').replace(/\/(read-ticket|read)$/, ''));
+}
+
 async function signAssetTicket(payload, env) {
     const encoded = base64UrlEncode(JSON.stringify(payload));
     return `${encoded}.${await hmacBase64Url(encoded, env.SHOPIFY_API_SECRET)}`;
@@ -6673,6 +7456,61 @@ async function handleV1AssetRead(request, env, allowOrigin, reqAllowHeaders) {
         // The short-lived signed URL remains the authorization boundary. Let a
         // browser reuse bytes while that ticket is valid so a board repaint
         // does not re-download the same private mockup.
+        headers.set('Cache-Control', 'private, max-age=55');
+        for (const [key, value] of Object.entries(corsHeaders(allowOrigin, reqAllowHeaders))) headers.set(key, value);
+        return new Response(object.body, { headers });
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+async function findEtsyCatalogPreviewForRead(env, previewId) {
+    const shop = await d1Shop(env);
+    return requireOrderDb(env).prepare(`
+      SELECT mappings.id, blobs.object_key
+      FROM etsy_catalog_preview_mappings AS mappings
+      JOIN etsy_catalog_preview_blobs AS blobs ON blobs.id = mappings.blob_id
+      WHERE mappings.id = ? AND mappings.shop_id = ? AND mappings.state = 'active'
+        AND blobs.state = 'active'
+      LIMIT 1
+    `).bind(previewId, shop.id).first();
+}
+
+async function handleEtsyCatalogPreviewReadTicket(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const previewId = catalogPreviewIdFromPath(new URL(request.url).pathname);
+        const preview = await findEtsyCatalogPreviewForRead(env, previewId);
+        if (!preview) {
+            return v1Error({ code: 'CATALOG_PREVIEW_NOT_FOUND', message: 'Catalog preview was not found.' }, allowOrigin, reqAllowHeaders, 404);
+        }
+        const expiresIn = 60;
+        const ticket = await signAssetTicket({ catalogPreviewId: previewId, exp: Math.floor(Date.now() / 1000) + expiresIn }, env);
+        return jsonResponse({
+            previewId,
+            url: `/order-manager/v1/catalog-previews/${encodeURIComponent(previewId)}/read?ticket=${encodeURIComponent(ticket)}`,
+            expiresIn
+        }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+async function handleEtsyCatalogPreviewRead(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const url = new URL(request.url);
+        const previewId = catalogPreviewIdFromPath(url.pathname);
+        const ticket = await verifyAssetTicket(url.searchParams.get('ticket'), env);
+        if (!ticket || ticket.catalogPreviewId !== previewId) {
+            return v1Error({ code: 'INVALID_ASSET_TICKET', message: 'Catalog preview ticket is invalid or expired.' }, allowOrigin, reqAllowHeaders, 401);
+        }
+        if (!env.R2_BUCKET) return v1Error({ code: 'R2_NOT_CONFIGURED', message: 'Private preview storage is not configured.' }, allowOrigin, reqAllowHeaders, 503);
+        const preview = await findEtsyCatalogPreviewForRead(env, previewId);
+        if (!preview) return v1Error({ code: 'CATALOG_PREVIEW_NOT_FOUND', message: 'Catalog preview was not found.' }, allowOrigin, reqAllowHeaders, 404);
+        const object = await env.R2_BUCKET.get(preview.object_key);
+        if (!object) return v1Error({ code: 'CATALOG_PREVIEW_NOT_FOUND', message: 'Catalog preview object was not found.' }, allowOrigin, reqAllowHeaders, 404);
+        const headers = new Headers();
+        object.writeHttpMetadata(headers);
+        headers.set('ETag', object.httpEtag);
         headers.set('Cache-Control', 'private, max-age=55');
         for (const [key, value] of Object.entries(corsHeaders(allowOrigin, reqAllowHeaders))) headers.set(key, value);
         return new Response(object.body, { headers });

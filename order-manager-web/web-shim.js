@@ -145,6 +145,7 @@ window.api.transport = "http";
 const candidateOrdersByName = new Map();
 const candidateAssetObjectUrls = new Map();
 const candidateAssetObjectUrlLoads = new Map();
+const candidateCatalogPreviewLoads = new Map();
 const candidateMutationChains = new Map();
 // Visible mockups receive their signed URLs immediately; the browser owns
 // HTTP scheduling and decoding instead of a detached-image timeout queue.
@@ -339,6 +340,7 @@ function candidateLineItem(item = {}, assets = []) {
     properties,
     customAttributes,
     assets,
+    catalogPreview: item.catalogPreview?.previewId ? item.catalogPreview : null,
   };
 }
 
@@ -416,6 +418,46 @@ async function candidateAssetObjectUrl(asset) {
   });
   candidateAssetObjectUrlLoads.set(asset.assetId, load);
   return load;
+}
+
+function catalogPreviewCacheKey(previewId) {
+  return previewId ? `catalog:${previewId}` : "";
+}
+
+async function candidateCatalogPreviewUrl(preview) {
+  const previewId = String(preview?.previewId || "");
+  const cacheKey = catalogPreviewCacheKey(previewId);
+  if (!cacheKey) return "";
+  const cached = candidateCachedAssetUrl(cacheKey);
+  if (cached) return cached;
+  if (candidateCatalogPreviewLoads.has(cacheKey)) return candidateCatalogPreviewLoads.get(cacheKey);
+  const load = (async () => {
+    const ticket = await apiFetch(
+      `/order-manager/v1/catalog-previews/${encodeURIComponent(previewId)}/read-ticket`,
+      { method: "POST", body: "{}" }
+    );
+    if (!ticket?.url) throw new Error(`Catalog preview ticket was not returned for ${previewId}.`);
+    return rememberCandidateAssetUrl(cacheKey, ticket.url, ticket.expiresIn);
+  })().finally(() => {
+    candidateCatalogPreviewLoads.delete(cacheKey);
+  });
+  candidateCatalogPreviewLoads.set(cacheKey, load);
+  return load;
+}
+
+function candidateCatalogPreviewEntries(records) {
+  const entries = [];
+  const seen = new Set();
+  (records || []).forEach(record => {
+    (record?.commerce?.lineItems || []).forEach(item => {
+      const preview = item?.catalogPreview;
+      const previewId = String(preview?.previewId || "");
+      if (!previewId || seen.has(`${record.id}:${previewId}`)) return;
+      seen.add(`${record.id}:${previewId}`);
+      entries.push({ record, item, preview });
+    });
+  });
+  return entries;
 }
 
 async function prefetchCandidateAssetTickets(assets) {
@@ -548,6 +590,21 @@ async function hydrateCandidateAssets(records, { onMockupChange, boardVisibleOnl
       if (!repainted && isMockup && typeof onMockupChange === "function") onMockupChange(record);
     }
   });
+  const catalogPreviews = candidateCatalogPreviewEntries(records);
+  await runWithConcurrency(catalogPreviews, ASSET_HYDRATION_CONCURRENCY, async ({ preview, record }) => {
+    try {
+      const previousUrl = preview.url || "";
+      const nextUrl = await candidateCatalogPreviewUrl(preview);
+      preview.url = nextUrl;
+      preview._previewState = "ready";
+      if (nextUrl && nextUrl !== previousUrl) changedOrderIds.add(record.id);
+    } catch (error) {
+      preview._previewState = "failed";
+      console.warn("Unable to hydrate Etsy catalog preview", preview?.previewId, error);
+    } finally {
+      if (typeof onMockupChange === "function") onMockupChange(record);
+    }
+  });
   return changedOrderIds;
 }
 
@@ -556,6 +613,11 @@ function applyCandidateCachedAssetUrls(records) {
     (order?.production?.assets || []).forEach((asset) => {
       const cached = candidateCachedAssetUrl(asset?.assetId);
       if (cached) asset.url = cached;
+    });
+    (order?.commerce?.lineItems || []).forEach(item => {
+      const preview = item?.catalogPreview;
+      const cached = candidateCachedAssetUrl(catalogPreviewCacheKey(preview?.previewId));
+      if (cached && preview) preview.url = cached;
     });
   });
 }

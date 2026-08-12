@@ -156,8 +156,10 @@ function etsyTransactionFixtures(receiptId = 7001) {
       title: 'Fixture garment', quantity: 2, sku: 'B001',
       variations: [
         { property_id: 100, value_id: 200, formatted_name: 'Size', formatted_value: 'Large' },
+        { property_id: 101, value_id: 201, formatted_name: 'Color', formatted_value: 'Forest Green' },
         { property_id: 101, value_id: null, formatted_name: 'Personalization', formatted_value: 'Private custom text' }
       ],
+      listing_image_id: 9101,
       price: { amount: 1250, divisor: 100, currency_code: 'USD' }
     },
     {
@@ -202,7 +204,7 @@ async function run() {
 
   const root = path.join(__dirname, '..');
   const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8');
-  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql', '0007_etsy_webhook_delivery.sql']
+  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql', '0007_etsy_webhook_delivery.sql', '0008_etsy_catalog_previews.sql']
     .map(file => fs.readFileSync(path.join(root, 'order-manager-proxy', 'migrations', file), 'utf8'))
     .join('\n');
   const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
@@ -459,6 +461,42 @@ async function run() {
       assert.equal(options.headers.Authorization, 'Bearer 12345.refreshed-access');
       return Response.json({ count: 2, results: etsyTransactionFixtures(7005) });
     }
+    if (target === 'https://api.etsy.com/v3/application/listings/9001/images/9101') {
+      assert.equal(options.headers.Authorization, undefined, 'listing-image proof must use only the app key');
+      assert.equal(options.headers['x-api-key'], `${env.ETSY_API_KEY}:${env.ETSY_SHARED_SECRET}`);
+      return Response.json({
+        listing_id: 9001,
+        listing_image_id: 9101,
+        url_75x75: 'https://i.etsystatic.com/9001-9101-75.jpg',
+        url_570xN: 'https://i.etsystatic.com/9001-9101-570.jpg',
+        url_fullxfull: 'https://i.etsystatic.com/9001-9101-full.jpg',
+        full_width: 2000,
+        full_height: 2500
+      });
+    }
+    if (target === 'https://i.etsystatic.com/9001-9101-570.jpg') {
+      return new Response(new TextEncoder().encode('etsy-preview-image-9001-9101'), {
+        headers: { 'Content-Type': 'image/jpeg', 'Content-Length': '28' }
+      });
+    }
+    if (target === 'https://api.etsy.com/v3/application/listings/9001') {
+      assert.equal(options.headers.Authorization, undefined, 'catalog ownership proof must use only the app key');
+      assert.equal(options.headers['x-api-key'], `${env.ETSY_API_KEY}:${env.ETSY_SHARED_SECRET}`);
+      return Response.json({ listing_id: 9001, shop_id: 98765, title: 'Private Fixture Listing Title' });
+    }
+    if (target === 'https://api.etsy.com/v3/application/listings/9002') {
+      assert.equal(options.headers.Authorization, undefined, 'foreign-listing rejection must use only the app key');
+      assert.equal(options.headers['x-api-key'], `${env.ETSY_API_KEY}:${env.ETSY_SHARED_SECRET}`);
+      return Response.json({ listing_id: 9002, shop_id: 12345, title: 'Foreign Fixture Listing' });
+    }
+    if (target === 'https://api.etsy.com/v3/application/shops/98765/listings/9001/variation-images') {
+      assert.equal(options.headers.Authorization, undefined, 'variation-image proof must use only the app key');
+      assert.equal(options.headers['x-api-key'], `${env.ETSY_API_KEY}:${env.ETSY_SHARED_SECRET}`);
+      return Response.json({
+        count: 1,
+        results: [{ property_id: 101, value_id: 201, value: 'Forest Green', image_id: 9101 }]
+      });
+    }
     if (target.endsWith('/admin/oauth/access_token')) {
       return Response.json({ access_token: 'runtime-token', expires_in: 86399 });
     }
@@ -699,6 +737,163 @@ async function run() {
       ),
       'Etsy field inventory must preserve observed nullable type unions'
     );
+
+    const providerRowsBeforeListingImageProbe = await env.ORDER_DB.prepare(
+      'SELECT COUNT(*) AS count FROM provider_order_projection'
+    ).first();
+    const listingImageProbe = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/listing-image-probe',
+      { method: 'POST', headers, body: JSON.stringify({ receiptId: 7001, transactionId: 8001 }) }
+    ), env);
+    assert.equal(listingImageProbe.status, 200, 'a receipt-backed listing image probe must remain an authenticated read-only operation');
+    const listingImageProbeText = await listingImageProbe.text();
+    assert(!listingImageProbeText.includes('Protected Fixture Buyer'), 'listing image proof must not expose buyer identity');
+    assert(!listingImageProbeText.includes('private@example.test'), 'listing image proof must not expose buyer email');
+    assert(!listingImageProbeText.includes('Private custom text'), 'listing image proof must not expose personalization values');
+    assert(!listingImageProbeText.includes('images.example.test'), 'listing image proof must not expose image URLs');
+    const listingImageProbeJson = JSON.parse(listingImageProbeText);
+    assert.equal(listingImageProbeJson.scope, 'transactions_r');
+    assert.equal(listingImageProbeJson.boardChanged, false);
+    assert.equal(listingImageProbeJson.imageBytesStored, false);
+    assert.equal(listingImageProbeJson.customerDataIncluded, false);
+    assert.equal(listingImageProbeJson.imageUrlIncluded, false);
+    assert.equal(listingImageProbeJson.preview.listingId, '9001');
+    assert.equal(listingImageProbeJson.preview.listingImageId, '9101');
+    assert.deepEqual(listingImageProbeJson.preview.dimensions, { width: 2000, height: 2500 });
+    assert.deepEqual(listingImageProbeJson.preview.renditionsAvailable, { thumbnail: true, standard: true, full: true });
+    assert.equal(listingImageProbeJson.preview.purchasedVariationEvidence.verdict, 'MATCHED');
+    assert.equal(listingImageProbeJson.preview.purchasedVariationEvidence.purchasedOptionCount, 2, 'personalization must be excluded from visual-variation matching');
+    assert.equal(listingImageProbeJson.preview.purchasedVariationEvidence.transactionImageMatchesPurchasedVariation, true);
+    const providerRowsAfterListingImageProbe = await env.ORDER_DB.prepare(
+      'SELECT COUNT(*) AS count FROM provider_order_projection'
+    ).first();
+    assert.equal(providerRowsAfterListingImageProbe.count, providerRowsBeforeListingImageProbe.count, 'listing image proof must not create or change a provider projection');
+    const catalogVariationOptions = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/catalog-image-probe',
+      { method: 'POST', headers, body: JSON.stringify({ listingId: 9001 }) }
+    ), env);
+    assert.equal(catalogVariationOptions.status, 200, 'a catalog probe with only a listing ID must reveal safe mapped variation choices');
+    const catalogVariationOptionsJson = await catalogVariationOptions.json();
+    assert.equal(catalogVariationOptionsJson.probe, 'catalog-variation-options');
+    assert.deepEqual(catalogVariationOptionsJson.variationOptions, [{
+      propertyId: '101', valueId: '201', value: 'Forest Green', imageMapped: true
+    }]);
+    const catalogImageProbe = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/catalog-image-probe',
+      { method: 'POST', headers, body: JSON.stringify({ listingId: 9001, propertyId: 101, valueId: 201 }) }
+    ), env);
+    assert.equal(catalogImageProbe.status, 200, 'a catalog-only listing image probe must verify an owner-selected color without an Etsy receipt');
+    const catalogImageProbeText = await catalogImageProbe.text();
+    assert(!catalogImageProbeText.includes('Private Fixture Listing Title'), 'catalog image proof must not return listing title data');
+    assert(!catalogImageProbeText.includes('images.example.test'), 'catalog image proof must not return image URLs');
+    const catalogImageProbeJson = JSON.parse(catalogImageProbeText);
+    assert.equal(catalogImageProbeJson.probe, 'catalog-variation-image');
+    assert.equal(catalogImageProbeJson.catalogReadAuthorization, 'api_key');
+    assert.equal(catalogImageProbeJson.connectionScope, 'transactions_r');
+    assert.equal(catalogImageProbeJson.boardChanged, false);
+    assert.equal(catalogImageProbeJson.imageBytesStored, false);
+    assert.equal(catalogImageProbeJson.customerDataIncluded, false);
+    assert.equal(catalogImageProbeJson.imageUrlIncluded, false);
+    assert.equal(catalogImageProbeJson.preview.listingId, '9001');
+    assert.equal(catalogImageProbeJson.preview.listingImageId, '9101');
+    assert.deepEqual(catalogImageProbeJson.preview.selectedVariation, {
+      propertyId: '101', valueId: '201', value: 'Forest Green', imageMapped: true
+    });
+    const providerRowsAfterCatalogImageProbe = await env.ORDER_DB.prepare(
+      'SELECT COUNT(*) AS count FROM provider_order_projection'
+    ).first();
+    assert.equal(providerRowsAfterCatalogImageProbe.count, providerRowsBeforeListingImageProbe.count, 'catalog image proof must not create or change a provider projection');
+    const catalogPreviewDryRun = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/catalog-preview-sync',
+      { method: 'POST', headers, body: JSON.stringify({ listings: ['https://www.etsy.com/listing/9001/fixture-listing'] }) }
+    ), env);
+    assert.equal(catalogPreviewDryRun.status, 200, 'catalog preview sync must default to a safe dry run');
+    const catalogPreviewDryRunText = await catalogPreviewDryRun.text();
+    assert(!catalogPreviewDryRunText.includes('i.etsystatic.com'), 'catalog preview dry run must not return Etsy rendition URLs');
+    const catalogPreviewDryRunJson = JSON.parse(catalogPreviewDryRunText);
+    assert.equal(catalogPreviewDryRunJson.mode, 'dry_run');
+    assert.equal(catalogPreviewDryRunJson.boardChanged, false);
+    assert.equal(catalogPreviewDryRunJson.orderDataChanged, false);
+    assert.equal(catalogPreviewDryRunJson.productionArtworkChanged, false);
+    assert.equal(catalogPreviewDryRunJson.report.wouldImport, 1);
+    assert.equal(catalogPreviewDryRunJson.report.imported, 0);
+    assert.equal(catalogPreviewDryRunJson.report.listings[0].variations[0].outcome, 'would_import');
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT COUNT(*) AS count FROM etsy_catalog_preview_mappings').first()).count,
+      0,
+      'catalog preview dry runs must not write mappings'
+    );
+    const catalogPreviewExecute = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/catalog-preview-sync',
+      { method: 'POST', headers, body: JSON.stringify({ listings: [9001], execute: true }) }
+    ), env);
+    assert.equal(catalogPreviewExecute.status, 200, 'catalog preview execute must cache the mapped Etsy image privately');
+    const catalogPreviewExecuteText = await catalogPreviewExecute.text();
+    assert(!catalogPreviewExecuteText.includes('i.etsystatic.com'), 'catalog preview execute must not return Etsy rendition URLs');
+    const catalogPreviewExecuteJson = JSON.parse(catalogPreviewExecuteText);
+    assert.equal(catalogPreviewExecuteJson.mode, 'execute');
+    assert.equal(catalogPreviewExecuteJson.report.imported, 1);
+    const catalogPreviewId = catalogPreviewExecuteJson.report.listings[0].variations[0].previewId;
+    assert(catalogPreviewId, 'catalog preview execute must return only an opaque preview ID');
+    const catalogPreviewMapping = await env.ORDER_DB.prepare(`
+      SELECT mappings.id, mappings.shop_id, mappings.listing_image_id, mappings.source_type, mappings.resolution_mode,
+             blobs.object_key, blobs.content_type, blobs.state AS blob_state
+      FROM etsy_catalog_preview_mappings AS mappings
+      JOIN etsy_catalog_preview_blobs AS blobs ON blobs.id = mappings.blob_id
+      WHERE mappings.id = ?
+    `).bind(catalogPreviewId).first();
+    assert.equal(catalogPreviewMapping.listing_image_id, '9101');
+    assert.equal(catalogPreviewMapping.source_type, 'etsy');
+    assert.equal(catalogPreviewMapping.resolution_mode, 'direct');
+    assert.equal(catalogPreviewMapping.content_type, 'image/jpeg');
+    assert.equal(catalogPreviewMapping.blob_state, 'active');
+    assert(privateObjects.has(catalogPreviewMapping.object_key), 'catalog preview execute must write private R2 bytes');
+    const catalogPreviewBlob = await env.ORDER_DB.prepare(
+      'SELECT blob_id FROM etsy_catalog_preview_mappings WHERE id = ?'
+    ).bind(catalogPreviewId).first();
+    const catalogPreviewTicket = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/catalog-previews/${encodeURIComponent(catalogPreviewId)}/read-ticket`,
+      { method: 'POST', headers }
+    ), env);
+    assert.equal(catalogPreviewTicket.status, 200, 'catalog preview must issue a short-lived opaque read ticket');
+    const catalogPreviewTicketJson = await catalogPreviewTicket.json();
+    assert.equal(catalogPreviewTicketJson.previewId, catalogPreviewId);
+    assert(!catalogPreviewTicketJson.url.includes(catalogPreviewMapping.object_key), 'catalog preview ticket must never reveal the R2 object key');
+    const catalogPreviewRead = await worker.fetch(new Request(`https://worker.test${catalogPreviewTicketJson.url}`), env);
+    assert.equal(catalogPreviewRead.status, 200, 'catalog preview signed read must resolve private R2 bytes');
+    assert.equal(catalogPreviewRead.headers.get('Content-Type'), 'image/jpeg');
+    assert.equal(await catalogPreviewRead.text(), 'etsy-preview-image-9001-9101');
+    const catalogPreviewBadRead = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/catalog-previews/${encodeURIComponent(catalogPreviewId)}/read?ticket=bad`
+    ), env);
+    assert.equal(catalogPreviewBadRead.status, 401, 'catalog preview reads must reject unsigned requests');
+    const catalogPreviewRepeat = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/catalog-preview-sync',
+      { method: 'POST', headers, body: JSON.stringify({ listings: [9001], execute: true }) }
+    ), env);
+    assert.equal(catalogPreviewRepeat.status, 200);
+    const catalogPreviewRepeatJson = await catalogPreviewRepeat.json();
+    assert.equal(catalogPreviewRepeatJson.report.imported, 0, 'identical catalog sync must not rewrite the existing mapping');
+    assert.equal(catalogPreviewRepeatJson.report.unchanged, 1, 'identical catalog sync must report the existing preview');
+    assert.equal(
+      calls.filter(call => call.target === 'https://i.etsystatic.com/9001-9101-570.jpg').length,
+      1,
+      'an idempotent sync must not redownload an unchanged Etsy image'
+    );
+    const providerRowsAfterCatalogPreviewSync = await env.ORDER_DB.prepare(
+      'SELECT COUNT(*) AS count FROM provider_order_projection'
+    ).first();
+    assert.equal(providerRowsAfterCatalogPreviewSync.count, providerRowsBeforeListingImageProbe.count, 'catalog preview sync must not create or change a provider projection');
+    const foreignListingProbe = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/catalog-image-probe',
+      { method: 'POST', headers, body: JSON.stringify({ listingId: 9002, propertyId: 101, valueId: 201 }) }
+    ), env);
+    assert.equal(foreignListingProbe.status, 403, 'catalog image proof must reject listings outside the connected Etsy shop');
+    const missingProbeTransaction = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/listing-image-probe',
+      { method: 'POST', headers, body: JSON.stringify({ receiptId: 7001, transactionId: 8999 }) }
+    ), env);
+    assert.equal(missingProbeTransaction.status, 404, 'listing image proof must reject a transaction outside the requested receipt');
 
     const connectedEtsyStatus = await worker.fetch(
       new Request('https://worker.test/order-manager/v1/integrations/etsy/status', { headers }),
@@ -1067,6 +1262,24 @@ async function run() {
     ), env);
     assert.equal(unconfirmedSynthetic.status, 400, 'live synthetic enrollment must require an exact confirmation phrase');
 
+    // The live synthetic contract uses the owner-approved catalog listing. Seed
+    // equivalent private mappings here so the fixture proves both receipt
+    // selection fields and the cached-image identity gate without network data.
+    for (const [id, valueId, imageId] of [
+      ['fixture-synthetic-black-preview', '49928889190', '7722005927'],
+      ['fixture-synthetic-white-preview', '49974750696', '7722005937'],
+      ['fixture-synthetic-red-preview', '52041479599', '7722005931'],
+      ['fixture-synthetic-green-preview', '49974750678', '7722005929'],
+    ]) {
+      await env.ORDER_DB.prepare(`
+        INSERT INTO etsy_catalog_preview_mappings (
+          id, shop_id, etsy_shop_id, etsy_listing_id, property_id, value_id,
+          listing_image_id, source_type, resolution_mode, blob_id, state,
+          created_by, created_at, updated_at, deleted_at
+        ) VALUES (?, ?, '98765', '4452232638', '200', ?, ?, 'etsy', 'direct', ?, 'active', 'fixture', ?, ?, NULL)
+      `).bind(id, catalogPreviewMapping.shop_id, valueId, imageId, catalogPreviewBlob.blob_id, '2026-08-11T00:00:00.000Z', '2026-08-11T00:00:00.000Z').run();
+    }
+
     const syntheticCreate = await worker.fetch(new Request(
       'https://worker.test/order-manager/v1/integrations/etsy/synthetic-order',
       { method: 'POST', headers, body: JSON.stringify({ confirm: 'CREATE_LIVE_ETSY_TEST_ORDER' }) }
@@ -1096,6 +1309,11 @@ async function run() {
     assert.equal(syntheticCard.source.provider, 'etsy');
     assert.equal(syntheticCard.source.synthetic, true);
     assert.equal(syntheticCard.capabilities.productionWrite, true);
+    assert.deepEqual(
+      syntheticCard.commerce.lineItems.map(item => item.catalogPreview?.previewId),
+      ['fixture-synthetic-black-preview', 'fixture-synthetic-green-preview'],
+      'an Etsy receipt must resolve each purchased variation only to its matching cached catalog preview'
+    );
 
     const encodedSyntheticOrderKey = encodeURIComponent(syntheticOrderKey);
     const syntheticDetail = await worker.fetch(
@@ -1146,6 +1364,39 @@ async function run() {
     );
     const syntheticStageBoardJson = await syntheticStageBoard.json();
     assert(syntheticStageBoardJson.data.some(order => order.orderKey === syntheticOrderKey), 'stage filtering must include enrolled provider state');
+
+    const fullReceiptCreate = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/synthetic-order',
+      { method: 'POST', headers, body: JSON.stringify({ scenario: 'full_receipt', confirm: 'CREATE_LIVE_ETSY_FULL_RECEIPT_TEST_ORDER' }) }
+    ), env);
+    assert.equal(fullReceiptCreate.status, 201, 'the full fabricated Etsy receipt must require and accept its own explicit confirmation');
+    const fullReceiptCreateJson = await fullReceiptCreate.json();
+    const fullReceiptOrderKey = 'etsy-synthetic:98765:synthetic-full-receipt-1';
+    assert.equal(fullReceiptCreateJson.orderKey, fullReceiptOrderKey);
+    assert.equal(fullReceiptCreateJson.scenario, 'full_receipt');
+    const fullReceiptDetail = await worker.fetch(
+      new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(fullReceiptOrderKey)}`, { headers }), env
+    );
+    const fullReceiptDetailJson = await fullReceiptDetail.json();
+    assert.equal(fullReceiptDetail.status, 200);
+    assert.equal(fullReceiptDetailJson.detail.lineItems.length, 4);
+    assert.equal(fullReceiptDetailJson.detail.customer.email, 'avery.example@printmo-test.invalid');
+    assert.equal(fullReceiptDetailJson.detail.data.delivery.shippingAddress.address1, '2002 Test Receipt Lane');
+    assert.equal(fullReceiptDetailJson.detail.data.delivery.shippingLines.length, 1);
+    assert.equal(fullReceiptDetailJson.detail.data.discounts[0].code, 'SYNTHETIC10');
+    assert.equal(fullReceiptDetailJson.commerce.subtotal, 129.5, 'full synthetic receipt must use the shared raw Etsy receipt normalizer for money');
+    assert.equal(fullReceiptDetailJson.commerce.lineItems[2].personalization[0].value, 'NO REAL CUSTOMER DATA');
+    assert.deepEqual(
+      fullReceiptDetailJson.commerce.lineItems.map(item => item.catalogPreview?.previewId),
+      ['fixture-synthetic-black-preview', 'fixture-synthetic-white-preview', 'fixture-synthetic-red-preview', 'fixture-synthetic-green-preview'],
+      'the full fabricated receipt must resolve every imported color through the same receipt-image gate'
+    );
+    const fullReceiptDelete = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/synthetic-order',
+      { method: 'DELETE', headers, body: JSON.stringify({ scenario: 'full_receipt', confirm: 'DELETE_LIVE_ETSY_FULL_RECEIPT_TEST_ORDER' }) }
+    ), env);
+    assert.equal(fullReceiptDelete.status, 200);
+    assert.equal((await fullReceiptDelete.json()).removed, true, 'full receipt cleanup must target only that synthetic scenario');
 
     const unconfirmedDelete = await worker.fetch(new Request(
       'https://worker.test/order-manager/v1/integrations/etsy/synthetic-order',
@@ -2030,6 +2281,13 @@ async function run() {
       && sharedRenderer.includes("label.textContent = loading ? 'Loading preview' : 'No preview';")
       && sharedRenderer.includes('if (container) container.scrollTop = 0;'),
     'candidate cards must keep stable preview/status anatomy and explicit print-view scroll reset behavior'
+  );
+  assert(
+    sharedRenderer.includes('isCatalogPreview: true')
+      && sharedRenderer.includes('Etsy catalog preview')
+      && detailEnhancements.includes('catalogPreview: mergeCatalogPreview(existing.catalogPreview, item.catalogPreview)')
+      && detailEnhancements.includes('function mergeCatalogPreview(existingPreview, incomingPreview)'),
+    'resolved Etsy catalog previews must remain read-only recognition images in the detail artwork browser after canonical detail hydration'
   );
   assert(
     desktopCss.includes('Shopify workflow foundation')
