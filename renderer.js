@@ -1454,19 +1454,43 @@ function renderOrderAssets(order) {
 
   const assets = splitOrderAssets(order);
   const catalogPreviews = (order?.items || [])
-    .map(item => ({ preview: item?.catalogPreview, label: item?.variantTitle || item?.properties?.Color || '' }))
+    .map(item => ({
+      preview: item?.catalogPreview,
+      label: item?.variantTitle || item?.properties?.Color || '',
+      lineItemId: item?.id || ''
+    }))
     .filter(entry => entry.preview?.previewId && entry.preview?.url)
     .map(entry => ({
       id: `catalog:${entry.preview.previewId}`,
       url: entry.preview.url,
       isCatalogPreview: true,
       catalogLabel: entry.label,
+      lineItemIds: entry.lineItemId ? [entry.lineItemId] : [],
     }));
-  const mockups = [
+  const mockupSources = [
     ...getManualMockupsForOrder(order),
     ...assets.mockups.map(asset => ({ ...asset, isManual: false })),
     ...catalogPreviews,
   ];
+  const mockupsByIdentity = new Map();
+  mockupSources.forEach((asset, index) => {
+    const identity = asset.isCatalogPreview
+      ? asset.id
+      : asset.isManual
+        ? `manual:${asset.id || asset.url || index}`
+        : asset.assetId || asset.id || asset.url || `mockup:${index}`;
+    const lineItemIds = [
+      ...(Array.isArray(asset.lineItemIds) ? asset.lineItemIds : []),
+      asset.lineItemId
+    ].filter(Boolean);
+    const existing = mockupsByIdentity.get(identity);
+    if (existing) {
+      existing.lineItemIds = [...new Set([...existing.lineItemIds, ...lineItemIds])];
+      return;
+    }
+    mockupsByIdentity.set(identity, { ...asset, lineItemIds: [...new Set(lineItemIds)] });
+  });
+  const mockups = [...mockupsByIdentity.values()];
 
   if (!mockups.length) {
     if (mockupFeature) mockupFeature.classList.add('hidden');
@@ -1544,6 +1568,8 @@ function renderOrderAssets(order) {
         ? `Show Etsy catalog preview${asset.catalogLabel ? ` — ${asset.catalogLabel}` : ''}`
         : `Show mockup ${idx + 1} of ${mockups.length}`);
       thumb.setAttribute('aria-pressed', idx === 0 ? 'true' : 'false');
+      thumb.dataset.lineItemIds = (asset.lineItemIds || []).join('|');
+      thumb.dataset.mockupScope = asset.isCatalogPreview ? 'catalog-preview' : asset.isManual ? 'order-level' : 'linked-artwork';
 
       const img = document.createElement('img');
       img.alt = asset.isCatalogPreview

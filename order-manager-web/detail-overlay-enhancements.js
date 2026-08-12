@@ -22,6 +22,8 @@
     }
   ];
   let mockupObserver = null;
+  let mockupFrameResizeObserver = null;
+  let mockupFrameResizeScheduled = false;
   let itemTableObserver = null;
   let designFilesObserver = null;
   let readyApplyObserver = null;
@@ -1704,6 +1706,156 @@
     setTimeout(scheduleDesignFilesEnhancement, 1000);
   }
 
+  function mockupItemSize(item) {
+    const explicitSize = (item?.customAttributes || []).find(attribute =>
+      /^(size|garment size)$/i.test(String(attribute?.key || '').trim())
+    )?.value;
+    if (explicitSize) return String(explicitSize).trim();
+    const options = String(item?.variantTitle || '')
+      .split('/')
+      .map(value => value.trim())
+      .filter(Boolean);
+    return options.at(-1) || 'Size not specified';
+  }
+
+  function mockupItemArtworkScopeKey(item) {
+    const product = String(item?.title || '').trim().toLowerCase();
+    const explicitColor = (item?.customAttributes || []).find(attribute =>
+      /^(color|colour|garment color|garment colour)$/i.test(String(attribute?.key || '').trim())
+    )?.value;
+    const variantParts = String(item?.variantTitle || '')
+      .split('/')
+      .map(value => value.trim())
+      .filter(Boolean);
+    const color = String(explicitColor || (variantParts.length > 1 ? variantParts[0] : ''))
+      .trim()
+      .toLowerCase();
+    return product && color ? `${product}\u0000${color}` : '';
+  }
+
+  function renderSelectedMockupContext(thumb) {
+    const context = document.getElementById('detail-mockup-context');
+    if (!context) return;
+    context.replaceChildren();
+    context.classList.add('hidden');
+
+    const order = currentDetailOrder;
+    if (!order?._candidate) return;
+
+    const linkedIds = new Set(String(thumb?.dataset?.lineItemIds || '')
+      .split('|')
+      .map(value => value.trim())
+      .filter(Boolean));
+    if (!linkedIds.size) {
+      const label = document.createElement('span');
+      label.className = 'detail-mockup-context-order-level';
+      label.textContent = 'Order-level artwork · not linked to a specific garment';
+      context.appendChild(label);
+      context.classList.remove('hidden');
+      return;
+    }
+
+    const linkedItems = (order.items || [])
+      .filter(item => linkedIds.has(String(item?.id || '')));
+    const artworkScopes = new Set(linkedItems
+      .map(mockupItemArtworkScopeKey)
+      .filter(Boolean));
+    const groups = new Map();
+    (order.items || [])
+      .filter(item => {
+        if (linkedIds.has(String(item?.id || ''))) return true;
+        return artworkScopes.has(mockupItemArtworkScopeKey(item));
+      })
+      .forEach(item => {
+        const product = String(item.title || 'Linked item').trim();
+        const size = mockupItemSize(item);
+        const key = `${product}\u0000${size}`;
+        const current = groups.get(key) || { product, size, qty: 0 };
+        current.qty += Number(item.qty) || 0;
+        groups.set(key, current);
+      });
+    if (!groups.size) return;
+
+    const heading = document.createElement('span');
+    heading.className = 'detail-mockup-context-label';
+    heading.textContent = 'Applies to';
+    const list = document.createElement('div');
+    list.className = 'detail-mockup-context-list';
+    const productGroups = new Map();
+    groups.forEach(group => {
+      const entries = productGroups.get(group.product) || [];
+      entries.push(group);
+      productGroups.set(group.product, entries);
+    });
+    productGroups.forEach((entries, product) => {
+      const group = document.createElement('div');
+      group.className = 'detail-mockup-context-product';
+      const productName = document.createElement('span');
+      productName.className = 'detail-mockup-context-product-name';
+      productName.textContent = product;
+      const quantities = document.createElement('span');
+      quantities.className = 'detail-mockup-context-quantities';
+      entries.forEach(entry => {
+        const quantity = document.createElement('span');
+        quantity.className = 'detail-mockup-quantity';
+        quantity.textContent = `${entry.size} × ${entry.qty}`;
+        quantities.appendChild(quantity);
+      });
+      group.append(productName, quantities);
+      list.appendChild(group);
+    });
+    context.append(heading, list);
+    context.classList.remove('hidden');
+  }
+
+  function resetMockupFrame(mainButton = document.getElementById('detail-mockup-main')) {
+    if (!mainButton) return;
+    mainButton.style.removeProperty('width');
+    mainButton.style.removeProperty('height');
+    mainButton.style.removeProperty('aspect-ratio');
+  }
+
+  function sizeMockupFrame(image, mainButton = document.getElementById('detail-mockup-main')) {
+    const isDesktopShopifyBoard = document.body?.dataset.orderSource === 'shopify'
+      && window.matchMedia?.('(min-width: 901px)').matches;
+    const naturalWidth = Number(image?.naturalWidth);
+    const naturalHeight = Number(image?.naturalHeight);
+    if (!mainButton || !isDesktopShopifyBoard || !naturalWidth || !naturalHeight) {
+      resetMockupFrame(mainButton);
+      return;
+    }
+
+    const feature = mainButton.closest('.detail-mockup-feature');
+    const availableWidth = feature?.clientWidth || mainButton.parentElement?.clientWidth || 0;
+    if (!availableWidth) return;
+
+    const ratio = naturalWidth / naturalHeight;
+    const maximumWorkingHeight = Math.min(400, Math.max(260, Math.round(window.innerHeight * 0.38)));
+    const frameWidth = Math.round(Math.min(availableWidth, maximumWorkingHeight * ratio));
+    const ratioValue = `${naturalWidth} / ${naturalHeight}`;
+    const widthValue = `${frameWidth}px`;
+    if (mainButton.style.width !== widthValue) mainButton.style.width = widthValue;
+    if (mainButton.style.aspectRatio !== ratioValue) mainButton.style.aspectRatio = ratioValue;
+    if (mainButton.style.height) mainButton.style.removeProperty('height');
+  }
+
+  function scheduleMockupFrameSize() {
+    if (mockupFrameResizeScheduled) return;
+    mockupFrameResizeScheduled = true;
+    requestAnimationFrame(() => {
+      mockupFrameResizeScheduled = false;
+      const image = mockupThumbs()[selectedMockupIndex]?.querySelector('img');
+      sizeMockupFrame(image);
+    });
+  }
+
+  function wireMockupFrameSize() {
+    const browser = document.querySelector('.detail-mockups-browser');
+    if (!browser || mockupFrameResizeObserver || typeof ResizeObserver !== 'function') return;
+    mockupFrameResizeObserver = new ResizeObserver(scheduleMockupFrameSize);
+    mockupFrameResizeObserver.observe(browser);
+  }
+
   function syncSelectedMockup(index = selectedMockupIndex) {
     const strip = document.getElementById('detail-mockups-strip');
     const feature = document.getElementById('detail-mockup-feature');
@@ -1720,6 +1872,7 @@
       strip?.classList.remove('has-mockups');
       feature.classList.add('hidden');
       count.textContent = '0 mockups';
+      resetMockupFrame(mainButton);
       setMainMockupMessage('No mockup previews available');
       return;
     }
@@ -1748,12 +1901,18 @@
     if (activeImg?.src) {
       const img = activeImg.cloneNode(false);
       img.alt = activeImg.alt || `Mockup ${selectedMockupIndex + 1}`;
+      img.addEventListener('load', () => sizeMockupFrame(img, mainButton), { once: true });
       content.appendChild(img);
+      sizeMockupFrame(activeImg, mainButton);
+      requestAnimationFrame(() => sizeMockupFrame(activeImg, mainButton));
     } else if (activeStatus) {
+      resetMockupFrame(mainButton);
       setMainMockupMessage(activeStatus.textContent || 'Preview unavailable');
     } else {
+      resetMockupFrame(mainButton);
       setMainMockupMessage('Loading preview...');
     }
+    renderSelectedMockupContext(activeThumb);
 
     mainButton.onclick = () => {
       const currentThumb = mockupThumbs()[selectedMockupIndex];
@@ -1768,6 +1927,7 @@
   function wireMockupBrowser() {
     const track = document.getElementById('detail-mockups-track');
     if (!track) return;
+    wireMockupFrameSize();
     track.setAttribute('role', 'listbox');
     track.setAttribute('aria-label', 'Available order mockups');
 

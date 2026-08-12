@@ -699,6 +699,124 @@
   justify-content: flex-end;
 }
 
+.detail-mockup-context {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--detail-canvas);
+  color: var(--detail-text);
+}
+
+.detail-mockup-context-label {
+  color: var(--detail-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.detail-mockup-context-list {
+  display: grid;
+  gap: 6px;
+}
+
+.detail-mockup-context-product {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.detail-mockup-context-product-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--detail-ink);
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-mockup-context-quantities {
+  display: inline-flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.detail-mockup-quantity {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--detail-surface);
+  color: var(--detail-text);
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.detail-mockup-context-order-level {
+  color: var(--detail-muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+@media (min-width: 901px) {
+  body[data-order-source="shopify"] .detail-mockups-browser {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  body[data-order-source="shopify"] .detail-mockup-feature:not(.hidden) {
+    display: flex !important;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: center;
+    min-height: 0;
+    gap: 8px;
+    overflow: visible;
+  }
+
+  body[data-order-source="shopify"] #detail-mockup-main {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    aspect-ratio: 4 / 3;
+    padding: 12px;
+  }
+
+  body[data-order-source="shopify"] .detail-mockup-meta,
+  body[data-order-source="shopify"] #detail-mockup-context {
+    align-self: stretch;
+  }
+
+  body[data-order-source="shopify"] #detail-mockups-track,
+  body[data-order-source="shopify"] #detail-mockups-track.center-align,
+  body[data-order-source="shopify"] #detail-mockups-track.left-align {
+    width: 100%;
+    min-width: 0;
+    height: 78px;
+    min-height: 78px;
+    max-height: 78px;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  body[data-order-source="shopify"] #detail-mockups-track .mockup-thumb {
+    flex-basis: 72px;
+    width: 72px;
+    height: 72px;
+    min-width: 72px;
+    max-width: 72px;
+    max-height: 72px;
+  }
+}
+
 .detail-mockup-dots {
   display: none;
 }
