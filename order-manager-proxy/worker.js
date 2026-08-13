@@ -194,6 +194,14 @@ export default {
             return handleEtsyCatalogPreviewSync(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
         }
 
+        if (url.pathname === "/order-manager/v1/integrations/etsy/catalog-preview-refresh" && request.method === "POST") {
+            return handleEtsyCatalogPreviewRefresh(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
+        }
+
+        if (url.pathname === "/order-manager/v1/integrations/etsy/blank-recipe" && request.method === "POST") {
+            return handleEtsyBlankRecipe(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
+        }
+
         if (url.pathname === "/order-manager/v1/integrations/etsy/shadow-sync" && request.method === "POST") {
             return handleEtsyShadowSync(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
         }
@@ -345,6 +353,10 @@ export default {
 
         if (url.pathname === "/order-manager/v1/batches/commit" && request.method === "POST") {
             return handleV1BatchCommit(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
+        }
+
+        if (url.pathname === "/order-manager/v1/provider-batches/commit" && request.method === "POST") {
+            return handleProviderBatchCommit(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
         }
 
         if (url.pathname === "/order-manager/v1/assets/read-tickets" && request.method === "POST") {
@@ -3931,6 +3943,258 @@ async function handleEtsyCatalogPreviewSync(request, env, allowOrigin, reqAllowH
     }
 }
 
+function etsyPreviewRefreshKey(listingId, propertyId, valueId) {
+    return `${listingId}:${propertyId}:${valueId}`;
+}
+
+async function etsyCatalogPreviewRefreshPlan(env, db, shop, connection, listingId) {
+    const liveMappings = await etsyCatalogPreviewMappings(env, connection, listingId);
+    const stored = await db.prepare(`
+      SELECT mappings.id, mappings.property_id, mappings.value_id, mappings.listing_image_id,
+             mappings.blob_id, blobs.state AS blob_state
+      FROM etsy_catalog_preview_mappings mappings
+      LEFT JOIN etsy_catalog_preview_blobs blobs ON blobs.id = mappings.blob_id
+      WHERE mappings.shop_id = ? AND mappings.etsy_listing_id = ? AND mappings.source_type = 'etsy'
+        AND mappings.resolution_mode = 'direct' AND mappings.state = 'active'
+    `).bind(shop.id, listingId).all();
+    const liveBySelection = new Map(liveMappings.map(mapping => [
+        etsyPreviewRefreshKey(listingId, mapping.propertyId, mapping.valueId), mapping
+    ]));
+    const storedBySelection = new Map((stored.results || []).map(mapping => [
+        etsyPreviewRefreshKey(listingId, mapping.property_id, mapping.value_id), mapping
+    ]));
+    const variations = [];
+    for (const mapping of liveMappings) {
+        const key = etsyPreviewRefreshKey(listingId, mapping.propertyId, mapping.valueId);
+        const existing = storedBySelection.get(key);
+        const proposedAction = etsyCatalogPreviewIsCurrent(existing, mapping.listingImageId)
+            ? 'unchanged'
+            : (existing ? 'update' : 'import');
+        variations.push({
+            listingId, propertyId: mapping.propertyId, valueId: mapping.valueId,
+            value: mapping.value, listingImageId: mapping.listingImageId,
+            existingPreviewId: existing?.id || null,
+            existingListingImageId: existing?.listing_image_id || null,
+            proposedAction
+        });
+    }
+    for (const [key, existing] of storedBySelection) {
+        if (liveBySelection.has(key)) continue;
+        variations.push({
+            listingId, propertyId: String(existing.property_id), valueId: String(existing.value_id),
+            value: null, listingImageId: null, existingPreviewId: existing.id,
+            existingListingImageId: existing.listing_image_id,
+            proposedAction: 'archive'
+        });
+    }
+    return { listingId, variations };
+}
+
+function etsyPreviewRefreshActions(body, listingIds) {
+    const actions = Array.isArray(body?.actions) ? body.actions : [];
+    const byKey = new Map();
+    for (const entry of actions) {
+        const listingId = entry?.listingId == null
+            ? (listingIds.length === 1 ? listingIds[0] : null)
+            : etsyNumericIdentity(entry.listingId, 'listing ID');
+        const propertyId = entry?.propertyId == null ? '' : String(entry.propertyId).trim();
+        const valueId = entry?.valueId == null ? '' : String(entry.valueId).trim();
+        const action = String(entry?.action || '').trim().toLowerCase();
+        if (!listingId || !/^\d+$/.test(propertyId) || !/^\d+$/.test(valueId)
+            || !['import', 'update', 'archive', 'keep'].includes(action)) {
+            throw etsyListingImageProbeError('ETSY_PREVIEW_REFRESH_ACTION_INVALID', 'Each refresh action needs a listing ID, property ID, value ID, and import, update, archive, or keep action.');
+        }
+        byKey.set(etsyPreviewRefreshKey(listingId, propertyId, valueId), action);
+    }
+    return byKey;
+}
+
+async function handleEtsyCatalogPreviewRefresh(request, env, allowOrigin, reqAllowHeaders, identity) {
+    try {
+        const body = await request.json().catch(() => ({}));
+        const rawListings = Array.isArray(body.listings) ? body.listings : (body.listing == null ? [] : [body.listing]);
+        const listingIds = [...new Set(rawListings.map(etsyListingIdFromCatalogInput))];
+        if (!listingIds.length || listingIds.length > ETSY_CATALOG_PREVIEW_MAX_LISTINGS) {
+            throw etsyListingImageProbeError('ETSY_PREVIEW_LISTINGS_REQUIRED', 'Provide between one and 25 Etsy listing URLs or IDs.');
+        }
+        const execute = body.execute === true;
+        const connection = await loadEtsyConnection(env);
+        const db = requireOrderDb(env);
+        const shop = await d1Shop(env);
+        const plans = [];
+        for (const listingId of listingIds) plans.push(await etsyCatalogPreviewRefreshPlan(env, db, shop, connection, listingId));
+        if (!execute) return jsonResponse({
+            ok: true, source: 'etsy', mode: 'review', boardChanged: false,
+            orderDataChanged: false, productionArtworkChanged: false,
+            plans
+        }, allowOrigin, reqAllowHeaders);
+
+        const selectedActions = etsyPreviewRefreshActions(body, listingIds);
+        const actor = `${identity.kind}:${identity.subject}`;
+        const sourceCache = new Map();
+        const applied = [];
+        for (const plan of plans) {
+            const liveByKey = new Map((await etsyCatalogPreviewMappings(env, connection, plan.listingId)).map(mapping => [
+                etsyPreviewRefreshKey(plan.listingId, mapping.propertyId, mapping.valueId), mapping
+            ]));
+            for (const variation of plan.variations) {
+                const key = etsyPreviewRefreshKey(plan.listingId, variation.propertyId, variation.valueId);
+                const action = selectedActions.get(key);
+                if (!action || action === 'keep' || variation.proposedAction === 'unchanged') continue;
+                if (action === 'archive' && variation.proposedAction === 'archive') {
+                    await db.prepare(`
+                      UPDATE etsy_catalog_preview_mappings
+                      SET state = 'deleted', deleted_at = ?, updated_at = ?
+                      WHERE shop_id = ? AND id = ? AND state = 'active'
+                    `).bind(isoNow(), isoNow(), shop.id, variation.existingPreviewId).run();
+                    applied.push({ ...variation, action, outcome: 'archived' });
+                    continue;
+                }
+                const live = liveByKey.get(key);
+                if (!live || !['import', 'update'].includes(action) || action !== variation.proposedAction) {
+                    applied.push({ ...variation, action: action || 'none', outcome: 'skipped_action_mismatch' });
+                    continue;
+                }
+                const stored = await importEtsyCatalogPreviewMapping(env, db, shop, connection, plan.listingId, live, actor, sourceCache);
+                applied.push({ ...variation, action, outcome: action === 'update' ? 'updated' : 'imported', previewId: stored.previewId });
+            }
+        }
+        return jsonResponse({
+            ok: true, source: 'etsy', mode: 'execute', boardChanged: false,
+            orderDataChanged: false, productionArtworkChanged: false, applied
+        }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+function etsySupplierSelectorKey(variations) {
+    const selections = (Array.isArray(variations) ? variations : [])
+        .filter(variation => !variation?.questionId && variation?.propertyId != null && variation?.valueId != null)
+        .map(variation => ({ propertyId: String(variation.propertyId).trim(), valueId: String(variation.valueId).trim() }))
+        .filter(variation => /^\d+$/.test(variation.propertyId) && /^\d+$/.test(variation.valueId))
+        .sort((left, right) => left.propertyId.localeCompare(right.propertyId) || left.valueId.localeCompare(right.valueId));
+    return selections.map(variation => `${variation.propertyId}:${variation.valueId}`).join('|');
+}
+
+function etsyBlankRecipeVariants(input) {
+    if (!Array.isArray(input) || !input.length || input.length > 250) {
+        throw etsyListingImageProbeError('ETSY_BLANK_RECIPE_VARIANTS_REQUIRED', 'Provide between one and 250 exact Etsy variation-to-S&S SKU mappings.');
+    }
+    const seen = new Set();
+    return input.map(entry => {
+        const selectorKey = etsySupplierSelectorKey(entry?.selections);
+        const supplierSku = String(entry?.supplierSku || '').trim();
+        const supplierColor = String(entry?.supplierColor || '').trim();
+        const supplierSize = String(entry?.supplierSize || '').trim();
+        if (!selectorKey || !/^[A-Za-z0-9._-]{2,120}$/.test(supplierSku) || !supplierColor || !supplierSize) {
+            throw etsyListingImageProbeError('ETSY_BLANK_RECIPE_VARIANT_INVALID', 'Each blank mapping needs exact Etsy selections and an exact S&S SKU, color, and size.');
+        }
+        if (seen.has(selectorKey)) throw etsyListingImageProbeError('ETSY_BLANK_RECIPE_SELECTOR_DUPLICATE', 'Each Etsy variation selector can map to only one S&S SKU.');
+        seen.add(selectorKey);
+        return { selectorKey, supplierSku, supplierColor: supplierColor.slice(0, 120), supplierSize: supplierSize.slice(0, 80) };
+    });
+}
+
+async function handleEtsyBlankRecipe(request, env, allowOrigin, reqAllowHeaders, identity) {
+    try {
+        const body = await request.json().catch(() => ({}));
+        const listingId = etsyListingIdFromCatalogInput(body.listing ?? body.listingId);
+        const supplier = body?.supplier || {};
+        const snapshotDate = String(supplier.snapshotDate || '').trim();
+        const brand = String(supplier.brand || '').trim();
+        const style = String(supplier.style || '').trim();
+        if (String(supplier.name || 'ss').toLowerCase() !== 'ss' || !/^\d{4}-\d{2}-\d{2}$/.test(snapshotDate) || !brand || !style) {
+            throw etsyListingImageProbeError('ETSY_BLANK_RECIPE_SUPPLIER_INVALID', 'Use the dated S&S snapshot plus an exact supplier brand and style.');
+        }
+        const variants = etsyBlankRecipeVariants(body.variants);
+        const connection = await loadEtsyConnection(env);
+        // Reuses the owned-listing check without storing or exposing Etsy media.
+        await etsyCatalogPreviewMappings(env, connection, listingId);
+        if (body.execute !== true) return jsonResponse({
+            ok: true, source: 'etsy', mode: 'review', boardChanged: false, orderDataChanged: false,
+            listingId, supplier: { name: 'ss', snapshotDate, brand, style }, variants
+        }, allowOrigin, reqAllowHeaders);
+
+        const db = requireOrderDb(env);
+        const shop = await d1Shop(env);
+        const actor = `${identity.kind}:${identity.subject}`;
+        const recipeId = await stableAssetId(`etsy-blank-recipe:${shop.id}:${listingId}:ss`);
+        const now = isoNow();
+        await db.prepare(`
+          INSERT INTO etsy_listing_blank_recipes (
+            id, shop_id, etsy_shop_id, etsy_listing_id, supplier, supplier_snapshot_date,
+            supplier_brand, supplier_style, state, created_by, created_at, updated_at, archived_at
+          ) VALUES (?, ?, ?, ?, 'ss', ?, ?, ?, 'active', ?, ?, ?, NULL)
+          ON CONFLICT(shop_id, etsy_listing_id) DO UPDATE SET
+            etsy_shop_id = excluded.etsy_shop_id, supplier = excluded.supplier,
+            supplier_snapshot_date = excluded.supplier_snapshot_date, supplier_brand = excluded.supplier_brand,
+            supplier_style = excluded.supplier_style, state = 'active', created_by = excluded.created_by,
+            updated_at = excluded.updated_at, archived_at = NULL
+        `).bind(recipeId, shop.id, String(connection.etsy_shop_id), listingId, snapshotDate, brand, style, actor, now, now).run();
+        const variantStatements = [];
+        for (const variant of variants) {
+            const variantId = await stableAssetId(`etsy-blank-recipe-line:${recipeId}:${variant.selectorKey}`);
+            variantStatements.push(db.prepare(`
+              INSERT INTO etsy_listing_supplier_skus (
+                id, shop_id, recipe_id, selector_key, supplier_sku, supplier_color, supplier_size,
+                state, created_by, created_at, updated_at, archived_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL)
+              ON CONFLICT(recipe_id, selector_key) DO UPDATE SET
+                supplier_sku = excluded.supplier_sku, supplier_color = excluded.supplier_color,
+                supplier_size = excluded.supplier_size, state = 'active', created_by = excluded.created_by,
+                updated_at = excluded.updated_at, archived_at = NULL
+            `).bind(
+                variantId, shop.id, recipeId, variant.selectorKey, variant.supplierSku,
+                variant.supplierColor, variant.supplierSize, actor, now, now
+            ));
+        }
+        await db.batch(variantStatements);
+        const refreshedOrders = await refreshEtsySupplierSkusForListing(env, listingId);
+        return jsonResponse({
+            ok: true, source: 'etsy', mode: 'execute', listingId,
+            supplier: { name: 'ss', snapshotDate, brand, style }, mappedVariants: variants.length,
+            refreshedOrders, boardChanged: false, orderDataChanged: refreshedOrders > 0
+        }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+async function resolveEtsySupplierSkus(env, contract) {
+    const lines = Array.isArray(contract?.commerce?.lineItems) ? contract.commerce.lineItems : [];
+    if (!lines.length) return contract;
+    const shop = await d1Shop(env);
+    const db = requireOrderDb(env);
+    const resolvedLines = [];
+    for (const item of lines) {
+        const listingId = String(item?.listingId || '').trim();
+        const selectorKey = etsySupplierSelectorKey(item?.variations);
+        if (!listingId || !selectorKey) { resolvedLines.push(item); continue; }
+        const mapping = await db.prepare(`
+          SELECT m.supplier_sku, m.supplier_color, m.supplier_size,
+                 r.supplier, r.supplier_snapshot_date, r.supplier_brand, r.supplier_style
+          FROM etsy_listing_blank_recipes r
+          JOIN etsy_listing_supplier_skus m ON m.recipe_id = r.id
+          WHERE r.shop_id = ? AND r.etsy_listing_id = ? AND r.state = 'active'
+            AND m.state = 'active' AND m.selector_key = ?
+          LIMIT 1
+        `).bind(shop.id, listingId, selectorKey).first();
+        if (!mapping) { resolvedLines.push(item); continue; }
+        resolvedLines.push({
+            ...item,
+            sourceSku: item.sku || null,
+            supplierSku: mapping.supplier_sku,
+            supplier: {
+                name: mapping.supplier, snapshotDate: mapping.supplier_snapshot_date,
+                brand: mapping.supplier_brand, style: mapping.supplier_style,
+                color: mapping.supplier_color, size: mapping.supplier_size
+            }
+        });
+    }
+    return { ...contract, commerce: { ...contract.commerce, lineItems: resolvedLines } };
+}
+
 function etsyShadowEligibility(receipt) {
     const status = String(receipt?.status || '').trim().toLowerCase();
     const paid = Boolean(receipt?.is_paid ?? receipt?.was_paid ?? status === 'paid');
@@ -3981,6 +4245,7 @@ async function readEtsyReceiptForShadow(env, connection, { receiptId = null } = 
 async function persistEtsyShadowOrder(env, contract, eligibility, actorId, { enroll = false } = {}) {
     const db = requireOrderDb(env);
     const shop = await d1Shop(env);
+    contract = await resolveEtsySupplierSkus(env, contract);
     const now = isoNow();
     const production = defaultProductionState(actorId || 'etsy-shadow');
     const source = contract.source;
@@ -6593,6 +6858,9 @@ function providerDetailLineItems(contract) {
         const unitPrice = Number(item.unitPrice || 0);
         return {
             ...item,
+            sku: item.supplierSku || item.sku || null,
+            sourceSku: item.sourceSku || item.sku || null,
+            supplierSku: item.supplierSku || null,
             quantity,
             currentQuantity: quantity,
             unfulfilledQuantity: contract?.commerce?.shipped ? 0 : quantity,
@@ -6756,7 +7024,7 @@ async function handleProviderProductionPatch(request, env, orderKey, allowOrigin
     }
     const actor = `${identity?.kind || 'unknown'}:${identity?.subject || 'unknown'}`;
     const { shop, record } = await readProviderOrder(env, orderKey);
-    if (record.enrollmentState !== 'pilot') {
+    if (!['pilot', 'active'].includes(record.enrollmentState)) {
         return v1Error({
             code: 'PROVIDER_PRODUCTION_WRITE_DISABLED',
             message: 'Production updates are disabled for this provider order.'
@@ -7397,6 +7665,130 @@ async function handleV1BatchCommit(request, env, allowOrigin, reqAllowHeaders, i
 
 function assetIdFromPath(pathname) {
     return decodeURIComponent(pathname.replace(/^\/order-manager\/v1\/assets\//, '').replace(/\/(read-ticket|read)$/, ''));
+}
+
+function supplierLinesFromProviderRecords(records) {
+    const aggregate = new Map();
+    for (const record of records) {
+        for (const item of record.contract?.commerce?.lineItems || []) {
+            if (PRINT_TITLES.has(item?.title)) continue;
+            const sku = String(item?.supplierSku || '').trim();
+            const qty = Number(item?.currentQuantity ?? item?.quantity ?? 0);
+            if (!sku || !Number.isInteger(qty) || qty <= 0) continue;
+            aggregate.set(sku, (aggregate.get(sku) || 0) + qty);
+        }
+    }
+    return [...aggregate.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([sku, qty]) => ({ sku, qty }));
+}
+
+async function refreshEtsySupplierSkusForListing(env, listingId) {
+    const shop = await d1Shop(env);
+    const db = requireOrderDb(env);
+    const rows = await db.prepare(`
+      SELECT order_key, commerce_json FROM provider_order_projection
+      WHERE shop_id = ? AND provider = 'etsy' AND board_enrolled = 1
+        AND commerce_json LIKE ?
+    `).bind(shop.id, `%\"listingId\":\"${listingId}\"%`).all();
+    let updated = 0;
+    for (const row of rows.results || []) {
+        let contract;
+        try { contract = JSON.parse(row.commerce_json || '{}'); } catch (_) { continue; }
+        const resolved = await resolveEtsySupplierSkus(env, contract);
+        if (JSON.stringify(resolved) === JSON.stringify(contract)) continue;
+        await db.prepare(`
+          UPDATE provider_order_projection SET commerce_json = ?, updated_at = ?
+          WHERE shop_id = ? AND order_key = ?
+        `).bind(JSON.stringify(resolved), isoNow(), shop.id, row.order_key).run();
+        updated += 1;
+    }
+    return updated;
+}
+
+async function confirmedProviderBatchProductionUpdate(env, shop, record, batchId, poNumber, actor) {
+    const current = record.production;
+    if (current.batchRefs.includes(poNumber)
+        && ['blanks_cart', 'blanks_ordered', 'print', 'completed'].includes(current.stage)) return { repaired: false };
+    const next = normalizeProductionState(current, actor);
+    next.stage = 'blanks_cart';
+    next.readiness.blanksOrdered = false;
+    next.batchRefs = [...new Set([...next.batchRefs, poNumber])].slice(0, 100);
+    next.revision = current.revision + 1;
+    next.lastMutationId = `batch:${batchId}`;
+    next.updatedAt = isoNow();
+    next.updatedBy = actor;
+    const saved = await requireOrderDb(env).prepare(`
+      UPDATE provider_production_state
+      SET revision = ?, last_mutation_id = ?, state_json = ?, updated_at = ?
+      WHERE shop_id = ? AND order_key = ? AND revision = ?
+    `).bind(next.revision, next.lastMutationId, JSON.stringify(next), next.updatedAt, shop.id, record.orderKey, current.revision).run();
+    if (!saved.meta?.changes) throw Object.assign(new Error('Provider production state changed before batch confirmation.'), { code: 'VERSION_CONFLICT' });
+    return { repaired: true };
+}
+
+async function handleProviderBatchCommit(request, env, allowOrigin, reqAllowHeaders, identity) {
+    try {
+        const body = await request.json().catch(() => ({}));
+        const orderKeys = [...new Set((body.orderKeys || []).map(value => String(value || '').trim()).filter(value => /^etsy:\d+:\d+$/.test(value)))];
+        const idempotencyKey = String(body.idempotencyKey || '').trim();
+        if (!orderKeys.length || orderKeys.length > 50 || !/^[A-Za-z0-9._:-]{8,200}$/.test(idempotencyKey)) {
+            return v1Error({ code: 'INVALID_PROVIDER_BATCH', message: 'Select one to 50 Etsy orders and provide a valid idempotency key.' }, allowOrigin, reqAllowHeaders, 400);
+        }
+        const shop = await d1Shop(env);
+        const db = requireOrderDb(env);
+        const actor = `${identity?.kind || 'unknown'}:${identity?.subject || 'unknown'}`;
+        const rows = await db.prepare(`
+          SELECT p.*, ps.revision, ps.last_mutation_id, ps.state_json
+          FROM provider_order_projection p
+          JOIN provider_production_state ps ON ps.shop_id = p.shop_id AND ps.order_key = p.order_key
+          WHERE p.shop_id = ? AND p.provider = 'etsy' AND p.board_enrolled = 1
+            AND p.order_key IN (${orderKeys.map(() => '?').join(',')})
+        `).bind(shop.id, ...orderKeys).all();
+        const records = (rows.results || []).map(providerProjectionRecord);
+        if (records.length !== orderKeys.length || records.some(record => !['to_order', 'blanks_cart'].includes(record.production.stage))) {
+            return v1Error({ code: 'INVALID_PROVIDER_BATCH_STAGE', message: 'Every Etsy order must be active and in Create blanks order or In S&S cart.' }, allowOrigin, reqAllowHeaders, 409);
+        }
+        const lines = supplierLinesFromProviderRecords(records);
+        if (!lines.length) return v1Error({ code: 'BATCH_HAS_NO_SUPPLIER_SKUS', message: 'These Etsy orders need an exact S&S blank recipe before they can be submitted.' }, allowOrigin, reqAllowHeaders, 400);
+        const lineHash = bytesToHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(lines))));
+        const batchId = `ssb-${await stableAssetId(`${shop.shop_domain}:${actor}:${idempotencyKey}`)}`;
+        const poNumber = `PM-${batchId.slice(-12).toUpperCase()}`;
+        const requestJson = JSON.stringify({ orderKeys, lines, orderCount: orderKeys.length, provider: 'etsy' });
+        const now = isoNow();
+        await db.prepare(`
+          INSERT INTO batches (id, shop_id, po_number, state, line_hash, request_json, expires_at, created_by, created_at, updated_at)
+          VALUES (?, ?, ?, 'prepared', ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO NOTHING
+        `).bind(batchId, shop.id, poNumber, lineHash, requestJson, new Date(Date.now() + 15 * 60 * 1000).toISOString(), actor, now, now).run();
+        const batch = await db.prepare('SELECT * FROM batches WHERE id = ? AND shop_id = ?').bind(batchId, shop.id).first();
+        if (!batch || batch.line_hash !== lineHash || batch.request_json !== requestJson) return v1Error({ code: 'BATCH_IDEMPOTENCY_CONFLICT', message: 'This batch key was already used for different orders.' }, allowOrigin, reqAllowHeaders, 409);
+        if (batch.state === 'confirmed') return jsonResponse(JSON.parse(batch.response_json || '{"ok":true}'), allowOrigin, reqAllowHeaders);
+        if (['submitting', 'unknown'].includes(batch.state)) return v1Error({ code: 'BATCH_RECONCILIATION_REQUIRED', message: 'This batch may already have reached S&S and must be reconciled before retrying.', batchId }, allowOrigin, reqAllowHeaders, 409);
+        await db.batch([
+            ...records.map(record => db.prepare(`INSERT OR IGNORE INTO batch_orders (batch_id, order_gid, production_revision, quantity_hash) VALUES (?, ?, ?, ?)`).bind(batchId, record.orderKey, record.production.revision, lineHash)),
+            db.prepare(`UPDATE batches SET state = 'submitting', updated_at = ? WHERE id = ?`).bind(isoNow(), batchId)
+        ]);
+        let supplier;
+        try {
+            supplier = await upstreamDataRequest(env, '/order-manager/v1/supplier/ss/commit', {
+                method: 'POST', body: JSON.stringify({ batchId, poNumber, lineHash, lines, orderCount: records.length, testOrder: env.SS_TEST_ORDER !== '0' })
+            });
+        } catch (error) {
+            await db.prepare(`UPDATE batches SET state = 'unknown', response_json = ?, updated_at = ? WHERE id = ?`).bind(JSON.stringify({ error: error.message }), isoNow(), batchId).run();
+            return v1Error({ code: 'SUPPLIER_RESULT_UNKNOWN', message: 'S&S did not return a confirmed result. Do not retry until this batch is reconciled.', batchId }, allowOrigin, reqAllowHeaders, 502);
+        }
+        const response = { ok: true, batchId, poNumber, supplierOrderNumber: supplier.orderNumber, lineHash, count: records.length, subtotal: supplier.subtotal, skuCount: supplier.skuCount, testOrder: Boolean(supplier.testOrder), metadataRepairRequired: [] };
+        await db.prepare(`UPDATE batches SET state = 'confirmed', response_json = ?, updated_at = ? WHERE id = ?`).bind(JSON.stringify(response), isoNow(), batchId).run();
+        for (const record of records) {
+            try { await confirmedProviderBatchProductionUpdate(env, shop, record, batchId, poNumber, actor); }
+            catch (_) { response.metadataRepairRequired.push(record.orderKey); }
+        }
+        await db.prepare(`UPDATE batches SET response_json = ?, updated_at = ? WHERE id = ?`).bind(JSON.stringify(response), isoNow(), batchId).run();
+        return jsonResponse(response, allowOrigin, reqAllowHeaders, response.metadataRepairRequired.length ? 202 : 200);
+    } catch (error) {
+        return v1Error(error.body?.error || error, allowOrigin, reqAllowHeaders, error.status || 500, error.body);
+    }
 }
 
 function catalogPreviewIdFromPath(pathname) {

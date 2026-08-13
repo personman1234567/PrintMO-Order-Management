@@ -204,7 +204,7 @@ async function run() {
 
   const root = path.join(__dirname, '..');
   const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8');
-  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql', '0007_etsy_webhook_delivery.sql', '0008_etsy_catalog_previews.sql']
+  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql', '0007_etsy_webhook_delivery.sql', '0008_etsy_catalog_previews.sql', '0009_etsy_preview_refresh_and_supplier_skus.sql']
     .map(file => fs.readFileSync(path.join(root, 'order-manager-proxy', 'migrations', file), 'utf8'))
     .join('\n');
   const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
@@ -645,13 +645,14 @@ async function run() {
     }
     if (target.endsWith('/order-manager/v1/supplier/ss/commit')) {
       const request = JSON.parse(options.body);
-      assert.deepEqual(request.lines, [{ sku: 'B001', qty: 2 }, { sku: 'B002', qty: 1 }]);
+      const providerBatch = request.lines?.length === 1 && request.lines[0]?.sku === 'B10259505';
+      assert.deepEqual(request.lines, providerBatch ? [{ sku: 'B10259505', qty: 2 }] : [{ sku: 'B001', qty: 2 }, { sku: 'B002', qty: 1 }]);
       return Response.json({
         ok: true,
-        orderNumber: 'SS-9001',
-        count: 2,
-        subtotal: 8.5,
-        skuCount: 2,
+        orderNumber: providerBatch ? 'SS-ETSY-9001' : 'SS-9001',
+        count: providerBatch ? 1 : 2,
+        subtotal: providerBatch ? 5.5 : 8.5,
+        skuCount: providerBatch ? 1 : 2,
         testOrder: true,
       });
     }
@@ -880,6 +881,73 @@ async function run() {
       1,
       'an idempotent sync must not redownload an unchanged Etsy image'
     );
+    const previewRefreshReview = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/catalog-preview-refresh',
+      { method: 'POST', headers, body: JSON.stringify({ listings: [9001] }) }
+    ), env);
+    assert.equal(previewRefreshReview.status, 200, 'preview refresh must provide a read-only human review before changing cached mappings');
+    const previewRefreshReviewJson = await previewRefreshReview.json();
+    assert.equal(previewRefreshReviewJson.mode, 'review');
+    assert.equal(previewRefreshReviewJson.plans[0].variations[0].proposedAction, 'unchanged');
+    await env.ORDER_DB.prepare(`
+      UPDATE etsy_catalog_preview_mappings SET listing_image_id = 'obsolete-image'
+      WHERE id = ?
+    `).bind(catalogPreviewId).run();
+    await env.ORDER_DB.prepare(`
+      INSERT INTO etsy_catalog_preview_mappings (
+        id, shop_id, etsy_shop_id, etsy_listing_id, property_id, value_id, listing_image_id,
+        source_type, resolution_mode, blob_id, state, created_by, created_at, updated_at, deleted_at
+      ) VALUES ('fixture-stale-preview', 1, '98765', '9001', '102', '202', 'stale-image', 'etsy', 'direct', ?, 'active', 'fixture', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL)
+    `).bind(catalogPreviewBlob.blob_id).run();
+    const previewRefreshChanged = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/catalog-preview-refresh',
+      { method: 'POST', headers, body: JSON.stringify({ listings: [9001] }) }
+    ), env);
+    const previewRefreshChangedJson = await previewRefreshChanged.json();
+    assert.deepEqual(
+      previewRefreshChangedJson.plans[0].variations.map(variation => variation.proposedAction).sort(),
+      ['archive', 'update'],
+      'refresh review must distinguish an Etsy replacement from a mapping Etsy removed'
+    );
+    const previewRefreshExecute = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/catalog-preview-refresh',
+      { method: 'POST', headers, body: JSON.stringify({
+        listings: [9001], execute: true,
+        actions: [
+          { propertyId: '101', valueId: '201', action: 'update' },
+          { propertyId: '102', valueId: '202', action: 'archive' }
+        ]
+      }) }
+    ), env);
+    assert.equal(previewRefreshExecute.status, 200, 'only owner-selected preview refresh actions may write');
+    assert.deepEqual((await previewRefreshExecute.json()).applied.map(action => action.outcome).sort(), ['archived', 'updated']);
+    assert.equal((await env.ORDER_DB.prepare("SELECT state FROM etsy_catalog_preview_mappings WHERE id = 'fixture-stale-preview'").first()).state, 'deleted');
+    const blankRecipeReview = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/blank-recipe',
+      { method: 'POST', headers, body: JSON.stringify({
+        listingId: 9001,
+        supplier: { name: 'ss', snapshotDate: '2026-08-10', brand: 'Tultex', style: '202' },
+        variants: [{
+          selections: [{ propertyId: 100, valueId: 200 }, { propertyId: 101, valueId: 201 }],
+          supplierSku: 'B10259505', supplierColor: 'Forest Green', supplierSize: 'L'
+        }]
+      }) }
+    ), env);
+    assert.equal(blankRecipeReview.status, 200, 'blank recipes must preview exact selector-to-S&S-SKU mappings before write');
+    assert.equal((await blankRecipeReview.json()).mode, 'review');
+    const blankRecipeExecute = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/integrations/etsy/blank-recipe',
+      { method: 'POST', headers, body: JSON.stringify({
+        listingId: 9001, execute: true,
+        supplier: { name: 'ss', snapshotDate: '2026-08-10', brand: 'Tultex', style: '202' },
+        variants: [{
+          selections: [{ propertyId: 100, valueId: 200 }, { propertyId: 101, valueId: 201 }],
+          supplierSku: 'B10259505', supplierColor: 'Forest Green', supplierSize: 'L'
+        }]
+      }) }
+    ), env);
+    assert.equal(blankRecipeExecute.status, 200, 'confirmed blank recipe setup must store an exact supplier mapping');
+    assert.equal((await blankRecipeExecute.json()).mappedVariants, 1);
     const providerRowsAfterCatalogPreviewSync = await env.ORDER_DB.prepare(
       'SELECT COUNT(*) AS count FROM provider_order_projection'
     ).first();
@@ -932,6 +1000,8 @@ async function run() {
     `).first();
     assert.equal(webhookProjection.enrollment_state, 'shadow', 'webhooks must default to hidden shadow persistence');
     assert.equal(webhookProjection.board_enrolled, 0, 'automatic enrollment must remain off by default');
+    assert(webhookProjection.commerce_json.includes('"supplierSku":"B10259505"'), 'a configured Etsy blank recipe must resolve the receipt line to the exact S&S SKU');
+    assert(webhookProjection.commerce_json.includes('"sourceSku":"B001"'), 'the Etsy source SKU must be retained separately from the S&S supplier SKU');
     assert(!webhookProjection.commerce_json.includes('private@example.test'), 'webhook projection must omit buyer email');
     const webhookLedgerJson = JSON.stringify(await env.ORDER_DB.prepare(
       'SELECT * FROM etsy_webhook_deliveries WHERE webhook_id = ?'
@@ -1110,6 +1180,23 @@ async function run() {
     const enrolledWebhookCard = (await enrolledWebhookBoard.json()).data.find(order => order.orderKey === 'etsy:98765:7005');
     assert(enrolledWebhookCard, 'a flag-enabled eligible receipt must enter the shared board');
     assert.equal(enrolledWebhookCard.capabilities.productionWrite, true, 'active real Etsy orders must use revisioned D1 production state');
+    assert.equal(enrolledWebhookCard.commerce.lineItems[0].supplierSku, 'B10259505', 'the active provider board DTO must expose the resolved S&S SKU');
+    const enrolledOrderKey = encodeURIComponent('etsy:98765:7005');
+    const providerToOrder = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/orders/${enrolledOrderKey}/production`,
+      { method: 'PATCH', headers, body: JSON.stringify({ expectedVersion: 0, idempotencyKey: 'etsy-active-to-order-1', patch: { stage: 'to_order' } }) }
+    ), env);
+    assert.equal(providerToOrder.status, 200, 'active real Etsy orders must accept guarded production-stage changes');
+    const providerBatch = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/provider-batches/commit',
+      { method: 'POST', headers, body: JSON.stringify({ orderKeys: ['etsy:98765:7005'], idempotencyKey: 'etsy-provider-batch-1' }) }
+    ), env);
+    assert.equal(providerBatch.status, 200, 'a resolved Etsy order must submit its S&S SKU through the provider batch path');
+    assert.equal((await providerBatch.json()).supplierOrderNumber, 'SS-ETSY-9001');
+    const providerBatchState = await env.ORDER_DB.prepare(`
+      SELECT state_json FROM provider_production_state WHERE order_key = 'etsy:98765:7005'
+    `).first();
+    assert.equal(JSON.parse(providerBatchState.state_json).stage, 'blanks_cart', 'a confirmed Etsy S&S batch must advance only the provider production state');
     await env.ORDER_DB.prepare("DELETE FROM provider_order_projection WHERE order_key = 'etsy:98765:7005'").run();
     await env.ORDER_DB.prepare("DELETE FROM etsy_webhook_deliveries WHERE webhook_id = 'msg_enrollment_gate_1'").run();
 

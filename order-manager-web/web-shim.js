@@ -333,7 +333,9 @@ function candidateLineItem(item = {}, assets = []) {
     id: item.id,
     title: item.title || "",
     variantTitle,
-    sku: item.sku || "",
+    sku: item.supplierSku || item.sku || "",
+    sourceSku: item.sourceSku || item.sku || "",
+    supplierSku: item.supplierSku || "",
     qty: Number(item.currentQuantity ?? item.quantity ?? 0),
     price: Number(item.unitPrice || 0),
     unitPrice: Number(item.unitPrice || 0),
@@ -1021,14 +1023,15 @@ window.api.processBatch = async (orderIds) => {
   const names = Array.isArray(orderIds) ? orderIds : [];
   if (isShopifyCandidateView()) {
     const orders = names.map(candidateByName);
-    const unsupported = orders.filter(order => order._provider !== "shopify");
-    if (unsupported.length) {
-      throw new Error("Etsy orders cannot be submitted to S&S yet. Move the Etsy test card out of Build Order and submit Shopify orders separately.");
+    const providers = new Set(orders.map(order => order._provider));
+    if (providers.size !== 1) {
+      throw new Error("Submit Shopify and Etsy Build Order cards as separate S&S batches.");
     }
-    const result = await apiFetch("/order-manager/v1/batches/commit", {
+    const isEtsyBatch = providers.has("etsy");
+    const result = await apiFetch(isEtsyBatch ? "/order-manager/v1/provider-batches/commit" : "/order-manager/v1/batches/commit", {
       method: "POST",
       body: JSON.stringify({
-        orderIds: orders.map((order) => order._gid),
+        ...(isEtsyBatch ? { orderKeys: orders.map((order) => order._orderKey) } : { orderIds: orders.map((order) => order._gid) }),
         idempotencyKey: newIdempotencyKey("batch"),
       }),
     });
