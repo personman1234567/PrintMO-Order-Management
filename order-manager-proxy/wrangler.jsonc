@@ -12,7 +12,7 @@
     "SS_TEST_ORDER": "1",
     "ETSY_REDIRECT_URI": "https://order-manager-proxy.printmobusiness.workers.dev/order-manager/v1/oauth/etsy/callback",
     "ETSY_WEBHOOK_CALLBACK_URL": "https://order-manager-proxy.printmobusiness.workers.dev/order-manager/v1/webhooks/etsy",
-    "ETSY_WEBHOOK_ENROLLMENT_ENABLED": "0",
+    "ETSY_WEBHOOK_ENROLLMENT_ENABLED": "1",
     "ETSY_WEBHOOK_RECONCILIATION_ENABLED": "1"
   },
   "durable_objects": {

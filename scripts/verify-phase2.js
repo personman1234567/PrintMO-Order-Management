@@ -1921,6 +1921,13 @@ async function run() {
     'line-item tables must stay fully visible without becoming a nested scroll owner'
   );
   assert(
+    /\.detail-mockup-context-product\s*\{[\s\S]*?display:\s*grid;[\s\S]*?min-width:\s*0;/.test(detailCss)
+      && /\.detail-mockup-context-product-name\s*\{[\s\S]*?overflow-wrap:\s*anywhere;[\s\S]*?white-space:\s*normal;/.test(detailCss)
+      && /\.detail-mockup-context-quantities\s*\{[\s\S]*?display:\s*flex;[\s\S]*?flex-wrap:\s*wrap;/.test(detailCss)
+      && /\.detail-mockup-quantity\s*\{[\s\S]*?max-width:\s*100%;[\s\S]*?white-space:\s*normal;/.test(detailCss),
+    'detail mockup context must wrap long product titles and keep every quantity pill inside the pane'
+  );
+  assert(
     detailEnhancements.includes("'grouped item' : 'grouped items'")
       && detailEnhancements.includes("detail-item-qty-cell")
       && detailEnhancements.includes("classList.toggle('is-placeholder'")
