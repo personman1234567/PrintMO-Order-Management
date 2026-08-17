@@ -17,11 +17,11 @@ This plan separates three evidence states:
 
 ## Current Continuation State
 
-- **Current state**: A dual-assessment Impeccable audit scored the current detail workbench 24/40 (Acceptable). The split layout and error/accessibility foundations are credible, but the persisted model cannot represent artwork approval/versioning, gang-sheet lifecycle, partial material readiness, blocker ownership, deadlines, or quality/rework. Six P1 reliability and product-model issues are documented below. No redesign or defect fix from this plan is implemented.
-- **Next safe action**: Implement the bounded reliability patch in Phase 1, then validate the smallest authoritative artwork, gang-sheet/transfer, garment, blocker, owner, and deadline vocabulary with the PrintMO owner before changing the production schema or claiming complete production readiness.
+- **Current state**: A dual-assessment Impeccable audit scored the current detail workbench 24/40 (Acceptable). The split layout and error/accessibility foundations are credible, but the persisted model cannot represent artwork approval/versioning, gang-sheet lifecycle, partial material readiness, blocker ownership, deadlines, or quality/rework. Six P1 reliability and product-model issues are documented below. A Journey + Philosopher exploration now maps three candidate operator arcs—routine action, blocked/uncertain resolution, and interruption/handoff—but no redesign or defect fix from this plan is implemented.
+- **Next safe action**: Implement the bounded reliability patch in Phase 1, then validate the smallest authoritative artwork, gang-sheet/transfer, garment, blocker, owner, and deadline vocabulary and walk through the three candidate arcs with representative PrintMO orders before changing the production schema or claiming complete production readiness.
 - **Remaining blockers**: No representative authenticated order was available during the production-browser pass; populated density and real mobile workflow need owner acceptance. Exact shop state names, transition authority, partial-receipt semantics, and quality/rework policy remain unapproved.
 - **Owner / external actions**: Confirm the real shop workflow vocabulary, which workstreams apply to each order type, who may approve artwork/release work/override blockers, and whether Overview should replace Items & financials as the default tab.
-- **Last verified evidence**: Repository source and deployed unauthenticated shell inspected 2026-08-17. `scripts/verify-phase2.js` passed. The production shell exposed zero orders outside Shopify Admin, so no customer-bearing order or mutation was opened. Full audit snapshot: `../../../.impeccable/critique/2026-08-17T21-04-46Z__order-manager-web-index-html.md`.
+- **Last verified evidence**: Repository source and deployed unauthenticated shell inspected 2026-08-17. `scripts/verify-phase2.js` passed. The production shell exposed zero orders outside Shopify Admin, so no customer-bearing order or mutation was opened. Full audit snapshot: `../../../.impeccable/critique/2026-08-17T21-04-46Z__order-manager-web-index-html.md`. Candidate journey visualization: [Order Detail Journey Map](order-detail-journey-map.html).
 
 ## Problem & User Need
 
@@ -150,6 +150,56 @@ Show order/customer identity, promised or operational due date, responsible owne
 - **Items & commerce**: canonical line items, current money, payment, customer, and delivery evidence without becoming the default production task.
 - **Activity**: immutable production and commerce history; current blockers must not live only here.
 
+## Journey + Philosopher Exploration — Candidate
+
+This exploration deliberately questioned the inherited “detail screen” model before refining its tabs. Its output is a set of journey hypotheses, not approved workflow or a replacement for observing representative shop orders. The self-contained visualization is [Order Detail Journey Map](order-detail-journey-map.html).
+
+### Reframed mental model
+
+- **The order is a case moving through commitments, not a static record.** The important unit is often a transition—approve, order, receive, accept, release, complete, hand off—rather than a field category.
+- **Order Detail is a checkpoint, not a destination.** Its stable job is to help an operator orient, choose the next safe commitment, act, verify the consequence, and exit or hand off without losing context.
+- **Readiness is an evidence-backed claim.** It can be incomplete, stale, contradicted, invalidated by later evidence, or impossible for the system to determine. The UI should expose the proof and uncertainty behind the claim.
+- **Work state and knowledge state are different.** “Gang sheet ordered” is a work state; “order reference unverified” is a knowledge state. Compressing both into Ready/Not ready hides whether the shop needs action, evidence, or judgment.
+- **The experience crosses systems and time.** Some work happens in Designer Studio, a gang-sheet/vendor tool, receiving, or the physical shop. The detail must preserve a return checkpoint and the evidence needed to continue, rather than pretending every action occurs inside the modal.
+- **“Alive” means causally responsive.** After an action, show what committed, which milestone changed, what downstream work became possible, and the new next action. Animation is secondary to this visible cause-and-effect.
+- **Exit is part of the workflow.** Closing, interruption, mobile re-entry, shift change, and delegation require safe draft ownership and a recoverable handoff state.
+
+### Three distinct operator arcs
+
+False coherence would hide meaningful variance, so the journey is not one universal happy path.
+
+| Arc | Entry condition | Core need | Successful end |
+|---|---|---|---|
+| Routine / known next action | Evidence is current and one deterministic action is safe | Orient quickly, act without tab hunting, verify the commit | The new milestone and next action are visible, or the order is complete. |
+| Blocked / uncertain | A blocker, stale fact, missing artifact, partial quantity, or contradictory evidence prevents safe release | Understand why, inspect proof, resolve or delegate, and return with evidence | The order is explicitly released or remains blocked with owner, reason, and resolution path. |
+| Interrupted / handoff | The operator returns later, changes device, or another person takes over | Recover what changed, draft ownership, pending work, and responsibility | Work resumes without reconstructing history or carrying hidden local state across orders. |
+
+### Stable journey spine
+
+1. **Entry from context**: carry board identity, stage, attention, and the operator's reason for opening the order; do not make the rich endpoint a blank-screen gate.
+2. **Orientation checkpoint**: show identity, due/urgency source, freshness, changes since last view, current commitment, and owner.
+3. **Decision frame**: show one next safe action when deterministic; otherwise state exactly why the system cannot determine one.
+4. **Focused resolution**: open the relevant artwork, gang-sheet/transfer, garment, production, quality, or fulfillment workspace with only the necessary evidence and controls prominent.
+5. **Commit boundary**: distinguish local draft, pending write, committed state, conflict, and failed write. Irreversible or externally committed actions require stronger confirmation than reversible local edits.
+6. **Consequence state**: identify what changed, which downstream dependency is now satisfied, whether readiness changed, and what comes next.
+7. **Exit or handoff**: close safely, retain only intentionally order-scoped drafts, or assign a named next owner with a recoverable checkpoint.
+
+### Device and context variants
+
+- **Desktop / owner or power operator**: keep artwork and production evidence visible while the focused resolver changes; support keyboard acceleration and next-order progression.
+- **Embedded mobile / interrupted shop-floor use**: the initial viewport owns orientation, blocker, and next action. Deep evidence is progressively disclosed; the operator should not traverse the desktop pane stack before reaching the selected task.
+- **Role handoff**: a designer, receiving operator, production operator, or owner may enter the same order for different reasons. Preserve one canonical state while tailoring the prominent evidence and allowed actions to role/capability rather than duplicating order truth.
+- **External-tool handoff**: when work leaves Order Manager, retain the work package identity, expected return evidence, owner, and re-entry action. A generic “open vendor” link without a return contract is incomplete.
+
+### Journey hypotheses to validate
+
+- A representative operator can identify the correct next safe action within 10 seconds without opening another system.
+- Current blockers become more useful when each exposes owner, due time, evidence, and a resolution path rather than a badge alone.
+- Showing “what changed since last view” reduces history scanning during interruption and shift handoff.
+- Separating work state from evidence/knowledge state prevents false release and makes “unknown” actionable.
+- Showing the downstream consequence of a commit improves confidence more than decorative motion.
+- The three arcs cover most real opens; any common fourth arc should be discovered through representative-order walkthroughs rather than invented from the data model.
+
 ## Interaction, Copy, and Feedback Requirements
 
 - Replace broad `Production ready` copy with scope-accurate language until all required gates are modeled, such as `Materials marked ready`.
@@ -253,6 +303,10 @@ The design must not use false certainty, hidden blockers, or opaque priority sco
 - How should partial receipt and customer-approved partial fulfillment affect release?
 - Which date is authoritative for urgency: requested, quoted, committed, fulfill-by, pickup, ship, or internal must-start?
 - Is the printed counter garment pieces, completed decoration operations, or another unit?
+- What are the actual reasons staff open Order Detail, and what percentage of opens follow the routine, blocked, or re-entry/handoff arcs?
+- Which external tools participate in artwork, gang-sheet ordering, receiving, and production, and what evidence must return to Order Manager?
+- What should “changes since last view” mean for a shared workstation or role account, and whose view timestamp is authoritative?
+- When is a handoff an explicit assignment versus an inferred next role, and what prevents an order from becoming ownerless?
 
 ### Engineering questions
 
@@ -265,3 +319,4 @@ The design must not use false certainty, hidden blockers, or opaque priority sco
 ## Progress Log
 
 - **2026-08-17 — Audit intake**: Preserved the dual-assessment 24/40 audit, separated verified defects from candidate shop states, and defined the reliability-first continuation path. No application behavior or production schema changed.
+- **2026-08-17 — Journey + Philosopher exploration**: Reframed Order Detail as a checkpoint for evidence-backed commitments, separated routine, blocked/uncertain, and interruption/handoff arcs, documented the stable orient → decide → resolve → commit → consequence → exit spine, and added a self-contained HTML journey map. All findings remain candidate until representative-order walkthroughs and owner validation.

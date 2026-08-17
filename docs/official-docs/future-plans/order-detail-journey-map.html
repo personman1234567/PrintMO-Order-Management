@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PrintMO Order Detail Journey Map</title>
+  <style>
+:root {
+  --bg: #fafafc; --surface: #ffffff; --fg: #18182b; --fg-muted: #65657a;
+  --border: #d8d8e4; --accent: #4338ca;
+  --sans: "Hanken Grotesk", Inter, system-ui, -apple-system, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px;
+  --s5: 20px; --s6: 24px; --s7: 32px; --s8: 48px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #18182b; --surface: #1f1f36; --fg: #f0f0f8; --fg-muted: #8888a8;
+    --border: #2a2a44; --accent: #7c6ff0;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  font-family: var(--sans); background: var(--bg); color: var(--fg);
+  padding: var(--s7); line-height: 1.5; margin: 0;
+}
+.visual-diagram {
+  margin: 0; padding: var(--s5);
+  background: var(--surface); border-radius: 8px;
+  border: 1px solid var(--border); overflow-x: auto;
+}
+.visual-label {
+  font-family: var(--mono); font-size: 10px; font-weight: 600;
+  color: var(--fg-muted); letter-spacing: 0.06em;
+  margin-bottom: var(--s4); text-transform: uppercase;
+}
+.flow-grid {
+  display: grid;
+  grid-template-columns: auto 16px 1fr 16px 1fr 16px 1fr 16px 1fr 16px 1fr;
+  align-items: center; padding: var(--s3) 0; row-gap: var(--s2);
+}
+.flow-node {
+  padding: var(--s2); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 4px;
+  text-align: center; min-width: 0;
+}
+.flow-node-step { font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--accent); margin-bottom: 1px; }
+.flow-node-label { font-size: 11px; font-weight: 600; color: var(--fg); }
+.flow-node-detail { font-size: 10px; color: var(--fg-muted); margin-top: 1px; }
+.flow-node-icon { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--accent); }
+.flow-start { border-color: var(--accent); border-width: 2px; padding: var(--s2) var(--s3); }
+.flow-end { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--bg)); }
+.flow-arrow { height: 1px; background: var(--border); position: relative; }
+.flow-arrow::after {
+  content: ''; position: absolute; right: 0; top: -3px;
+  border-left: 4px solid var(--border);
+  border-top: 3px solid transparent; border-bottom: 3px solid transparent;
+}
+.flow-gate { text-align: center; padding-top: var(--s1); }
+.flow-gate-connector { width: 1px; height: 10px; background: var(--border); margin: 0 auto; }
+.flow-gate-diamond {
+  width: 10px; height: 10px; background: var(--surface);
+  border: 1px solid var(--border);
+  transform: rotate(45deg); margin: 0 auto 4px;
+}
+.flow-gate-label { font-size: 10px; font-weight: 600; color: var(--fg-muted); }
+.flow-gate-action { font-size: 10px; color: var(--fg-muted); opacity: 0.6; }
+.flow-metric { margin-top: var(--s3); padding-top: var(--s3); border-top: 1px solid var(--border); font-size: 11px; }
+.flow-metric-value { font-weight: 600; color: var(--accent); }
+.flow-metric-label { color: var(--fg-muted); }
+  h1 { margin: 0 0 var(--s2); font-size: 28px; line-height: 1.15; }
+  h2 { margin: var(--s7) 0 var(--s3); font-size: 18px; }
+  p { max-width: 78ch; color: var(--fg-muted); }
+  ul { max-width: 84ch; padding-left: var(--s6); }
+  .visual-diagram + .visual-diagram { margin-top: var(--s5); }
+  @media (max-width: 720px) {
+    body { padding: var(--s4); }
+    .visual-diagram { padding: var(--s3); }
+    .flow-grid { min-width: 920px; }
+  }
+  </style>
+</head>
+<body>
+  <h1>Order Detail as a Digital Traveler</h1>
+  <p>Journey + Philosopher exploration, 2026-08-17. This is a candidate experience model, not approved PrintMO workflow policy. It deliberately keeps three operator paths separate because a routine order, a blocked order, and an interrupted handoff do not converge into one honest happy path.</p>
+
+  <h2>What changed in the framing</h2>
+  <ul>
+    <li>The order is not primarily a record to inspect; it is a case moving through commitments.</li>
+    <li>Readiness is not a permanent label. It is an evidence-backed claim that can be incomplete, stale, contradicted, or invalidated.</li>
+    <li>The detail experience is a checkpoint: orient, choose the next safe commitment, act, verify the consequence, then exit or hand off.</li>
+    <li>“Alive” means causally responsive—showing what changed and what that unlocks—not decorative animation.</li>
+    <li>Closing, interruption, external-tool work, and return are part of the journey rather than edge cases outside it.</li>
+  </ul>
+
+  <h2>Arc A — Routine order with one safe next action</h2>
+  <div class="visual-diagram">
+    <div class="visual-label">Flow: Known next action</div>
+    <div class="flow-grid">
+      <div class="flow-node flow-start"><div class="flow-node-icon">#</div><div class="flow-node-label">Open order</div><div class="flow-node-detail">From the active board</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node"><div class="flow-node-step">1</div><div class="flow-node-label">Orient</div><div class="flow-node-detail">Identity, due, freshness</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node"><div class="flow-node-step">2</div><div class="flow-node-label">Confirm next action</div><div class="flow-node-detail">Evidence and consequence</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node"><div class="flow-node-step">3</div><div class="flow-node-label">Act in context</div><div class="flow-node-detail">No navigation scavenger hunt</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node"><div class="flow-node-step">4</div><div class="flow-node-label">Commit + verify</div><div class="flow-node-detail">Pending, saved, or conflict</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node flow-end"><div class="flow-node-step">5</div><div class="flow-node-label">See what changed</div><div class="flow-node-detail">New next action or done</div></div>
+      <div class="flow-gate" style="grid-column: 5; grid-row: 2;"><div class="flow-gate-connector"></div><div class="flow-gate-diamond"></div><div class="flow-gate-label">Still safe?</div><div class="flow-gate-action">Route to blocked arc if not</div></div>
+    </div>
+    <div class="flow-metric"><span class="flow-metric-value">Validation target: identify the correct next action in ≤10 seconds</span> <span class="flow-metric-label">without opening another tab or system</span></div>
+  </div>
+
+  <h2>Arc B — Blocked or uncertain order</h2>
+  <div class="visual-diagram">
+    <div class="visual-label">Flow: Resolve evidence, not just a badge</div>
+    <div class="flow-grid">
+      <div class="flow-node flow-start"><div class="flow-node-icon">!</div><div class="flow-node-label">Open attention order</div><div class="flow-node-detail">Known or suspected blocker</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node"><div class="flow-node-step">1</div><div class="flow-node-label">Name the blocker</div><div class="flow-node-detail">Reason, owner, due</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node"><div class="flow-node-step">2</div><div class="flow-node-label">Inspect proof</div><div class="flow-node-detail">Artifact, quantity, source</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node"><div class="flow-node-step">3</div><div class="flow-node-label">Resolve or delegate</div><div class="flow-node-detail">In app or external tool</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node"><div class="flow-node-step">4</div><div class="flow-node-label">Return with evidence</div><div class="flow-node-detail">Sync, attach, or verify</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node flow-end"><div class="flow-node-step">5</div><div class="flow-node-label">Release or remain blocked</div><div class="flow-node-detail">Reason stays explainable</div></div>
+      <div class="flow-gate" style="grid-column: 9; grid-row: 2;"><div class="flow-gate-connector"></div><div class="flow-gate-diamond"></div><div class="flow-gate-label">Evidence sufficient?</div><div class="flow-gate-action">Do not auto-release if unknown</div></div>
+    </div>
+    <div class="flow-metric"><span class="flow-metric-value">Validation target: every blocker has an owner, resolution path, and proof</span> <span class="flow-metric-label">with uncertainty visible instead of collapsed into “not ready”</span></div>
+  </div>
+
+  <h2>Arc C — Interruption, re-entry, and handoff</h2>
+  <div class="visual-diagram">
+    <div class="visual-label">Flow: Preserve context across time and people</div>
+    <div class="flow-grid">
+      <div class="flow-node flow-start"><div class="flow-node-icon">↻</div><div class="flow-node-label">Reopen order</div><div class="flow-node-detail">Later, mobile, or new operator</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node"><div class="flow-node-step">1</div><div class="flow-node-label">Recognize context</div><div class="flow-node-detail">What changed since last view</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node"><div class="flow-node-step">2</div><div class="flow-node-label">Recover ownership</div><div class="flow-node-detail">Draft, owner, pending action</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node"><div class="flow-node-step">3</div><div class="flow-node-label">Resume or hand off</div><div class="flow-node-detail">No hidden local state</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node"><div class="flow-node-step">4</div><div class="flow-node-label">Leave a checkpoint</div><div class="flow-node-detail">State, evidence, next owner</div></div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node flow-end"><div class="flow-node-step">5</div><div class="flow-node-label">Next person resumes</div><div class="flow-node-detail">Without reconstructing history</div></div>
+      <div class="flow-gate" style="grid-column: 7; grid-row: 2;"><div class="flow-gate-connector"></div><div class="flow-gate-diamond"></div><div class="flow-gate-label">Same owner?</div><div class="flow-gate-action">Require explicit handoff if not</div></div>
+    </div>
+    <div class="flow-metric"><span class="flow-metric-value">Validation target: resume without re-reading the full history</span> <span class="flow-metric-label">and never carry an unsaved draft across order identity</span></div>
+  </div>
+
+  <h2>Journey-wide contract</h2>
+  <div class="visual-diagram">
+    <div class="visual-label">Stable spine across all three arcs</div>
+    <ul>
+      <li><strong>Orient:</strong> identity, due, source freshness, current commitment, and changes since last view.</li>
+      <li><strong>Decide:</strong> one next safe action or one clearly explained reason the system cannot determine it.</li>
+      <li><strong>Resolve:</strong> show only the evidence and controls needed for the current workstream, with deeper detail available.</li>
+      <li><strong>Commit:</strong> distinguish local draft, pending write, committed state, conflict, and failed write.</li>
+      <li><strong>Consequences:</strong> show which milestone changed, which downstream work became possible, and what is next.</li>
+      <li><strong>Exit/handoff:</strong> close safely, preserve only intentionally scoped drafts, and leave a recoverable checkpoint.</li>
+    </ul>
+  </div>
+</body>
+</html>
