@@ -111,9 +111,17 @@ Below is the complete inventory of all 10 modal overlays and secondary screens e
       1. `Items & financials` (`#tab-items`, default): Presentation-consolidated line items, custom attributes, discount, order total, and a SKU-gated garment accounting control. Selecting `Receive n/n` opens the canonical supplier-batch receiving record at the matching SKU line; increment, typed quantity, and All actions remain batch-authoritative and retain oldest-first order allocation.
       2. `Production` (`#tab-production`): Customer checkout note banner and the full-width Design Files workspace (`#detail-design-panel`), grouped into `Front prints`, `Back prints`, and `Extras`.
       3. `Fulfillment` (`#tab-logistics`): Shipping address and tracking.
-      4. `Customer & history` (`#tab-customer`): Customer email/phone with protected-data fallback states and the order event timeline.
-  - **Mobile adaptation**: `#detail-content` is the sole vertical scroll owner and resets to its top whenever a detail opens. The header retains a labeled `Close` control, both panes become intrinsic-height blocks, tabs scroll horizontally and remain sticky within the workbench, readiness milestones become full-width sequence rows rather than compressed side-by-side labels, design groups collapse to one column, controls retain at least 44px touch targets, and safe-area padding is honored.
+      4. `Customer & order` (`#tab-customer`): Customer contact, addresses/order context, protected-data fallback states, and commerce metadata.
+      5. `Activity & exceptions` (`#tab-activity`): Current production-attention reasons, Shopify order activity, and PrintMO production history.
+  - **Mobile adaptation**: `#detail-content` is the sole vertical scroll owner and resets to its top whenever a detail opens. The header retains a labeled `Close` control, both panes become intrinsic-height blocks, tabs scroll horizontally and remain sticky within the workbench, readiness milestones become full-width sequence rows rather than compressed side-by-side labels, design groups collapse to one column, and safe-area padding is honored. Primary controls meet the 44px target, but several secondary controls remain 40px unless a coarse-pointer query matches; that known gap is tracked in the [Order Detail Digital Traveler Redesign](../future-plans/order-detail-digital-traveler-redesign-plan.md).
   - **Surface-specific file access**: The desktop detail retains the legacy aggregate `#detail-files-btn` and attachments modal. The Shopify web detail intentionally omits that button because mockups and design files render inline. Shared renderer code treats `#detail-files-btn` as optional.
+
+- **Current reliability and semantic boundaries**:
+  - `Production ready` currently means only that the two Blanks and two Prints Ordered/Ready flags are checked. It is not evidence of approved artwork, an ordered/received gang sheet, quantity reconciliation, quality acceptance, or formal work release.
+  - Canonical detail hydration repaints commerce, assets, attention, and stage, but the current merge path does not adopt canonical revision, printed count, and all readiness flags into the local control model. A stale board summary can therefore remain visible after richer detail arrives.
+  - The inline desktop notes editor is shared across order opens and is not reset by the canonical close path. Until repaired, an unsaved draft can survive opening a different order.
+  - Customer names are commerce-source read-only in Shopify candidate mode even though the shared renderer still exposes the legacy Edit name entry point.
+  - These are current known limitations, not intended contracts. Their repair sequence and future workflow model are specified in the linked Digital Traveler plan.
 
 ### 2. Batch Order Summary Drawer (`.summary`)
 - **Purpose**: Displays pre-submission totals for blank apparel orders staged in `#col-toOrder`.

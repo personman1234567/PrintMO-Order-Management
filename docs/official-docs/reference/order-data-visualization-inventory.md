@@ -21,6 +21,7 @@
 - [Visualization-relevant Shopify inventory](#visualization-relevant-shopify-inventory)
 - [Complete Shopify Order field coverage](#complete-shopify-order-field-coverage)
 - [PrintMO production, artwork, and operational inventory](#printmo-production-artwork-and-operational-inventory)
+- [Production-control fields not yet modeled](#production-control-fields-not-yet-modeled)
 - [Access, privacy, freshness, and payload constraints](#access-privacy-freshness-and-payload-constraints)
 - [Questions reserved for the layout phase](#questions-reserved-for-the-layout-phase)
 - [Source anchors](#source-anchors)
@@ -101,6 +102,8 @@ The board uses the bounded Shopify/D1 summary mapped through `web-shim.js` into 
 - Current subtotal, named shipping or local-pickup selection, discount when applied, tax total, and total. Tax breakdown is available behind a collapsed disclosure.
 - Shopify delivery/fulfillment, conversion, discounts, and timeline data when returned, plus a separate PrintMO production history.
 - PrintMO blanks/prints ordered and ready controls.
+
+The readiness summary is limited to those four booleans. It does not currently establish approved artwork, gang-sheet/transfer state, partial material reconciliation, quality acceptance, blocker ownership, a deadline, or formal work release. The candidate model and implementation boundary are in [Order Detail Digital Traveler Redesign](../future-plans/order-detail-digital-traveler-redesign-plan.md).
 
 The shared Shopify-board workbench first paints from the bounded board object, then loads and renders the canonical `GET /order-manager/v1/orders/:gid` response. Optional Shopify permission failures remain partial-data notices rather than order exceptions.
 
@@ -397,6 +400,22 @@ These data points are not Shopify commerce even when some are stored on a Shopif
 | Supplier attempts | attempt type, outcome, HTTP status, time | Exception/support; raw response should remain server-side. |
 | Migration ledger | source identity/hash, target, state, attempts, error, timestamps | Support only. |
 
+## Production-Control Fields Not Yet Modeled
+
+The 2026-08-17 repository-grounded order-detail audit confirmed that these concepts do not have an authoritative end-to-end contract in the current shared detail. They are important design inputs, but their exact names, granularity, transition authority, and storage location require owner/workflow validation before implementation.
+
+| Candidate family | Missing or incomplete information | Why it matters |
+|---|---|---|
+| Artwork workflow | Designing/proof/approval/production-ready states; current versus superseded version; approver/time; rejection reason; placement and production selection | Assets can be viewed, but the operator cannot prove which exact version is approved for production. |
+| Gang sheet / transfers | Layout needed, draft saved, ready to order, ordered, ETA, received, verified, cut/sorted, partial/discrepancy/remake; vendor/order reference; linked artwork versions and quantities | `printsOrdered`/`printsReady` cannot distinguish a draft from a placed order or a complete receipt. |
+| Garment reconciliation | Required, ordered, received, and accepted quantities; supplier/PO/ETA; partial, backorder, substitution, shortage, wrong/damaged item | Ordered/Ready booleans hide partial and discrepant material states. |
+| Blocker and responsibility | Current blocker, severity, owner, next action, due time, dependency, resolution evidence, override actor/reason | Operators must infer what is actionable and who owns recovery. |
+| Release and execution | Ready pool versus released/queued work, operator, release time, operation/sublot progress | One broad production stage cannot distinguish readiness from floor commitment. |
+| Quality and rework | Pending/pass/hold/rework/reverified, affected quantity, defect, disposition, owner | Completion can otherwise hide an unresolved quality failure or remake. |
+| Promise health | Requested/quoted/committed/internal must-start/ship/pickup/fulfill-by dates and source | No approved date hierarchy currently supports trustworthy urgency. |
+
+Every future field needs a named authority, timestamp/actor, freshness behavior, and an explicit distinction between source fact, deterministic derivation, recommendation, and owner override.
+
 ## Access, Privacy, Freshness, and Payload Constraints
 
 - The app currently requests `read_orders`, `write_orders`, `read_all_orders`, `read_merchant_managed_fulfillment_orders`, and `read_third_party_fulfillment_orders`.
@@ -426,6 +445,9 @@ This inventory intentionally leaves these decisions open:
 - Which audit/history data should be available to operators versus administrators/support?
 - What is the mobile information hierarchy and what remains desktop-only?
 - Which summary fields justify adding to the bounded board projection instead of loading on demand?
+- Which artwork and gang-sheet states match the shop's real workflow, and at what level—order, line, placement, work package, or sublot—are they authoritative?
+- Which transitions require owner approval, and how are substitutions, partial readiness, quality holds, and overrides recorded?
+- Should the detail open to an operational Overview with one next action and blocker stack instead of Items & financials?
 
 Answer these during layout/UX work; do not infer them by placing every available field on screen.
 

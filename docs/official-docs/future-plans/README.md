@@ -31,6 +31,7 @@
 | Shopify Draft Orders and Invoicing | `[Draft / Idea]` | v1.5 Backlog | `workflows/draft-orders-invoicing.md` | [shopify-draft-orders-invoicing-plan.md](shopify-draft-orders-invoicing-plan.md) |
 | Shopify Live API, Admin Block, and Redis-Free Cutover | `[Implemented Candidate]` | v1.4 | `architecture/shopify-primary-data-plane.md` | [shopify-live-api-sync-admin-blocks-plan.md](shopify-live-api-sync-admin-blocks-plan.md) |
 | Shopify Board UI Audit and Blueprint | `[Spec Ready]` | v1.4 polish | `reference/ui-containers-and-views.md` | [shopify-board-ui-audit-and-blueprint.md](shopify-board-ui-audit-and-blueprint.md) |
+| Order Detail Digital Traveler Redesign | `[Draft / Idea]` | Reliability patch, then workflow validation | Owner-approved production workflow and `reference/ui-containers-and-views.md` | [order-detail-digital-traveler-redesign-plan.md](order-detail-digital-traveler-redesign-plan.md) |
 | In-House Blank Inventory and Digital Whiteboard | `[Spec Ready]` | v1.5 Backlog | `features/in-house-inventory.md` | [in-house-inventory-blanks-tracking-plan.md](in-house-inventory-blanks-tracking-plan.md) |
 | Supplies Column and Dashboard Layout Redesign | `[In Progress]` | v1.5 Backlog | `reference/ui-containers-and-views.md` | [supplies-dashboard-layout-redesign-plan.md](supplies-dashboard-layout-redesign-plan.md) |
 | Etsy Order Source Integration | `[In Progress]` | Etsy connection proof, then provider-aware rollout | Worker/D1 connection proof and owner acceptance | [etsy-order-source-integration-plan.md](etsy-order-source-integration-plan.md) |

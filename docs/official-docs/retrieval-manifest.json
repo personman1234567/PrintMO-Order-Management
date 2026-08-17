@@ -180,6 +180,39 @@
       "stop": ["Stop before changing canonical production stages or legacy/candidate source isolation."]
     },
     {
+      "id": "order-detail-workbench",
+      "description": "Order Detail reliability, digital-traveler redesign, artwork and gang-sheet workflow, readiness semantics, mobile hierarchy, and accessibility",
+      "taskTypes": ["design", "planning", "change", "diagnosis", "accessibility"],
+      "keywords": ["order detail", "detail workbench", "digital traveler", "artwork approval", "gang sheet", "production readiness", "next action", "cross-order notes", "detail focus trap", "mobile detail hierarchy"],
+      "paths": ["renderer.js", "order-manager-web/index.html", "order-manager-web/detail-overlay-enhancements.js", "order-manager-web/accessibility-hardening.js", "order-manager-web/order-detail-split.css", "order-manager-web/web-shim.js", "order-manager-proxy/worker.js"],
+      "symbols": ["openDetail", "closeDetail", "mergeCanonicalDetail", "hydrateCanonicalDetail", "syncNotesContext", "focusableElements", "window.api.updateName", "defaultProductionState"],
+      "errors": ["notes saved to wrong order", "production ready is incorrect", "detail controls are stale", "focus escapes detail", "customer names cannot be changed"],
+      "read": [
+        {
+          "path": "docs/official-docs/future-plans/order-detail-digital-traveler-redesign-plan.md",
+          "anchor": "current-continuation-state"
+        },
+        {
+          "path": "docs/official-docs/reference/ui-containers-and-views.md",
+          "anchor": "1-order-detail-modal-detail-overlay-detail-card"
+        },
+        {
+          "path": "docs/official-docs/reference/order-data-visualization-inventory.md",
+          "anchor": "production-control-fields-not-yet-modeled"
+        }
+      ],
+      "inspect": [
+        {"path": "renderer.js", "symbols": ["openDetail", "closeDetail"]},
+        {"path": "order-manager-web/detail-overlay-enhancements.js", "symbols": ["mergeCanonicalDetail", "hydrateCanonicalDetail", "syncNotesContext"]},
+        {"path": "order-manager-web/accessibility-hardening.js", "symbols": ["focusableElements"]},
+        {"path": "order-manager-web/web-shim.js", "symbols": ["window.api.updateName"]},
+        {"path": "order-manager-proxy/worker.js", "symbols": ["defaultProductionState"]}
+      ],
+      "tools": ["verify-phase2", "docs-check"],
+      "verify": ["node --check renderer.js", "node --check order-manager-web/detail-overlay-enhancements.js", "node --check order-manager-web/accessibility-hardening.js", "node --check order-manager-web/web-shim.js", "node --check order-manager-proxy/worker.js", "npm run verify:phase2", "npm run docs:check"],
+      "stop": ["Stop before approving shop workflow semantics, migrating the production schema, changing Shopify commerce authority, or weakening Legacy/Shopify/provider isolation without owner approval."]
+    },
+    {
       "id": "etsy-integration",
       "description": "Etsy Seller App OAuth, bounded receipt proof, provider shadow, synthetic shared-board pilot, production state, webhooks, and staged rollout",
       "taskTypes": ["planning", "implementation", "diagnosis", "security"],

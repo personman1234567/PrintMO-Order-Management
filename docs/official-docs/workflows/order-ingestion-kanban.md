@@ -103,6 +103,7 @@ Legacy status values remain compatibility data for the Legacy Redis view only.
 - Candidate rich detail is fetched on demand.
 - Provider identity uses `_orderKey`/`orderKey`; combined customer/order display names remain presentation text only.
 - Candidate source switching preserves the last usable board if the requested source fails.
+- The shared detail's current limitations and the reliability-first redesign path are documented in [Order Detail Digital Traveler Redesign](../future-plans/order-detail-digital-traveler-redesign-plan.md). Do not infer complete production eligibility from the current four readiness flags.
 
 ## Common Failure Modes & Recovery
 
