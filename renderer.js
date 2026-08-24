@@ -1886,7 +1886,19 @@ function openDetail(o) {
   if (headerCust) headerCust.textContent = custName;
   document.getElementById('detail-cust-name').textContent = custName || 'No customer name';
   document.getElementById('detail-notes').textContent = o.notes || 'No special instructions';
-  document.getElementById('detail-edit-name-btn').onclick = () => openNameModal(o);
+  const editNameButton = document.getElementById('detail-edit-name-btn');
+  const nameSourceNote = document.getElementById('detail-cust-name-source-note');
+  const canEditCustomerName = o?._candidate !== true && o?._capabilities?.commerceWrite !== false;
+  if (editNameButton) {
+    editNameButton.classList.toggle('hidden', !canEditCustomerName);
+    editNameButton.disabled = !canEditCustomerName;
+    editNameButton.onclick = canEditCustomerName ? () => openNameModal(o) : null;
+  }
+  if (nameSourceNote) {
+    const sourceLabel = provider === 'etsy' ? 'Etsy' : 'Shopify';
+    nameSourceNote.textContent = canEditCustomerName ? '' : `Managed by ${sourceLabel}`;
+    nameSourceNote.classList.toggle('hidden', canEditCustomerName);
+  }
   document.getElementById('detail-edit-notes-btn').onclick = () => openNotesModal(o);
   document.getElementById('detail-view-notes-btn').onclick = () => openViewNotesModal(o);
 
@@ -1907,21 +1919,18 @@ function openDetail(o) {
   const progressText = document.getElementById('progress-text');
   const progressBar = document.getElementById('progress-bar');
   const updateProgressUI = () => {
-    progressText.textContent = `${o.progress} / ${totalApparel} pieces printed`;
-    const pct = totalApparel ? Math.min(100, (o.progress / totalApparel) * 100) : 0;
+    const currentTotal = Math.max(0, Number(o.totalApparel) || 0);
+    progressText.textContent = `${o.progress} / ${currentTotal} pieces printed`;
+    const pct = currentTotal ? Math.min(100, (o.progress / currentTotal) * 100) : 0;
     progressBar.style.width = pct + '%';
+    progressPlusOne.disabled = currentTotal === 0 || o.progress >= currentTotal;
   };
-  updateProgressUI();
   const progressPlusOne = document.getElementById('progress-plus1');
+  updateProgressUI();
   progressPlusOne.onclick = async () => {
-    if (o.progress < totalApparel) {
-      progressPlusOne.disabled = true;
-      try {
-        return await saveProductionProgress(o, o.progress + 1, updateProgressUI);
-      } finally {
-        progressPlusOne.disabled = false;
-      }
-    }
+    const currentTotal = Math.max(0, Number(o.totalApparel) || 0);
+    if (o.progress >= currentTotal) return false;
+    return saveProductionProgress(o, o.progress + 1, updateProgressUI);
   };
   document.getElementById('progress-custom').onclick = () => openProgressModal(o, updateProgressUI);
 
@@ -2215,22 +2224,38 @@ function openNotesModal(order) {
   const input = document.getElementById('notes-input');
   const confirmBtn = document.getElementById('notes-confirm');
   const cancelBtn = document.getElementById('notes-cancel');
+  const status = document.getElementById('notes-modal-status');
 
   input.value = order.notes || 'No special instructions';
+  if (status) status.textContent = '';
 
   const cleanup = () => {
     overlay.classList.add('hidden');
     confirmBtn.onclick = null;
     cancelBtn.onclick = null;
     overlay.onclick = null;
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = 'Confirm';
+    if (status) status.textContent = '';
   };
 
   confirmBtn.onclick = async () => {
     const val = input.value;
-    await window.api.updateNotes(order.name, val);
-    order.notes = val;
-    document.getElementById('detail-notes').textContent = val || 'No special instructions';
-    cleanup();
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Saving…';
+    if (status) status.textContent = 'Saving notes…';
+    try {
+      await window.api.updateNotes(order.name, val);
+      order.notes = val;
+      document.getElementById('detail-notes').textContent = val || 'No special instructions';
+      cleanup();
+    } catch (error) {
+      console.error('Unable to save order notes', error);
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Try again';
+      if (status) status.textContent = `Notes were not saved: ${error?.message || 'Please try again.'}`;
+      input.focus();
+    }
   };
 
   cancelBtn.onclick = () => cleanup();
@@ -2241,6 +2266,7 @@ function openNotesModal(order) {
 }
 
 function openNameModal(order) {
+  if (order?._candidate === true || order?._capabilities?.commerceWrite === false) return;
   const overlay = document.getElementById('name-overlay');
   const input = document.getElementById('name-input');
   const confirmBtn = document.getElementById('name-confirm');
@@ -2295,46 +2321,106 @@ function openProgressModal(order, updateFn) {
   const input = document.getElementById('progress-input');
   const confirmBtn = document.getElementById('progress-confirm');
   const cancelBtn = document.getElementById('progress-cancel');
+  const decrementBtn = document.getElementById('progress-decrement');
+  const incrementBtn = document.getElementById('progress-increment');
+  const completeBtn = document.getElementById('progress-complete');
+  const summary = document.getElementById('progress-modal-summary');
+  const validation = document.getElementById('progress-validation');
+  const total = Math.max(0, Number(order.totalApparel) || 0);
 
   input.value = order.progress;
+  input.max = String(total);
+  summary.textContent = `${order.progress} of ${total} pieces currently printed`;
+  completeBtn.textContent = total ? `Mark all ${total} printed` : 'No garments to mark';
+  completeBtn.disabled = total === 0;
+  validation.textContent = '';
+
+  const setControlsDisabled = disabled => {
+    input.disabled = disabled;
+    confirmBtn.disabled = disabled;
+    decrementBtn.disabled = disabled;
+    incrementBtn.disabled = disabled;
+    completeBtn.disabled = disabled || total === 0;
+  };
+
+  const validatedValue = () => {
+    const raw = input.value.trim();
+    const val = Number(raw);
+    if (!/^\d+$/.test(raw) || !Number.isInteger(val) || val < 0 || val > total) {
+      validation.textContent = `Enter a whole number from 0 to ${total}.`;
+      input.setAttribute('aria-invalid', 'true');
+      return null;
+    }
+    validation.textContent = '';
+    input.removeAttribute('aria-invalid');
+    return val;
+  };
+
+  const setInputValue = value => {
+    input.value = String(Math.min(total, Math.max(0, Number(value) || 0)));
+    validation.textContent = '';
+    input.removeAttribute('aria-invalid');
+  };
 
   const cleanup = () => {
     overlay.classList.add('hidden');
     confirmBtn.onclick = null;
     cancelBtn.onclick = null;
+    decrementBtn.onclick = null;
+    incrementBtn.onclick = null;
+    completeBtn.onclick = null;
+    input.oninput = null;
+    input.onkeydown = null;
     overlay.onclick = null;
+    setControlsDisabled(false);
+    confirmBtn.textContent = 'Save count';
+    validation.textContent = '';
+    input.removeAttribute('aria-invalid');
   };
 
-  confirmBtn.onclick = async () => {
-    let val = parseInt(input.value, 10);
-    if (isNaN(val) || val < 0) val = 0;
-    if (val > order.totalApparel) val = order.totalApparel;
-    confirmBtn.disabled = true;
-    try {
-      const saved = await saveProductionProgress(order, val, updateFn);
-      if (saved) cleanup();
-    } finally {
-      confirmBtn.disabled = false;
+  const commitValue = async val => {
+    if (val === null) {
+      input.focus();
+      return false;
     }
+    setControlsDisabled(true);
+    confirmBtn.textContent = 'Saving…';
+    validation.textContent = `Saving ${val} of ${total}…`;
+    const saved = await saveProductionProgress(order, val, updateFn);
+    if (saved) {
+      cleanup();
+      return true;
+    }
+    setControlsDisabled(false);
+    confirmBtn.textContent = 'Try again';
+    validation.textContent = 'The print count was not saved. Check the count and try again.';
+    input.focus();
+    input.select();
+    return false;
   };
 
+  confirmBtn.onclick = () => commitValue(validatedValue());
+  decrementBtn.onclick = () => setInputValue((Number(input.value) || 0) - 1);
+  incrementBtn.onclick = () => setInputValue((Number(input.value) || 0) + 1);
+  completeBtn.onclick = () => {
+    setInputValue(total);
+    return commitValue(total);
+  };
+  input.oninput = () => {
+    validation.textContent = '';
+    input.removeAttribute('aria-invalid');
+  };
+  input.onkeydown = event => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    confirmBtn.click();
+  };
   cancelBtn.onclick = () => cleanup();
   overlay.onclick = e => { if (e.target.id === 'progress-overlay') cleanup(); };
 
   overlay.classList.remove('hidden');
   input.focus();
-}
-
-function intendedStageForProgress(order, progress, totalApparel) {
-  if (
-    !order?._candidate
-    || !['print', 'completed'].includes(order.productionStage)
-  ) {
-    return null;
-  }
-  if (totalApparel > 0 && progress === totalApparel) return 'completed';
-  if (order.productionStage === 'completed' && progress < totalApparel) return 'print';
-  return order.productionStage;
+  input.select();
 }
 
 function showProductionNotice(message, tone = 'success') {
@@ -2364,54 +2450,64 @@ function productionProgressErrorMessage(error) {
   return 'Print progress could not be saved. Please try again.';
 }
 
-async function saveProductionProgress(order, nextProgress, updateFn) {
-  const previousProgress = Number(order.progress || 0);
-  const previousStage = order.productionStage || '';
-  const nextStage = intendedStageForProgress(order, nextProgress, order.totalApparel);
-  const stageChanged = Boolean(nextStage && nextStage !== previousStage);
+let productionProgressCoordinator = null;
 
-  order.progress = nextProgress;
-  if (nextStage) order.productionStage = nextStage;
-  updateFn();
+function progressSaveStatus(message, tone = '') {
+  const status = document.getElementById('progress-save-status');
+  if (!status) return;
+  status.classList.remove('is-success', 'is-error');
+  if (tone) status.classList.add(`is-${tone}`);
+  status.textContent = message;
+}
 
-  try {
-    await window.api.updateProgress({
-      name: order.name,
-      progress: nextProgress,
-      ...(nextStage ? { stage: nextStage } : {})
-    });
-    order.progress = nextProgress;
-    if (nextStage) {
-      order.productionStage = nextStage;
-      order.status = 'print';
-    }
-    const completeBadge = document.getElementById('badge-production-complete');
-    completeBadge?.classList.toggle('hidden', order.productionStage !== 'completed');
-    await renderBoardFromLocalState([order.status || 'received']);
-    updateFn();
-    if (stageChanged) {
-      showProductionNotice(nextStage === 'completed'
-        ? 'Order moved to Printed'
-        : 'Order returned to To Print');
-    }
-    return true;
-  } catch (error) {
-    console.error('Unable to save print progress', error);
-    order.progress = previousProgress;
-    order.productionStage = previousStage;
-    updateFn();
-    if (order._candidate) {
-      try {
-        await renderBoard();
-      } catch (_) {
-        await renderBoardFromLocalState([order.status || 'received']);
-      }
-    } else {
-      await renderBoardFromLocalState([order.status || 'received']);
-    }
-    showProductionNotice(productionProgressErrorMessage(error), 'error');
-    return false;
+function getProductionProgressCoordinator() {
+  if (productionProgressCoordinator) return productionProgressCoordinator;
+  if (typeof window.OrderDetailState?.createProgressSaveCoordinator !== 'function') {
+    throw new Error('Order Detail progress state is unavailable.');
   }
+  productionProgressCoordinator = window.OrderDetailState.createProgressSaveCoordinator({
+    commit: (order, progress, stage) => window.api.updateProgress({
+      name: order.name,
+      progress,
+      ...(stage ? { stage } : {})
+    }),
+    notify: ({ phase, order, state, error, stageChanged }) => {
+      if (phase === 'optimistic' || phase === 'saving') {
+        progressSaveStatus(`Saving ${state.desiredProgress} / ${state.total}…`);
+        return;
+      }
+      if (phase === 'saved') {
+        progressSaveStatus(`${state.confirmedProgress} / ${state.total} saved`, 'success');
+        document.getElementById('badge-production-complete')
+          ?.classList.toggle('hidden', order.productionStage !== 'completed');
+        void renderBoardFromLocalState([order.status || 'received']);
+        if (stageChanged) {
+          showProductionNotice(order.productionStage === 'completed'
+            ? 'Order moved to Printed'
+            : 'Order returned to To Print');
+        }
+        return;
+      }
+      if (phase === 'error') {
+        console.error('Unable to save print progress', error);
+        progressSaveStatus(productionProgressErrorMessage(error), 'error');
+        showProductionNotice(productionProgressErrorMessage(error), 'error');
+        if (order._candidate) {
+          void renderBoard().catch(() => renderBoardFromLocalState([order.status || 'received']));
+        } else {
+          void renderBoardFromLocalState([order.status || 'received']);
+        }
+      }
+    }
+  });
+  return productionProgressCoordinator;
+}
+
+function saveProductionProgress(order, nextProgress, updateFn) {
+  return getProductionProgressCoordinator().request(order, nextProgress, {
+    total: order.totalApparel,
+    update: updateFn
+  });
 }
 
 // close handlers

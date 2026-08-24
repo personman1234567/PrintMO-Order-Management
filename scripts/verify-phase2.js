@@ -1947,8 +1947,8 @@ async function run() {
   assert(!previewHtml.includes('detail-header-ready-summary'), 'duplicate header readiness summary must stay removed');
   assert.equal(
     (previewHtml.match(/class="detail-tab-item/g) || []).length,
-    5,
-    'rich workbench must expose five workflow-oriented detail tabs'
+    6,
+    'rich workbench must expose six workflow-oriented detail tabs including Overview'
   );
   assert(
     previewHtml.includes('id="detail-data-status"')
@@ -1984,11 +1984,209 @@ async function run() {
       && detailEnhancements.includes('consolidateLineItemsForDisplay(order?.items || [])'),
     'canonical detail must attach every private asset to its line, repaint Production downloads, and consolidate display rows'
   );
+  const detailState = require(path.join(root, 'order-manager-web', 'order-detail-state.js'));
+  const draftStore = detailState.createNoteDraftStore();
+  const orderA = { _provider: 'shopify', _gid: 'gid://shopify/Order/1', name: '#1001' };
+  const orderB = { _provider: 'shopify', _gid: 'gid://shopify/Order/2', name: '#1002' };
+  const orderAKey = draftStore.keyFor(orderA);
+  const orderBKey = draftStore.keyFor(orderB);
+  draftStore.remember(orderAKey, 'draft for A', 'saved A');
+  assert.strictEqual(draftStore.read(orderAKey)?.text, 'draft for A');
+  assert.strictEqual(draftStore.read(orderBKey), undefined);
+  draftStore.remember(orderBKey, 'saved B', 'saved B');
+  assert.strictEqual(draftStore.read(orderAKey)?.text, 'draft for A');
+  assert.strictEqual(draftStore.read(orderBKey), undefined);
   assert(
-    previewHtml.includes('id="detail-tab-items" class="detail-tab-item active"')
-      && previewHtml.includes('id="tab-items" class="detail-tab-panel active"')
-      && detailEnhancements.includes("activateDetailTab('tab-items')"),
-    'Items & financials must be the default Shopify order-detail tab'
+    detailEnhancements.includes('window.OrderDetailState.createNoteDraftStore()')
+      && detailEnhancements.includes('function detailOrderDraftKey(order)')
+      && detailEnhancements.includes('function rememberCurrentNotesDraft()')
+      && detailEnhancements.includes('function preserveNotesDraftForClose()')
+      && detailEnhancements.includes('noteDraftStore.discard(activeNotesOrderKey)'),
+    'Order Detail notes must isolate unsaved drafts by provider-aware immutable order identity and preserve only the matching draft across close/open'
+  );
+  const staleOrder = {
+    _version: 2,
+    progress: 1,
+    blanksStatus: 0,
+    printsStatus: 0,
+    blanksOrdered: 0,
+    printsOrdered: 0
+  };
+  detailState.mergeCanonicalProductionState(staleOrder, {
+    revision: 7,
+    printedCount: 12,
+    blanksStatus: 1,
+    printsStatus: 1,
+    blanksOrdered: 1,
+    printsOrdered: 1
+  });
+  assert.deepStrictEqual(staleOrder, {
+    _version: 7,
+    progress: 12,
+    blanksStatus: 1,
+    printsStatus: 1,
+    blanksOrdered: 1,
+    printsOrdered: 1
+  });
+  const newerLocalProgress = {
+    _version: 9,
+    progress: 6,
+    productionStage: 'print',
+    blanksStatus: 0
+  };
+  detailState.mergeCanonicalProductionState(newerLocalProgress, {
+    revision: 8,
+    printedCount: 2,
+    stage: 'print',
+    blanksStatus: 1
+  });
+  assert.deepStrictEqual(newerLocalProgress, {
+    _version: 9,
+    progress: 6,
+    productionStage: 'print',
+    blanksStatus: 0
+  }, 'an older detail response must not rewind newer local production state');
+  const pendingLocalProgress = {
+    _version: 9,
+    _progressMutationPending: true,
+    progress: 10,
+    productionStage: 'completed',
+    blanksStatus: 0
+  };
+  detailState.mergeCanonicalProductionState(pendingLocalProgress, {
+    revision: 10,
+    printedCount: 4,
+    stage: 'print',
+    blanksStatus: 1
+  });
+  assert.equal(pendingLocalProgress._version, 10, 'pending progress must still adopt a newer canonical revision');
+  assert.equal(pendingLocalProgress.progress, 10, 'pending optimistic progress must survive detail hydration');
+  assert.equal(pendingLocalProgress.productionStage, 'completed', 'pending optimistic completion must survive detail hydration');
+  assert.equal(pendingLocalProgress.blanksStatus, 1, 'unrelated canonical readiness state must still hydrate');
+
+  let releaseFirstProgressCommit;
+  const firstProgressCommit = new Promise(resolve => { releaseFirstProgressCommit = resolve; });
+  const progressCommits = [];
+  let nextProgressVersion = 1;
+  const progressOrder = {
+    _candidate: true,
+    _version: nextProgressVersion,
+    progress: 0,
+    productionStage: 'print',
+    status: 'print',
+    totalApparel: 10
+  };
+  const progressCoordinator = detailState.createProgressSaveCoordinator({
+    commit: async (_order, progress, stage) => {
+      progressCommits.push({ progress, stage });
+      if (progressCommits.length === 1) await firstProgressCommit;
+      nextProgressVersion += 1;
+      return {
+        production: {
+          printedCount: progress,
+          stage,
+          version: nextProgressVersion
+        }
+      };
+    }
+  });
+  const rapidProgressSave = progressCoordinator.request(progressOrder, 1, { total: 10 });
+  for (let progress = 2; progress <= 10; progress += 1) {
+    progressCoordinator.request(progressOrder, progress, { total: 10 });
+  }
+  assert.equal(progressOrder.progress, 10, 'ten rapid increments must paint immediately');
+  assert.deepStrictEqual(progressCommits, [{ progress: 1, stage: 'print' }], 'only one progress request may be in flight');
+  releaseFirstProgressCommit();
+  assert.equal(await rapidProgressSave, true);
+  assert.deepStrictEqual(progressCommits, [
+    { progress: 1, stage: 'print' },
+    { progress: 10, stage: 'completed' }
+  ], 'rapid increments must coalesce into the latest desired count and complete atomically');
+  assert.equal(progressOrder.progress, 10);
+  assert.equal(progressOrder.productionStage, 'completed');
+  assert.equal(progressOrder._progressMutationPending, false);
+
+  const failedProgressOrder = {
+    _candidate: true,
+    _version: 3,
+    progress: 4,
+    productionStage: 'print',
+    totalApparel: 8
+  };
+  const failedProgressCoordinator = detailState.createProgressSaveCoordinator({
+    commit: async () => { throw new Error('fixture progress failure'); }
+  });
+  assert.equal(await failedProgressCoordinator.request(failedProgressOrder, 5, { total: 8 }), false);
+  assert.equal(failedProgressOrder.progress, 4, 'a failed progress save must restore the last confirmed count');
+  assert.equal(failedProgressOrder._progressMutationPending, false);
+  assert(
+    detailEnhancements.includes('window.OrderDetailState.mergeCanonicalProductionState(order, production)')
+      && detailEnhancements.includes('syncCanonicalProductionControls(order)')
+      && detailEnhancements.includes("document.getElementById('ready-apply')?.classList.add('hidden')"),
+    'canonical detail hydration must adopt revision, progress, and every readiness flag before repainting production controls'
+  );
+  assert(
+    detailEnhancements.includes("label: 'Materials marked ready'")
+      && !detailEnhancements.includes("label: 'Production ready'")
+      && detailEnhancements.includes("'(prefers-reduced-motion: reduce)'")
+      && detailEnhancements.includes("behavior: options.focus && !window.matchMedia"),
+    'readiness copy must stay scoped to material milestones and programmatic tab scrolling must respect reduced motion'
+  );
+  const sharedDetailRenderer = fs.readFileSync(path.join(root, 'renderer.js'), 'utf8');
+  assert(
+    sharedDetailRenderer.includes("const canEditCustomerName = o?._candidate !== true")
+      && sharedDetailRenderer.includes("nameSourceNote.textContent = canEditCustomerName ? '' : `Managed by ${sourceLabel}`")
+      && sharedDetailRenderer.includes("if (order?._candidate === true || order?._capabilities?.commerceWrite === false) return")
+      && previewHtml.includes('id="detail-cust-name-source-note"'),
+    'commerce-source customer names must render as source-managed without exposing a mutation path the adapter rejects'
+  );
+  assert(
+    sharedDetailRenderer.includes("status.textContent = `Notes were not saved:")
+      && sharedDetailRenderer.includes("confirmBtn.textContent = 'Try again'")
+      && sharedDetailRenderer.includes('function saveProductionProgress')
+      && sharedDetailRenderer.includes('createProgressSaveCoordinator')
+      && sharedDetailRenderer.includes('progressSaveStatus(`Saving ${state.desiredProgress} / ${state.total}…`)'),
+    'mobile/legacy notes and progress mutations must retain input, coalesce optimistic changes, and expose save state'
+  );
+  assert(
+    previewHtml.includes('id="progress-decrement"')
+      && previewHtml.includes('id="progress-increment"')
+      && previewHtml.includes('id="progress-complete"')
+      && previewHtml.includes('id="progress-validation"')
+      && sharedDetailRenderer.includes('Mark all ${total} printed')
+      && sharedDetailRenderer.includes('Enter a whole number from 0 to ${total}.'),
+    'custom print progress must expose a validated stepper and an explicit mark-all action'
+  );
+  const detailAccessibilityHardening = fs.readFileSync(path.join(root, 'order-manager-web', 'accessibility-hardening.js'), 'utf8');
+  assert(
+    detailAccessibilityHardening.includes("element.closest('[hidden], [aria-hidden=\"true\"], [inert]')")
+      && detailAccessibilityHardening.includes('element.tabIndex < 0')
+      && detailAccessibilityHardening.includes('element.getClientRects().length > 0')
+      && detailAccessibilityHardening.includes("event.target.closest('#detail-notes-wrapper.is-editing-notes')"),
+    'dialog focus wrapping must include only rendered tabbable controls and let the inline notes editor own its first Escape'
+  );
+  assert(
+    previewHtml.includes('<section id="detail-right-pane" aria-label="Order detail workspaces">')
+      && !previewHtml.includes('<main id="detail-right-pane">')
+      && previewHtml.indexOf('id="manual-mockup-file-input"') < previewHtml.indexOf('id="manual-mockup-upload-btn"')
+      && previewHtml.includes('id="notes-modal-status"'),
+    'Order Detail must avoid a nested main landmark and expose visible focus/error targets for upload and notes mutation'
+  );
+  assert(
+    previewHtml.includes('id="detail-tab-overview" class="detail-tab-item active"')
+      && previewHtml.includes('id="tab-overview" class="detail-tab-panel active detail-overview"')
+      && previewHtml.includes('id="overview-primary-action"')
+      && previewHtml.includes('id="overview-attention-list"')
+      && previewHtml.includes('id="overview-milestone-materials"')
+      && detailEnhancements.includes("activateDetailTab('tab-overview')")
+      && detailEnhancements.includes('function renderOverview(order, result = null)')
+      && detailEnhancements.includes(": !printItem && Boolean(String(item?.sku || '').trim())")
+      && detailEnhancements.includes("reasons.push('This production order is marked as needing attention.')")
+      && detailEnhancements.includes("mobileAnchor: 'ready-controls'")
+      && detailEnhancements.includes("mobileAnchor: 'progress-section'")
+      && detailEnhancements.includes("window.matchMedia?.('(max-width: 900px)')?.matches")
+      && detailEnhancements.includes("activateDetailTab(action.dataset.overviewTarget, { focus: true })"),
+    'Overview must be the default Shopify order-detail workspace, retain web garment counts, share the attention model, and route mobile production actions to their controls'
   );
   assert(
     detailEnhancements.includes("orderedId: 'chk-blanks-ordered'")
@@ -1999,8 +2197,24 @@ async function run() {
   );
   const detailCss = fs.readFileSync(path.join(root, 'order-manager-web', 'order-detail-split.css'), 'utf8');
   assert(
+    detailCss.includes('--detail-border-strong:')
+      && /#detail-overlay\.hidden\s*\{[\s\S]*?display:\s*none\s*!important;/.test(detailCss)
+      && detailCss.includes('#manual-mockup-file-input:focus-visible + #manual-mockup-upload-btn')
+      && detailCss.includes('@media (pointer: coarse), (any-pointer: coarse)')
+      && /@media \(max-width: 900px\)[\s\S]*?min-height:\s*44px;/.test(detailCss)
+      && /\.mockup-dot\s*\{[\s\S]*?width:\s*44px;[\s\S]*?height:\s*44px;/.test(detailCss),
+    'detail styling must define its border token, remove closed layout, expose upload focus, and enforce mobile touch targets'
+  );
+  assert(
     /@media \(max-width: 900px\)[\s\S]*?#detail-content[\s\S]*?overflow-y:\s*auto/.test(detailCss),
     'mobile order detail must keep #detail-content as its explicit vertical scroll owner'
+  );
+  assert(
+    /@media \(max-width: 900px\)[\s\S]*?#detail-left-pane[\s\S]*?order:\s*2;/.test(detailCss)
+      && /@media \(max-width: 900px\)[\s\S]*?#detail-right-pane[\s\S]*?order:\s*1;/.test(detailCss)
+      && /\.overview-primary-action\s*\{[\s\S]*?min-height:\s*44px;/.test(detailCss)
+      && /\.overview-milestones\s*\{[\s\S]*?grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/.test(detailCss),
+    'Overview must lead the mobile detail flow while keeping a complete, touch-safe workflow snapshot'
   );
   assert(
     /#detail-items-wrapper\s*\{[\s\S]*?overflow:\s*visible;/.test(detailCss)
@@ -2259,8 +2473,8 @@ async function run() {
     'Ready to Print tabs must separate canonical print/completed stages while retaining fulfilled completed orders'
   );
   assert(
-    sharedRenderer.includes("return 'completed'")
-      && sharedRenderer.includes("return 'print'")
+    fs.readFileSync(path.join(root, 'order-manager-web', 'order-detail-state.js'), 'utf8').includes("return 'completed'")
+      && fs.readFileSync(path.join(root, 'order-manager-web', 'order-detail-state.js'), 'utf8').includes("return 'print'")
       && sharedRenderer.includes("stageChanged")
       && sharedRenderer.includes("Order moved to Printed")
       && sharedRenderer.includes("Order returned to To Print"),

@@ -17,11 +17,11 @@ This plan separates three evidence states:
 
 ## Current Continuation State
 
-- **Current state**: A dual-assessment Impeccable audit scored the current detail workbench 24/40 (Acceptable). The split layout and error/accessibility foundations are credible, but the persisted model cannot represent artwork approval/versioning, gang-sheet lifecycle, partial material readiness, blocker ownership, deadlines, or quality/rework. Six P1 reliability and product-model issues are documented below. A Journey + Philosopher exploration now maps three candidate operator arcs—routine action, blocked/uncertain resolution, and interruption/handoff—but no redesign or defect fix from this plan is implemented.
-- **Next safe action**: Implement the bounded reliability patch in Phase 1, then validate the smallest authoritative artwork, gang-sheet/transfer, garment, blocker, owner, and deadline vocabulary and walk through the three candidate arcs with representative PrintMO orders before changing the production schema or claiming complete production readiness.
-- **Remaining blockers**: No representative authenticated order was available during the production-browser pass; populated density and real mobile workflow need owner acceptance. Exact shop state names, transition authority, partial-receipt semantics, and quality/rework policy remain unapproved.
-- **Owner / external actions**: Confirm the real shop workflow vocabulary, which workstreams apply to each order type, who may approve artwork/release work/override blockers, and whether Overview should replace Items & financials as the default tab.
-- **Last verified evidence**: Repository source and deployed unauthenticated shell inspected 2026-08-17. `scripts/verify-phase2.js` passed. The production shell exposed zero orders outside Shopify Admin, so no customer-bearing order or mutation was opened. Full audit snapshot: `../../../.impeccable/critique/2026-08-17T21-04-46Z__order-manager-web-index-html.md`. Candidate journey visualization: [Order Detail Journey Map](order-detail-journey-map.html).
+- **Current state**: Overview v1 remains the default desktop/mobile detail workspace. Production Pages deployment `7a803619` with verified release marker `17876102743N` additionally makes print progress immediately responsive: rapid `+1 Print` clicks coalesce behind one in-flight save, stale detail hydration cannot rewind a newer pending count, and the validated custom-count dialog can mark every garment printed in one atomic completion. It does not add schema fields or claim artwork approval, release, owner, deadline, blocker, gang-sheet, or quality semantics.
+- **Next safe action**: Select the smallest app-owned next-action/owner/deadline/blocker contract and promote its appropriate summary into the sticky command header. Confirm the actual shop labels, authoritative deadline, and transition authority before changing the production schema; another broad UX audit is not required.
+- **Remaining blockers**: Overview v1 and the print-progress repair have no remaining release blocker. The redesigned count dialog passed isolated desktop/mobile visual inspection, but populated live-order acceptance remains unavailable outside Shopify Admin authentication. The next persisted workflow slice remains blocked on exact shop labels, transition authority, and deadline semantics.
+- **Owner / external actions**: Before the next schema-backed slice, confirm who owns a next action, which deadline is authoritative, and what qualifies as a recorded blocker.
+- **Last verified evidence**: Production deployment `7a803619` uploaded five changed files, reused 23 existing files, and the canonical production hostname served release marker `17876102743N` on 2026-08-24. Focused syntax, executable rapid-click/coalescing/completion/rollback regressions, Phase 2, documentation, diff, responsive dialog inspection, artifact, upload, and live-marker checks pass. The Worker, schema, Shopify app/scopes, and supplier gateway were unchanged. Full audit snapshot: `../../../.impeccable/critique/2026-08-17T21-04-46Z__order-manager-web-index-html.md`. Candidate journey visualization: [Order Detail Journey Map](order-detail-journey-map.html).
 
 ## Problem & User Need
 
@@ -224,21 +224,21 @@ False coherence would hide meaningful variance, so the journey is not one univer
 
 ### Phase 1 — Reliability patch before redesign
 
-- [ ] Key inline-note drafts by immutable order ID and define close/backdrop/Escape behavior.
-- [ ] Add the cross-order notes regression test.
-- [ ] Merge canonical revision, printed count, and readiness flags into the local control model before repaint.
-- [ ] Add hydration regression coverage for a stale board summary followed by a newer detail response.
-- [ ] Correct focusable-element filtering and test wraparound with each tab active.
-- [ ] Capability-gate Edit name and add source-aware copy.
-- [ ] Fix the missing border token, visible Upload focus, reduced-motion scrolling, nested landmark, and mobile target floor.
-- [ ] Bring legacy mobile custom-progress and notes mutations under explicit failure/rollback feedback.
+- [x] Key inline-note drafts by immutable order ID and define close/backdrop/Escape behavior.
+- [x] Add the cross-order notes regression test.
+- [x] Merge canonical revision, printed count, and readiness flags into the local control model before repaint.
+- [x] Add hydration regression coverage for a stale board summary followed by a newer detail response.
+- [ ] Correct focusable-element filtering and test wraparound with each tab active. The filter is corrected and contract-covered; authenticated tab-by-tab keyboard acceptance remains pending.
+- [x] Capability-gate Edit name and add source-aware copy.
+- [x] Fix the missing border token, visible Upload focus, reduced-motion scrolling, nested landmark, and mobile target floor.
+- [x] Bring legacy mobile custom-progress and notes mutations under explicit failure/rollback feedback.
 
 ### Phase 2 — Validate and specify authoritative workflow
 
 - [ ] Observe or map representative orders: ordinary garment order, artwork-in-design, gang-sheet draft, partial garment receipt, partial transfer receipt, quality hold/remake, local pickup, and shipped order.
 - [ ] Approve state names, transition actors, granularity (order/line/placement/work package/sublot), partial-readiness semantics, and override authority.
 - [ ] Identify the smallest first schema slice; artwork version/approval, gang-sheet work package, blocker/owner/deadline, and quantity reconciliation are the leading candidates.
-- [ ] Decide whether “Overview” becomes the default on desktop and mobile.
+- [x] Make “Overview” the default Shopify Order Detail workspace on desktop and mobile, using only current fields until richer workflow semantics are modeled.
 
 ### Phase 3 — Versioned data and event contracts
 
@@ -250,7 +250,8 @@ False coherence would hide meaningful variance, so the journey is not one univer
 
 ### Phase 4 — Workbench redesign
 
-- [ ] Build the sticky command header and Overview.
+- [x] Build Overview v1 as the default workspace with current stage, material and print progress, fulfillment, recorded attention, freshness, order facts, and navigation into existing tabs.
+- [ ] Add persisted next action/owner/deadline/blocker fields and promote the appropriate summary into the sticky command header after the data contract exists.
 - [ ] Add artwork version/approval, materials ledgers, gang-sheet work package, and current blocker stack.
 - [ ] Keep commerce and activity as supporting workspaces.
 - [ ] Adapt the structure for mobile instead of merely stacking the desktop panes.
@@ -258,7 +259,8 @@ False coherence would hide meaningful variance, so the journey is not one univer
 
 ### Phase 5 — Acceptance and rollout
 
-- [ ] Run focused syntax, Phase 2, documentation, and artifact checks.
+- [x] Run focused syntax, Phase 2, documentation, and diff checks for Overview v1.
+- [x] Run the Pages artifact, production upload, and canonical-host release-marker checks for Overview v1.
 - [ ] Verify authenticated representative orders for every approved state and exception.
 - [ ] Complete desktop keyboard and screen-reader behavior checks.
 - [ ] Complete 390×844 and 430×932 mobile checks with touch-target geometry and no shell-level overflow.
@@ -318,5 +320,9 @@ The design must not use false certainty, hidden blockers, or opaque priority sco
 
 ## Progress Log
 
+- **2026-08-24 — Overview v1 production release**: Published production Pages deployment `ca4ad26c` and verified release marker `17876084003N` on the canonical production hostname. Three changed files uploaded and 25 existing files were reused. Worker, database, Shopify scopes/app version, production schema, supplier gateway, and customer/order records were unchanged.
+- **2026-08-24 — Overview v1 implementation**: Made Overview the default Shopify Order Detail workspace without changing the production schema. The new workspace derives a transparent navigation recommendation from existing stage, material readiness, print progress, fulfillment, and recorded attention; shows a compact workflow snapshot and order facts; routes into existing tabs; and appears before the artwork/production rail on mobile. No new approval, release, owner, deadline, blocker, artwork-version, gang-sheet, or quality semantics were introduced.
+- **2026-08-24 — Phase 1 production release**: Installed the locked dependencies, reran release-level syntax, Phase 1, Phase 2, documentation, and diff checks, built the cache-busted Pages artifact, and published production deployment `5650b797`. The canonical production hostname served release marker `17876050863N`. Worker, database, Shopify scopes/app version, production schema, and supplier gateway were unchanged; authenticated owner acceptance remains pending.
+- **2026-08-24 — Phase 1 reliability implementation**: Added provider-aware order draft state, executable cross-order draft and canonical hydration regressions, canonical revision/progress/readiness repaint, rendered-only focus filtering, nested-editor Escape ownership, source-gated customer-name copy, scope-accurate material readiness language, recoverable legacy notes saves, and the bounded mobile/accessibility fixes. Focused syntax and Phase 2 verification pass; authenticated interaction, release, and workflow-state validation remain pending.
 - **2026-08-17 — Audit intake**: Preserved the dual-assessment 24/40 audit, separated verified defects from candidate shop states, and defined the reliability-first continuation path. No application behavior or production schema changed.
 - **2026-08-17 — Journey + Philosopher exploration**: Reframed Order Detail as a checkpoint for evidence-backed commitments, separated routine, blocked/uncertain, and interruption/handoff arcs, documented the stable orient → decide → resolve → commit → consequence → exit spine, and added a self-contained HTML journey map. All findings remain candidate until representative-order walkthroughs and owner validation.

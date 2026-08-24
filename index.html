@@ -1806,13 +1806,23 @@
   </div>
 </div>
 
-<div id="progress-overlay" class="hidden">
-  <div id="progress-modal">
-    <label for="progress-input">Enter number of items completed</label>
-    <input id="progress-input" type="number" min="0" />
-    <div class="buttons">
-      <button id="progress-confirm">Confirm</button>
-      <button id="progress-cancel">Cancel</button>
+<div id="progress-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="progress-modal-title" aria-hidden="true">
+  <div id="progress-modal" tabindex="-1">
+    <div class="progress-modal-heading">
+      <h2 id="progress-modal-title">Set print count</h2>
+      <p id="progress-modal-summary">0 of 0 pieces currently printed</p>
+    </div>
+    <label class="progress-input-label" for="progress-input">Pieces printed</label>
+    <div class="progress-count-stepper">
+      <button id="progress-decrement" type="button" aria-label="Decrease print count">&minus;</button>
+      <input id="progress-input" type="number" min="0" step="1" inputmode="numeric" aria-describedby="progress-modal-summary progress-validation" />
+      <button id="progress-increment" type="button" aria-label="Increase print count">+</button>
+    </div>
+    <p id="progress-validation" class="progress-validation" role="status" aria-live="polite"></p>
+    <button id="progress-complete" class="progress-complete-action" type="button">Mark all printed</button>
+    <div class="buttons progress-modal-actions">
+      <button id="progress-cancel" type="button">Cancel</button>
+      <button id="progress-confirm" type="button">Save count</button>
     </div>
   </div>
 </div>
@@ -1844,6 +1854,7 @@
   <!-- existing renderer logic -->
   <script src="./web-shim.js"></script>
   <script src="./renderer.js"></script>
+  <script src="./order-manager-web/order-detail-state.js"></script>
   <script src="./order-manager-web/detail-overlay-enhancements.js"></script>
 </body>
 </html>

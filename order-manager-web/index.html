@@ -1,3 +1,11 @@
+<!--
+THESIS: Order Detail opens as an operational checkpoint, not a commerce report; it refuses the default of making line items the first task.
+OWN-WORLD: Extend the existing Precision Workbench with white and slate working surfaces, Action Blue for the one active route, and status color only when current order data earns it.
+STORY: The operator sees the order's current stage, material and print progress, recorded attention, and the best existing workspace to open next.
+FIRST VIEWPORT: Overview leads the right pane with one navigation recommendation, a compact workflow snapshot, recorded attention, and essential order facts; the artwork and production rail remains visible on desktop.
+FORM: Existing-workbench extension, first-ranked local structure, no concept seed required for this precisely scoped addition.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -298,9 +306,9 @@
                       <span id="detail-mockup-count">0 mockups</span>
                     </div>
                     <div class="manual-mockup-actions">
+                      <input id="manual-mockup-file-input" class="manual-mockup-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple>
                       <label id="manual-mockup-upload-btn" class="fullscreen-btn" for="manual-mockup-file-input">Upload</label>
                       <button id="manual-mockup-paste-btn" class="fullscreen-btn" type="button">Paste</button>
-                      <input id="manual-mockup-file-input" class="manual-mockup-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple>
                     </div>
                   </div>
                   <div id="detail-mockups-browser" class="detail-mockups-browser">
@@ -324,6 +332,7 @@
                     <div>
                       <span class="detail-section-label">Customer</span>
                       <h3 id="detail-cust-name"></h3>
+                      <span id="detail-cust-name-source-note" class="detail-source-note hidden"></span>
                     </div>
                     <button id="detail-edit-name-btn" class="fullscreen-btn" type="button">Edit name</button>
                   </div>
@@ -356,7 +365,7 @@
                   <div class="production-section-header">
                     <div>
                       <h3>Production progress</h3>
-                      <span id="production-status-pill" class="production-status-pill" aria-live="polite">Not started</span>
+                      <span id="production-status-pill" class="production-status-pill" aria-live="polite">Materials not marked ready</span>
                     </div>
                     <span id="progress-text">0 / 0 pieces printed</span>
                   </div>
@@ -422,9 +431,10 @@
               </div>
             </aside>
 
-            <main id="detail-right-pane">
+            <section id="detail-right-pane" aria-label="Order detail workspaces">
               <div id="detail-tabs-header" role="tablist" aria-label="Order details">
-                <button id="detail-tab-items" class="detail-tab-item active" data-tab="tab-items" type="button" role="tab" aria-selected="true" aria-controls="tab-items" tabindex="0"><span class="detail-tab-label-full">Items &amp; financials</span><span class="detail-tab-label-short">Items &amp; money</span> <span class="detail-tab-badge" id="tab-badge-items">0</span></button>
+                <button id="detail-tab-overview" class="detail-tab-item active" data-tab="tab-overview" type="button" role="tab" aria-selected="true" aria-controls="tab-overview" tabindex="0">Overview</button>
+                <button id="detail-tab-items" class="detail-tab-item" data-tab="tab-items" type="button" role="tab" aria-selected="false" aria-controls="tab-items" tabindex="-1"><span class="detail-tab-label-full">Items &amp; financials</span><span class="detail-tab-label-short">Items &amp; money</span> <span class="detail-tab-badge" id="tab-badge-items">0</span></button>
                 <button id="detail-tab-production" class="detail-tab-item" data-tab="tab-production" type="button" role="tab" aria-selected="false" aria-controls="tab-production" tabindex="-1">Production</button>
                 <button id="detail-tab-logistics" class="detail-tab-item" data-tab="tab-logistics" type="button" role="tab" aria-selected="false" aria-controls="tab-logistics" tabindex="-1">Fulfillment</button>
                 <button id="detail-tab-customer" class="detail-tab-item" data-tab="tab-customer" type="button" role="tab" aria-selected="false" aria-controls="tab-customer" tabindex="-1"><span class="detail-tab-label-full">Customer &amp; order</span><span class="detail-tab-label-short">Customer</span></button>
@@ -437,6 +447,80 @@
               </div>
 
               <div id="detail-tab-panels">
+                <section id="tab-overview" class="detail-tab-panel active detail-overview" role="tabpanel" aria-labelledby="detail-tab-overview" aria-hidden="false">
+                  <section class="overview-command" aria-labelledby="overview-command-title">
+                    <div class="overview-command-copy">
+                      <span id="overview-stage-label" class="overview-stage-label">Received</span>
+                      <h3 id="overview-command-title">Review current production details</h3>
+                      <p id="overview-command-description">The overview is using the latest order information currently available.</p>
+                    </div>
+                    <button id="overview-primary-action" class="overview-primary-action" type="button" data-overview-target="tab-production">Open production</button>
+                  </section>
+
+                  <section class="overview-workflow" aria-labelledby="overview-workflow-title">
+                    <div class="overview-section-heading">
+                      <div>
+                        <h3 id="overview-workflow-title">Workflow snapshot</h3>
+                        <p>Current Order Manager fields only—no inferred approval or release state.</p>
+                      </div>
+                      <span id="overview-freshness" class="overview-freshness">Loading current detail</span>
+                    </div>
+                    <ol class="overview-milestones" aria-label="Current order workflow snapshot">
+                      <li id="overview-milestone-order" class="overview-milestone" data-state="current">
+                        <span class="overview-milestone-marker" aria-hidden="true"></span>
+                        <span><strong>Order</strong><small id="overview-order-state">Received</small></span>
+                      </li>
+                      <li id="overview-milestone-materials" class="overview-milestone" data-state="pending">
+                        <span class="overview-milestone-marker" aria-hidden="true"></span>
+                        <span><strong>Materials</strong><small id="overview-materials-state">0 of 4 marked</small></span>
+                      </li>
+                      <li id="overview-milestone-printing" class="overview-milestone" data-state="pending">
+                        <span class="overview-milestone-marker" aria-hidden="true"></span>
+                        <span><strong>Printing</strong><small id="overview-printing-state">0 of 0 pieces</small></span>
+                      </li>
+                      <li id="overview-milestone-fulfillment" class="overview-milestone" data-state="pending">
+                        <span class="overview-milestone-marker" aria-hidden="true"></span>
+                        <span><strong>Fulfillment</strong><small id="overview-fulfillment-state">Unfulfilled</small></span>
+                      </li>
+                    </ol>
+                  </section>
+
+                  <div class="overview-detail-grid">
+                    <section class="overview-attention" aria-labelledby="overview-attention-title">
+                      <div class="overview-section-heading">
+                        <div>
+                          <h3 id="overview-attention-title">Recorded attention</h3>
+                          <p>Reasons currently attached to the production record.</p>
+                        </div>
+                        <span id="overview-attention-count" class="detail-context-badge">0 open</span>
+                      </div>
+                      <div id="overview-attention-list" class="overview-attention-list">
+                        <p class="detail-inline-empty">No production attention reasons are currently recorded.</p>
+                      </div>
+                      <button class="overview-text-action" type="button" data-overview-target="tab-activity">Open activity &amp; exceptions</button>
+                    </section>
+
+                    <section class="overview-order-facts" aria-labelledby="overview-order-facts-title">
+                      <div class="overview-section-heading">
+                        <div>
+                          <h3 id="overview-order-facts-title">Order facts</h3>
+                          <p>Commerce context supporting the production decision.</p>
+                        </div>
+                      </div>
+                      <dl class="overview-fact-list">
+                        <div><dt>Garments</dt><dd id="overview-garment-count">0</dd></div>
+                        <div><dt>Print items</dt><dd id="overview-print-count">0</dd></div>
+                        <div><dt>Order total</dt><dd id="overview-order-total">$0.00</dd></div>
+                        <div><dt>Received</dt><dd id="overview-received-at">—</dd></div>
+                      </dl>
+                      <div class="overview-link-row">
+                        <button class="overview-text-action" type="button" data-overview-target="tab-items">Open items</button>
+                        <button class="overview-text-action" type="button" data-overview-target="tab-logistics">Open fulfillment</button>
+                      </div>
+                    </section>
+                  </div>
+                </section>
+
                 <section id="tab-production" class="detail-tab-panel" role="tabpanel" aria-labelledby="detail-tab-production" aria-hidden="true" hidden>
                   <div id="customer-checkout-note-banner" class="customer-checkout-note-banner hidden">
                     <strong>Customer checkout note</strong>
@@ -492,7 +576,7 @@
                   </section>
                 </section>
 
-                <section id="tab-items" class="detail-tab-panel active" role="tabpanel" aria-labelledby="detail-tab-items" aria-hidden="false">
+                <section id="tab-items" class="detail-tab-panel" role="tabpanel" aria-labelledby="detail-tab-items" aria-hidden="true" hidden>
                   <section id="detail-items-section" class="detail-section">
                     <div class="detail-items-header-row">
                       <h3>Items in order</h3>
@@ -643,7 +727,7 @@
                   </section>
                 </section>
               </div>
-            </main>
+            </section>
           </div>
         </div>
       </div>
@@ -675,6 +759,7 @@
     <h2 id="notes-modal-title" class="visually-hidden">Edit order notes</h2>
     <label class="visually-hidden" for="notes-input">Order notes</label>
     <textarea id="notes-input"></textarea>
+    <p id="notes-modal-status" class="modal-inline-status" role="status" aria-live="polite"></p>
     <div class="buttons">
       <button id="notes-confirm">Confirm</button>
       <button id="notes-cancel">Cancel</button>
@@ -696,11 +781,21 @@
 
 <div id="progress-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="progress-modal-title" aria-hidden="true">
   <div id="progress-modal" tabindex="-1">
-    <label id="progress-modal-title" for="progress-input">Enter number of items completed</label>
-    <input id="progress-input" type="number" min="0" />
-    <div class="buttons">
-      <button id="progress-confirm">Confirm</button>
-      <button id="progress-cancel">Cancel</button>
+    <div class="progress-modal-heading">
+      <h2 id="progress-modal-title">Set print count</h2>
+      <p id="progress-modal-summary">0 of 0 pieces currently printed</p>
+    </div>
+    <label class="progress-input-label" for="progress-input">Pieces printed</label>
+    <div class="progress-count-stepper">
+      <button id="progress-decrement" type="button" aria-label="Decrease print count">&minus;</button>
+      <input id="progress-input" type="number" min="0" step="1" inputmode="numeric" aria-describedby="progress-modal-summary progress-validation" />
+      <button id="progress-increment" type="button" aria-label="Increase print count">+</button>
+    </div>
+    <p id="progress-validation" class="progress-validation" role="status" aria-live="polite"></p>
+    <button id="progress-complete" class="progress-complete-action" type="button">Mark all printed</button>
+    <div class="buttons progress-modal-actions">
+      <button id="progress-cancel" type="button">Cancel</button>
+      <button id="progress-confirm" type="button">Save count</button>
     </div>
   </div>
 </div>
@@ -807,6 +902,7 @@
   <script src="./shopify-preview.js"></script>
   <script src="./dashboard-triage-enhancements.js"></script>
   <script src="./blanks-batches.js"></script>
+  <script src="./order-detail-state.js"></script>
   <script src="./detail-overlay-enhancements.js"></script>
   <script src="./desktop-drag-polish.js"></script>
   <script src="./manual-add-checklist.js"></script>

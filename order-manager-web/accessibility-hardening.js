@@ -172,8 +172,15 @@
     return Array.from(root.querySelectorAll(
       'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
     )).filter(element => {
+      if (element.tabIndex < 0) return false;
+      if (element.closest('[hidden], [aria-hidden="true"], [inert]')) return false;
       const style = window.getComputedStyle(element);
-      return style.display !== 'none' && style.visibility !== 'hidden';
+      const rect = element.getBoundingClientRect();
+      return style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && rect.width > 0
+        && rect.height > 0
+        && element.getClientRects().length > 0;
     });
   }
 
@@ -298,6 +305,10 @@
       if (!activeConfig) return;
 
       if (event.key === 'Escape') {
+        const inlineNotesOwnsEscape = activeConfig.root === '#detail-overlay'
+          && event.target instanceof HTMLElement
+          && Boolean(event.target.closest('#detail-notes-wrapper.is-editing-notes'));
+        if (inlineNotesOwnsEscape) return;
         event.preventDefault();
         event.stopPropagation();
         closeDialog(activeConfig);

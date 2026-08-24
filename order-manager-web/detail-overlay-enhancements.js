@@ -30,12 +30,15 @@
   let designFilesEnhanceScheduled = false;
   let currentDetailOrder = null;
   let savedNotesText = '';
+  const noteDraftStore = window.OrderDetailState.createNoteDraftStore();
+  let activeNotesOrderKey = '';
   let notesSavedFlashTimer = null;
   let selectedMockupIndex = 0;
   let assetViewerCloseTimer = null;
   let detailTabControllerWired = false;
   let detailHydrationGeneration = 0;
   let detailHydrationController = null;
+  let overviewProgressObserver = null;
 
   function normalizedStatusClass(value) {
     return `is-${String(value || 'unknown')
@@ -179,7 +182,11 @@
     order.phone = customer.phone || order.phone || '';
     order.customer = customer;
     order.attention = result.attention || production.attention || order.attention || { required: false, reasons: [] };
-    order.productionStage = production.stage || order.productionStage || order.status || 'received';
+    window.OrderDetailState.mergeCanonicalProductionState(order, production);
+    order.productionStage = order.productionStage || order.status || 'received';
+    if (Object.prototype.hasOwnProperty.call(production, 'internalNotes')) {
+      order.notes = cleanNoteValue(production.internalNotes);
+    }
     order.sync = result.sync || order.sync || {};
     order.canonicalDetail = result;
 
@@ -734,6 +741,7 @@
 
   function renderCanonicalDetail(order, result) {
     mergeCanonicalDetail(order, result);
+    syncCanonicalProductionControls(order);
     if (typeof renderOrderAssets === 'function') renderOrderAssets(order);
     syncDetailHeader(order);
     syncCommerceDetail(order);
@@ -743,6 +751,7 @@
     renderFulfillmentDetail(order, result);
     renderCustomerAndOrder(order, result);
     renderActivityAndExceptions(order, result);
+    renderOverview(order, result);
     enhanceItemsTable(order);
     document.dispatchEvent(new CustomEvent('printmo:detail-items-rendered', {
       detail: { orderName: order?.name || '' }
@@ -788,11 +797,13 @@
 
     if (!eligible) {
       setDetailDataState('ready');
-      renderProductionContext({ production: {
+      const localResult = { production: {
         stage: order?.status,
         version: order?._version,
         bundleId: order?.bundle
-      } });
+      } };
+      renderProductionContext(localResult);
+      renderOverview(order, localResult);
       return;
     }
 
@@ -824,12 +835,196 @@
   function itemCounts(order) {
     return (order.items || []).reduce((totals, item) => {
       const qty = Number(item.qty) || 0;
-      if (typeof isPrintItem === 'function' && isPrintItem(item)) totals.prints += qty;
-      else if (typeof isGarmentItem === 'function' && isGarmentItem(item)) totals.apparel += qty;
+      const printItem = typeof isPrintItem === 'function' && isPrintItem(item);
+      const garmentItem = typeof isGarmentItem === 'function'
+        ? isGarmentItem(item)
+        : !printItem && Boolean(String(item?.sku || '').trim());
+      if (printItem) totals.prints += qty;
+      else if (garmentItem) totals.apparel += qty;
       else totals.other += qty;
       totals.all += qty;
       return totals;
     }, { all: 0, apparel: 0, prints: 0, other: 0 });
+  }
+
+  function overviewAttentionReasons(order, result) {
+    const attention = result?.attention || result?.production?.attention || order?.attention || {};
+    const reasons = Array.isArray(attention.reasons)
+      ? attention.reasons.map(reason => String(reason || '').trim()).filter(Boolean)
+      : [];
+    if (attention.required && !reasons.length) reasons.push('This production order is marked as needing attention.');
+    if (result?.commerce?.cancelledAt) reasons.unshift('The commerce order is canceled.');
+    return [...new Set(reasons)];
+  }
+
+  function overviewMaterialCount() {
+    return checkboxIds.filter(id => document.getElementById(id)?.checked).length;
+  }
+
+  function setOverviewMilestone(id, state) {
+    const milestone = document.getElementById(id);
+    if (milestone) milestone.dataset.state = state;
+  }
+
+  function overviewRecommendation(snapshot) {
+    if (snapshot.reasons.length) {
+      return {
+        title: `Review ${snapshot.reasons.length} recorded ${snapshot.reasons.length === 1 ? 'exception' : 'exceptions'}`,
+        description: 'Open Activity & exceptions to inspect the current reason before changing production state.',
+        action: 'Open exceptions',
+        target: 'tab-activity'
+      };
+    }
+    if (snapshot.materialCount < checkboxIds.length) {
+      return {
+        title: 'Review material readiness',
+        description: `${snapshot.materialCount} of ${checkboxIds.length} existing material milestones are marked.`,
+        action: 'Open production',
+        target: 'tab-production',
+        mobileAnchor: 'ready-controls'
+      };
+    }
+    if (snapshot.apparel > 0 && snapshot.progress < snapshot.apparel) {
+      return {
+        title: 'Update print progress',
+        description: `${snapshot.progress} of ${snapshot.apparel} garment pieces are currently recorded as printed.`,
+        action: 'Open production',
+        target: 'tab-production',
+        mobileAnchor: 'progress-section'
+      };
+    }
+    if (snapshot.fulfillment !== 'FULFILLED') {
+      return {
+        title: 'Review fulfillment',
+        description: 'Materials and print progress are recorded; fulfillment is not marked complete in commerce.',
+        action: 'Open fulfillment',
+        target: 'tab-logistics'
+      };
+    }
+    return {
+      title: 'Review completed order',
+      description: 'Current material, print, and fulfillment fields show no remaining recorded work.',
+      action: 'Open activity',
+      target: 'tab-activity'
+    };
+  }
+
+  function renderOverview(order, result = null) {
+    if (!order || !document.getElementById('tab-overview')) return;
+    const counts = itemCounts(order);
+    const progress = Math.max(0, Number(order.progress || 0));
+    const materialCount = overviewMaterialCount();
+    const stage = String(result?.production?.stage || order.productionStage || order.status || 'received').toLowerCase();
+    const fulfillment = String(
+      result?.commerce?.fulfillmentStatus
+        || order.displayFulfillmentStatus
+        || order.fulfillmentStatus
+        || 'UNFULFILLED'
+    ).toUpperCase();
+    const reasons = overviewAttentionReasons(order, result || order.canonicalDetail);
+    const recommendation = overviewRecommendation({
+      apparel: counts.apparel,
+      progress,
+      materialCount,
+      fulfillment,
+      reasons
+    });
+    const stageLabel = normalizedStageLabel(stage);
+
+    setText('overview-stage-label', stageLabel, 'Received');
+    setText('overview-command-title', recommendation.title, 'Review current production details');
+    setText('overview-command-description', recommendation.description, 'Open the current production workspace.');
+    const primaryAction = document.getElementById('overview-primary-action');
+    if (primaryAction) {
+      primaryAction.textContent = recommendation.action;
+      primaryAction.dataset.overviewTarget = recommendation.target;
+      if (recommendation.mobileAnchor) primaryAction.dataset.overviewMobileAnchor = recommendation.mobileAnchor;
+      else delete primaryAction.dataset.overviewMobileAnchor;
+    }
+
+    setText('overview-order-state', stageLabel, 'Received');
+    setText('overview-materials-state', `${materialCount} of ${checkboxIds.length} marked`);
+    setText('overview-printing-state', `${progress} of ${counts.apparel} pieces`);
+    setText('overview-fulfillment-state', normalizedStageLabel(fulfillment.toLowerCase()), 'Unfulfilled');
+    setOverviewMilestone('overview-milestone-order', stage === 'completed' ? 'complete' : 'current');
+    setOverviewMilestone(
+      'overview-milestone-materials',
+      materialCount === checkboxIds.length ? 'complete' : materialCount > 0 ? 'current' : 'pending'
+    );
+    setOverviewMilestone(
+      'overview-milestone-printing',
+      counts.apparel > 0 && progress >= counts.apparel ? 'complete' : progress > 0 || stage === 'print' ? 'current' : 'pending'
+    );
+    setOverviewMilestone(
+      'overview-milestone-fulfillment',
+      fulfillment === 'FULFILLED' ? 'complete' : fulfillment.includes('PARTIAL') ? 'current' : 'pending'
+    );
+
+    const updatedAt = result?.production?.updatedAt
+      || order.canonicalDetail?.production?.updatedAt
+      || result?.commerce?.updatedAt
+      || order.shopifyUpdatedAt;
+    const receivedAt = order.receivedAt || order.createdAt;
+    setText(
+      'overview-freshness',
+      updatedAt ? `Updated ${formatDetailDate(updatedAt)}` : receivedAt ? `Received ${formatDetailDate(receivedAt)}` : 'Current detail loaded'
+    );
+    setText('overview-garment-count', counts.apparel);
+    setText('overview-print-count', counts.prints);
+    setText('overview-order-total', money(order.total, order.currencyCode), '$0.00');
+    setText('overview-received-at', formatDetailDate(order.receivedAt || order.createdAt), '—');
+
+    const attentionCount = document.getElementById('overview-attention-count');
+    if (attentionCount) {
+      attentionCount.textContent = `${reasons.length} open`;
+      attentionCount.dataset.state = reasons.length ? 'attention' : 'clear';
+    }
+    const attentionList = document.getElementById('overview-attention-list');
+    if (attentionList) {
+      if (!reasons.length) {
+        const empty = document.createElement('p');
+        empty.className = 'detail-inline-empty';
+        empty.textContent = 'No production attention reasons are currently recorded.';
+        attentionList.replaceChildren(empty);
+      } else {
+        attentionList.replaceChildren(...reasons.map(reason => {
+          const item = document.createElement('p');
+          item.className = 'overview-attention-item';
+          item.textContent = reason;
+          return item;
+        }));
+      }
+    }
+  }
+
+  function syncCanonicalProductionControls(order) {
+    if (!order) return;
+    const counts = itemCounts(order);
+    order.totalApparel = counts.apparel;
+
+    const progress = Math.max(0, Number(order.progress || 0));
+    const progressText = document.getElementById('progress-text');
+    const progressBar = document.getElementById('progress-bar');
+    if (progressText) progressText.textContent = `${progress} / ${counts.apparel} pieces printed`;
+    if (progressBar) {
+      const percentage = counts.apparel ? Math.min(100, (progress / counts.apparel) * 100) : 0;
+      progressBar.style.width = `${percentage}%`;
+    }
+
+    const canonicalValues = {
+      'chk-blanks': Boolean(Number(order.blanksStatus || 0)),
+      'chk-prints': Boolean(Number(order.printsStatus || 0)),
+      'chk-blanks-ordered': Boolean(Number(order.blanksOrdered || 0)),
+      'chk-prints-ordered': Boolean(Number(order.printsOrdered || 0))
+    };
+    Object.entries(canonicalValues).forEach(([id, checked]) => {
+      const input = document.getElementById(id);
+      if (input) input.checked = checked;
+    });
+    document.getElementById('ready-apply')?.classList.add('hidden');
+    setReadyBaselines();
+    syncReadyPendingState();
+    syncProductionTimeline();
   }
 
   function orderContextParts(name) {
@@ -934,6 +1129,23 @@
     }
   }
 
+  function detailOrderDraftKey(order) {
+    return noteDraftStore.keyFor(order);
+  }
+
+  function rememberCurrentNotesDraft() {
+    const input = document.getElementById('detail-notes-input');
+    if (!input || !activeNotesOrderKey) return;
+    const text = cleanNoteValue(input.value);
+    noteDraftStore.remember(activeNotesOrderKey, text, savedNotesText);
+  }
+
+  function discardCurrentNotesDraft() {
+    const input = document.getElementById('detail-notes-input');
+    noteDraftStore.discard(activeNotesOrderKey);
+    if (input) input.value = savedNotesText;
+  }
+
   function syncNotesEditState() {
     const card = document.getElementById('detail-notes-wrapper');
     const input = document.getElementById('detail-notes-input');
@@ -943,10 +1155,17 @@
 
     const currentText = cleanNoteValue(input.value);
     const hasUnsaved = currentText !== savedNotesText;
+    if (activeNotesOrderKey) {
+      noteDraftStore.remember(activeNotesOrderKey, currentText, savedNotesText);
+    }
     card.classList.toggle('has-unsaved-notes', hasUnsaved);
     if (save) save.disabled = !hasUnsaved;
     if (status) {
-      if (hasUnsaved) status.textContent = 'Unsaved changes';
+      if (hasUnsaved) {
+        status.textContent = card.classList.contains('is-editing-notes')
+          ? 'Unsaved changes'
+          : 'Unsaved draft for this order';
+      }
       else if (currentText) status.textContent = `${noteLineCount(currentText)} ${noteLineCount(currentText) === 1 ? 'line' : 'lines'}`;
       else status.textContent = 'No changes';
     }
@@ -969,7 +1188,7 @@
     }
 
     if (editing) {
-      input.value = savedNotesText;
+      input.value = noteDraftStore.read(activeNotesOrderKey)?.text ?? savedNotesText;
       requestAnimationFrame(() => {
         autoGrowNotesInput();
         input.focus();
@@ -984,17 +1203,31 @@
   }
 
   function syncNotesContext(order) {
+    const nextOrder = order || currentDetailOrder || (typeof detailOrder !== 'undefined' ? detailOrder : null);
+    const nextOrderKey = detailOrderDraftKey(nextOrder);
+    if (activeNotesOrderKey && nextOrderKey !== activeNotesOrderKey) rememberCurrentNotesDraft();
     if (order) currentDetailOrder = order;
     const activeOrder = order || currentDetailOrder || (typeof detailOrder !== 'undefined' ? detailOrder : null);
     const text = cleanNoteValue(activeOrder?.notes);
     const card = document.getElementById('detail-notes-wrapper');
     const input = document.getElementById('detail-notes-input');
 
-    if (!card?.classList.contains('is-editing-notes')) {
-      savedNotesText = text;
-      updateNotesPreview(text);
-      if (input) input.value = text;
+    if (nextOrderKey !== activeNotesOrderKey) {
+      activeNotesOrderKey = nextOrderKey;
+      card?.classList.remove('is-editing-notes', 'is-saving-notes');
+      document.querySelector('.detail-notes-preview')?.classList.remove('hidden');
+      input?.classList.add('hidden');
+      const edit = document.getElementById('detail-edit-notes-btn');
+      if (edit) {
+        edit.textContent = 'Edit';
+        edit.setAttribute('aria-pressed', 'false');
+      }
     }
+    savedNotesText = text;
+    const draft = noteDraftStore.read(activeNotesOrderKey);
+    if (draft?.text === savedNotesText) noteDraftStore.discard(activeNotesOrderKey);
+    updateNotesPreview(text);
+    if (input) input.value = noteDraftStore.read(activeNotesOrderKey)?.text ?? text;
     syncNotesSummary(text);
     syncNotesEditState();
   }
@@ -1023,6 +1256,7 @@
       await window.api.updateNotes(order.name, nextNotes);
       updateStoredOrderNotes(order, nextNotes);
       savedNotesText = nextNotes;
+      noteDraftStore.discard(activeNotesOrderKey);
       updateNotesPreview(nextNotes);
       syncNotesSummary(nextNotes);
       setNotesEditing(false);
@@ -1060,8 +1294,10 @@
       cancel.dataset.detailInlineNotesWired = 'true';
       cancel.addEventListener('click', event => {
         event.preventDefault();
+        discardCurrentNotesDraft();
         setNotesEditing(false);
-        syncNotesContext();
+        updateNotesPreview(savedNotesText);
+        syncNotesSummary(savedNotesText);
       });
     }
     if (save && !save.dataset.detailInlineNotesWired) {
@@ -1077,8 +1313,8 @@
       input.addEventListener('keydown', event => {
         if (event.key === 'Escape') {
           event.preventDefault();
+          rememberCurrentNotesDraft();
           setNotesEditing(false);
-          syncNotesContext();
         }
         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
           event.preventDefault();
@@ -1090,14 +1326,15 @@
 
   function readyStateFromInputs() {
     const checked = checkboxIds.filter(id => document.getElementById(id)?.checked).length;
-    if (checked === checkboxIds.length) return { label: 'Production ready', state: 'ready' };
-    if (checked > 0) return { label: `${checked} of 4 milestones`, state: 'partial' };
-    return { label: 'Not started', state: 'missing' };
+    if (checked === checkboxIds.length) return { label: 'Materials marked ready', state: 'ready' };
+    if (checked > 0) return { label: `${checked} of 4 material milestones`, state: 'partial' };
+    return { label: 'Materials not marked ready', state: 'missing' };
   }
 
   function syncReadySummary() {
     const state = readyStateFromInputs();
     syncProductionTimeline(state);
+    if (currentDetailOrder) renderOverview(currentDetailOrder);
   }
 
   function syncProductionTimeline(readyState = readyStateFromInputs()) {
@@ -1114,7 +1351,7 @@
     if (pill) {
       pill.textContent = readyState.label;
       pill.dataset.state = readyState.state;
-      pill.title = `${completed} of ${checkboxIds.length} production milestones complete`;
+      pill.title = `${completed} of ${checkboxIds.length} material readiness milestones marked`;
     }
 
     readinessSequences.forEach(sequence => {
@@ -1258,48 +1495,9 @@
 
   function wireProgressFeedback() {
     const button = document.getElementById('progress-plus1');
-    const status = document.getElementById('progress-save-status');
-    if (!button || typeof button.onclick !== 'function' || button.onclick.__detailFeedbackWrapped) return;
-    const originalClick = button.onclick;
-    const wrappedClick = async function wrappedProgressClick(event) {
-      if (button.dataset.saving === 'true') return;
-      const order = currentDetailOrder || (typeof detailOrder !== 'undefined' ? detailOrder : null);
-      const previousProgress = Number(order?.progress) || 0;
-      button.dataset.saving = 'true';
-      button.disabled = true;
-      status?.classList.remove('is-success', 'is-error');
-      if (status) status.textContent = 'Saving print count...';
-      try {
-        const saved = await originalClick.call(this, event);
-        if (saved === false) {
-          status?.classList.add('is-error');
-          if (status) status.textContent = 'Print progress could not be saved. Please try again.';
-          return;
-        }
-        status?.classList.add('is-success');
-        if (status) status.textContent = 'Print count saved.';
-      } catch (error) {
-        if (order) {
-          order.progress = previousProgress;
-          const apparel = itemCounts(order).apparel;
-          const progressText = document.getElementById('progress-text');
-          const progressBar = document.getElementById('progress-bar');
-          if (progressText) progressText.textContent = `${previousProgress} / ${apparel} pieces printed`;
-          if (progressBar) progressBar.style.width = `${apparel ? Math.min(100, (previousProgress / apparel) * 100) : 0}%`;
-        }
-        status?.classList.add('is-error');
-        if (status) {
-          status.textContent = typeof productionProgressErrorMessage === 'function'
-            ? productionProgressErrorMessage(error)
-            : 'Print progress could not be saved. Please try again.';
-        }
-      } finally {
-        delete button.dataset.saving;
-        button.disabled = false;
-      }
-    };
-    wrappedClick.__detailFeedbackWrapped = true;
-    button.onclick = wrappedClick;
+    if (!button) return;
+    delete button.dataset.saving;
+    button.removeAttribute('aria-busy');
   }
 
   function wireReadyApplyObserver() {
@@ -1350,6 +1548,7 @@
     syncNotesContext(order);
     syncCommerceDetail(order);
     syncReadySummary();
+    renderOverview(order);
   }
 
   function addressLines(address, fallbackName) {
@@ -1460,7 +1659,7 @@
     targetTab.scrollIntoView?.({
       block: 'nearest',
       inline: 'nearest',
-      behavior: options.focus ? 'smooth' : 'auto'
+      behavior: options.focus && !window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'smooth' : 'auto'
     });
     if (options.focus) targetTab.focus();
   }
@@ -1489,6 +1688,43 @@
       event.preventDefault();
       activateDetailTab(tabs[nextIndex].dataset.tab, { focus: true });
     });
+  }
+
+  function wireOverview() {
+    const overview = document.getElementById('tab-overview');
+    if (overview && !overview.dataset.overviewWired) {
+      overview.dataset.overviewWired = 'true';
+      overview.addEventListener('click', event => {
+        const action = event.target.closest('[data-overview-target]');
+        if (!action || !overview.contains(action)) return;
+        event.preventDefault();
+        activateDetailTab(action.dataset.overviewTarget, { focus: true });
+        const mobileAnchor = action.dataset.overviewMobileAnchor;
+        if (mobileAnchor && window.matchMedia?.('(max-width: 900px)')?.matches) {
+          requestAnimationFrame(() => {
+            const target = document.getElementById(mobileAnchor);
+            if (!target) return;
+            target.scrollIntoView({
+              block: 'start',
+              behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'auto' : 'smooth'
+            });
+            const focusTarget = target.querySelector('button:not([disabled]), input:not([disabled])');
+            focusTarget?.focus({ preventScroll: true });
+          });
+        }
+      });
+    }
+    const progressText = document.getElementById('progress-text');
+    if (progressText && !overviewProgressObserver) {
+      overviewProgressObserver = new MutationObserver(() => {
+        if (currentDetailOrder) renderOverview(currentDetailOrder);
+      });
+      overviewProgressObserver.observe(progressText, {
+        childList: true,
+        characterData: true,
+        subtree: true
+      });
+    }
   }
 
   function mockupThumbs() {
@@ -2142,6 +2378,24 @@
     detailHydrationController = null;
   }
 
+  function preserveNotesDraftForClose() {
+    rememberCurrentNotesDraft();
+    setNotesEditing(false);
+    currentDetailOrder = null;
+    activeNotesOrderKey = '';
+  }
+
+  function wireNotesCloseLifecycle() {
+    const overlay = document.getElementById('detail-overlay');
+    if (!overlay || overlay.dataset.notesCloseLifecycleWired) return;
+    overlay.dataset.notesCloseLifecycleWired = 'true';
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay || event.target.closest?.('#detail-close, #detail-close-btn')) {
+        preserveNotesDraftForClose();
+      }
+    }, true);
+  }
+
   function wireCanonicalDetailLifecycle() {
     const overlay = document.getElementById('detail-overlay');
     if (overlay && !overlay.dataset.canonicalLifecycleWired) {
@@ -2149,7 +2403,10 @@
       const observer = new MutationObserver(() => {
         const closed = !overlay.classList.contains('visible')
           || overlay.getAttribute('aria-hidden') === 'true';
-        if (closed) invalidateCanonicalDetailLoad();
+        if (closed) {
+          preserveNotesDraftForClose();
+          invalidateCanonicalDetailLoad();
+        }
       });
       observer.observe(overlay, {
         attributes: true,
@@ -2176,7 +2433,7 @@
       const result = originalOpenDetail.call(this, order, ...args);
       const overlay = document.getElementById('detail-overlay');
       overlay?.setAttribute('aria-hidden', 'false');
-      activateDetailTab('tab-items');
+      activateDetailTab('tab-overview');
       syncDetailHeader(order);
       wireCustomerNotesControls();
       wireReadyInputs();
@@ -2185,11 +2442,13 @@
       wireReadyApplyFeedback();
       wireProgressFeedback();
       wireDetailTabs();
+      wireOverview();
       wireAssetViewerCaptions();
       patchAssetViewerClose();
       wireItemsTable(order);
       wireDesignFilesPanel();
       wireCanonicalDetailLifecycle();
+      wireNotesCloseLifecycle();
       requestAnimationFrame(wireMockupBrowser);
       requestAnimationFrame(() => enhanceItemsTable(order));
       requestAnimationFrame(scheduleDesignFilesEnhancement);
@@ -2206,11 +2465,13 @@
   document.addEventListener('DOMContentLoaded', () => {
     patchDetailOpen();
     wireDetailTabs();
+    wireOverview();
     wireCustomerNotesControls();
     wireReadyInputs();
     wireAssetViewerCaptions();
     patchAssetViewerClose();
     wireCanonicalDetailLifecycle();
+    wireNotesCloseLifecycle();
     wireMockupBrowser();
     wireItemsTable();
     wireDesignFilesPanel();
@@ -2218,10 +2479,12 @@
 
   patchDetailOpen();
   wireDetailTabs();
+  wireOverview();
   wireCustomerNotesControls();
   wireAssetViewerCaptions();
   patchAssetViewerClose();
   wireCanonicalDetailLifecycle();
+  wireNotesCloseLifecycle();
   wireItemsTable();
   wireDesignFilesPanel();
 })();
