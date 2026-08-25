@@ -355,6 +355,10 @@ export default {
             return handleV1BatchCommit(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
         }
 
+        if (url.pathname === "/order-manager/v1/batches/latest" && request.method === "GET") {
+            return handleV1LatestBatchResult(env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
         if (url.pathname === "/order-manager/v1/provider-batches/commit" && request.method === "POST") {
             return handleProviderBatchCommit(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
         }
@@ -7548,6 +7552,7 @@ async function handleV1BatchCommit(request, env, allowOrigin, reqAllowHeaders, i
             }
         }
         const lines = supplierLinesFromProjectionRows(rows);
+        const lineSources = supplierLineSourcesFromProjectionRows(rows);
         if (!lines.length) {
             return v1Error({
                 code: 'BATCH_HAS_NO_SUPPLIER_SKUS',
@@ -7561,7 +7566,7 @@ async function handleV1BatchCommit(request, env, allowOrigin, reqAllowHeaders, i
         const batchId = `ssb-${await stableAssetId(`${shop.shop_domain}:${actor}:${idempotencyKey}`)}`;
         const poNumber = `PM-${batchId.slice(-12).toUpperCase()}`;
         const now = isoNow();
-        const requestJson = JSON.stringify({ orderIds: gids, lines, orderCount: gids.length });
+        const requestJson = JSON.stringify({ orderIds: gids, lines, lineSources, orderCount: gids.length });
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
         await db.prepare(`
           INSERT INTO batches (
@@ -7579,7 +7584,15 @@ async function handleV1BatchCommit(request, env, allowOrigin, reqAllowHeaders, i
             }, allowOrigin, reqAllowHeaders, 409);
         }
         if (batch.state === 'confirmed') {
-            return jsonResponse(JSON.parse(batch.response_json || '{"ok":true}'), allowOrigin, reqAllowHeaders);
+            const confirmed = JSON.parse(batch.response_json || '{"ok":true,"outcome":"confirmed"}');
+            return jsonResponse(confirmed, allowOrigin, reqAllowHeaders, confirmed.outcome === 'partial' ? 207 : 200);
+        }
+        if (batch.state === 'failed') {
+            const failed = JSON.parse(batch.response_json || '{}');
+            return v1Error({
+                code: 'SUPPLIER_REJECTED',
+                message: failed.summary || 'S&S rejected this submission.'
+            }, allowOrigin, reqAllowHeaders, 422, { report: failed });
         }
         if (['submitting', 'unknown'].includes(batch.state)) {
             return v1Error({
@@ -7610,44 +7623,86 @@ async function handleV1BatchCommit(request, env, allowOrigin, reqAllowHeaders, i
                 })
             });
         } catch (error) {
+            const report = normalizeSupplierCommitReport({
+                payload: error.body,
+                error,
+                requestedLines: lines,
+                lineSources,
+                orderIds: gids,
+                batchId,
+                poNumber
+            });
+            const state = report.outcome === 'rejected' ? 'failed' : 'unknown';
             await db.batch([
-                db.prepare(`UPDATE batches SET state = 'unknown', response_json = ?, updated_at = ? WHERE id = ?`)
-                    .bind(JSON.stringify({ error: error.message }), isoNow(), batchId),
+                db.prepare(`UPDATE batches SET state = ?, response_json = ?, updated_at = ? WHERE id = ?`)
+                    .bind(state, JSON.stringify(report), isoNow(), batchId),
                 db.prepare(`
                   INSERT INTO supplier_attempts (
                     id, batch_id, attempt_type, outcome, http_status, response_json, created_at
-                  ) VALUES (?, ?, 'commit', 'unknown', ?, ?, ?)
-                `).bind(crypto.randomUUID(), batchId, Number(error.status || 0) || null, JSON.stringify({ error: error.message }), isoNow())
+                  ) VALUES (?, ?, 'commit', ?, ?, ?, ?)
+                `).bind(crypto.randomUUID(), batchId, report.outcome, Number(error.status || 0) || null, JSON.stringify(report), isoNow())
             ]);
+            if (report.outcome === 'rejected') {
+                return v1Error({
+                    code: 'SUPPLIER_REJECTED',
+                    message: report.summary,
+                    batchId
+                }, allowOrigin, reqAllowHeaders, 422, { report });
+            }
             return v1Error({
                 code: 'SUPPLIER_RESULT_UNKNOWN',
                 message: 'S&S did not return a confirmed result. Do not retry until this batch is reconciled.',
                 batchId
-            }, allowOrigin, reqAllowHeaders, 502);
+            }, allowOrigin, reqAllowHeaders, 502, { report });
         }
 
-        const response = {
-            ok: true,
+        const response = normalizeSupplierCommitReport({
+            payload: supplier,
+            requestedLines: lines,
+            lineSources,
+            orderIds: gids,
             batchId,
-            poNumber,
-            supplierOrderNumber: supplier.orderNumber,
-            lineHash,
-            count: gids.length,
-            subtotal: supplier.subtotal,
-            skuCount: supplier.skuCount,
-            testOrder: Boolean(supplier.testOrder),
-            metadataRepairRequired: []
-        };
+            poNumber
+        });
+        response.lineHash = lineHash;
+        response.count = gids.length;
+        response.skuCount = lines.length;
+        response.metadataRepairRequired = [];
+
+        if (response.outcome === 'rejected' || response.outcome === 'unknown') {
+            const state = response.outcome === 'rejected' ? 'failed' : 'unknown';
+            await db.batch([
+                db.prepare(`UPDATE batches SET state = ?, response_json = ?, updated_at = ? WHERE id = ?`)
+                    .bind(state, JSON.stringify(response), isoNow(), batchId),
+                db.prepare(`
+                  INSERT INTO supplier_attempts (
+                    id, batch_id, attempt_type, outcome, http_status, response_json, created_at
+                  ) VALUES (?, ?, 'commit', ?, 200, ?, ?)
+                `).bind(crypto.randomUUID(), batchId, response.outcome, JSON.stringify(response), isoNow())
+            ]);
+            const unknown = response.outcome === 'unknown';
+            return v1Error({
+                code: unknown ? 'SUPPLIER_RESULT_UNKNOWN' : 'SUPPLIER_REJECTED',
+                message: response.summary,
+                batchId
+            }, allowOrigin, reqAllowHeaders, unknown ? 502 : 422, { report: response });
+        }
+
+        const acceptedOrderIds = new Set(response.orderResults
+            .filter(order => order.outcome === 'confirmed')
+            .map(order => order.orderId));
+        const rejectedOrderIds = gids.filter(gid => !acceptedOrderIds.has(gid));
         await db.batch([
+            ...rejectedOrderIds.map(gid => db.prepare(`DELETE FROM batch_orders WHERE batch_id = ? AND order_gid = ?`).bind(batchId, gid)),
             db.prepare(`UPDATE batches SET state = 'confirmed', response_json = ?, updated_at = ? WHERE id = ?`)
                 .bind(JSON.stringify(response), isoNow(), batchId),
             db.prepare(`
               INSERT INTO supplier_attempts (
                 id, batch_id, attempt_type, outcome, http_status, response_json, created_at
               ) VALUES (?, ?, 'commit', 'confirmed', 200, ?, ?)
-            `).bind(crypto.randomUUID(), batchId, JSON.stringify(supplier), isoNow())
+            `).bind(crypto.randomUUID(), batchId, JSON.stringify(response), isoNow())
         ]);
-        for (const row of rows) {
+        for (const row of rows.filter(candidate => acceptedOrderIds.has(candidate.order_gid))) {
             try {
                 await confirmedBatchProductionUpdate(env, shop, row, batchId, poNumber, actor);
             } catch (error) {
@@ -7667,6 +7722,255 @@ function assetIdFromPath(pathname) {
     return decodeURIComponent(pathname.replace(/^\/order-manager\/v1\/assets\//, '').replace(/\/(read-ticket|read)$/, ''));
 }
 
+function supplierLineSourcesFromProjectionRows(rows) {
+    const sources = [];
+    for (const row of rows) {
+        let summary;
+        try { summary = JSON.parse(row.commerce_json || '{}'); } catch (_) { summary = {}; }
+        const orderName = String(summary?.displayName || row.order_gid || '').trim();
+        for (const item of summary?.commerce?.lineItems || []) {
+            if (PRINT_TITLES.has(item?.title)) continue;
+            const sku = String(item?.sku || '').trim();
+            const qty = Number(item?.currentQuantity ?? item?.quantity ?? 0);
+            if (!sku || !Number.isInteger(qty) || qty <= 0) continue;
+            sources.push({
+                orderId: row.order_gid,
+                orderName,
+                lineItemId: String(item?.id || '').trim() || null,
+                sku,
+                title: String(item?.title || 'Garment').trim().slice(0, 160),
+                variantTitle: String(item?.variantTitle || '').trim().slice(0, 160),
+                qty
+            });
+        }
+    }
+    return sources;
+}
+
+function supplierValue(object, names) {
+    if (!object || typeof object !== 'object') return undefined;
+    const wanted = new Set(names.map(name => String(name).toLowerCase()));
+    const key = Object.keys(object).find(candidate => wanted.has(candidate.toLowerCase()));
+    return key ? object[key] : undefined;
+}
+
+function supplierText(value, fallback = '') {
+    if (value === undefined || value === null) return fallback;
+    if (typeof value === 'object') {
+        try { return JSON.stringify(value).slice(0, 500); } catch (_) { return fallback; }
+    }
+    return String(value).trim().slice(0, 500) || fallback;
+}
+
+function supplierArray(object, names) {
+    const value = supplierValue(object, names);
+    return Array.isArray(value) ? value : [];
+}
+
+function supplierOrderRecords(payload) {
+    if (Array.isArray(payload)) return payload;
+    return supplierArray(payload, ['orders', 'orderResults', 'supplierOrders']);
+}
+
+function supplierLineErrorRecords(payload) {
+    if (!payload || typeof payload !== 'object') return [];
+    const direct = supplierArray(payload, ['lineErrors', 'line_errors', 'rejectedLines', 'errors']);
+    if (direct.length) return direct;
+    const nestedError = supplierValue(payload, ['error']);
+    if (nestedError && typeof nestedError === 'object') {
+        return supplierArray(nestedError, ['lineErrors', 'line_errors', 'rejectedLines', 'errors']);
+    }
+    return [];
+}
+
+function supplierSkuFromRecord(record, requestedLines) {
+    const direct = supplierText(supplierValue(record, ['sku', 'identifier', 'skuId', 'skuID', 'productSku']));
+    if (direct) return direct;
+    const field = supplierText(supplierValue(record, ['field', 'path']));
+    const index = /lines?\s*\[?\s*(\d+)\s*\]?/i.exec(field)?.[1];
+    return index !== undefined ? String(requestedLines[Number(index)]?.sku || '') : '';
+}
+
+function supplierItemNamesForSku(lineSources, sku) {
+    return [...new Set(lineSources
+        .filter(source => !sku || source.sku === sku)
+        .map(source => [source.title, source.variantTitle].filter(Boolean).join(' — '))
+        .filter(Boolean))];
+}
+
+function normalizedSupplierAcceptedLines(payload, requestedLines, lineSources) {
+    const candidates = supplierArray(payload, ['acceptedLines', 'accepted_lines', 'lines']);
+    const orderLines = supplierOrderRecords(payload).flatMap(order => supplierArray(order, ['lines', 'lineItems']));
+    const explicit = candidates.length ? candidates : orderLines;
+    if (!explicit.length) return [];
+    const bySku = new Map();
+    for (const line of explicit) {
+        const sku = supplierSkuFromRecord(line, requestedLines);
+        const qty = Number(supplierValue(line, ['acceptedQty', 'qtyOrdered', 'quantity', 'qty']) || 0);
+        if (!sku || !Number.isFinite(qty) || qty <= 0) continue;
+        bySku.set(sku, (bySku.get(sku) || 0) + qty);
+    }
+    return [...bySku.entries()].map(([sku, acceptedQty]) => {
+        const requestedQty = Number(requestedLines.find(line => line.sku === sku)?.qty || acceptedQty);
+        const orderNames = [...new Set(lineSources.filter(source => source.sku === sku).map(source => source.orderName))];
+        const itemNames = supplierItemNamesForSku(lineSources, sku);
+        return { sku, requestedQty, acceptedQty, orderNames, itemNames };
+    });
+}
+
+function normalizedSupplierRejectedLines(payload, requestedLines, lineSources) {
+    return supplierLineErrorRecords(payload).map((record, index) => {
+        const sku = supplierSkuFromRecord(record, requestedLines);
+        const requested = requestedLines.find(line => line.sku === sku);
+        const reason = supplierText(
+            supplierValue(record, ['message', 'reason', 'error', 'description', 'detail']),
+            'S&S rejected this line.'
+        );
+        const code = supplierText(supplierValue(record, ['code', 'errorCode', 'type']));
+        const availableQtyValue = supplierValue(record, ['availableQty', 'available', 'inventoryQty']);
+        const availableQty = Number.isFinite(Number(availableQtyValue)) ? Number(availableQtyValue) : null;
+        const orderNames = [...new Set(lineSources.filter(source => !sku || source.sku === sku).map(source => source.orderName))];
+        const itemNames = supplierItemNamesForSku(lineSources, sku);
+        return {
+            line: index + 1,
+            sku: sku || null,
+            requestedQty: Number(requested?.qty || supplierValue(record, ['requestedQty', 'qty', 'quantity']) || 0) || null,
+            availableQty,
+            code: code || null,
+            reason,
+            orderNames,
+            itemNames
+        };
+    });
+}
+
+function supplierOrderNumbers(payload) {
+    const values = [
+        supplierValue(payload, ['orderNumber', 'supplierOrderNumber']),
+        ...supplierOrderRecords(payload).map(order => supplierValue(order, ['orderNumber', 'supplierOrderNumber']))
+    ];
+    return [...new Set(values.map(value => supplierText(value)).filter(Boolean))];
+}
+
+function normalizeSupplierCommitReport({ payload, error, requestedLines, lineSources, orderIds, batchId, poNumber }) {
+    const source = payload && typeof payload === 'object' ? payload : {};
+    let acceptedLines = normalizedSupplierAcceptedLines(source, requestedLines, lineSources);
+    let rejectedLines = normalizedSupplierRejectedLines(source, requestedLines, lineSources);
+    const orderNumbers = supplierOrderNumbers(source);
+    const explicitOutcome = supplierText(supplierValue(source, ['outcome', 'status'])).toLowerCase();
+    const httpStatus = Number(error?.status || 0) || null;
+    const deterministicFailure = Boolean(error && httpStatus >= 400 && httpStatus < 500 && ![408, 425, 429].includes(httpStatus));
+    let outcome;
+
+    if (['confirmed', 'partial', 'rejected', 'unknown'].includes(explicitOutcome)) {
+        outcome = explicitOutcome;
+    } else if (error) {
+        outcome = deterministicFailure ? 'rejected' : 'unknown';
+    } else if (acceptedLines.length && rejectedLines.length) {
+        outcome = 'partial';
+    } else if (rejectedLines.length) {
+        outcome = 'rejected';
+    } else if (orderNumbers.length || source.ok === true) {
+        outcome = 'confirmed';
+    } else {
+        outcome = 'unknown';
+    }
+
+    if (!rejectedLines.length && error && outcome === 'rejected') {
+        rejectedLines = [{
+            line: 1,
+            sku: null,
+            requestedQty: null,
+            availableQty: null,
+            code: supplierText(supplierValue(source?.error || source, ['code'])) || null,
+            reason: supplierText(
+                supplierValue(source?.error || source, ['message', 'error']),
+                supplierText(error.message, 'S&S rejected this batch.')
+            ),
+            orderNames: [...new Set(lineSources.map(sourceLine => sourceLine.orderName))],
+            itemNames: supplierItemNamesForSku(lineSources, '')
+        }];
+    }
+
+    if (outcome === 'confirmed' && !acceptedLines.length) {
+        acceptedLines = requestedLines.map(line => ({
+            sku: line.sku,
+            requestedQty: line.qty,
+            acceptedQty: line.qty,
+            orderNames: [...new Set(lineSources.filter(sourceLine => sourceLine.sku === line.sku).map(sourceLine => sourceLine.orderName))],
+            itemNames: supplierItemNamesForSku(lineSources, line.sku)
+        }));
+    }
+
+    const acceptedSkus = new Set(acceptedLines
+        .filter(line => Number(line.acceptedQty) >= Number(line.requestedQty))
+        .map(line => line.sku));
+    const rejectedSkus = new Set(rejectedLines.map(line => line.sku).filter(Boolean));
+    const genericRejection = rejectedLines.some(line => !line.sku);
+    const orderResults = orderIds.map(orderId => {
+        const sources = lineSources.filter(sourceLine => sourceLine.orderId === orderId);
+        const orderName = sources[0]?.orderName || orderId;
+        const rejected = sources.filter(sourceLine => genericRejection || rejectedSkus.has(sourceLine.sku) || (
+            outcome === 'partial' && !acceptedSkus.has(sourceLine.sku)
+        ));
+        const orderOutcome = outcome === 'confirmed'
+            ? 'confirmed'
+            : outcome === 'partial' && sources.length && !rejected.length
+                ? 'confirmed'
+                : outcome === 'unknown'
+                    ? 'unknown'
+                    : 'rejected';
+        return {
+            orderId,
+            orderName,
+            outcome: orderOutcome,
+            rejectedSkus: [...new Set(rejected.map(line => line.sku))]
+        };
+    });
+    const acceptedOrderCount = orderResults.filter(order => order.outcome === 'confirmed').length;
+    const summary = outcome === 'confirmed'
+        ? `${requestedLines.length} S&S ${requestedLines.length === 1 ? 'line was' : 'lines were'} accepted.`
+        : outcome === 'partial'
+            ? `${acceptedOrderCount} of ${orderIds.length} ${orderIds.length === 1 ? 'order was' : 'orders were'} fully accepted. Review the rejected garments before retrying.`
+            : outcome === 'rejected'
+                ? 'S&S rejected this submission. No rejected order was advanced.'
+                : 'S&S did not return a definite result. Do not retry until the PO is reconciled.';
+
+    return {
+        ok: outcome === 'confirmed' || outcome === 'partial',
+        outcome,
+        batchId,
+        poNumber,
+        supplierOrderNumbers: orderNumbers,
+        supplierOrderNumber: orderNumbers[0] || null,
+        lineHash: supplierText(supplierValue(source, ['lineHash'])) || null,
+        orderCount: orderIds.length,
+        acceptedOrderCount,
+        acceptedLines,
+        rejectedLines,
+        orderResults,
+        subtotal: Number(supplierValue(source, ['subtotal']) || 0) || null,
+        testOrder: Boolean(supplierValue(source, ['testOrder'])),
+        httpStatus,
+        summary,
+        recordedAt: isoNow()
+    };
+}
+
+async function handleV1LatestBatchResult(env, allowOrigin, reqAllowHeaders) {
+    try {
+        const shop = await d1Shop(env);
+        const row = await requireOrderDb(env).prepare(`
+          SELECT response_json FROM batches
+          WHERE shop_id = ? AND response_json IS NOT NULL
+          ORDER BY created_at DESC LIMIT 1
+        `).bind(shop.id).first();
+        return jsonResponse({ result: row?.response_json ? JSON.parse(row.response_json) : null }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
 function supplierLinesFromProviderRecords(records) {
     const aggregate = new Map();
     for (const record of records) {
@@ -7681,6 +7985,29 @@ function supplierLinesFromProviderRecords(records) {
     return [...aggregate.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([sku, qty]) => ({ sku, qty }));
+}
+
+function supplierLineSourcesFromProviderRecords(records) {
+    const sources = [];
+    for (const record of records) {
+        const orderName = String(record.contract?.displayName || record.contract?.source?.displayNumber || record.orderKey || '').trim();
+        for (const item of record.contract?.commerce?.lineItems || []) {
+            if (PRINT_TITLES.has(item?.title)) continue;
+            const sku = String(item?.supplierSku || '').trim();
+            const qty = Number(item?.currentQuantity ?? item?.quantity ?? 0);
+            if (!sku || !Number.isInteger(qty) || qty <= 0) continue;
+            sources.push({
+                orderId: record.orderKey,
+                orderName,
+                lineItemId: String(item?.id || '').trim() || null,
+                sku,
+                title: String(item?.title || 'Garment').trim().slice(0, 160),
+                variantTitle: String(item?.variantTitle || '').trim().slice(0, 160),
+                qty
+            });
+        }
+    }
+    return sources;
 }
 
 async function refreshEtsySupplierSkusForListing(env, listingId) {
@@ -7750,11 +8077,12 @@ async function handleProviderBatchCommit(request, env, allowOrigin, reqAllowHead
             return v1Error({ code: 'INVALID_PROVIDER_BATCH_STAGE', message: 'Every Etsy order must be active and in Create blanks order or In S&S cart.' }, allowOrigin, reqAllowHeaders, 409);
         }
         const lines = supplierLinesFromProviderRecords(records);
+        const lineSources = supplierLineSourcesFromProviderRecords(records);
         if (!lines.length) return v1Error({ code: 'BATCH_HAS_NO_SUPPLIER_SKUS', message: 'These Etsy orders need an exact S&S blank recipe before they can be submitted.' }, allowOrigin, reqAllowHeaders, 400);
         const lineHash = bytesToHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(lines))));
         const batchId = `ssb-${await stableAssetId(`${shop.shop_domain}:${actor}:${idempotencyKey}`)}`;
         const poNumber = `PM-${batchId.slice(-12).toUpperCase()}`;
-        const requestJson = JSON.stringify({ orderKeys, lines, orderCount: orderKeys.length, provider: 'etsy' });
+        const requestJson = JSON.stringify({ orderKeys, lines, lineSources, orderCount: orderKeys.length, provider: 'etsy' });
         const now = isoNow();
         await db.prepare(`
           INSERT INTO batches (id, shop_id, po_number, state, line_hash, request_json, expires_at, created_by, created_at, updated_at)
@@ -7763,7 +8091,14 @@ async function handleProviderBatchCommit(request, env, allowOrigin, reqAllowHead
         `).bind(batchId, shop.id, poNumber, lineHash, requestJson, new Date(Date.now() + 15 * 60 * 1000).toISOString(), actor, now, now).run();
         const batch = await db.prepare('SELECT * FROM batches WHERE id = ? AND shop_id = ?').bind(batchId, shop.id).first();
         if (!batch || batch.line_hash !== lineHash || batch.request_json !== requestJson) return v1Error({ code: 'BATCH_IDEMPOTENCY_CONFLICT', message: 'This batch key was already used for different orders.' }, allowOrigin, reqAllowHeaders, 409);
-        if (batch.state === 'confirmed') return jsonResponse(JSON.parse(batch.response_json || '{"ok":true}'), allowOrigin, reqAllowHeaders);
+        if (batch.state === 'confirmed') {
+            const confirmed = JSON.parse(batch.response_json || '{"ok":true,"outcome":"confirmed"}');
+            return jsonResponse(confirmed, allowOrigin, reqAllowHeaders, confirmed.outcome === 'partial' ? 207 : 200);
+        }
+        if (batch.state === 'failed') {
+            const failed = JSON.parse(batch.response_json || '{}');
+            return v1Error({ code: 'SUPPLIER_REJECTED', message: failed.summary || 'S&S rejected this submission.' }, allowOrigin, reqAllowHeaders, 422, { report: failed });
+        }
         if (['submitting', 'unknown'].includes(batch.state)) return v1Error({ code: 'BATCH_RECONCILIATION_REQUIRED', message: 'This batch may already have reached S&S and must be reconciled before retrying.', batchId }, allowOrigin, reqAllowHeaders, 409);
         await db.batch([
             ...records.map(record => db.prepare(`INSERT OR IGNORE INTO batch_orders (batch_id, order_gid, production_revision, quantity_hash) VALUES (?, ?, ?, ?)`).bind(batchId, record.orderKey, record.production.revision, lineHash)),
@@ -7775,17 +8110,52 @@ async function handleProviderBatchCommit(request, env, allowOrigin, reqAllowHead
                 method: 'POST', body: JSON.stringify({ batchId, poNumber, lineHash, lines, orderCount: records.length, testOrder: env.SS_TEST_ORDER !== '0' })
             });
         } catch (error) {
-            await db.prepare(`UPDATE batches SET state = 'unknown', response_json = ?, updated_at = ? WHERE id = ?`).bind(JSON.stringify({ error: error.message }), isoNow(), batchId).run();
-            return v1Error({ code: 'SUPPLIER_RESULT_UNKNOWN', message: 'S&S did not return a confirmed result. Do not retry until this batch is reconciled.', batchId }, allowOrigin, reqAllowHeaders, 502);
+            const report = normalizeSupplierCommitReport({ payload: error.body, error, requestedLines: lines, lineSources, orderIds: orderKeys, batchId, poNumber });
+            const state = report.outcome === 'rejected' ? 'failed' : 'unknown';
+            await db.batch([
+                db.prepare(`UPDATE batches SET state = ?, response_json = ?, updated_at = ? WHERE id = ?`).bind(state, JSON.stringify(report), isoNow(), batchId),
+                db.prepare(`INSERT INTO supplier_attempts (id, batch_id, attempt_type, outcome, http_status, response_json, created_at) VALUES (?, ?, 'commit', ?, ?, ?, ?)`)
+                    .bind(crypto.randomUUID(), batchId, report.outcome, Number(error.status || 0) || null, JSON.stringify(report), isoNow())
+            ]);
+            if (report.outcome === 'rejected') {
+                return v1Error({ code: 'SUPPLIER_REJECTED', message: report.summary, batchId }, allowOrigin, reqAllowHeaders, 422, { report });
+            }
+            return v1Error({ code: 'SUPPLIER_RESULT_UNKNOWN', message: report.summary, batchId }, allowOrigin, reqAllowHeaders, 502, { report });
         }
-        const response = { ok: true, batchId, poNumber, supplierOrderNumber: supplier.orderNumber, lineHash, count: records.length, subtotal: supplier.subtotal, skuCount: supplier.skuCount, testOrder: Boolean(supplier.testOrder), metadataRepairRequired: [] };
-        await db.prepare(`UPDATE batches SET state = 'confirmed', response_json = ?, updated_at = ? WHERE id = ?`).bind(JSON.stringify(response), isoNow(), batchId).run();
-        for (const record of records) {
+        const response = normalizeSupplierCommitReport({ payload: supplier, requestedLines: lines, lineSources, orderIds: orderKeys, batchId, poNumber });
+        response.lineHash = lineHash;
+        response.count = records.length;
+        response.skuCount = lines.length;
+        response.metadataRepairRequired = [];
+        if (response.outcome === 'rejected' || response.outcome === 'unknown') {
+            const state = response.outcome === 'rejected' ? 'failed' : 'unknown';
+            await db.batch([
+                db.prepare(`UPDATE batches SET state = ?, response_json = ?, updated_at = ? WHERE id = ?`).bind(state, JSON.stringify(response), isoNow(), batchId),
+                db.prepare(`INSERT INTO supplier_attempts (id, batch_id, attempt_type, outcome, http_status, response_json, created_at) VALUES (?, ?, 'commit', ?, 200, ?, ?)`)
+                    .bind(crypto.randomUUID(), batchId, response.outcome, JSON.stringify(response), isoNow())
+            ]);
+            const unknown = response.outcome === 'unknown';
+            return v1Error({ code: unknown ? 'SUPPLIER_RESULT_UNKNOWN' : 'SUPPLIER_REJECTED', message: response.summary, batchId }, allowOrigin, reqAllowHeaders, unknown ? 502 : 422, { report: response });
+        }
+        const acceptedOrderIds = new Set(response.orderResults.filter(order => order.outcome === 'confirmed').map(order => order.orderId));
+        const rejectedOrderIds = orderKeys.filter(orderKey => !acceptedOrderIds.has(orderKey));
+        await db.batch([
+            ...rejectedOrderIds.map(orderKey => db.prepare(`DELETE FROM batch_orders WHERE batch_id = ? AND order_gid = ?`).bind(batchId, orderKey)),
+            db.prepare(`UPDATE batches SET state = 'confirmed', response_json = ?, updated_at = ? WHERE id = ?`).bind(JSON.stringify(response), isoNow(), batchId),
+            db.prepare(`INSERT INTO supplier_attempts (id, batch_id, attempt_type, outcome, http_status, response_json, created_at) VALUES (?, ?, 'commit', ?, 200, ?, ?)`)
+                .bind(crypto.randomUUID(), batchId, response.outcome, JSON.stringify(response), isoNow())
+        ]);
+        for (const record of records.filter(candidate => acceptedOrderIds.has(candidate.orderKey))) {
             try { await confirmedProviderBatchProductionUpdate(env, shop, record, batchId, poNumber, actor); }
             catch (_) { response.metadataRepairRequired.push(record.orderKey); }
         }
         await db.prepare(`UPDATE batches SET response_json = ?, updated_at = ? WHERE id = ?`).bind(JSON.stringify(response), isoNow(), batchId).run();
-        return jsonResponse(response, allowOrigin, reqAllowHeaders, response.metadataRepairRequired.length ? 202 : 200);
+        const status = response.outcome === 'partial'
+            ? 207
+            : response.metadataRepairRequired.length
+                ? 202
+                : 200;
+        return jsonResponse(response, allowOrigin, reqAllowHeaders, status);
     } catch (error) {
         return v1Error(error.body?.error || error, allowOrigin, reqAllowHeaders, error.status || 500, error.body);
     }
@@ -8748,6 +9118,7 @@ export {
     copyDesignerAsset,
     designerAssetCandidates,
     normalizeEtsyOrderContract,
+    normalizeSupplierCommitReport,
     orderCanEnterCandidateBoard,
     parseEtsyWebhookResource,
     pickAllowOrigin,

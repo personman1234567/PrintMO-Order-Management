@@ -31,7 +31,7 @@ Candidate deployment on 2026-08-06:
 - Worker version: `989a3f57-1632-4cbe-b810-8f7916693529`
 - Pages deployment: `f00284c1.print-mo-order-manager.pages.dev` (release marker `1786045361453`)
 - Shopify app version: `designer-assets-idempotency-2026-07-23`
-- Stateless supplier gateway commit: `420ff72`
+- Stateless supplier gateway commit: `d3a0d5a`
 
 The production installation has approved the candidate write/all-orders scopes, and canonical Shopify-board/Admin-block writes are live for acceptance. Final cutover, live S&S enablement, and permanent Redis retirement remain owner-gated.
 

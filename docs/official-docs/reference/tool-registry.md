@@ -114,6 +114,15 @@ The machine-readable authority is `../retrieval-manifest.json`. Run `npm run rep
 - Purpose: creates a fresh Pages artifact, deploys to the selected branch, and verifies the release marker served from that target.
 - Safety: production requires `--production`, deploys only to `main`, and exits nonzero unless the production hostname serves the exact marker. The bundle preparation step must not alter tracked web source.
 
+<!-- tool:ss-feedback-simulator -->
+### `ss-feedback-simulator`
+
+- Command: `npm run repo -- simulate ss-feedback -- --scenario random`.
+- Mode: read-only and fully local.
+- Purpose: passes synthetic shirt orders through the real Worker supplier-result normalizer and prints the affected product, variant, SKU, order, quantities, and reason.
+- Scenarios: `random`, `partial`, `out-of-stock`, `invalid-sku`, `accepted`, and `timeout`; use `--seed <integer>` for a repeatable random result or `--json` for structured output.
+- Safety: performs no network requests and writes no files, databases, Shopify state, or S&S orders.
+
 ## Tool Promotion Contract
 
 Promote a helper only when it is likely to recur, encodes non-obvious repository knowledge, replaces an error-prone sequence, or provides important validation.

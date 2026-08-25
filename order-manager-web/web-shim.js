@@ -1035,8 +1035,12 @@ window.api.processBatch = async (orderIds) => {
         idempotencyKey: newIdempotencyKey("batch"),
       }),
     });
+    const resultByOrderId = new Map((result?.orderResults || []).map(order => [order.orderId, order]));
+    const acceptedOrders = resultByOrderId.size
+      ? orders.filter(order => resultByOrderId.get(order._gid || order._orderKey)?.outcome === "confirmed")
+      : orders;
     const now = Date.now();
-    orders.forEach((order) => {
+    acceptedOrders.forEach((order) => {
       // The shared renderer owns the visible toOrder -> blanks transition so it
       // can repaint both columns. Mutating status here first loses the source
       // column from patchLocalOrders() and leaves stale Build Order cards.
@@ -1044,6 +1048,8 @@ window.api.processBatch = async (orderIds) => {
       order._batchConfirmedAt = now;
       if (result?.poNumber) order.blanksPo = [result.poNumber];
     });
+    result.acceptedOrderNames = acceptedOrders.map(order => order.name);
+    result.canonicalStageUpdated = true;
     return result;
   }
   return apiFetch("/order-manager/v1/legacy/ss/batch", {
@@ -1094,6 +1100,12 @@ window.api.addOrdersToBlanksBatch = async (id, orders = []) => {
     method: "PATCH",
     body: JSON.stringify({ id, action: "add-orders", orders: cleanOrders }),
   });
+};
+
+window.api.getLatestBatchResult = async () => {
+  if (!isShopifyCandidateView()) return null;
+  const response = await apiFetch("/order-manager/v1/batches/latest");
+  return response?.result || null;
 };
 
 window.api.assignOrdersToBlanksBatch = async (id, orders = []) => {

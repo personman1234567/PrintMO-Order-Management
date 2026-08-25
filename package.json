@@ -16,7 +16,8 @@
     "repo": "node scripts/repo-tool.js",
     "docs:check": "node scripts/check-docs.js",
     "verify:phase1": "node scripts/verify-phase1.js",
-    "verify:phase2": "node scripts/verify-phase2.js"
+    "verify:phase2": "node scripts/verify-phase2.js",
+    "simulate:ss-feedback": "node scripts/simulate-ss-feedback.js"
   },
   "dependencies": {
     "dotenv": "^16.5.0",

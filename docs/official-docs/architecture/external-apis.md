@@ -45,10 +45,13 @@ Embedded client
 ```
 
 - The Worker validates selected canonical projections, stages, revisions, and aggregate lines.
-- D1 records prepared/submitting/confirmed/unknown state and supplier attempts.
+- D1 records prepared/submitting/confirmed/unknown/failed state and redacted supplier attempts.
 - The gateway holds S&S credentials and never reads Redis.
-- A confirmed result is stored before Shopify production metadata advances.
+- The Worker accepts the gateway's legacy summary success and its detailed line-result contract, normalizes S&S `Orders`, `LineErrors`, and structured `errors`, and maps rejected SKUs back to the source PrintMO orders.
+- A confirmed or partial result is stored before Shopify production metadata advances. Only fully accepted orders advance after a partial result.
+- A deterministic supplier rejection is stored as `failed` with operator-safe line feedback.
 - An ambiguous result becomes `unknown` and must not be blindly resent.
+- `GET /order-manager/v1/batches/latest` returns the latest authenticated, redacted result report for the board; it never returns gateway credentials or raw customer/shipping payloads.
 - `SS_TEST_ORDER=1` remains required until owner approval enables live ordering.
 
 The Legacy Redis view continues using its isolated legacy batch route until final cutover.

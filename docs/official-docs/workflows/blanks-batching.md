@@ -12,6 +12,7 @@
 - [Blanks Batching Sequence](#blanks-batching-sequence)
 - [SKU Aggregation Algorithm](#sku-aggregation-algorithm)
 - [Batch Submission & State Update](#batch-submission--state-update)
+- [Safe Local Feedback Simulation](#safe-local-feedback-simulation)
 - [Receiving Manifest and Batch Correction](#receiving-manifest-and-batch-correction)
 - [Common Failure Modes & Recovery](#common-failure-modes--recovery)
 
@@ -61,15 +62,25 @@ When orders are dragged into the batch zone:
 ## Batch Submission & State Update
 
 1. The Worker inserts an idempotent D1 batch and allows only one transition to `submitting`.
-2. The Render gateway validates the already-aggregated lines, adds server-held credentials/payment/shipping configuration, performs pricing lookups, and posts to S&S without reading Redis.
-3. A confirmed S&S response is stored before Shopify metadata is advanced.
-4. Each selected order receives the PO in `batchRefs` and advances to `blanks_cart` through compare-digest mutation.
-5. If the supplier confirms but metadata is incomplete, the response lists repair-required GIDs and nightly integrity reconciliation repairs them. The supplier order is never resent.
-6. A timeout or ambiguous gateway result is stored as `unknown` and requires reconciliation.
+2. Before aggregation, the Worker retains a private SKU-to-source-order map so supplier feedback can identify the affected PrintMO order without sending customer data to S&S.
+3. The Render gateway validates the already-aggregated lines, adds server-held credentials/payment/shipping configuration, performs pricing lookups, and posts to S&S without reading Redis. Detailed gateway responses may contain S&S `Orders` plus `LineErrors`; the Worker remains backward-compatible with the earlier summary-only success response.
+4. The Worker normalizes every attempt as `confirmed`, `partial`, `rejected`, or `unknown`, stores the redacted report in `batches.response_json` and `supplier_attempts`, and exposes the latest report to the authenticated board.
+5. A confirmed S&S response is stored before Shopify metadata is advanced. For a partial response, only orders whose complete garment SKU set was accepted remain in `batch_orders`, receive the PO, and advance to `blanks_cart`; affected orders remain documented in the immutable request report but are removed from confirmed-batch reconciliation membership and stay in Build Order.
+6. A structured supplier `4xx` is a deterministic rejection rather than an ambiguous result. The board shows the human-readable product and variant, rejected SKU, requested quantity, affected order, and supplier reason when returned.
+7. If the supplier confirms but metadata is incomplete, the response lists repair-required GIDs and nightly integrity reconciliation repairs them. The supplier order is never resent.
+8. A timeout, gateway `5xx`, or success-shaped response without supplier confirmation is stored as `unknown`, displayed with its batch reference, and must not be blindly retried.
+
+The embedded board keeps the submit button label stable and opens a keyboard-contained S&S result report after every attempt. The most recent persisted report can be reopened after reload. Partial and unknown reports include explicit operational warnings; the browser never renders raw gateway payloads or credentials.
+
+The stateless gateway is deployed from the sibling `shopify-ss-integration` source boundary. Gateway commit `d3a0d5a` returns an operator-safe `Orders`/`LineErrors` shape plus normalized accepted lines from `/order-manager/v1/supplier/ss/commit`; it strips shipping, payment, pricing internals, and unknown supplier fields. Structured S&S `400`, `404`, and `422` responses remain deterministic rejections, while authentication, throttling, server, and transport failures remain uncertain. Changing S&S `rejectLineErrors` behavior remains a separate gateway release decision and must first be exercised with `SS_TEST_ORDER=1`.
 
 Confirmed batches leave `readiness.blanksOrdered` false so newly submitted cards appear in **In S&S Cart**. **Mark In Cart Ordered** atomically advances every current cart card to `blanks_ordered` and sets `readiness.blanksOrdered`, opens the Ordered view, and then records the receiving manifest. The Worker enforces that stage/readiness pairing for both Blanks substages so reloads cannot classify an ordered card as in-cart. Reconciliation preserves that later stage and readiness instead of moving cards backward.
 
 Legacy Redis mode continues using its existing process-batch route until final cutover; candidate mode never calls it.
+
+## Safe Local Feedback Simulation
+
+Run `npm run repo -- simulate ss-feedback -- --scenario random` to pass three synthetic shirts through the real Worker response normalizer and print the product, variant, SKU, affected PrintMO order, quantities, and supplier reason. The command is fully local: it makes no S&S, Shopify, Worker, or database request. Use `--scenario partial`, `out-of-stock`, `invalid-sku`, `accepted`, or `timeout` for a specific outcome, `--seed <integer>` to repeat a random fixture, and `--json` for the normalized report payload.
 
 ## Receiving Manifest and Batch Correction
 

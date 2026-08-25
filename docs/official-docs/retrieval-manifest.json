@@ -78,6 +78,13 @@
       "purpose": "Publish a prepared Cloudflare Pages release and verify its served release marker.",
       "mode": "remote-write",
       "script": "scripts/deploy-cloudflare-pages.sh"
+    },
+    {
+      "id": "ss-feedback-simulator",
+      "command": "npm run repo -- simulate ss-feedback -- --scenario random",
+      "purpose": "Exercise the real supplier-result normalizer with synthetic shirts and print item-level accepted/rejected reasons without network or database access.",
+      "mode": "read-only",
+      "script": "scripts/simulate-ss-feedback.js"
     }
   ],
   "routes": [
@@ -284,8 +291,8 @@
         {"path": "order-manager-web/blanks-batches.js", "symbols": ["saveBatchForOrders"]},
         {"path": "order-manager-proxy/worker.js", "symbols": ["/order-manager/v1/batches/commit"]}
       ],
-      "tools": ["verify-phase2"],
-      "verify": ["npm run verify:phase2"],
+      "tools": ["verify-phase2", "ss-feedback-simulator"],
+      "verify": ["npm run verify:phase2", "npm run repo -- simulate ss-feedback -- --scenario random"],
       "stop": ["Stop before enabling live supplier ordering or changing supplier authentication/payload contracts."]
     },
     {

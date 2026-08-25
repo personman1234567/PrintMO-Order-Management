@@ -162,6 +162,7 @@
     { root: '#view-notes-overlay', content: '#view-notes-modal', close: '#view-notes-close' },
     { root: '#asset-viewer', content: '.viewer-content', close: '#asset-viewer-close' },
     { root: '#storage-detail-overlay', content: '.storage-detail-card', close: '#storage-detail-close' },
+    { root: '#ss-submission-overlay', content: '#ss-submission-dialog', close: '#ss-submission-close' },
     { root: '#blanks-receive-overlay', content: '.blanks-receive-dialog', close: '#blanks-receive-close' },
     { root: '#batch-correction-overlay', content: '.batch-correction-dialog', initial: '[data-batch-choice="remove"]' }
   ];

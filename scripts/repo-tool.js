@@ -116,6 +116,7 @@ function runRegisteredCommand(args) {
   if (group === 'build' && action === 'desktop-config') return runNode('scripts/create-desktop-config.js', rest);
   if (group === 'build' && action === 'cloudflare') return run('bash', ['scripts/prepare-cloudflare-pages-upload.sh', ...commandArgs]);
   if (group === 'deploy' && action === 'cloudflare') return run('bash', ['scripts/deploy-cloudflare-pages.sh', ...commandArgs]);
+  if (group === 'simulate' && action === 'ss-feedback') return runNode('scripts/simulate-ss-feedback.js', commandArgs);
   if (group === 'migration' && ['dry-run', 'execute'].includes(action)) {
     const mode = action === 'execute' ? '--execute' : '--dry-run';
     return runNode('scripts/run-shadow-migration.js', [mode, ...rest]);
@@ -141,11 +142,13 @@ Usage:
   npm run repo -- completion dry-run|execute [completion-repair arguments]
   npm run repo -- build desktop-config|cloudflare
   npm run repo -- deploy cloudflare -- --production|--preview [branch]
+  npm run repo -- simulate ss-feedback -- --scenario random
 
 Safety:
   Route, tools, docs checks, and verifiers are read-only.
   Migration and completion repair default to dry-run; execution requires exact --confirm-shop.
   Redis backup and build commands write only their documented local artifacts.
+  S&S feedback simulation uses synthetic data and performs no network requests or writes.
 
 Run 'npm run repo -- tools <tool-id>' for purpose and mutation mode.`);
 }

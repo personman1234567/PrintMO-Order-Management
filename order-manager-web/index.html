@@ -202,6 +202,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           <div id="cart-total">Total items: 0</div>
           <button id="clear-picked">Clear</button>
           <button id="order-submit">Add to S&S Cart</button>
+          <button id="ss-last-result" class="ss-last-result hidden" type="button">View last S&amp;S result</button>
+          <p id="ss-submit-status" class="ss-submit-status" role="status" aria-live="polite"></p>
         </div>
       </div>
     </div>
@@ -740,6 +742,46 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     <div id="bundle-cards"></div>
     <button id="bundle-destroy" class="fullscreen-btn">Destroy Bundle</button>
   </div>
+</div>
+
+<div id="ss-submission-overlay" class="ss-submission-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="ss-submission-title" aria-describedby="ss-submission-summary" aria-hidden="true">
+  <section id="ss-submission-dialog" class="ss-submission-dialog" tabindex="-1">
+    <header class="ss-submission-header">
+      <div class="ss-submission-heading">
+        <span id="ss-submission-indicator" class="ss-submission-indicator" aria-hidden="true"></span>
+        <div>
+          <p id="ss-submission-eyebrow" class="ss-submission-eyebrow">S&amp;S submission</p>
+          <h2 id="ss-submission-title">Submission result</h2>
+        </div>
+      </div>
+      <button id="ss-submission-close" class="ss-submission-close" type="button" aria-label="Close S&S submission result">&times;</button>
+    </header>
+    <div class="ss-submission-body">
+      <p id="ss-submission-summary" class="ss-submission-summary"></p>
+      <div class="ss-submission-stats" aria-label="Submission summary">
+        <div><span>Orders accepted</span><strong id="ss-submission-orders">0 / 0</strong></div>
+        <div><span>Garment lines</span><strong id="ss-submission-lines">0 accepted</strong></div>
+        <div><span>S&amp;S order</span><strong id="ss-submission-order-number">Not created</strong></div>
+      </div>
+      <div class="ss-submission-table-wrap" role="region" aria-label="S&S line results" tabindex="0">
+        <table class="ss-submission-table">
+          <thead>
+            <tr><th scope="col">Status</th><th scope="col">PrintMO order</th><th scope="col">Item</th><th scope="col">Requested</th><th scope="col">Accepted</th><th scope="col">Why</th></tr>
+          </thead>
+          <tbody id="ss-submission-lines-body"></tbody>
+        </table>
+      </div>
+      <div id="ss-submission-warning" class="ss-submission-warning hidden" role="note"></div>
+    </div>
+    <footer class="ss-submission-footer">
+      <div class="ss-submission-reference">
+        <span>Reference</span>
+        <code id="ss-submission-reference"></code>
+      </div>
+      <button id="ss-submission-copy" type="button">Copy reference</button>
+      <button id="ss-submission-done" class="ss-submission-done" type="button">Done</button>
+    </footer>
+  </section>
 </div>
 
 <div id="bundle-name-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="bundle-name-title" aria-hidden="true">

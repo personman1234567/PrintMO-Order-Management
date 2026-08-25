@@ -223,6 +223,48 @@ async function run() {
     'cancelled orders must not enter the active board even when a paid webhook is replayed'
   );
 
+  const supplierReportFixture = {
+    requestedLines: [{ sku: 'B001', qty: 2 }, { sku: 'B002', qty: 1 }],
+    lineSources: [
+      { orderId: 'gid://shopify/Order/1', orderName: '#1001', sku: 'B001', title: 'Gildan 5000', variantTitle: 'Black / Medium', qty: 2 },
+      { orderId: 'gid://shopify/Order/2', orderName: '#1002', sku: 'B002', title: 'Comfort Colors 1717', variantTitle: 'Blue Jean / Large', qty: 1 },
+    ],
+    orderIds: ['gid://shopify/Order/1', 'gid://shopify/Order/2'],
+    batchId: 'ssb-report-fixture',
+    poNumber: 'PM-REPORT-FIXTURE',
+  };
+  const partialSupplierReport = module.normalizeSupplierCommitReport({
+    ...supplierReportFixture,
+    payload: {
+      Orders: [{ OrderNumber: 'SS-REPORT-1', Lines: [{ Sku: 'B001', QtyOrdered: 2 }] }],
+      LineErrors: [{ Identifier: 'B002', Code: 'NO_STOCK', Message: 'No inventory is available for this SKU.' }],
+      testOrder: true,
+    },
+  });
+  assert.equal(partialSupplierReport.outcome, 'partial', 'S&S Orders plus LineErrors must become a partial result');
+  assert.equal(partialSupplierReport.acceptedOrderCount, 1, 'only orders whose garment SKUs were fully accepted may advance');
+  assert.deepEqual(partialSupplierReport.supplierOrderNumbers, ['SS-REPORT-1']);
+  assert.deepEqual(partialSupplierReport.rejectedLines[0].orderNames, ['#1002']);
+  assert.deepEqual(partialSupplierReport.rejectedLines[0].itemNames, ['Comfort Colors 1717 — Blue Jean / Large']);
+  assert.equal(partialSupplierReport.rejectedLines[0].reason, 'No inventory is available for this SKU.');
+  assert.equal(partialSupplierReport.orderResults[1].outcome, 'rejected');
+
+  const rejectedSupplierReport = module.normalizeSupplierCommitReport({
+    ...supplierReportFixture,
+    payload: { code: '400', errors: [{ field: 'lines[0].identifier', message: 'The SKU was not found.' }] },
+    error: Object.assign(new Error('Bad Request'), { status: 400 }),
+  });
+  assert.equal(rejectedSupplierReport.outcome, 'rejected', 'a structured supplier 400 must not be classified as an ambiguous result');
+  assert.equal(rejectedSupplierReport.rejectedLines[0].sku, 'B001', 'indexed supplier fields must map back to the requested SKU');
+  assert.deepEqual(rejectedSupplierReport.rejectedLines[0].itemNames, ['Gildan 5000 — Black / Medium']);
+
+  const unknownSupplierReport = module.normalizeSupplierCommitReport({
+    ...supplierReportFixture,
+    payload: { error: 'Gateway timeout' },
+    error: Object.assign(new Error('Gateway timeout'), { status: 502 }),
+  });
+  assert.equal(unknownSupplierReport.outcome, 'unknown', 'supplier transport failures must remain non-retryable unknown results');
+
   const etsyContract = module.normalizeEtsyOrderContract({
     providerAccountId: 98765,
     fetchedAt: '2026-08-08T22:00:00.000Z',
@@ -2338,6 +2380,23 @@ async function run() {
   const webRenderer = fs.readFileSync(path.join(root, 'order-manager-web', 'renderer.js'), 'utf8');
   assert(webRenderer.includes('assetId'), 'shared web renderer must recognize private manifest assets without public /orders/ URLs');
   const sharedRenderer = fs.readFileSync(path.join(root, 'renderer.js'), 'utf8');
+  const webHtml = fs.readFileSync(path.join(root, 'order-manager-web', 'index.html'), 'utf8');
+  const accessibilityJs = fs.readFileSync(path.join(root, 'order-manager-web', 'accessibility-hardening.js'), 'utf8');
+  assert(
+    webHtml.includes('id="ss-submission-overlay"')
+      && webHtml.includes('id="ss-submission-lines-body"')
+      && sharedRenderer.includes('supplierSubmissionReportFromError')
+      && sharedRenderer.includes("result?.acceptedOrderNames")
+      && sharedRenderer.includes('result.itemNames')
+      && webShim.includes('/order-manager/v1/batches/latest')
+      && accessibilityJs.includes("root: '#ss-submission-overlay'"),
+    'S&S submission feedback must retain a persistent, keyboard-contained line-result report and move only accepted orders'
+  );
+  assert(
+    source.includes('const rejectedOrderIds = gids.filter')
+      && source.includes('DELETE FROM batch_orders WHERE batch_id = ? AND order_gid = ?'),
+    'partial supplier batches must remove rejected memberships before confirmed-batch metadata reconciliation'
+  );
   const desktopDragPolish = fs.readFileSync(path.join(root, 'order-manager-web', 'desktop-drag-polish.js'), 'utf8');
   const auxiliaryQueueReaders = fs.readdirSync(path.join(root, 'order-manager-web'))
     .filter(name => name.endsWith('.js') && name !== 'renderer.js')
