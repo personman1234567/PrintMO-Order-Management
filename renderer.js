@@ -1119,7 +1119,11 @@ function splitOrderAssets(order) {
       if (typeof url !== 'string') return;
       const isPrivateManifest = Boolean(asset && typeof asset === 'object' && asset.assetId);
       if (!url.toLowerCase().includes('/orders/') && !isPrivateManifest) return;
-      const norm = url.toLowerCase();
+      const norm = [
+        url.toLowerCase(),
+        String(asset?.role || '').toLowerCase(),
+        String(asset?.side || '').toLowerCase()
+      ].join('|');
       if (seen.has(norm)) return;
       seen.add(norm);
 
@@ -1685,6 +1689,27 @@ function renderOrderAssets(order) {
       const filename = item.name || item.filename || detailAssetFilename(url, idx);
       downloadBtn.addEventListener('click', () => handleAssetDownload(item, filename, downloadBtn));
       actions.appendChild(downloadBtn);
+      if (item?.removable && item?.assetId) {
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'detail-asset-remove';
+        removeBtn.type = 'button';
+        removeBtn.textContent = 'Remove';
+        removeBtn.addEventListener('click', async () => {
+          if (!confirm(`Remove "${filename}" from this order?`)) return;
+          const originalText = removeBtn.textContent;
+          removeBtn.disabled = true;
+          removeBtn.textContent = 'Removing…';
+          try {
+            await window.api.deleteOrderDesignAsset(item.assetId, item.side || 'extra');
+            await window.refreshCanonicalOrderDetail?.();
+          } catch (err) {
+            alert(`Remove failed: ${err?.message || err}`);
+            removeBtn.disabled = false;
+            removeBtn.textContent = originalText;
+          }
+        });
+        actions.appendChild(removeBtn);
+      }
       tile.appendChild(actions);
 
       const status = document.createElement('div');
@@ -1785,6 +1810,80 @@ function setupManualMockupControls() {
   if (paste) paste.addEventListener('click', pasteManualMockupFromClipboard);
 }
 
+function canUploadManualDesign(order) {
+  const provider = String(order?._provider || order?.source?.provider || 'shopify').toLowerCase();
+  return order?._candidate === true
+    && provider === 'shopify'
+    && Boolean(order?._gid)
+    && order?._capabilities?.artworkUpload !== false;
+}
+
+function setManualDesignUploadStatus(message, state = '') {
+  const status = document.getElementById('manual-design-upload-status');
+  if (!status) return;
+  status.textContent = message || '';
+  status.dataset.state = state;
+}
+
+async function uploadManualDesignFiles(files) {
+  const order = detailOrder;
+  const input = document.getElementById('manual-design-file-input');
+  const upload = document.getElementById('manual-design-upload-btn');
+  const placementControl = document.getElementById('manual-design-side');
+  const tools = document.querySelector('.manual-design-tools');
+  const side = placementControl?.value || 'extra';
+  const acceptedTypes = new Set(['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp']);
+  const selected = Array.from(files || []);
+  const accepted = selected.filter(file => acceptedTypes.has(String(file?.type || '').toLowerCase())
+    || /\.(svg|png|jpe?g|webp)$/i.test(String(file?.name || '')));
+  if (!canUploadManualDesign(order)) {
+    if (selected.length) setManualDesignUploadStatus('Design uploads require a current Shopify order.', 'error');
+    if (input) input.value = '';
+    return;
+  }
+  if (!accepted.length || accepted.length !== selected.length) {
+    setManualDesignUploadStatus('Choose SVG, PNG, JPG, or WebP files.', 'error');
+    if (input) input.value = '';
+    return;
+  }
+
+  const originalText = upload?.textContent || 'Add design';
+  if (upload) {
+    upload.textContent = `Uploading 0/${accepted.length}`;
+    upload.setAttribute('aria-disabled', 'true');
+  }
+  if (input) input.disabled = true;
+  if (placementControl) placementControl.disabled = true;
+  if (tools) tools.setAttribute('aria-busy', 'true');
+  setManualDesignUploadStatus(`Uploading ${accepted.length} ${accepted.length === 1 ? 'file' : 'files'}…`, 'busy');
+  try {
+    for (let index = 0; index < accepted.length; index += 1) {
+      if (upload) upload.textContent = `Uploading ${index + 1}/${accepted.length}`;
+      await window.api.uploadOrderDesignAsset(order._gid, accepted[index], side);
+    }
+    await window.refreshCanonicalOrderDetail?.();
+    setManualDesignUploadStatus(`${accepted.length} ${accepted.length === 1 ? 'design' : 'designs'} added.`, 'success');
+  } catch (err) {
+    setManualDesignUploadStatus(`Upload failed: ${err?.message || err}`, 'error');
+  } finally {
+    if (upload) {
+      upload.textContent = originalText;
+      upload.removeAttribute('aria-disabled');
+    }
+    if (input) {
+      input.disabled = false;
+      input.value = '';
+    }
+    if (placementControl) placementControl.disabled = false;
+    if (tools) tools.removeAttribute('aria-busy');
+  }
+}
+
+function setupManualDesignControls() {
+  const input = document.getElementById('manual-design-file-input');
+  if (input) input.addEventListener('change', () => uploadManualDesignFiles(input.files));
+}
+
 /**
  * Collapse Shopify's batch-split lines into the commercial rows an operator
  * needs to read. The underlying order items and their IDs remain untouched;
@@ -1878,6 +1977,9 @@ function openDetail(o) {
   if (mockupActions) {
     mockupActions.classList.toggle('hidden', o?._capabilities?.artworkUpload === false);
   }
+  const designActions = document.querySelector('.manual-design-upload-actions');
+  if (designActions) designActions.classList.toggle('hidden', !canUploadManualDesign(o));
+  setManualDesignUploadStatus('');
 
   // customer & notes
   const [orderNum, custName = ''] = (o.name || '').split(' – ');
@@ -2958,6 +3060,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initMobileTabs();
   initPrintTabs();
   setupManualMockupControls();
+  setupManualDesignControls();
   setupSupplierSubmissionReport();
 
   // wire up the four zones

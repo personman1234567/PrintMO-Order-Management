@@ -832,6 +832,12 @@
     }
   }
 
+  window.refreshCanonicalOrderDetail = async () => {
+    const order = currentDetailOrder || (typeof detailOrder !== 'undefined' ? detailOrder : null);
+    if (!order?._gid || order?._candidate !== true) return null;
+    return hydrateCanonicalDetail(order, { retry: true });
+  };
+
   function itemCounts(order) {
     return (order.items || []).reduce((totals, item) => {
       const qty = Number(item.qty) || 0;

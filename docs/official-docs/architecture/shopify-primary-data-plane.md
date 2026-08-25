@@ -26,10 +26,10 @@
 
 ## Current Release Boundary
 
-Candidate deployment on 2026-08-06:
+Current production deployment on 2026-08-25:
 
-- Worker version: `989a3f57-1632-4cbe-b810-8f7916693529`
-- Pages deployment: `f00284c1.print-mo-order-manager.pages.dev` (release marker `1786045361453`)
+- Worker version: `c21ae215-b7de-484c-915f-e0ad597509a8`
+- Pages deployment: `f0c24982.print-mo-order-manager.pages.dev` (release marker `1787679222819`)
 - Shopify app version: `designer-assets-idempotency-2026-07-23`
 - Stateless supplier gateway commit: `d3a0d5a`
 
@@ -167,6 +167,8 @@ Shopify summary reads retain the Designer Studio line-item properties `_designre
 
 The first release runs a bounded active-order backfill of at most 50 orders and records the `designer-studio-assets-v1` reconciliation checkpoint only when every discovered candidate resolves. An incomplete run leaves no completion checkpoint and retries from the board background task or five-minute cron. Normal future summary/webhook refreshes use the same deterministic import path. Candidate generation is per Shopify line item, not per unit quantity; identical bytes within an order reuse one manifest and add line-item links instead of another R2 copy.
 
+Authenticated operators can attach an order-level print design through `POST /order-manager/v1/orders/:gid/assets` when a Shopify order has no Designer Studio artwork, including manual-invoice orders. The multipart request requires a Front, Back, or Extras placement and accepts SVG, PNG, JPEG, or WebP up to 50 MB. The Worker verifies the Shopify order, computes SHA-256, reuses identical active bytes within that order when possible, writes new bytes to private `R2_BUCKET`, reads them back, verifies the checksum, and records a D1 `role = 'design'` link marked as a manual upload. This does not add a Shopify metafield or expose an R2 key to the browser. `DELETE /order-manager/v1/assets/:assetId?side=...` removes only a manual-upload association; Designer Studio links are source-managed and cannot be deleted by that route. An unreferenced manifest is retired to `deleted`, while its private bytes remain recoverable for later audited cleanup.
+
 Production backfill evidence on 2026-07-23: 12 active orders scanned, 12 candidates resolved, 12 active `designer-studio-sync` manifests, zero failures, checkpoint `2026-07-24T03:28:53.220Z` (UTC).
 
 Board DTOs include at most one representative asset per order and never private object keys. On the initial Shopify-board load, `web-shim.js` maps and publishes each 50-order page as soon as it arrives; the shared renderer paints the first page immediately and merges later pages while their requests continue. Presentation helpers consume the renderer's current snapshot rather than starting competing queue requests, so a metadata read cannot cancel the initial paint. Existing cards remain visible during later polling or manual refreshes, so a partial refresh response never temporarily removes later-page orders. Private preview hydration starts only after a page's cards are usable, reuses the fresh queue bearer for batch-ticket requests, and requests signed 60-second URLs without placing ticket or image work on the queue promise. As each URL resolves, the shared renderer patches the matching card's reserved mockup slot directly. Mockup slots retain the stable opaque asset ID, while render fingerprints exclude the expiring signed URL; ticket rotation for the same healthy image therefore preserves the existing element and source instead of rebuilding or visibly reloading it. Missing, changed, or failed images still receive a fresh source. Neither later queue pages nor the periodic board poll is a preview-rendering dependency. Image elements stream private responses without buffering every full file into JavaScript blobs. Ticket payloads contain only opaque manifest IDs; the read route resolves R2 keys server-side after signature verification. On mobile, only the active workflow tab is hydrated, and selecting another tab triggers its deferred previews. Opening an order loads the complete linked asset set on demand, with requests deduplicated by asset ID and signed URLs held in a bounded, expiry-aware cache. Artwork latency therefore cannot block the operational board or make hidden-stage/design files part of initial mobile hydration. Asset role, side, line-item ID, and filename—not a public URL shape—drive mockup/design placement.
@@ -185,7 +187,7 @@ These are server-side Worker variables. Credentials remain secrets and never ent
 
 ## Security Baseline and Remaining Hardening
 
-Active controls include signed Shopify/OIDC bearer validation, configured-shop and partner-user allowlists, raw-body webhook HMAC verification, webhook deduplication, prepared D1 statements, allowlisted production patches, Shopify compare-digest concurrency, mutation idempotency, private R2 storage, short-lived authenticated asset tickets, and server-only infrastructure credentials.
+Active controls include signed Shopify/OIDC bearer validation, configured-shop and partner-user allowlists, raw-body webhook HMAC verification, webhook deduplication, prepared D1 statements, allowlisted production patches, Shopify compare-digest concurrency, mutation idempotency, private R2 storage, format/size validation and checksum readback for manual design uploads, short-lived authenticated asset tickets, SVG sandboxing on private reads, and server-only infrastructure credentials.
 
 Before final cutover, complete these defense-in-depth items:
 

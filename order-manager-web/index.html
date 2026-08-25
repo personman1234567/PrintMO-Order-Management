@@ -549,7 +549,20 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                         <h3 id="detail-design-title">Design files</h3>
                         <p>Print-ready artwork grouped by placement.</p>
                       </div>
-                      <span id="design-files-count" class="design-files-count">0 files</span>
+                      <div class="manual-design-tools">
+                        <span id="design-files-count" class="design-files-count">0 files</span>
+                        <div class="manual-design-upload-actions">
+                          <label class="manual-design-placement-label" for="manual-design-side">Placement</label>
+                          <select id="manual-design-side" class="manual-design-side" aria-label="Design placement">
+                            <option value="front">Front</option>
+                            <option value="back">Back</option>
+                            <option value="extra">Extras</option>
+                          </select>
+                          <input id="manual-design-file-input" class="manual-design-file-input" type="file" accept=".svg,.png,.jpg,.jpeg,.webp,image/svg+xml,image/png,image/jpeg,image/webp" multiple>
+                          <label id="manual-design-upload-btn" class="fullscreen-btn manual-design-upload-btn" for="manual-design-file-input">Add design</label>
+                        </div>
+                        <p id="manual-design-upload-status" class="manual-design-upload-status" role="status" aria-live="polite"></p>
+                      </div>
                     </div>
                     <div class="design-panel-body">
                       <div class="design-group" id="design-group-front">

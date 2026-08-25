@@ -347,6 +347,10 @@ export default {
             return handleV1ProductionPatch(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
         }
 
+        if (url.pathname.startsWith("/order-manager/v1/orders/") && url.pathname.endsWith("/assets") && request.method === "POST") {
+            return handleV1DesignAssetUpload(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
+        }
+
         if (url.pathname.startsWith("/order-manager/v1/orders/") && request.method === "GET") {
             return handleV1OrderDetailGet(request, env, allowOrigin || origin || "*");
         }
@@ -369,6 +373,10 @@ export default {
 
         if (url.pathname.startsWith("/order-manager/v1/assets/") && url.pathname.endsWith("/read-ticket") && request.method === "POST") {
             return handleV1AssetReadTicket(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
+        if (url.pathname.startsWith("/order-manager/v1/assets/") && request.method === "DELETE") {
+            return handleV1ManualAssetDelete(request, env, allowOrigin || origin || "*", reqAllowHeaders);
         }
 
         if (url.pathname.startsWith("/order-manager/v1/catalog-previews/") && url.pathname.endsWith("/read-ticket") && request.method === "POST") {
@@ -5366,23 +5374,29 @@ async function d1AssetsForOrder(env, shopId, gid) {
              COALESCE(links.design_ref, manifests.design_ref, '') AS design_ref,
              COALESCE(links.role, manifests.role, '') AS role,
              COALESCE(links.side, manifests.side, '') AS side,
+             COALESCE(NULLIF(links.source_key, ''), manifests.source_key, '') AS association_source_key,
              manifests.created_at
       FROM asset_manifests AS manifests
       LEFT JOIN asset_manifest_links AS links ON links.asset_id = manifests.id
       WHERE manifests.shop_id = ? AND manifests.order_gid = ? AND manifests.state = 'active'
       ORDER BY manifests.created_at, manifests.id, links.line_item_id, links.role, links.side
     `).bind(shopId, gid).all();
-    return (result.results || []).map(row => ({
-        assetId: row.id,
-        name: row.filename,
-        contentType: row.content_type,
-        byteSize: row.byte_size,
-        sha256: row.sha256,
-        lineItemId: row.line_item_id || null,
-        designRef: row.design_ref || null,
-        role: row.role || null,
-        side: row.side || null
-    }));
+    return (result.results || []).map(row => {
+        const manualUpload = String(row.association_source_key || '').startsWith('manual-upload:');
+        return {
+            assetId: row.id,
+            name: row.filename,
+            contentType: row.content_type,
+            byteSize: row.byte_size,
+            sha256: row.sha256,
+            lineItemId: row.line_item_id || null,
+            designRef: row.design_ref || null,
+            role: row.role || null,
+            side: row.side || null,
+            manualUpload,
+            removable: manualUpload
+        };
+    });
 }
 
 async function d1AssetsForOrders(env, shopId, gids) {
@@ -5765,6 +5779,13 @@ const DESIGNER_REFERENCE_KEYS = new Set(['_designref', '_design_ref']);
 const DESIGNER_PREVIEW_KEYS = new Set(['design_preview_url', 'design-preview-url']);
 const DESIGNER_ASSET_MAX_BYTES = 50 * 1024 * 1024;
 const DESIGNER_ASSET_BACKFILL_CHECKPOINT = 'designer-studio-assets-v1';
+const MANUAL_DESIGN_CONTENT_TYPES = new Map([
+    ['.svg', 'image/svg+xml'],
+    ['.png', 'image/png'],
+    ['.jpg', 'image/jpeg'],
+    ['.jpeg', 'image/jpeg'],
+    ['.webp', 'image/webp']
+]);
 
 function designerAttributeMap(attributes) {
     const values = new Map();
@@ -5951,6 +5972,206 @@ async function insertAssetManifestLink(db, assetId, values, createdAt = isoNow()
         String(values?.sourceKey || ''),
         createdAt
     ).run();
+}
+
+function manualDesignUploadMetadata(file, placement) {
+    if (!isFileLike(file)) {
+        throw Object.assign(new Error('Choose a design file to upload.'), {
+            code: 'DESIGN_FILE_REQUIRED',
+            status: 400
+        });
+    }
+    const name = safeAssetName(file.name);
+    const extension = /\.[A-Za-z0-9]+$/.exec(name)?.[0]?.toLowerCase() || '';
+    const expectedType = MANUAL_DESIGN_CONTENT_TYPES.get(extension);
+    const declaredType = String(file.type || '').trim().toLowerCase();
+    if (!expectedType || (declaredType && declaredType !== expectedType)) {
+        throw Object.assign(new Error('Design files must be SVG, PNG, JPG, or WebP.'), {
+            code: 'UNSUPPORTED_DESIGN_FILE',
+            status: 415
+        });
+    }
+    const byteSize = Number(file.size);
+    if (!Number.isFinite(byteSize) || byteSize <= 0 || byteSize > DESIGNER_ASSET_MAX_BYTES) {
+        throw Object.assign(new Error('Design files must be between 1 byte and 50 MB.'), {
+            code: 'INVALID_DESIGN_FILE_SIZE',
+            status: 413
+        });
+    }
+    const normalizedPlacement = String(placement || '').trim().toLowerCase();
+    if (!['front', 'back', 'extra', 'extras'].includes(normalizedPlacement)) {
+        throw Object.assign(new Error('Choose Front, Back, or Extras for this design.'), {
+            code: 'INVALID_DESIGN_PLACEMENT',
+            status: 400
+        });
+    }
+    return {
+        name,
+        contentType: expectedType,
+        byteSize,
+        side: normalizedPlacement === 'front' || normalizedPlacement === 'back'
+            ? normalizedPlacement
+            : ''
+    };
+}
+
+async function handleV1DesignAssetUpload(request, env, allowOrigin, reqAllowHeaders, identity) {
+    try {
+        const orderIdentity = orderIdentityFromV1Path(new URL(request.url).pathname);
+        if (!orderIdentity) {
+            throw Object.assign(new Error('Order ID is invalid.'), { code: 'INVALID_ORDER_ID', status: 400 });
+        }
+        if (orderIdentity.provider !== 'shopify') {
+            throw Object.assign(new Error('Manual design uploads currently require a Shopify order.'), {
+                code: 'UNSUPPORTED_ORDER_PROVIDER',
+                status: 409
+            });
+        }
+        if (!env.R2_BUCKET) {
+            throw Object.assign(new Error('Private artwork storage is not configured.'), {
+                code: 'R2_NOT_CONFIGURED',
+                status: 503
+            });
+        }
+
+        const form = await request.formData();
+        const file = form.get('file');
+        const metadata = manualDesignUploadMetadata(file, form.get('side') || form.get('placement'));
+        const actor = `${identity?.kind || 'unknown'}:${identity?.subject || 'unknown'}`;
+        await readProductionMetafield(env, orderIdentity.id, actor);
+
+        const shop = await d1Shop(env);
+        const db = requireOrderDb(env);
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        if (bytes.byteLength !== metadata.byteSize) {
+            throw Object.assign(new Error('The uploaded design changed while it was being read.'), {
+                code: 'DESIGN_FILE_SIZE_MISMATCH',
+                status: 400
+            });
+        }
+        const sha256 = bytesToHex(await crypto.subtle.digest('SHA-256', bytes));
+        const existingBlob = await db.prepare(`
+          SELECT id
+          FROM asset_manifests
+          WHERE shop_id = ? AND order_gid = ? AND state = 'active'
+            AND sha256 = ? AND byte_size = ? AND content_type = ?
+          ORDER BY created_at, id
+          LIMIT 1
+        `).bind(shop.id, orderIdentity.id, sha256, bytes.byteLength, metadata.contentType).first();
+        const assetId = existingBlob?.id || await stableAssetId(
+            `${orderIdentity.id}:sha256:${sha256}:${bytes.byteLength}:${metadata.contentType}`
+        );
+        const sourceKey = `manual-upload:${assetId}`;
+        const now = isoNow();
+
+        if (!existingBlob) {
+            const objectKey = `orders/${numericIdFromGid(orderIdentity.id)}/assets/${assetId}/${metadata.name}`;
+            await env.R2_BUCKET.put(objectKey, bytes, {
+                httpMetadata: { contentType: metadata.contentType },
+                customMetadata: { sha256, source: 'manual-upload' }
+            });
+            const stored = await env.R2_BUCKET.get(objectKey);
+            if (!stored) throw new Error(`Private R2 verification could not read ${metadata.name}.`);
+            const storedBytes = new Uint8Array(await stored.arrayBuffer());
+            const storedDigest = bytesToHex(await crypto.subtle.digest('SHA-256', storedBytes));
+            if (storedDigest !== sha256) {
+                throw new Error(`Private R2 checksum verification failed for ${metadata.name}.`);
+            }
+
+            await db.prepare(`
+              INSERT INTO asset_manifests (
+                id, shop_id, order_gid, object_key, filename, content_type, byte_size,
+                sha256, state, source_key, created_by, created_at, updated_at,
+                line_item_id, design_ref, role, side
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, '', '', 'design', ?)
+              ON CONFLICT(id) DO UPDATE SET
+                object_key = excluded.object_key,
+                filename = excluded.filename,
+                content_type = excluded.content_type,
+                byte_size = excluded.byte_size,
+                sha256 = excluded.sha256,
+                state = 'active',
+                source_key = excluded.source_key,
+                created_by = excluded.created_by,
+                role = 'design',
+                side = excluded.side,
+                deleted_at = NULL,
+                updated_at = excluded.updated_at
+            `).bind(
+                assetId, shop.id, orderIdentity.id, objectKey, metadata.name, metadata.contentType,
+                bytes.byteLength, sha256, sourceKey, actor, now, now, metadata.side
+            ).run();
+        }
+
+        await insertAssetManifestLink(db, assetId, {
+            role: 'design',
+            side: metadata.side,
+            sourceKey
+        }, now);
+        const assets = await d1AssetsForOrder(env, shop.id, orderIdentity.id);
+        return jsonResponse({
+            ok: true,
+            orderId: orderIdentity.id,
+            assetId,
+            placement: metadata.side || 'extra',
+            assets
+        }, allowOrigin, reqAllowHeaders, 201);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+async function handleV1ManualAssetDelete(request, env, allowOrigin, reqAllowHeaders) {
+    try {
+        const url = new URL(request.url);
+        const assetId = assetIdFromPath(url.pathname);
+        const placement = String(url.searchParams.get('side') || '').trim().toLowerCase();
+        if (!assetId || !['front', 'back', 'extra', 'extras'].includes(placement)) {
+            throw Object.assign(new Error('Asset ID and placement are required.'), {
+                code: 'INVALID_ASSET_DELETE',
+                status: 400
+            });
+        }
+        const side = placement === 'front' || placement === 'back' ? placement : '';
+        const shop = await d1Shop(env);
+        const db = requireOrderDb(env);
+        const manualLink = await db.prepare(`
+          SELECT manifests.id, manifests.order_gid
+          FROM asset_manifest_links AS links
+          JOIN asset_manifests AS manifests ON manifests.id = links.asset_id
+          WHERE manifests.id = ? AND manifests.shop_id = ? AND manifests.state = 'active'
+            AND links.line_item_id = '' AND links.design_ref = ''
+            AND links.role = 'design' AND links.side = ?
+            AND links.source_key LIKE 'manual-upload:%'
+          LIMIT 1
+        `).bind(assetId, shop.id, side).first();
+        if (!manualLink) {
+            throw Object.assign(new Error('This design is not a removable manual upload.'), {
+                code: 'MANUAL_ASSET_NOT_FOUND',
+                status: 404
+            });
+        }
+
+        await db.prepare(`
+          DELETE FROM asset_manifest_links
+          WHERE asset_id = ? AND line_item_id = '' AND design_ref = ''
+            AND role = 'design' AND side = ? AND source_key LIKE 'manual-upload:%'
+        `).bind(assetId, side).run();
+        const remaining = await db.prepare('SELECT COUNT(*) AS count FROM asset_manifest_links WHERE asset_id = ?')
+            .bind(assetId).first();
+        if (Number(remaining?.count || 0) === 0) {
+            const now = isoNow();
+            await db.prepare(`
+              UPDATE asset_manifests
+              SET state = 'deleted', deleted_at = ?, updated_at = ?
+              WHERE id = ? AND shop_id = ?
+            `).bind(now, now, assetId, shop.id).run();
+        }
+        const assets = await d1AssetsForOrder(env, shop.id, manualLink.order_gid);
+        return jsonResponse({ ok: true, assetId, assets }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
 }
 
 async function syncDesignerStudioAssetsForSummary(env, shopId, summary) {
@@ -6807,12 +7028,12 @@ async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders, ctx
 }
 
 function orderIdFromV1Path(pathname) {
-    const raw = pathname.replace(/^\/order-manager\/v1\/orders\//, '').replace(/\/production$/, '');
+    const raw = pathname.replace(/^\/order-manager\/v1\/orders\//, '').replace(/\/(production|assets)$/, '');
     try { return canonicalOrderGid(decodeURIComponent(raw)); } catch { return null; }
 }
 
 function providerOrderKeyFromV1Path(pathname) {
-    const raw = pathname.replace(/^\/order-manager\/v1\/orders\//, '').replace(/\/production$/, '');
+    const raw = pathname.replace(/^\/order-manager\/v1\/orders\//, '').replace(/\/(production|assets)$/, '');
     try {
         const decoded = decodeURIComponent(raw);
         return /^etsy(?:-synthetic)?:[A-Za-z0-9._-]{1,80}:[A-Za-z0-9._-]{1,120}$/.test(decoded)
@@ -8219,6 +8440,10 @@ async function handleV1AssetRead(request, env, allowOrigin, reqAllowHeaders) {
         // browser reuse bytes while that ticket is valid so a board repaint
         // does not re-download the same private mockup.
         headers.set('Cache-Control', 'private, max-age=55');
+        headers.set('X-Content-Type-Options', 'nosniff');
+        if (headers.get('Content-Type') === 'image/svg+xml') {
+            headers.set('Content-Security-Policy', "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'");
+        }
         for (const [key, value] of Object.entries(corsHeaders(allowOrigin, reqAllowHeaders))) headers.set(key, value);
         return new Response(object.body, { headers });
     } catch (error) {

@@ -1687,6 +1687,41 @@ async function run() {
     const renderCallsAfterDetail = calls.filter(call => call.target.startsWith('https://render.example.test')).length;
     assert.equal(renderCallsAfterDetail, renderCallsAfterPreview, 'Shopify detail preview must not read the Redis/Render adapter');
 
+    const manualDesignForm = new FormData();
+    manualDesignForm.set('side', 'front');
+    manualDesignForm.set('file', new Blob(['<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>'], {
+      type: 'image/svg+xml'
+    }), 'manual-front.svg');
+    const manualDesignUpload = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/assets`,
+      { method: 'POST', headers: { Authorization: headers.Authorization }, body: manualDesignForm }
+    ), env);
+    assert.equal(manualDesignUpload.status, 201, 'an authenticated operator must be able to attach a design to a Shopify order');
+    const manualDesignUploadJson = await manualDesignUpload.json();
+    const manualDesignAsset = manualDesignUploadJson.assets.find(asset => asset.assetId === manualDesignUploadJson.assetId && asset.side === 'front');
+    assert.equal(manualDesignAsset?.role, 'design');
+    assert.equal(manualDesignAsset?.manualUpload, true);
+    assert.equal(manualDesignAsset?.removable, true);
+    assert(!JSON.stringify(manualDesignUploadJson).includes('object_key'), 'manual upload responses must not expose manifest storage columns');
+    assert(!JSON.stringify(manualDesignUploadJson).includes('orders/60129381/assets/'), 'manual upload responses must not expose private R2 keys');
+    const manualDesignManifest = await env.ORDER_DB.prepare(`
+      SELECT state, source_key, content_type, byte_size
+      FROM asset_manifests
+      WHERE id = ?
+    `).bind(manualDesignUploadJson.assetId).first();
+    assert.equal(manualDesignManifest.state, 'active');
+    assert.equal(manualDesignManifest.content_type, 'image/svg+xml');
+    assert(String(manualDesignManifest.source_key).startsWith('manual-upload:'));
+
+    const invalidDesignForm = new FormData();
+    invalidDesignForm.set('side', 'front');
+    invalidDesignForm.set('file', new Blob(['not artwork'], { type: 'application/pdf' }), 'manual.pdf');
+    const invalidDesignUpload = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/assets`,
+      { method: 'POST', headers: { Authorization: headers.Authorization }, body: invalidDesignForm }
+    ), env);
+    assert.equal(invalidDesignUpload.status, 415, 'manual design uploads must reject formats outside the artwork allowlist');
+
     const renderCallsBeforeCanonicalDetail = calls.filter(call => call.target.startsWith('https://render.example.test')).length;
     const canonicalDetail = await worker.fetch(
       new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}`, { headers }),
@@ -1703,11 +1738,16 @@ async function run() {
     assert.equal(canonicalDetailJson.detail.lineItems.length, 2, 'canonical detail must paginate all line items');
     assert.equal(canonicalDetailJson.commerce.financialStatus, 'PAID');
     assert.equal(canonicalDetailJson.production.stage, 'received');
-    assert.equal(canonicalDetailJson.production.assets.length, 2, 'detail must return every line-item link for the deduplicated blob');
+    assert.equal(canonicalDetailJson.production.assets.length, 3, 'detail must return Designer links plus the order-level manual design');
     assert.equal(
-      new Set(canonicalDetailJson.production.assets.map(asset => asset.assetId)).size,
+      new Set(canonicalDetailJson.production.assets.filter(asset => !asset.manualUpload).map(asset => asset.assetId)).size,
       1,
       'detail links for identical Designer bytes must share one private asset ID'
+    );
+    assert.equal(
+      canonicalDetailJson.production.assets.find(asset => asset.assetId === manualDesignUploadJson.assetId)?.side,
+      'front',
+      'canonical detail must surface the selected placement for a manual design'
     );
     assert.equal(canonicalDetailJson.attention.required, false);
     assert.equal(canonicalDetailJson.detail.customer.id, undefined, 'canonical detail must use direct Order contact fields');
@@ -1719,6 +1759,23 @@ async function run() {
     assert.equal(canonicalDetailJson.detail.data.commerce.tax.amount, '2.60');
     const renderCallsAfterCanonicalDetail = calls.filter(call => call.target.startsWith('https://render.example.test')).length;
     assert.equal(renderCallsAfterCanonicalDetail, renderCallsBeforeCanonicalDetail, 'canonical detail must remain Redis-free');
+
+    const manualDesignDelete = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/assets/${encodeURIComponent(manualDesignUploadJson.assetId)}?side=front`,
+      { method: 'DELETE', headers }
+    ), env);
+    assert.equal(manualDesignDelete.status, 200, 'manual designs must be removable from the order detail');
+    const manualDesignDeleteJson = await manualDesignDelete.json();
+    assert(!manualDesignDeleteJson.assets.some(asset => asset.assetId === manualDesignUploadJson.assetId && asset.manualUpload));
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT state FROM asset_manifests WHERE id = ?').bind(manualDesignUploadJson.assetId).first()).state,
+      'deleted',
+      'an unreferenced manual design manifest must be retired without requiring an R2 hard delete'
+    );
+    assert(
+      Array.from(privateObjects.keys()).some(key => key.includes(`/assets/${manualDesignUploadJson.assetId}/`)),
+      'manual removal must leave the private bytes recoverable for audited cleanup'
+    );
 
     const productionRead = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
       headers: { ...headers, Origin: 'https://extensions.shopifycdn.com' }
@@ -2183,6 +2240,16 @@ async function run() {
     'commerce-source customer names must render as source-managed without exposing a mutation path the adapter rejects'
   );
   assert(
+    previewHtml.includes('id="manual-design-side"')
+      && previewHtml.includes('id="manual-design-file-input"')
+      && previewHtml.includes('id="manual-design-upload-btn"')
+      && previewHtml.includes('id="manual-design-upload-status"')
+      && sharedDetailRenderer.includes('function uploadManualDesignFiles')
+      && sharedDetailRenderer.includes('window.api.deleteOrderDesignAsset')
+      && sharedDetailRenderer.includes("String(asset?.side || '').toLowerCase()"),
+    'Design Files must support placed manual uploads, removable manual assets, and placement-aware deduplication'
+  );
+  assert(
     sharedDetailRenderer.includes("status.textContent = `Notes were not saved:")
       && sharedDetailRenderer.includes("confirmBtn.textContent = 'Try again'")
       && sharedDetailRenderer.includes('function saveProductionProgress')
@@ -2302,6 +2369,13 @@ async function run() {
     webShim.includes('window.api.getOrderDetail')
       && webShim.includes('`/order-manager/v1/orders/${encodeURIComponent(orderId)}`'),
     'shared Shopify workbench must hydrate from the canonical on-demand detail endpoint'
+  );
+  assert(
+    webShim.includes('window.api.uploadOrderDesignAsset')
+      && webShim.includes('`/order-manager/v1/orders/${encodeURIComponent(orderId)}/assets`')
+      && webShim.includes('window.api.deleteOrderDesignAsset')
+      && detailEnhancements.includes('window.refreshCanonicalOrderDetail'),
+    'manual design mutations must use authenticated canonical endpoints and refresh the open canonical detail'
   );
   const candidateAssetLoaderSource = webShim.slice(
     webShim.indexOf('async function candidateAssetObjectUrl'),

@@ -858,6 +858,27 @@ window.api.getOrderDetail = async (orderId, { signal } = {}) => {
   return result;
 };
 
+window.api.uploadOrderDesignAsset = async (orderId, file, side) => {
+  if (!orderId) throw new Error("An order ID is required");
+  if (!file) throw new Error("A design file is required");
+  const form = new FormData();
+  form.set("file", file, file.name || "design");
+  form.set("side", side || "extra");
+  return apiFetch(
+    `/order-manager/v1/orders/${encodeURIComponent(orderId)}/assets`,
+    { method: "POST", body: form }
+  );
+};
+
+window.api.deleteOrderDesignAsset = async (assetId, side) => {
+  if (!assetId) throw new Error("A design asset ID is required");
+  const query = buildQuery({ side: side || "extra" });
+  return apiFetch(
+    `/order-manager/v1/assets/${encodeURIComponent(assetId)}${query}`,
+    { method: "DELETE" }
+  );
+};
+
 // Production metadata is separate from commerce. Shopify state remains in its
 // canonical metafield; explicitly enrolled provider pilots use provider-owned
 // D1 state. Candidate edits remain Redis-free in both cases.
