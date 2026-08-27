@@ -3,6 +3,39 @@ const API_BASE = "https://order-manager-proxy.printmobusiness.workers.dev";
 
 let shopifyIdTokenCache = null;
 let shopifyIdTokenLoad = null;
+const SHOPIFY_CONTEXT_WAIT_MS = 3000;
+const SHOPIFY_CONTEXT_POLL_MS = 50;
+
+function shopifyContextError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function shopifyIdTokenApiAvailable() {
+  return Boolean(window.shopify && typeof window.shopify.idToken === "function");
+}
+
+async function waitForShopifyIdTokenApi() {
+  if (shopifyIdTokenApiAvailable()) return;
+  const hasShopContext = new URLSearchParams(window.location?.search || "").has("shop");
+  if (!hasShopContext) {
+    throw shopifyContextError(
+      "SHOPIFY_CONTEXT_MISSING",
+      "Shopify sign-in context is missing. Open PrintMO from Shopify Admin."
+    );
+  }
+
+  const deadline = Date.now() + SHOPIFY_CONTEXT_WAIT_MS;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, SHOPIFY_CONTEXT_POLL_MS));
+    if (shopifyIdTokenApiAvailable()) return;
+  }
+  throw shopifyContextError(
+    "SHOPIFY_AUTH_TIMEOUT",
+    "Shopify authentication is still starting. Try again."
+  );
+}
 
 function shopifyIdTokenExpiry(token) {
   try {
@@ -23,10 +56,8 @@ async function getShopifyIdToken({ force = false } = {}) {
     return shopifyIdTokenCache.value;
   }
   if (shopifyIdTokenLoad) return shopifyIdTokenLoad;
-  if (!window.shopify || typeof window.shopify.idToken !== "function") {
-    throw new Error("Shopify authentication is unavailable. Open PrintMO from Shopify Admin.");
-  }
   shopifyIdTokenLoad = (async () => {
+    await waitForShopifyIdTokenApi();
     const token = await window.shopify.idToken();
     if (!token) throw new Error("Shopify authentication did not return an ID token.");
     const declaredExpiry = shopifyIdTokenExpiry(token);

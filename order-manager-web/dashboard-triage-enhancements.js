@@ -342,7 +342,8 @@
     const count = document.getElementById('pipeline-count');
     if (count) count.textContent = state.filter === 'all' ? String(cards.length) : `${visible}/${cards.length}`;
     const empty = ensureEmptyState(container);
-    empty.hidden = visible > 0;
+    const boardState = document.body?.dataset.boardLoadState || 'ready';
+    empty.hidden = boardState !== 'ready' || visible > 0;
   }
 
   function wireControls() {

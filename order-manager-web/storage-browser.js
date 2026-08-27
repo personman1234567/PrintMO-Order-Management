@@ -1864,7 +1864,10 @@
 
         if (nextTab === 'storage') {
           event.stopImmediatePropagation();
+          const detailWasOpen = document.body.classList.contains('detail-open');
+          if (detailWasOpen) document.getElementById('detail-close')?.click();
           setActiveView('storage');
+          if (detailWasOpen) window.setTimeout(() => btn.focus({ preventScroll: true }), 0);
           return;
         }
 

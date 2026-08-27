@@ -861,8 +861,10 @@
     if (!state.active) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    if (typeof window.refreshOrderManagerNow === 'function') window.refreshOrderManagerNow();
-    else if (typeof window.renderBoard === 'function') window.renderBoard();
+    const refresh = typeof window.refreshOrderManagerNow === 'function'
+      ? window.refreshOrderManagerNow()
+      : typeof window.renderBoard === 'function' ? window.renderBoard() : null;
+    Promise.resolve(refresh).catch(error => console.error('Order refresh failed', error));
   }
 
   document.addEventListener('DOMContentLoaded', () => {

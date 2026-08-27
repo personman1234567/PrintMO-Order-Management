@@ -256,6 +256,10 @@
   line-height: 1;
 }
 
+.detail-close-icon-back {
+  display: none;
+}
+
 .detail-close-label {
   display: none;
   font-size: 0.78rem;
@@ -2648,7 +2652,7 @@
   #detail-card,
   body.mobile-mode #detail-overlay.mobile-fullscreen-detail #detail-card {
     width: 100%;
-    height: var(--embedded-viewport-height, 100dvh);
+    height: 100%;
     min-height: 0;
     max-width: none;
     max-height: none;
@@ -2738,6 +2742,14 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
+  }
+
+  body.mobile-mode #detail-overlay.mobile-fullscreen-detail .detail-close-icon-dismiss {
+    display: none;
+  }
+
+  body.mobile-mode #detail-overlay.mobile-fullscreen-detail .detail-close-icon-back {
+    display: inline;
   }
 
   .detail-close-label {

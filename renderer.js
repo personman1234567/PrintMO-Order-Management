@@ -83,7 +83,7 @@ const PRINT_TITLES = new Set([
 ]);
 
 const MOBILE_TAB_BREAKPOINT = 900;
-const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint'];
+const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint', 'storage'];
 const PRINT_VIEWS = ['toPrint', 'printed'];
 let activeMobileTab = MOBILE_TABS[0];
 let activePrintView = PRINT_VIEWS[0];
@@ -103,6 +103,7 @@ function setActiveMobileTab(tab, opts = {}) {
   activeMobileTab = nextTab;
   if (document.body) {
     document.body.dataset.activeTab = nextTab;
+    document.body.dataset.activeView = nextTab === 'storage' ? 'storage' : 'orders';
   }
   document.querySelectorAll('.mobile-tab').forEach(btn => {
     const isActive = btn.dataset.tab === nextTab;
@@ -143,12 +144,72 @@ function initMobileTabs() {
   setActiveMobileTab(initialTab, { scrollTop: false });
 
   document.querySelectorAll('.mobile-tab').forEach(btn => {
-    btn.addEventListener('click', () => setActiveMobileTab(btn.dataset.tab));
+    btn.addEventListener('click', () => {
+      const detailWasOpen = isMobileViewport && document.body?.classList.contains('detail-open');
+      if (detailWasOpen) document.getElementById('detail-close')?.click();
+      setActiveMobileTab(btn.dataset.tab);
+      if (detailWasOpen) {
+        window.setTimeout(() => btn.focus({ preventScroll: true }), 0);
+      }
+    });
   });
 }
 
 function isShopifyBoardView() {
   return document.body?.dataset.orderSource === 'shopify';
+}
+
+function boardLoadErrorPresentation(error, hasRenderedBoard = boardHasRendered) {
+  if (error?.code === 'SHOPIFY_CONTEXT_MISSING') {
+    return {
+      title: 'Open PrintMO from Shopify Admin',
+      message: 'This page is missing the Shopify sign-in context needed to load orders.'
+    };
+  }
+  if (error?.code === 'SHOPIFY_AUTH_TIMEOUT') {
+    return {
+      title: 'Shopify is still connecting',
+      message: 'Try again in a moment. If this keeps happening, reopen PrintMO from Shopify Admin.'
+    };
+  }
+  return {
+    title: hasRenderedBoard ? 'Couldn’t refresh orders' : 'Couldn’t load orders',
+    message: hasRenderedBoard
+      ? 'The last loaded board is still shown. Check your connection and try again.'
+      : 'Check your connection and try again.'
+  };
+}
+
+function setBoardLoadState(state, detail = {}) {
+  if (document.body) document.body.dataset.boardLoadState = state;
+  const region = document.getElementById('board-load-state');
+  if (!region) return;
+  const title = document.getElementById('board-load-state-title');
+  const message = document.getElementById('board-load-state-message');
+  const retry = document.getElementById('board-load-retry');
+  const ready = state === 'ready';
+  region.hidden = ready;
+  region.dataset.state = state;
+  region.setAttribute('role', state === 'error' ? 'alert' : 'status');
+  if (title && detail.title) title.textContent = detail.title;
+  if (message && detail.message) message.textContent = detail.message;
+  if (retry) retry.hidden = state !== 'error';
+}
+
+function setupBoardLoadRecovery() {
+  const retry = document.getElementById('board-load-retry');
+  if (!retry || retry.dataset.boardLoadWired) return;
+  retry.dataset.boardLoadWired = 'true';
+  retry.addEventListener('click', async () => {
+    retry.disabled = true;
+    try {
+      await renderBoard();
+    } catch (error) {
+      console.error('Order board retry failed', error);
+    } finally {
+      retry.disabled = false;
+    }
+  });
 }
 
 function printViewForOrder(order) {
@@ -2650,6 +2711,12 @@ async function renderBoard(options = {}) {
   } else {
     const fetchGeneration = ++boardFetchGeneration;
     const allowProgressivePaint = isShopifyBoardView() && !boardHasRendered;
+    if (!boardHasRendered) {
+      setBoardLoadState('loading', {
+        title: 'Loading orders',
+        message: 'Connecting to Shopify Admin…'
+      });
+    }
     const applyQueueSnapshot = (nextOrders, { page = null, hasMore = false } = {}) => {
       if (fetchGeneration !== boardFetchGeneration) return false;
       const changedStatuses = changedCandidateBoardStatuses(allOrders, nextOrders);
@@ -2678,19 +2745,28 @@ async function renderBoard(options = {}) {
       return true;
     };
 
-    const nextOrders = await window.api.getQueue({
-      onPage: allowProgressivePaint
-        ? (pageOrders, pageInfo) => {
-          const painted = applyQueueSnapshot(pageOrders, pageInfo);
-          if (painted) void hydrateManualMockupsForOrders(pageOrders, { refresh: true });
-          return painted;
-        }
-        : undefined,
-    });
+    let nextOrders;
+    try {
+      nextOrders = await window.api.getQueue({
+        onPage: allowProgressivePaint
+          ? (pageOrders, pageInfo) => {
+            const painted = applyQueueSnapshot(pageOrders, pageInfo);
+            if (painted) void hydrateManualMockupsForOrders(pageOrders, { refresh: true });
+            return painted;
+          }
+          : undefined,
+      });
+    } catch (error) {
+      if (fetchGeneration === boardFetchGeneration) {
+        setBoardLoadState('error', boardLoadErrorPresentation(error));
+      }
+      throw error;
+    }
     if (fetchGeneration !== boardFetchGeneration) {
       return { rendered: false, stale: true, statuses: [] };
     }
     applyQueueSnapshot(nextOrders);
+    setBoardLoadState('ready');
     if (!allowProgressivePaint) void hydrateManualMockupsForOrders(allOrders, { refresh: true });
     return {
       rendered: renderedAnySnapshot,
@@ -2702,6 +2778,7 @@ async function renderBoard(options = {}) {
   statusesToRender.forEach(renderStatusColumn);
   boardHasRendered = true;
   refreshOpenBundleModal();
+  setBoardLoadState('ready');
   return { rendered: true, stale: false, statuses: statusesToRender };
 }
 
@@ -3059,6 +3136,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   initMobileTabs();
   initPrintTabs();
+  setupBoardLoadRecovery();
   setupManualMockupControls();
   setupManualDesignControls();
   setupSupplierSubmissionReport();
@@ -3251,5 +3329,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupDropZones();
 
   // Initial render (await so allOrders is populated before interactions happen)
-  await renderBoard();
+  try {
+    await renderBoard();
+  } catch (error) {
+    console.error('Initial order board load failed', error);
+  }
 });

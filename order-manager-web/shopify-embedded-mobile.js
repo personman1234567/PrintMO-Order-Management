@@ -153,8 +153,12 @@
 
   function activateBlanksTarget(target) {
     if (!BLANKS_TARGETS.has(target)) return;
+    const trigger = document.querySelector(`[data-mobile-blanks-target="${target}"]`);
+    const detailWasOpen = document.body.classList.contains('detail-open');
+    if (detailWasOpen) document.getElementById('detail-close')?.click();
     if (target === 'batches') {
       openBatches();
+      if (detailWasOpen) window.setTimeout(() => trigger?.focus({ preventScroll: true }), 0);
       return;
     }
 
@@ -162,6 +166,7 @@
     if (target === 'to-order') {
       setActiveTab('blanksCart');
       syncNavigationState();
+      if (detailWasOpen) window.setTimeout(() => trigger?.focus({ preventScroll: true }), 0);
       return;
     }
 
@@ -169,6 +174,7 @@
     const segment = document.getElementById(target === 'ordered' ? 'blanks-view-ordered' : 'blanks-view-cart');
     segment?.click();
     syncNavigationState();
+    if (detailWasOpen) window.setTimeout(() => trigger?.focus({ preventScroll: true }), 0);
   }
 
   function syncRefreshState() {
@@ -186,7 +192,7 @@
     document.documentElement.style.setProperty('--embedded-viewport-height', `${height}px`);
     document.body.classList.toggle('shopify-embedded-mobile', isMobile());
     document.body.classList.toggle('embedded-short-viewport', isMobile() && height < 700);
-    if (isMobile() && document.body.classList.contains('detail-open')) {
+    if (document.body.classList.contains('detail-open')) {
       normalizeDetailPresentation();
     }
   }
@@ -219,7 +225,7 @@
   }
 
   function normalizeDetailPresentation() {
-    if (!isMobile()) return;
+    const mobile = isMobile();
     try {
       if (typeof mobileDetailDragCleanup === 'function') mobileDetailDragCleanup();
       mobileDetailDragCleanup = null;
@@ -230,10 +236,14 @@
     const overlay = document.getElementById('detail-overlay');
     const card = document.getElementById('detail-card');
     overlay?.classList.remove('mobile-bottomsheet');
-    overlay?.classList.add('mobile-fullscreen-detail');
+    overlay?.classList.toggle('mobile-fullscreen-detail', mobile);
+    overlay?.setAttribute('aria-modal', mobile ? 'false' : 'true');
     document.body.classList.remove('mobile-detail-open');
     card?.style.removeProperty('transition');
     card?.style.removeProperty('transform');
+    const close = document.getElementById('detail-close');
+    close?.setAttribute('aria-label', mobile ? 'Back to order board' : 'Close order details');
+    if (!mobile) return;
     syncProductionSteps();
     document.getElementById('detail-content')?.scrollTo({ top: 0, behavior: 'auto' });
   }
@@ -243,8 +253,16 @@
       if (typeof openDetail !== 'function' || openDetail.__shopifyEmbeddedMobile) return;
       const originalOpenDetail = openDetail;
       openDetail = function embeddedMobileOpenDetail(...args) {
+        const overlay = document.getElementById('detail-overlay');
+        const mobile = isMobile();
+        overlay?.classList.toggle('mobile-fullscreen-detail', isMobile());
+        overlay?.setAttribute('aria-modal', mobile ? 'false' : 'true');
+        document.getElementById('detail-close')?.setAttribute(
+          'aria-label',
+          mobile ? 'Back to order board' : 'Close order details'
+        );
         const result = originalOpenDetail.apply(this, args);
-        if (isMobile()) requestAnimationFrame(normalizeDetailPresentation);
+        requestAnimationFrame(normalizeDetailPresentation);
         return result;
       };
       openDetail.__shopifyEmbeddedMobile = true;

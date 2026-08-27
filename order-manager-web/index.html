@@ -9,10 +9,61 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="shopify-api-key" content="__SHOPIFY_API_KEY__" />
-  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="shopify-api-key" content="__SHOPIFY_API_KEY__" />
+  <script>
+    (() => {
+      const storageKey = 'printmo:shopify:embedded-context-v1';
+      const params = new URLSearchParams(window.location.search);
+      const validShop = value => /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(String(value || ''));
+      const validHost = value => /^[A-Za-z0-9_-]{8,512}$/.test(String(value || ''));
+      let saved = {};
+
+      try {
+        saved = JSON.parse(window.localStorage.getItem(storageKey) || '{}') || {};
+      } catch (_) {
+        saved = {};
+      }
+
+      const currentShop = params.get('shop') || '';
+      const currentHost = params.get('host') || '';
+      let changed = false;
+
+      if (!validShop(currentShop) && validShop(saved.shop)) {
+        params.set('shop', saved.shop);
+        changed = true;
+      }
+      const effectiveShop = params.get('shop') || '';
+      if (!validHost(currentHost) && validHost(saved.host) && effectiveShop === saved.shop) {
+        params.set('host', saved.host);
+        changed = true;
+      }
+
+      if (changed) {
+        const query = params.toString();
+        window.history.replaceState(
+          window.history.state,
+          '',
+          `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`
+        );
+      }
+
+      const shop = params.get('shop') || '';
+      const host = params.get('host') || '';
+      if (validShop(shop)) {
+        try {
+          window.localStorage.setItem(storageKey, JSON.stringify({
+            shop,
+            ...(validHost(host) ? { host } : {})
+          }));
+        } catch (_) {
+          // Private browsing can deny storage; the live query remains authoritative.
+        }
+      }
+    })();
+  </script>
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'self';
     img-src 'self' data: blob: https:;
@@ -30,7 +81,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./shopify-preview.css" />
   <link rel="stylesheet" href="./order-detail-split.css" />
 </head>
-<body data-active-tab="pipeline" data-active-view="orders" data-order-source="shopify">
+<body data-active-tab="pipeline" data-active-view="orders" data-order-source="shopify" data-board-load-state="loading">
   <header class="app-header">
     <div class="app-brand">PrintMO Order Manager</div>
     <nav class="app-nav" aria-label="Primary navigation">
@@ -129,6 +180,13 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     </dialog>
   </section>
   <div id="orders-view" class="app-view">
+    <section id="board-load-state" class="board-load-state" data-state="loading" role="status" aria-live="polite" aria-atomic="true">
+      <div class="board-load-state-copy">
+        <strong id="board-load-state-title">Loading orders</strong>
+        <span id="board-load-state-message">Connecting to Shopify Admin…</span>
+      </div>
+      <button id="board-load-retry" type="button" hidden>Try again</button>
+    </section>
     <div class="container">
     <!-- LEFT: Pipeline -->
     <div class="panel pipeline">
@@ -292,7 +350,11 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
               <span id="detail-header-total">$0.00</span>
             </div>
           </div>
-          <button id="detail-close" type="button" aria-label="Close order details"><span class="detail-close-icon" aria-hidden="true">&times;</span><span class="detail-close-label">Close</span></button>
+          <button id="detail-close" type="button" aria-label="Close order details">
+            <span class="detail-close-icon detail-close-icon-dismiss" aria-hidden="true">&times;</span>
+            <span class="detail-close-icon detail-close-icon-back" aria-hidden="true">&larr;</span>
+            <span class="detail-close-label">Back</span>
+          </button>
         </div>
       </header>
 

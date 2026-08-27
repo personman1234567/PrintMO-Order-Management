@@ -42,7 +42,7 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 |---|---|---|
 | Desktop App Local Boot | Run `npm start` | OIDC sign-in succeeds, the window launches, and the authenticated legacy board loads through the Worker. |
 | Legacy Kanban Card Drag-and-Drop | In **Legacy Redis**, move a card between supported columns | IPC calls the authenticated legacy adapter; the stable-identity mutation persists after refresh. |
-| Order Detail Modal | Click any order card | Modal overlays dashboard showing customer info, SKU variants, unit costs, and attachments. |
+| Order Detail Workbench | Click any order card | Desktop opens a modal workbench; mobile opens a drill-in screen beneath the workflow tabs. Both show customer info, SKU variants, unit costs, and attachments. |
 | Attachment File Upload | Upload image attachment via detail modal | FileReader encodes image Base64, IPC `add-file` persists file, image renders in preview tab. |
 | S&S Blank Batching | Drag multiple cards to Create Blanks Order zone, click Submit | SKUs aggregate, API call executes, order confirmation returns, cards advance to `Blanks Ordered`. |
 | Malformed Legacy Asset Container | Run the `splitOrderAssets` regression check with item assets shaped as `{}`, `null`, and a valid array; then load the Redis board | Invalid containers are treated as empty, valid asset arrays still render, and one malformed item cannot blank the entire board. |

@@ -97,8 +97,8 @@ An **Order Card** (`.pipeline-card`, `.card`) is the fundamental visual unit dis
 
 Below is the complete inventory of all 10 modal overlays and secondary screens embedded in `index.html`.
 
-### 1. Order Detail Modal (`#detail-overlay`, `#detail-card`)
-- **Purpose**: Responsive order workbench for production decisions and Shopify commerce inspection. Desktop uses a split canvas; mobile adapts it into one continuous full-screen workflow.
+### 1. Order Detail Workbench (`#detail-overlay`, `#detail-card`)
+- **Purpose**: Responsive order workbench for production decisions and Shopify commerce inspection. Desktop uses a modal split canvas; mobile uses a drill-in screen beneath the persistent workflow navigation.
 - **Displayed Data & Topology**:
   - **Header Bar** (`#detail-header`, `#detail-header-bar`): Order identifier (`#detail-order-id`), customer name (`#detail-header-customer`), financial and fulfillment badges (`#badge-financial`, `#badge-fulfillment`), received timestamp (`#detail-timestamp`), item and total summaries, readiness summary, and the canonical close control (`#detail-close`).
   - **Always-visible Production Pane (~39% desktop)** (`#detail-left-pane`):
@@ -114,7 +114,7 @@ Below is the complete inventory of all 10 modal overlays and secondary screens e
       4. `Fulfillment` (`#tab-logistics`): Shipping address and tracking.
       5. `Customer & order` (`#tab-customer`): Customer contact, addresses/order context, protected-data fallback states, and commerce metadata.
       6. `Activity & exceptions` (`#tab-activity`): Current production-attention reasons, Shopify order activity, and PrintMO production history.
-  - **Mobile adaptation**: `#detail-content` is the sole vertical scroll owner and resets to its top whenever a detail opens. The header retains a labeled `Close` control. The right workspace pane is ordered before the artwork/production rail so the default Overview, recorded attention, and navigation recommendation appear immediately; all artwork, notes, readiness, and production controls remain available below. Tabs scroll horizontally and remain sticky within the workbench, readiness milestones become full-width sequence rows rather than compressed side-by-side labels, design groups collapse to one column, and safe-area padding is honored. Detail actions and secondary controls enforce the 44px target at mobile widths regardless of pointer emulation.
+  - **Mobile adaptation**: `#detail-content` is the sole vertical scroll owner and resets to its top whenever a detail opens. The global Orders, Blanks, Print, and Storage command surface remains visible above Detail; the Detail header exposes a labeled `Back` control. Back preserves the originating workflow stage, board scroll position, and card focus, while selecting a global stage closes Detail before navigating. The covered board is inert, but the global command surface remains interactive and participates in keyboard focus containment. The right workspace pane is ordered before the artwork/production rail so the default Overview, recorded attention, and navigation recommendation appear immediately; all artwork, notes, readiness, and production controls remain available below. Tabs scroll horizontally and remain sticky within the workbench, readiness milestones become full-width sequence rows rather than compressed side-by-side labels, design groups collapse to one column, and safe-area padding is honored. Detail actions and secondary controls enforce the 44px target at mobile widths regardless of pointer emulation.
   - **Surface-specific file access**: The desktop detail retains the legacy aggregate `#detail-files-btn` and attachments modal. The Shopify web detail intentionally omits that button because mockups and design files render inline. Shared renderer code treats `#detail-files-btn` as optional.
 
 - **Current reliability and semantic boundaries**:

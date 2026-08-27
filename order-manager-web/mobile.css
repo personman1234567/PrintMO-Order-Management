@@ -14,7 +14,8 @@
       display: grid;
       grid-template-columns: minmax(320px, 1fr) minmax(300px, 0.95fr) minmax(320px, 1fr);
       gap: 16px;
-      height: 100%;
+      flex: 1;
+      height: auto;
       padding: 16px;
       background: #f6f5f6;
       min-height: 0;           /* allow children to manage their own scroll */
@@ -75,6 +76,7 @@
     }
 
     .app-content {
+      position: relative;
       flex: 1;
       min-height: 0;
       overflow: hidden;
@@ -85,6 +87,85 @@
     .app-view {
       flex: 1;
       min-height: 0;
+    }
+
+    #orders-view {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .board-load-state {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 8px 10px 0;
+      padding: 11px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      background: #ffffff;
+      color: #334155;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+    }
+
+    .board-load-state[hidden] {
+      display: none !important;
+    }
+
+    .board-load-state-copy {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    #board-load-state-title {
+      color: #0f172a;
+      font-size: 0.78rem;
+      line-height: 1.2;
+    }
+
+    #board-load-state-message {
+      font-size: 0.72rem;
+      line-height: 1.3;
+    }
+
+    .board-load-state[data-state="error"] {
+      border-color: #B42318;
+      background: #F8FAFC;
+      color: #B42318;
+    }
+
+    .board-load-state[data-state="error"] #board-load-state-title {
+      color: #B42318;
+    }
+
+    #board-load-retry {
+      flex: 0 0 auto;
+      min-height: 44px;
+      padding: 9px 12px;
+      border: 1px solid #B42318;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #B42318;
+      font-size: 0.78rem;
+      font-weight: 800;
+      touch-action: manipulation;
+    }
+
+    #board-load-retry:disabled {
+      opacity: 0.6;
+    }
+
+    @media (max-width: 350px) {
+      .board-load-state {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      #board-load-retry {
+        width: 100%;
+      }
     }
 
     body[data-active-view="storage"] #orders-view {
@@ -5468,6 +5549,10 @@ body.mobile-mode #orders-view {
   flex-direction: column;
 }
 
+body.mobile-mode[data-active-view="storage"] #orders-view {
+  display: none;
+}
+
 /* Storage is the one mobile destination that scrolls as a complete page.
    Keep the app shell fixed, but give this view a top-anchored vertical scroll
    owner so embedded touch containment does not swallow its gestures. */
@@ -5903,6 +5988,7 @@ body.mobile-mode .mobile-selection-actions {
 
 /* Full-screen order detail within the embedded app viewport. */
 body.mobile-mode #detail-overlay.mobile-fullscreen-detail {
+  position: absolute;
   inset: 0;
   display: flex;
   align-items: stretch;
@@ -5914,7 +6000,7 @@ body.mobile-mode #detail-overlay.mobile-fullscreen-detail {
 body.mobile-mode #detail-overlay.mobile-fullscreen-detail #detail-card {
   width: 100%;
   max-width: none;
-  height: var(--embedded-viewport-height, 100dvh);
+  height: 100%;
   max-height: none;
   padding: 0;
   border-radius: 0;
@@ -5936,6 +6022,19 @@ body.mobile-mode #detail-overlay.mobile-fullscreen-detail #detail-close {
   background: rgba(15, 23, 42, 0.18);
   color: #ffffff;
   font-size: 1.35rem;
+}
+
+body.mobile-mode #detail-overlay.mobile-fullscreen-detail .detail-close-icon-dismiss {
+  display: none;
+}
+
+body.mobile-mode #detail-overlay.mobile-fullscreen-detail .detail-close-icon-back {
+  display: inline;
+}
+
+body.mobile-mode.detail-open #mobile-refresh-btn {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 body.mobile-mode #detail-overlay.mobile-fullscreen-detail #detail-header {

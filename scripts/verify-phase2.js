@@ -2456,6 +2456,42 @@ async function run() {
   const sharedRenderer = fs.readFileSync(path.join(root, 'renderer.js'), 'utf8');
   const webHtml = fs.readFileSync(path.join(root, 'order-manager-web', 'index.html'), 'utf8');
   const accessibilityJs = fs.readFileSync(path.join(root, 'order-manager-web', 'accessibility-hardening.js'), 'utf8');
+  const storageBrowserSource = fs.readFileSync(path.join(root, 'order-manager-web', 'storage-browser.js'), 'utf8');
+  const dashboardTriageSource = fs.readFileSync(path.join(root, 'order-manager-web', 'dashboard-triage-enhancements.js'), 'utf8');
+  assert(
+    previewHtml.includes("printmo:shopify:embedded-context-v1")
+      && previewHtml.includes('window.history.replaceState')
+      && previewHtml.includes('id="board-load-state"')
+      && previewHtml.includes('id="board-load-retry"')
+      && webShim.includes('SHOPIFY_CONTEXT_MISSING')
+      && webShim.includes('SHOPIFY_AUTH_TIMEOUT')
+      && webShim.includes('waitForShopifyIdTokenApi'),
+    'embedded launch must restore validated Shopify context before App Bridge and expose retryable auth/load failures'
+  );
+  assert(
+    sharedRenderer.includes("const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint', 'storage']")
+      && sharedRenderer.includes("document.body.dataset.activeView = nextTab === 'storage' ? 'storage' : 'orders'")
+      && sharedRenderer.includes("setBoardLoadState('error', boardLoadErrorPresentation(error))")
+      && sharedRenderer.includes('setupBoardLoadRecovery()')
+      && dashboardTriageSource.includes("boardState !== 'ready' || visible > 0"),
+    'mobile navigation must reach Storage and failed board loads must never masquerade as a genuine empty pipeline'
+  );
+  assert(
+    webHtml.includes('detail-close-icon-dismiss')
+      && webHtml.includes('detail-close-icon-back')
+      && webHtml.includes('<span class="detail-close-label">Back</span>')
+      && sharedRenderer.includes("const detailWasOpen = isMobileViewport && document.body?.classList.contains('detail-open')")
+      && sharedRenderer.includes("if (detailWasOpen) document.getElementById('detail-close')?.click();")
+      && storageBrowserSource.includes("const detailWasOpen = document.body.classList.contains('detail-open')")
+      && storageBrowserSource.includes("if (detailWasOpen) document.getElementById('detail-close')?.click()"),
+    'mobile Order Detail must provide Back and close before any global Orders, Blanks, Print, or Storage navigation'
+  );
+  assert(
+    accessibilityJs.includes("config.mobileDrillIn && current.classList.contains('app-content')")
+      && accessibilityJs.includes("document.getElementById('mobile-command-surface')")
+      && accessibilityJs.includes("config.rootElement.setAttribute('aria-modal', mobileDrillIn ? 'false' : 'true')"),
+    'mobile Order Detail must isolate the covered board without making the global mobile command surface inert'
+  );
   assert(
     webHtml.includes('id="ss-submission-overlay"')
       && webHtml.includes('id="ss-submission-lines-body"')
@@ -2686,6 +2722,23 @@ async function run() {
   );
   const mobileCss = fs.readFileSync(path.join(root, 'order-manager-web', 'mobile.css'), 'utf8');
   assert(
+    desktopCss.includes('.board-load-state[data-state="error"]')
+      && mobileCss.includes('.board-load-state[data-state="error"]')
+      && mobileCss.includes('#board-load-retry')
+      && mobileCss.includes('min-height: 44px')
+      && mobileCss.includes('body.mobile-mode[data-active-view="storage"] #orders-view'),
+    'board load recovery must remain visible, responsive, and touch-safe at mobile widths'
+  );
+  assert(
+    mobileCss.includes('body.mobile-mode #detail-overlay.mobile-fullscreen-detail')
+      && mobileCss.includes('position: absolute;')
+      && mobileCss.includes('body.mobile-mode.detail-open #mobile-refresh-btn')
+      && mobileCss.includes('.detail-close-icon-dismiss')
+      && mobileCss.includes('.detail-close-icon-back')
+      && detailCss.includes('.detail-close-icon-back'),
+    'mobile Order Detail must sit beneath the command surface, expose Back, and hide the unrelated Sync action while open'
+  );
+  assert(
     mobileCss.includes('body.mobile-mode[data-order-source="shopify"] .production-card.print-card')
       && mobileCss.includes('grid-template-columns: clamp(74px, 24vw, 92px) minmax(0, 1fr)')
       && mobileCss.includes('.production-card.print-card:hover .progress-view')
@@ -2755,6 +2808,13 @@ async function run() {
   );
   const embeddedMobile = fs.readFileSync(path.join(root, 'order-manager-web', 'shopify-embedded-mobile.js'), 'utf8');
   assert(embeddedMobile.includes("closest('#detail-overlay.mobile-fullscreen-detail')"), 'mobile detail touch containment must preserve its internal scroll owner');
+  assert(
+    embeddedMobile.includes("overlay?.classList.toggle('mobile-fullscreen-detail', isMobile())")
+      && embeddedMobile.includes("overlay?.setAttribute('aria-modal', mobile ? 'false' : 'true')")
+      && embeddedMobile.includes("close?.setAttribute('aria-label', mobile ? 'Back to order board' : 'Close order details')")
+      && embeddedMobile.includes("if (detailWasOpen) document.getElementById('detail-close')?.click()"),
+    'embedded mobile must establish drill-in semantics before detail opens and restore desktop modal semantics outside the breakpoint'
+  );
 
   // Behavioral verification of web-shim adapter and worker normalization contract
   const webShimCode = fs.readFileSync(path.join(root, 'order-manager-web', 'web-shim.js'), 'utf8');
@@ -2793,6 +2853,21 @@ async function run() {
   assert.equal(idTokenCalls, 1, 'adjacent authenticated requests must share one fresh App Bridge token');
   assert.equal(await shimContext.getShopifyIdToken({ force: true }), reusableToken);
   assert.equal(idTokenCalls, 2, 'forced auth recovery must obtain a new App Bridge token');
+  shimContext.URLSearchParams = URLSearchParams;
+  shimContext.setTimeout = setTimeout;
+  shimContext.window.location = { search: '' };
+  delete shimContext.window.shopify;
+  await assert.rejects(
+    () => shimContext.getShopifyIdToken({ force: true }),
+    error => error?.code === 'SHOPIFY_CONTEXT_MISSING',
+    'a launch without Shopify context must fail explicitly instead of returning an empty board'
+  );
+  shimContext.window.shopify = {
+    async idToken() {
+      idTokenCalls += 1;
+      return reusableToken;
+    },
+  };
 
   // 1. Price mapping
   const testLineItem = candidateLineItem({ unitPrice: '12.50', currentQuantity: 3 });

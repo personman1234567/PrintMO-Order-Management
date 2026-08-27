@@ -135,6 +135,10 @@ The source adapter is `order-manager-web/web-shim.js`; Shopify-first source cont
 
 **Manual design upload release (2026-08-25):** Worker `c21ae215-b7de-484c-915f-e0ad597509a8` and production Pages deployment `f0c24982` (release marker `1787679222819`) let authenticated operators attach SVG, PNG, JPG, or WebP artwork to a Shopify order as Front, Back, or Extras. Uploads use the existing private R2/D1 manifest path with size validation, SHA-256 readback verification, safe client metadata, placement-aware rendering, and source-gated removal that leaves private bytes recoverable. No D1 migration, Shopify scope/app release, production-metafield change, supplier-gateway change, or Google Drive integration was required. Syntax, proxy tests/build, Phase 1, Phase 2, documentation, Worker dry-run/binding checks, remote migration check, production upload, fail-closed probes, release-marker verification, and live asset-content checks passed.
 
+**Mobile board recovery release (2026-08-25; accepted after environment correction):** Production Pages deployment `590f0abe` (release marker `17876858473N`) restores validated `shop`/`host` embedded context before App Bridge loads, allows the bridge a bounded startup window, and exposes a retryable board error instead of rendering authentication or transport failure as zero orders. Dashboard empty-state logic now runs only after a successful queue response, and the renderer's mobile tab state includes Storage and switches `data-active-view` explicitly. Syntax, Phase 2, documentation, artifact preparation, fixture-card rendering, Storage routing, error recovery at 393px and 320px, production upload, and canonical-host release-marker verification passed. The owner's first native-app check reported that cards still did not work, but a later retest after updating the Shopify mobile app confirmed that the board and cards render. Preserve the historical failed attempt, but treat the outdated app version as its confounder; do not introduce a same-origin authentication relay unless an updated app reproduces an authenticated request failure with direct evidence. Worker, database, Shopify scopes/app version, production metadata, supplier gateway, and existing manual-upload behavior remain unchanged.
+
+**Mobile Order Detail navigation release (2026-08-26):** Production Pages deployment `2d498349` (release marker `17877829113N`) turns mobile Order Detail into a drill-in screen beneath the persistent Orders, Blanks, Print, and Storage command surface. The header exposes a touch-safe **Back** action; Back restores the originating stage and card focus, while selecting a global stage closes Detail before navigating. The covered board remains inert without disabling the mobile command surface, and desktop Detail retains its modal, Escape, and focus-isolation behavior. Focused syntax, Phase 2, documentation, 320px/393px interaction and layout checks, desktop modal regression checks, artifact preparation, production upload, and canonical-host marker verification passed. Worker, database, schema, authentication, Shopify app/scopes, supplier gateway, and order records were unchanged.
+
 #### Shopify access requirements and current limitation
 
 - `read_orders` covers the base order, line items, transactions, fulfillments, conversion summary, discounts, and events for the normal Shopify order-access window.
@@ -176,6 +180,14 @@ active queue, detail view, or workflow sheet owns vertical scrolling.
 - Storage Browser is the exception to the fixed workflow-screen pattern: its
   full view is top-anchored and owns vertical scrolling, while horizontal
   scrolling and scroll chaining into Shopify Admin remain disabled.
+- The Storage item is part of the mobile tab state machine. Selecting it sets
+  `data-active-view="storage"`; selecting any order stage restores
+  `data-active-view="orders"`. Do not omit Storage from the renderer's allowed
+  mobile tabs or it will silently fall back to Pipeline.
+- A failed queue load is not an empty queue. The board owns explicit
+  `loading`, `ready`, and `error` states; filters may show their empty result
+  only in `ready`. Missing embedded context and delayed App Bridge startup must
+  remain visible and retryable rather than collapsing the cards to zero.
 - Pipeline cards retain a readable two-column treatment where space permits.
   Production cards use a one-column phone grid and become two columns only at
   wider embedded widths; never combine a multi-column grid with a one-third
@@ -184,8 +196,16 @@ active queue, detail view, or workflow sheet owns vertical scrolling.
   **Print** header with full-width, 44px **To Print** and **Printed** tabs. The
   mobile Blanks stage retains its own dedicated header and workflow controls;
   flattening the desktop print section must not merge those mobile stages.
+- Mobile Order Detail is a drill-in screen beneath the persistent workflow
+  command surface, not a viewport-sealing modal. Its header exposes a 44px
+  **Back** action; Orders, Blanks, Print, and Storage remain directly usable.
+  A global stage selection closes Detail before navigating, while Back restores
+  the originating stage, board scroll position, and card focus. Keep the covered
+  board inert without making `#mobile-command-surface` inert; mobile Detail uses
+  `aria-modal="false"`, while desktop Detail retains modal focus isolation and
+  `aria-modal="true"`.
 - `#detail-content` is the explicit vertical scroll owner for the mobile detail
-  overlay. Its inner detail columns must remain intrinsic-height
+  drill-in screen. Its inner detail columns must remain intrinsic-height
   (`flex: 0 0 auto; height: auto; overflow: visible`) so their complete height
   contributes to that scroller. The scroll owner locks gestures to `pan-y`,
   clips horizontal overflow, and suppresses page-shell rubber-banding.
@@ -207,6 +227,7 @@ active queue, detail view, or workflow sheet owns vertical scrolling.
 | Ordered tab cannot be selected or both tabs show the same cards | The control was styled as a tab but no `setActiveBlanksView`/filtered render contract was installed | Verify `blanks-batches.js` wires click/arrow-key activation and filters `blanks` cards by `blanksOrdered`; do not implement the tabs as status mutations. |
 | A Shopify card move pauses, reports 409, then appears only after refresh | Status and readiness were split across requests, or concurrent clients advanced the revision | Use `updateBoardMove` for one stage patch. Keep optimistic repaint/rollback, per-order serialization, and the single conflict reconciliation retry. |
 | Mobile detail opens but cannot scroll | The inner detail column retained `flex:1; overflow:hidden`, so `#detail-content` had no measurable overflow even though content was clipped | Keep `#detail-content` as the vertical-only scroll owner and reset its inner columns to intrinsic height with visible internal overflow. |
+| Mobile detail opens but the operator cannot return to the board or use another workflow stage | Detail was positioned across the whole app viewport and the modal isolation walk made the mobile command surface inert | Keep Detail absolutely contained by `.app-content`, leave `#mobile-command-surface` above and interactive, close through the canonical Back control before global navigation, and keep only the covered board inert. Verify Back plus Orders, Blanks, Print, and Storage at both 320px and 393px. |
 | Unsaved inline notes from one order appear when another order opens | The shared detail editor remained in editing state across `closeDetail()`, so `syncNotesContext()` intentionally preserved the stale draft after `currentDetailOrder` changed | Treat note drafts as immutable-order-scoped state. Close/backdrop/Escape must use one cancel/preserve/confirm path, and edit A → close → open B → save requires behavioral regression coverage. |
 | Detail opens with readiness/progress controls older than the rich response | `mergeCanonicalDetail()` repainted commerce/assets/stage but did not adopt canonical revision, printed count, and every readiness flag into the local order object used by controls | Merge the complete canonical production control state before repaint and retain expected revision for the next mutation. Test a stale board summary followed by a newer detail response. |
 | Shopify customer-name edit opens and then fails | The shared legacy entry point remained visible even though `web-shim.js → window.api.updateName` rejects commerce-source name writes | Capability-gate the action. Shopify names remain read-only; hide or disable Edit name with source-aware explanation. |

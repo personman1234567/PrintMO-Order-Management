@@ -217,6 +217,7 @@
       rememberAndSet(current, false);
       const parent = current.parentElement;
       if (!parent) break;
+      if (config.mobileDrillIn && current.classList.contains('app-content')) break;
       Array.from(parent.children).forEach(sibling => {
         if (sibling !== current) rememberAndSet(sibling, true);
       });
@@ -233,13 +234,25 @@
 
   function syncDialog(config) {
     const open = isDialogOpen(config);
+    const mobileDrillIn = config.root === '#detail-overlay'
+      && document.body.classList.contains('mobile-mode')
+      && config.rootElement.classList.contains('mobile-fullscreen-detail');
     config.rootElement.setAttribute('aria-hidden', open ? 'false' : 'true');
-    if (open === config.wasOpen) return;
+    if (config.root === '#detail-overlay') {
+      config.rootElement.setAttribute('aria-modal', mobileDrillIn ? 'false' : 'true');
+    }
+    const modeChangedWhileOpen = open && config.wasOpen && mobileDrillIn !== config.mobileDrillIn;
+    if (open === config.wasOpen && !modeChangedWhileOpen) return;
+    if (modeChangedWhileOpen) restoreDialogIsolation(config);
     config.wasOpen = open;
+    config.mobileDrillIn = mobileDrillIn;
 
     if (open) {
-      config.opener = lastExternalFocus?.isConnected ? lastExternalFocus : null;
+      if (!modeChangedWhileOpen) {
+        config.opener = lastExternalFocus?.isConnected ? lastExternalFocus : null;
+      }
       isolateDialog(config);
+      if (modeChangedWhileOpen) return;
       requestAnimationFrame(() => {
         const initial = config.initial ? config.rootElement.querySelector(config.initial) : null;
         (initial || config.contentElement)?.focus({ preventScroll: true });
@@ -317,7 +330,12 @@
       }
 
       if (event.key !== 'Tab') return;
-      const focusable = focusableElements(activeConfig.contentElement);
+      const focusable = activeConfig.mobileDrillIn
+        ? [
+            ...focusableElements(document.getElementById('mobile-command-surface')),
+            ...focusableElements(activeConfig.contentElement)
+          ]
+        : focusableElements(activeConfig.contentElement);
       if (!focusable.length) {
         event.preventDefault();
         activeConfig.contentElement?.focus();
