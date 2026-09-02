@@ -26,12 +26,19 @@
 
 ## Current Release Boundary
 
-Current production deployment on 2026-08-25:
+Current production deployment on 2026-09-02:
 
-- Worker version: `c21ae215-b7de-484c-915f-e0ad597509a8`
-- Pages deployment: `f0c24982.print-mo-order-manager.pages.dev` (release marker `1787679222819`)
+- Worker version: `d991db45-e13d-40d5-8c3d-6f0e3f335626`
+- Pages deployment: `56f49cab.print-mo-order-manager.pages.dev` (release marker `1788390148290`)
 - Shopify app version: `designer-assets-idempotency-2026-07-23`
 - Stateless supplier gateway commit: `d3a0d5a`
+
+This release makes authoritative Shopify cancellation and exact `FULFILLED`
+source-driven: either removes the order from active-board projection reads
+without deleting its D1 projection or production history, and later production
+reconciliation cannot reactivate it while Shopify continues to report the
+terminal state. Fulfilled, non-cancelled Shopify orders remain available through
+the lazy-loaded, view-only Previous Orders surface.
 
 The production installation has approved the candidate write/all-orders scopes, and canonical Shopify-board/Admin-block writes are live for acceptance. Final cutover, live S&S enablement, and permanent Redis retirement remain owner-gated.
 
@@ -83,13 +90,17 @@ current garment total. `PrintMOProductionState` must request `sku` on its first
 50 line items as well as on pagination; omitting it makes valid first-page
 garments indistinguishable from non-supplier lines and falsely reduces the cap.
 
-`completed` means manufacturing is finished, not that pickup or delivery has
+`completed` means manufacturing is finished, not that Shopify fulfillment has
 finished. The Ready to Print workspace renders `print` under **To Print** and
-`completed` under **Printed**. A completed order remains active in Printed,
-including when Shopify reports it fulfilled, until an operator marks customer
-handoff complete. That action server-stamps `archivedAt` and
-`archivedBy`; only archive state removes the order from the active projection.
-Reopening clears both archive fields.
+`completed` under **Printed**, so completed but still-unfulfilled work remains
+visible for customer handoff. Exact Shopify `FULFILLED` and Shopify
+`cancelledAt` are separate source-driven terminal conditions: either makes the
+D1 projection inactive without deleting production, audit, asset, or projection
+history. Operator archive state also removes a projection from the active board,
+but reopening clears only PrintMO's archive fields; it cannot reactivate an order
+while Shopify still reports it fulfilled or cancelled. If Shopify reverses
+fulfillment, the preserved production stage becomes active again unless the
+order remains cancelled or operator-archived.
 
 Every client mutation supplies an expected revision and idempotency key. Keys use only the Worker-accepted `[A-Za-z0-9._:-]` character set and are generated independently of Shopify GIDs; a GID contains `/` separators and must never be embedded in a fallback key. The Worker records the request in D1, reads the metafield digest, calls Shopify `metafieldsSet` with `compareDigest`, and then commits the D1 projection/audit result. If Shopify commits before D1 finalization, `lastMutationId` lets a retry repair D1. A concurrent edit returns `409 VERSION_CONFLICT`.
 
@@ -117,9 +128,11 @@ The Worker binding is `ORDER_DB`. The production database is `printmo-order-mana
 
 ## Board Reads
 
-`GET /order-manager/v1/orders` enumerates D1 projection rows in pages of at most 50. On a new or rebuilt database, the per-shop Durable Object performs one bounded read-only bootstrap of up to 50 recent paid/open Shopify orders, reads any existing canonical metafields, refreshes summaries in `nodes` chunks, and records a `bootstrap` checkpoint. Until that Shopify read succeeds, the endpoint returns `BOARD_NOT_INITIALIZED` instead of presenting an authoritative empty board. Once initialized, ordinary board reads return the existing D1 projection immediately and schedule stale commerce-summary refreshes through the coordinator in the request background. An explicit `refresh=1` request still waits for the refresh and returns the newly reprojected page.
+`GET /order-manager/v1/orders` defaults to `view=active` and enumerates D1 projection rows in pages of at most 50. Active reads exclude exact Shopify `FULFILLED` rows in SQL before representative asset metadata is selected. On a new or rebuilt database, the per-shop Durable Object performs one bounded read-only bootstrap of up to 50 recent paid/open Shopify orders, reads any existing canonical metafields, refreshes summaries in `nodes` chunks, and records a `bootstrap` checkpoint. Until that Shopify read succeeds, the endpoint returns `BOARD_NOT_INITIALIZED` instead of presenting an authoritative empty board. Once initialized, ordinary board reads return the existing D1 projection immediately and schedule stale commerce-summary refreshes through the coordinator in the request background. An explicit `refresh=1` request still waits for the refresh and returns the newly reprojected page.
 
-`GET /order-manager/v1/orders/:gid` loads rich Shopify detail on demand and merges it with the canonical production metafield and D1 asset manifests.
+`GET /order-manager/v1/orders?view=previous` returns only non-cancelled Shopify projections whose authoritative fulfillment status is exactly `FULFILLED`. It sorts by newest Shopify update, supports server-side order-number/customer-name search with `q`, defaults to 25 rows in the UI, and binds `view`, `q`, `stage`, and `limit` into the signed cursor. History list DTOs omit asset summaries. The browser does not preload or poll this view; selecting **Previous Orders**/**History** loads it, **Load More** follows the signed cursor, and Refresh affects only that open view.
+
+`GET /order-manager/v1/orders/:gid` loads rich Shopify detail on demand and merges it with the canonical production metafield and D1 asset manifests. Previous Orders reuses this endpoint only after an operator opens one row, then renders the established detail experience with commerce, production, and artwork mutations disabled.
 
 `order-manager-web/web-shim.js` maps the candidate DTO into the existing board renderer. Source-aware mutation methods route only the Shopify view to canonical endpoints; the legacy branch retains its existing URLs and payloads. The shared renderer is the sole browser owner of queue reads and exposes a shallow, read-only board snapshot for drag metadata and other presentation-only consumers. Candidate queue loads are generation-guarded, cached private preview URLs are preserved between polls, and the shared renderer discards superseded responses and repaints only columns whose render-relevant order data changed.
 

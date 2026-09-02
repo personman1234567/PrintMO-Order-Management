@@ -83,7 +83,7 @@ const PRINT_TITLES = new Set([
 ]);
 
 const MOBILE_TAB_BREAKPOINT = 900;
-const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint', 'storage'];
+const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint', 'storage', 'history'];
 const PRINT_VIEWS = ['toPrint', 'printed'];
 let activeMobileTab = MOBILE_TABS[0];
 let activePrintView = PRINT_VIEWS[0];
@@ -103,7 +103,9 @@ function setActiveMobileTab(tab, opts = {}) {
   activeMobileTab = nextTab;
   if (document.body) {
     document.body.dataset.activeTab = nextTab;
-    document.body.dataset.activeView = nextTab === 'storage' ? 'storage' : 'orders';
+    document.body.dataset.activeView = nextTab === 'storage'
+      ? 'storage'
+      : nextTab === 'history' ? 'previous' : 'orders';
   }
   document.querySelectorAll('.mobile-tab').forEach(btn => {
     const isActive = btn.dataset.tab === nextTab;
@@ -461,11 +463,7 @@ function refreshVisibleRelativeTimes() {
 function orderIsVisibleOnOperationalBoard(order) {
   if (!order?._candidate) return true;
   const fulfillment = String(order.displayFulfillmentStatus || '').trim().toUpperCase();
-  if (fulfillment !== 'FULFILLED') return true;
-  // Intentionally completed production remains visible in Printed until the
-  // operator archives it. Fulfilled commerce records with a default workflow
-  // stage must not re-enter the active pipeline.
-  return order.productionStage === 'completed';
+  return fulfillment !== 'FULFILLED';
 }
 
 function renderStatusColumn(status) {
@@ -2013,6 +2011,7 @@ function consolidateLineItemsForDisplay(items = []) {
 }
 
 function openDetail(o) {
+  const historyReadOnly = Boolean(o?._historyReadOnly);
   detailOrder = o;
   renderOrderAssets(o);
   if (o?._capabilities?.artworkUpload !== false) {
@@ -2034,6 +2033,8 @@ function openDetail(o) {
   }
   const testBadge = document.getElementById('badge-test-order');
   if (testBadge) testBadge.classList.toggle('hidden', !o._synthetic);
+  const historyBadge = document.getElementById('badge-history-readonly');
+  if (historyBadge) historyBadge.classList.toggle('hidden', !historyReadOnly);
   const mockupActions = document.querySelector('.manual-mockup-actions');
   if (mockupActions) {
     mockupActions.classList.toggle('hidden', o?._capabilities?.artworkUpload === false);
@@ -2086,7 +2087,7 @@ function openDetail(o) {
     progressText.textContent = `${o.progress} / ${currentTotal} pieces printed`;
     const pct = currentTotal ? Math.min(100, (o.progress / currentTotal) * 100) : 0;
     progressBar.style.width = pct + '%';
-    progressPlusOne.disabled = currentTotal === 0 || o.progress >= currentTotal;
+    progressPlusOne.disabled = historyReadOnly || currentTotal === 0 || o.progress >= currentTotal;
   };
   const progressPlusOne = document.getElementById('progress-plus1');
   updateProgressUI();
@@ -2210,6 +2211,20 @@ function openDetail(o) {
     applyBtn.classList.add('hidden');
   };
 
+  document.body.classList.toggle('history-detail-readonly', historyReadOnly);
+  const editNotesButton = document.getElementById('detail-edit-notes-btn');
+  if (editNotesButton) {
+    editNotesButton.disabled = historyReadOnly;
+    editNotesButton.classList.toggle('hidden', historyReadOnly);
+    if (historyReadOnly) editNotesButton.onclick = null;
+  }
+  document.getElementById('progress-custom').disabled = historyReadOnly;
+  [chkBlanks, chkPrints, chkBlanksOrd, chkPrintsOrd].forEach(input => {
+    input.disabled = historyReadOnly;
+  });
+  applyBtn.disabled = historyReadOnly;
+  if (historyReadOnly) applyBtn.classList.add('hidden');
+
   // The desktop detail surface still exposes the legacy aggregate Files button.
   // The Shopify web detail surface renders mockups/design files inline instead,
   // so this control is intentionally absent there.
@@ -2246,6 +2261,7 @@ function closeDetail() {
   overlay.classList.replace('visible', 'hidden');
   overlay.setAttribute('aria-hidden', 'true');
   document.body.classList.remove('detail-open');
+  document.body.classList.remove('history-detail-readonly');
   cleanupDetailAssetPreviews();
   const mockupTrack = document.getElementById('detail-mockups-track');
   if (mockupTrack) mockupTrack.innerHTML = '';
@@ -2268,6 +2284,8 @@ function closeDetail() {
     notesResizeHandler = null;
   }
 }
+
+window.openOrderManagerDetail = openDetail;
 
 function renderFileList(order) {
   const container = document.getElementById('file-list');

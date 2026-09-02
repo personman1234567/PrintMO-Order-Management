@@ -96,7 +96,9 @@
       window.setActiveMobileTab(tab, options);
     } else {
       document.body.dataset.activeTab = tab;
-      document.body.dataset.activeView = tab === 'storage' ? 'storage' : 'orders';
+      document.body.dataset.activeView = tab === 'storage'
+        ? 'storage'
+        : tab === 'history' ? 'previous' : 'orders';
     }
   }
 
@@ -113,6 +115,9 @@
   function currentStage() {
     if (document.body.dataset.activeView === 'storage' || document.body.dataset.activeTab === 'storage') {
       return 'storage';
+    }
+    if (document.body.dataset.activeView === 'previous' || document.body.dataset.activeTab === 'history') {
+      return 'history';
     }
     const activeTab = document.body.dataset.activeTab || 'pipeline';
     if (activeTab.startsWith('blanks')) return 'blanks';

@@ -478,10 +478,10 @@
   }
 
   function setActiveView(view) {
-    const nextView = view === 'storage' ? 'storage' : 'orders';
-    if (nextView === 'storage') {
+    const nextView = ['storage', 'previous'].includes(view) ? view : 'orders';
+    if (nextView !== 'orders') {
       const currentTab = document.body.dataset.activeTab || 'pipeline';
-      if (currentTab && currentTab !== 'storage') state.lastOrdersTab = currentTab;
+      if (currentTab && !['storage', 'history'].includes(currentTab)) state.lastOrdersTab = currentTab;
     }
 
     document.body.dataset.activeView = nextView;
@@ -496,6 +496,9 @@
     }
     if (elements.ordersView) {
       elements.ordersView.setAttribute('aria-hidden', nextView !== 'orders');
+    }
+    if (elements.previousView) {
+      elements.previousView.setAttribute('aria-hidden', nextView !== 'previous');
     }
 
     if (nextView === 'storage') {
@@ -987,6 +990,12 @@
         setLoading('previews', false);
         scheduleRender();
       }
+    }
+    if (nextView === 'previous') {
+      if (typeof window.setActiveMobileTab === 'function' && window.matchMedia('(max-width: 900px)').matches) {
+        window.setActiveMobileTab('history', { scrollTop: false });
+      }
+      if (typeof window.loadPreviousOrders === 'function') window.loadPreviousOrders();
     }
   }
 
@@ -1807,6 +1816,7 @@
     elements.copyUrl = document.getElementById('storage-copy-url');
     elements.storageView = document.getElementById('storage-view');
     elements.ordersView = document.getElementById('orders-view');
+    elements.previousView = document.getElementById('previous-orders-view');
     elements.viewModeButtons = Array.from(document.querySelectorAll('.storage-view-mode'));
     elements.viewModeHint = document.getElementById('storage-view-mode-hint');
     elements.rangePresetButtons = [];
@@ -1862,16 +1872,16 @@
         if (!window.matchMedia('(max-width: 900px)').matches) return;
         const nextTab = btn.dataset.tab || 'pipeline';
 
-        if (nextTab === 'storage') {
+        if (nextTab === 'storage' || nextTab === 'history') {
           event.stopImmediatePropagation();
           const detailWasOpen = document.body.classList.contains('detail-open');
           if (detailWasOpen) document.getElementById('detail-close')?.click();
-          setActiveView('storage');
+          setActiveView(nextTab === 'history' ? 'previous' : 'storage');
           if (detailWasOpen) window.setTimeout(() => btn.focus({ preventScroll: true }), 0);
           return;
         }
 
-        if (document.body.dataset.activeView === 'storage') {
+        if (document.body.dataset.activeView !== 'orders') {
           event.stopImmediatePropagation();
           setActiveView('orders');
           if (typeof window.setActiveMobileTab === 'function') {

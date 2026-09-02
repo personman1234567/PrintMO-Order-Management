@@ -2505,7 +2505,7 @@ const PRODUCTION_METAFIELD_KEY = 'production_state_v1';
 const BOOTSTRAP_ORDERS_QUERY = `query PrintMOBootstrapOrders($query: String!, $first: Int!) {
   orders(first: $first, sortKey: CREATED_AT, reverse: true, query: $query) {
     nodes {
-      id name createdAt updatedAt displayFinancialStatus
+      id name createdAt updatedAt displayFinancialStatus displayFulfillmentStatus cancelledAt
       metafield(namespace: "${PRODUCTION_METAFIELD_NAMESPACE}", key: "${PRODUCTION_METAFIELD_KEY}") {
         id namespace key type value compareDigest createdAt updatedAt
       }
@@ -2517,7 +2517,7 @@ const BOOTSTRAP_ORDERS_QUERY = `query PrintMOBootstrapOrders($query: String!, $f
 const PRODUCTION_STAGES = new Set(['received', 'to_order', 'blanks_cart', 'blanks_ordered', 'print', 'completed']);
 const PRODUCTION_STATE_QUERY = `query PrintMOProductionState($id: ID!) {
   order(id: $id) {
-    id name createdAt updatedAt
+    id name createdAt updatedAt displayFulfillmentStatus cancelledAt
     lineItems(first: 50) {
       nodes {
         id sku title quantity currentQuantity
@@ -5448,10 +5448,25 @@ async function d1AssetsForOrders(env, shopId, gids) {
     return byOrder;
 }
 
+function shopifyProjectionActiveValue(state, summary, order = {}) {
+    const cancelledAt = summary?.commerce?.cancelledAt
+        || order?.cancelledAt
+        || order?.cancelled_at
+        || null;
+    const fulfillmentStatus = String(
+        summary?.commerce?.fulfillmentStatus
+        || order?.displayFulfillmentStatus
+        || order?.fulfillmentStatus
+        || order?.fulfillment_status
+        || ''
+    ).toUpperCase();
+    return state?.archivedAt || cancelledAt || fulfillmentStatus === 'FULFILLED' ? 0 : 1;
+}
+
 async function d1ProjectionUpsert(env, shopId, gid, state, compareDigest, summary = undefined, order = {}) {
     const db = requireOrderDb(env);
     const now = isoNow();
-    const active = state.archivedAt ? 0 : 1;
+    const active = shopifyProjectionActiveValue(state, summary, order);
     await db.prepare(`
       INSERT INTO order_projection (
         shop_id, order_gid, display_name, stage, active, production_revision,
@@ -6882,11 +6897,51 @@ async function providerBoardDto(env, record) {
     return attachEtsyCatalogPreviews(env, dto);
 }
 
-async function loadDataPage(env, stage, limit, offset) {
+function d1LikePattern(value) {
+    return `%${String(value || '').replace(/[\\%_]/g, match => `\\${match}`)}%`;
+}
+
+async function loadDataPage(env, { view = 'active', stage = '', q = '', limit, offset }) {
     const shop = await d1Shop(env);
     const db = requireOrderDb(env);
+    if (!['active', 'previous'].includes(view)) {
+        throw Object.assign(new Error('View filter is invalid.'), { code: 'INVALID_VIEW', status: 400 });
+    }
     if (stage) {
         if (!PRODUCTION_STAGES.has(stage)) throw Object.assign(new Error('Stage filter is invalid.'), { code: 'INVALID_STAGE', status: 400 });
+    }
+    if (view === 'previous') {
+        const searchPattern = d1LikePattern(q.toLowerCase());
+        const searchSql = q
+            ? ` AND (
+                LOWER(COALESCE(display_name, '')) LIKE ? ESCAPE '\\'
+                OR LOWER(COALESCE(json_extract(commerce_json, '$.customer.displayName'), '')) LIKE ? ESCAPE '\\'
+              )`
+            : '';
+        const searchValues = q ? [searchPattern, searchPattern] : [];
+        const where = `
+          WHERE shop_id = ?
+            AND UPPER(COALESCE(json_extract(commerce_json, '$.commerce.fulfillmentStatus'), '')) = 'FULFILLED'
+            AND json_extract(commerce_json, '$.commerce.cancelledAt') IS NULL${searchSql}
+        `;
+        const [rows, count] = await Promise.all([
+            db.prepare(`
+              SELECT * FROM order_projection
+              ${where}
+              ORDER BY COALESCE(shopify_updated_at, updated_at) DESC, order_gid DESC
+              LIMIT ? OFFSET ?
+            `).bind(shop.id, ...searchValues, limit, offset).all(),
+            db.prepare(`SELECT COUNT(*) AS count FROM order_projection ${where}`)
+                .bind(shop.id, ...searchValues).first()
+        ]);
+        const total = Number(count?.count || 0);
+        return {
+            records: (rows.results || []).map(row => d1ProjectionRecord(row)),
+            shopifyTotal: total,
+            providerTotal: 0,
+            total,
+            nextOffset: offset + limit < total ? offset + limit : null
+        };
     }
     const shopifyStage = stage ? ' AND stage = ?' : '';
     const providerStage = stage ? ` AND json_extract(ps.state_json, '$.stage') = ?` : '';
@@ -6897,7 +6952,8 @@ async function loadDataPage(env, stage, limit, offset) {
       FROM (
         SELECT 'shopify' AS source_kind, order_gid AS source_id, created_at AS source_created_at
         FROM order_projection
-        WHERE shop_id = ? AND active = 1${shopifyStage}
+        WHERE shop_id = ? AND active = 1
+          AND UPPER(COALESCE(json_extract(commerce_json, '$.commerce.fulfillmentStatus'), '')) <> 'FULFILLED'${shopifyStage}
         UNION ALL
         SELECT 'provider' AS source_kind, p.order_key AS source_id,
                COALESCE(p.source_created_at, p.created_at) AS source_created_at
@@ -6913,7 +6969,8 @@ async function loadDataPage(env, stage, limit, offset) {
     const [shopifyCount, providerCount] = await Promise.all([
         db.prepare(`
           SELECT COUNT(*) AS count FROM order_projection
-          WHERE shop_id = ? AND active = 1${shopifyStage}
+          WHERE shop_id = ? AND active = 1
+            AND UPPER(COALESCE(json_extract(commerce_json, '$.commerce.fulfillmentStatus'), '')) <> 'FULFILLED'${shopifyStage}
         `).bind(...shopifyValues).first(),
         db.prepare(`
           SELECT COUNT(*) AS count
@@ -6968,13 +7025,15 @@ async function loadDataPage(env, stage, limit, offset) {
 async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders, ctx) {
     try {
         const url = new URL(request.url);
+        const view = url.searchParams.get('view') || 'active';
         const stage = url.searchParams.get('stage') || '';
+        const q = safeText(url.searchParams.get('q'), 120).trim();
         const forceRefresh = url.searchParams.get('refresh') === '1';
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 50), 1), 50);
-        const filter = JSON.stringify({ stage, limit });
+        const filter = JSON.stringify({ view, q, stage, limit });
         const offset = await decodeSignedCursor(url.searchParams.get('cursor'), filter, env);
-        let page = await loadDataPage(env, stage, limit, offset);
-        if (page.shopifyTotal === 0 && offset === 0) {
+        let page = await loadDataPage(env, { view, stage, q, limit, offset });
+        if (view === 'active' && page.shopifyTotal === 0 && offset === 0) {
             const shop = await d1Shop(env);
             const initialized = await requireOrderDb(env).prepare(`
               SELECT 1 AS ready
@@ -6985,7 +7044,7 @@ async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders, ctx
             if (!initialized) {
                 try {
                     await bootstrapThroughCoordinator(env);
-                    page = await loadDataPage(env, stage, limit, offset);
+                    page = await loadDataPage(env, { view, stage, q, limit, offset });
                 } catch (error) {
                     console.error('Initial Shopify board reconciliation failed:', error.message);
                     return v1Error({
@@ -7005,7 +7064,7 @@ async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders, ctx
             if (forceRefresh || !ctx?.waitUntil) {
                 try {
                     await refreshThroughCoordinator(env, staleGids);
-                    page = await loadDataPage(env, stage, limit, offset);
+                    page = await loadDataPage(env, { view, stage, q, limit, offset });
                 } catch (error) {
                     console.error('Shopify summary refresh failed:', error.message);
                 }
@@ -7015,7 +7074,7 @@ async function handleV1OrdersGet(request, env, allowOrigin, reqAllowHeaders, ctx
                 }));
             }
         }
-        if (ctx?.waitUntil) {
+        if (view === 'active' && ctx?.waitUntil) {
             ctx.waitUntil(backfillDesignerStudioAssets(env).catch(error => {
                 console.error('Designer Studio asset backfill error:', error.message);
             }));
@@ -7540,7 +7599,7 @@ async function handleV1ProductionGet(request, env, allowOrigin, reqAllowHeaders)
 async function d1FinalizeProductionMutation(env, shopId, requestRow, gid, state, compareDigest, production, changedFields, order) {
     const db = requireOrderDb(env);
     const now = isoNow();
-    const active = state.archivedAt ? 0 : 1;
+    const active = shopifyProjectionActiveValue(state, undefined, order);
     const resultJson = JSON.stringify({
         ok: true,
         canonicalSource: 'shopify-app-owned-metafield',
@@ -7714,7 +7773,7 @@ async function confirmedBatchProductionUpdate(env, shop, row, batchId, poNumber,
         current.state.batchRefs.includes(poNumber)
         && ['blanks_cart', 'blanks_ordered', 'print', 'completed'].includes(current.state.stage)
     ) {
-        await d1ProjectionUpsert(env, shop.id, row.order_gid, current.state, current.compareDigest);
+        await d1ProjectionUpsert(env, shop.id, row.order_gid, current.state, current.compareDigest, undefined, current.order);
         return { repaired: false, revision: current.state.revision };
     }
     const next = normalizeProductionState(current.state, actor);
@@ -7726,7 +7785,7 @@ async function confirmedBatchProductionUpdate(env, shop, row, batchId, poNumber,
     next.updatedAt = isoNow();
     next.updatedBy = actor;
     const saved = await setProductionMetafield(env, row.order_gid, next, current.compareDigest, graphQL);
-    await d1ProjectionUpsert(env, shop.id, row.order_gid, saved.state, saved.compareDigest);
+    await d1ProjectionUpsert(env, shop.id, row.order_gid, saved.state, saved.compareDigest, undefined, current.order);
     return { repaired: true, revision: saved.state.revision };
 }
 

@@ -12,6 +12,9 @@ const {
 
 if (!globalThis.crypto) globalThis.crypto = crypto.webcrypto;
 
+let fixtureShopifyCancelledAt = null;
+let fixtureShopifyFulfillmentStatus = 'UNFULFILLED';
+
 function createD1(schema) {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(schema);
@@ -57,8 +60,8 @@ function shopifyNode() {
     createdAt: '2026-07-20T15:30:00Z',
     updatedAt: '2026-07-22T14:05:00Z',
     displayFinancialStatus: 'PAID',
-    displayFulfillmentStatus: 'UNFULFILLED',
-    cancelledAt: null,
+    displayFulfillmentStatus: fixtureShopifyFulfillmentStatus,
+    cancelledAt: fixtureShopifyCancelledAt,
     currencyCode: 'USD',
     currentSubtotalLineItemsQuantity: 2,
     currentSubtotalPriceSet: { shopMoney: { amount: '20.00', currencyCode: 'USD' } },
@@ -553,6 +556,8 @@ async function run() {
               name: shopifyNode().name,
               createdAt: shopifyNode().createdAt,
               updatedAt: shopifyNode().updatedAt,
+              displayFulfillmentStatus: shopifyNode().displayFulfillmentStatus,
+              cancelledAt: shopifyNode().cancelledAt,
               lineItems: {
                 nodes: [
                   shopifyNode().lineItems.nodes[0],
@@ -652,6 +657,8 @@ async function run() {
                 createdAt: shopifyNode().createdAt,
                 updatedAt: shopifyNode().updatedAt,
                 displayFinancialStatus: 'PAID',
+                displayFulfillmentStatus: shopifyNode().displayFulfillmentStatus,
+                cancelledAt: shopifyNode().cancelledAt,
                 metafield: {
                   id: 'gid://shopify/Metafield/1',
                   namespace: 'app--fixture--printmo',
@@ -1997,11 +2004,303 @@ async function run() {
     }), env);
     assert.equal(unsafeMigration.status, 400, 'executing migration must require an exact shop confirmation');
 
+    const projectedBeforeFulfillment = await env.ORDER_DB.prepare(
+      'SELECT * FROM order_projection WHERE order_gid = ?'
+    ).bind(shopifyNode().id).first();
+    fixtureShopifyFulfillmentStatus = 'FULFILLED';
+    const knownFulfilledSummary = JSON.parse(projectedBeforeFulfillment.commerce_json);
+    knownFulfilledSummary.commerce.fulfillmentStatus = 'FULFILLED';
+    await env.ORDER_DB.prepare(`
+      UPDATE order_projection
+      SET active = 1, commerce_json = ?, stale_at = NULL
+      WHERE order_gid = ?
+    `).bind(JSON.stringify(knownFulfilledSummary), shopifyNode().id).run();
+
+    const activeWithExistingFulfillment = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/orders?view=active', { headers }), env
+    );
+    assert.equal(activeWithExistingFulfillment.status, 200);
+    assert.equal(
+      (await activeWithExistingFulfillment.json()).data.some(order => order.id === shopifyNode().id),
+      false,
+      'an existing D1 row already reporting FULFILLED must be excluded before active-board assets are built'
+    );
+
+    const previousFirstResponse = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/orders?view=previous&limit=1', { headers }), env
+    );
+    assert.equal(previousFirstResponse.status, 200);
+    const previousFirst = await previousFirstResponse.json();
+    assert.equal(previousFirst.data.length, 1, 'fulfilled Shopify orders must appear in Previous Orders');
+    assert.equal(previousFirst.data[0].id, shopifyNode().id);
+    assert.equal(previousFirst.data[0].commerce.fulfillmentStatus, 'FULFILLED');
+    assert.deepEqual(previousFirst.data[0].production.assets, [], 'history list responses must not contain asset summaries');
+
+    const historyDetailResponse = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}`,
+      { headers }
+    ), env);
+    assert.equal(historyDetailResponse.status, 200);
+    assert(
+      (await historyDetailResponse.json()).production.assets.length > 0,
+      'opening one historical order must retrieve its artwork on demand'
+    );
+
+    const secondFulfilledSummary = JSON.parse(JSON.stringify(knownFulfilledSummary));
+    secondFulfilledSummary.id = 'gid://shopify/Order/60129382';
+    secondFulfilledSummary.displayName = '#1002';
+    secondFulfilledSummary.shopifyUpdatedAt = '2026-07-24T14:05:00Z';
+    secondFulfilledSummary.customer = { displayName: 'History Search Customer' };
+    await env.ORDER_DB.prepare(`
+      INSERT INTO order_projection (
+        shop_id, order_gid, display_name, stage, active, production_revision,
+        production_digest, production_json, commerce_json, shopify_updated_at,
+        fetched_at, stale_at, last_error, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+    `).bind(
+      projectedBeforeFulfillment.shop_id,
+      secondFulfilledSummary.id,
+      secondFulfilledSummary.displayName,
+      projectedBeforeFulfillment.stage,
+      projectedBeforeFulfillment.production_revision,
+      projectedBeforeFulfillment.production_digest,
+      projectedBeforeFulfillment.production_json,
+      JSON.stringify(secondFulfilledSummary),
+      secondFulfilledSummary.shopifyUpdatedAt,
+      projectedBeforeFulfillment.fetched_at,
+      secondFulfilledSummary.createdAt,
+      secondFulfilledSummary.shopifyUpdatedAt
+    ).run();
+
+    const pagedHistoryResponse = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/orders?view=previous&limit=1', { headers }), env
+    );
+    const pagedHistory = await pagedHistoryResponse.json();
+    assert.equal(pagedHistory.data[0].displayName, '#1002', 'history must sort by newest Shopify update first');
+    assert(pagedHistory.pageInfo.nextCursor, 'history must return a signed cursor when more fulfilled orders remain');
+    const secondHistoryPage = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/orders?view=previous&limit=1&cursor=${encodeURIComponent(pagedHistory.pageInfo.nextCursor)}`,
+      { headers }
+    ), env);
+    assert.equal(secondHistoryPage.status, 200);
+    assert.equal((await secondHistoryPage.json()).data[0].displayName, '#1001');
+    const mismatchedHistoryCursor = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/orders?view=previous&limit=1&q=other&cursor=${encodeURIComponent(pagedHistory.pageInfo.nextCursor)}`,
+      { headers }
+    ), env);
+    assert.equal(mismatchedHistoryCursor.status, 400, 'history cursors must be bound to view, search, and limit');
+
+    const searchedHistoryResponse = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/orders?view=previous&limit=25&q=history%20search', { headers }), env
+    );
+    const searchedHistory = await searchedHistoryResponse.json();
+    assert.deepEqual(
+      searchedHistory.data.map(order => order.displayName),
+      ['#1002'],
+      'history search must match customer names on the server'
+    );
+
+    fixtureShopifyFulfillmentStatus = 'FULFILLED';
+    const fulfilledWebhookBody = JSON.stringify({
+      id: '60129381',
+      admin_graphql_api_id: shopifyNode().id,
+      name: '#1001',
+      order_number: 1001,
+      financial_status: 'paid',
+      fulfillment_status: 'fulfilled',
+      updated_at: '2026-07-25T12:00:00Z',
+    });
+    const fulfilledWebhookHmac = crypto.createHmac('sha256', secret).update(fulfilledWebhookBody).digest('base64');
+    let fulfillmentRefresh = null;
+    const fulfilledWebhook = await worker.fetch(new Request('https://worker.test/order-manager/v1/webhooks/shopify', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json', 'X-Shopify-Hmac-Sha256': fulfilledWebhookHmac,
+        'X-Shopify-Webhook-Id': 'delivery-fulfilled-1', 'X-Shopify-Topic': 'orders/updated',
+        'X-Shopify-Shop-Domain': 'printmo-test.myshopify.com'
+      },
+      body: fulfilledWebhookBody
+    }), env, { waitUntil(promise) { fulfillmentRefresh = promise; } });
+    assert.equal(fulfilledWebhook.status, 200, 'an authenticated fulfilled update must be accepted');
+    if (fulfillmentRefresh) await fulfillmentRefresh;
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active,
+      0,
+      'a Shopify fulfillment refresh must mark the projection inactive'
+    );
+
+    const fulfilledArchiveMutation = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
+        method: 'PATCH', headers,
+        body: JSON.stringify({
+          expectedVersion: productionState.revision,
+          patch: { archived_at: 'untrusted-client-time' },
+          idempotencyKey: 'mutation-fulfilled-archive-1'
+        })
+      }
+    ), env);
+    assert.equal(fulfilledArchiveMutation.status, 200);
+    const fulfilledReopenMutation = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
+        method: 'PATCH', headers,
+        body: JSON.stringify({
+          expectedVersion: productionState.revision,
+          patch: { archived_at: null },
+          idempotencyKey: 'mutation-fulfilled-reopen-1'
+        })
+      }
+    ), env);
+    assert.equal(fulfilledReopenMutation.status, 200);
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active,
+      0,
+      'production mutation and archive reopening must not reactivate a fulfilled order'
+    );
+
+    const fulfilledCoordinator = new module.OrderSyncCoordinator({}, env);
+    const fulfilledIntegrity = await fulfilledCoordinator.reconcileIntegrity();
+    assert.equal(fulfilledIntegrity.batchRepairErrors.length, 0);
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active,
+      0,
+      'batch reconciliation must not reactivate a fulfilled order'
+    );
+
+    fixtureShopifyFulfillmentStatus = 'UNFULFILLED';
+    const reversedWebhookBody = JSON.stringify({
+      id: '60129381',
+      admin_graphql_api_id: shopifyNode().id,
+      name: '#1001',
+      order_number: 1001,
+      financial_status: 'paid',
+      fulfillment_status: null,
+      updated_at: '2026-07-26T12:00:00Z',
+    });
+    const reversedWebhookHmac = crypto.createHmac('sha256', secret).update(reversedWebhookBody).digest('base64');
+    let reversalRefresh = null;
+    const reversedWebhook = await worker.fetch(new Request('https://worker.test/order-manager/v1/webhooks/shopify', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json', 'X-Shopify-Hmac-Sha256': reversedWebhookHmac,
+        'X-Shopify-Webhook-Id': 'delivery-fulfillment-reversed-1', 'X-Shopify-Topic': 'orders/updated',
+        'X-Shopify-Shop-Domain': 'printmo-test.myshopify.com'
+      },
+      body: reversedWebhookBody
+    }), env, { waitUntil(promise) { reversalRefresh = promise; } });
+    assert.equal(reversedWebhook.status, 200, 'an authenticated fulfillment reversal must be accepted');
+    if (reversalRefresh) await reversalRefresh;
+    const reversedProjection = await env.ORDER_DB.prepare(
+      'SELECT active, stage FROM order_projection WHERE order_gid = ?'
+    ).bind(shopifyNode().id).first();
+    assert.equal(reversedProjection.active, 1, 'reversed fulfillment must restore an otherwise eligible order');
+    assert.equal(reversedProjection.stage, productionState.stage, 'reversed fulfillment must preserve the production stage');
+    const previousAfterReversal = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/orders?view=previous&limit=25&q=%231001', { headers }), env
+    );
+    assert.equal((await previousAfterReversal.json()).data.length, 0, 'reversed fulfillment must leave Previous Orders');
+
+    const activeBeforeCancellation = await env.ORDER_DB.prepare(
+      'SELECT active FROM order_projection WHERE order_gid = ?'
+    ).bind(shopifyNode().id).first();
+    assert.equal(activeBeforeCancellation.active, 1, 'an uncancelled, unarchived Shopify order must remain active');
+
+    fixtureShopifyCancelledAt = '2026-07-23T12:00:00Z';
+    const cancelledWebhookBody = JSON.stringify({
+      id: '60129381',
+      admin_graphql_api_id: shopifyNode().id,
+      name: '#1001',
+      order_number: 1001,
+      financial_status: 'paid',
+      cancelled_at: fixtureShopifyCancelledAt,
+      updated_at: fixtureShopifyCancelledAt,
+    });
+    const cancelledWebhookHmac = crypto.createHmac('sha256', secret).update(cancelledWebhookBody).digest('base64');
+    let cancellationRefresh = null;
+    const cancelledWebhook = await worker.fetch(new Request('https://worker.test/order-manager/v1/webhooks/shopify', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json', 'X-Shopify-Hmac-Sha256': cancelledWebhookHmac,
+        'X-Shopify-Webhook-Id': 'delivery-cancelled-1', 'X-Shopify-Topic': 'orders/updated',
+        'X-Shopify-Shop-Domain': 'printmo-test.myshopify.com'
+      },
+      body: cancelledWebhookBody
+    }), env, { waitUntil(promise) { cancellationRefresh = promise; } });
+    assert.equal(cancelledWebhook.status, 200, 'an authenticated cancellation update must be accepted');
+    if (cancellationRefresh) await cancellationRefresh;
+
+    const cancelledProjection = await env.ORDER_DB.prepare(
+      'SELECT active, commerce_json, production_json FROM order_projection WHERE order_gid = ?'
+    ).bind(shopifyNode().id).first();
+    assert.equal(cancelledProjection.active, 0, 'a Shopify cancellation refresh must remove the order from the active board');
+    assert.equal(JSON.parse(cancelledProjection.commerce_json).commerce.cancelledAt, fixtureShopifyCancelledAt);
+    assert(JSON.parse(cancelledProjection.production_json), 'cancellation must preserve the production projection');
+
+    const boardAfterCancellation = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/orders', { headers }), env
+    );
+    assert.equal(boardAfterCancellation.status, 200);
+    assert.equal(
+      (await boardAfterCancellation.json()).data.some(order => order.id === shopifyNode().id),
+      false,
+      'cancelled Shopify orders must not be returned by the active board endpoint'
+    );
+    const previousAfterCancellation = await worker.fetch(
+      new Request('https://worker.test/order-manager/v1/orders?view=previous&limit=25&q=%231001', { headers }), env
+    );
+    assert.equal(
+      (await previousAfterCancellation.json()).data.length,
+      0,
+      'cancelled Shopify orders must not appear in Previous Orders even if they were previously fulfilled'
+    );
+
+    const cancelledArchiveMutation = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`,
+      {
+        method: 'PATCH', headers,
+        body: JSON.stringify({
+          expectedVersion: productionState.revision,
+          patch: { archived_at: 'untrusted-client-time' },
+          idempotencyKey: 'mutation-cancelled-archive-1'
+        })
+      }
+    ), env);
+    assert.equal(cancelledArchiveMutation.status, 200, 'a production mutation must preserve source-driven cancellation inactivity');
+
+    const cancelledReopenMutation = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`,
+      {
+        method: 'PATCH', headers,
+        body: JSON.stringify({
+          expectedVersion: productionState.revision,
+          patch: { archived_at: null },
+          idempotencyKey: 'mutation-cancelled-reopen-1'
+        })
+      }
+    ), env);
+    assert.equal(cancelledReopenMutation.status, 200, 'clearing PrintMO archive state must remain available for a cancelled order');
+    assert.equal((await cancelledReopenMutation.json()).production.archivedAt, null);
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active,
+      0,
+      'clearing PrintMO archive state must not reactivate a Shopify-cancelled order'
+    );
+
+    const coordinator = new module.OrderSyncCoordinator({}, env);
+    const integrityResult = await coordinator.reconcileIntegrity();
+    assert.equal(integrityResult.batchRepairErrors.length, 0);
+    assert.equal(
+      (await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active,
+      0,
+      'confirmed-batch integrity reconciliation must not reactivate a Shopify-cancelled order'
+    );
+
     assert(calls.some(call => call.target.endsWith('/admin/oauth/access_token')), 'Worker must exchange client credentials for a runtime token');
     assert(calls.some(call => call.target.includes('/graphql.json')), 'Worker must query Shopify GraphQL');
     assert(calls.some(call => String(call.options?.body || '').includes('PrintMOShopifyPreviewOrders')), 'preview must use the cost-bounded Shopify list query');
     assert(!source.includes('SHOPIFY_ACCESS_TOKEN'), 'Worker must not depend on a static Shopify access token');
   } finally {
+    fixtureShopifyCancelledAt = null;
+    fixtureShopifyFulfillmentStatus = 'UNFULFILLED';
     globalThis.fetch = nativeFetch;
   }
 
@@ -2457,6 +2756,7 @@ async function run() {
   const webHtml = fs.readFileSync(path.join(root, 'order-manager-web', 'index.html'), 'utf8');
   const accessibilityJs = fs.readFileSync(path.join(root, 'order-manager-web', 'accessibility-hardening.js'), 'utf8');
   const storageBrowserSource = fs.readFileSync(path.join(root, 'order-manager-web', 'storage-browser.js'), 'utf8');
+  const previousOrdersSource = fs.readFileSync(path.join(root, 'order-manager-web', 'previous-orders.js'), 'utf8');
   const dashboardTriageSource = fs.readFileSync(path.join(root, 'order-manager-web', 'dashboard-triage-enhancements.js'), 'utf8');
   assert(
     previewHtml.includes("printmo:shopify:embedded-context-v1")
@@ -2469,12 +2769,35 @@ async function run() {
     'embedded launch must restore validated Shopify context before App Bridge and expose retryable auth/load failures'
   );
   assert(
-    sharedRenderer.includes("const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint', 'storage']")
-      && sharedRenderer.includes("document.body.dataset.activeView = nextTab === 'storage' ? 'storage' : 'orders'")
+    sharedRenderer.includes("const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint', 'storage', 'history']")
+      && sharedRenderer.includes("nextTab === 'history' ? 'previous' : 'orders'")
       && sharedRenderer.includes("setBoardLoadState('error', boardLoadErrorPresentation(error))")
       && sharedRenderer.includes('setupBoardLoadRecovery()')
       && dashboardTriageSource.includes("boardState !== 'ready' || visible > 0"),
-    'mobile navigation must reach Storage and failed board loads must never masquerade as a genuine empty pipeline'
+    'mobile navigation must reach Storage and History while failed board loads never masquerade as a genuine empty pipeline'
+  );
+  assert(
+    webHtml.includes('data-view="previous"')
+      && webHtml.includes('data-tab="history"')
+      && webHtml.includes('id="previous-orders-view"')
+      && webHtml.includes('src="./previous-orders.js"')
+      && webShim.includes('window.api.getPreviousOrders')
+      && webShim.includes('view: "previous"')
+      && previousOrdersSource.includes('const PAGE_SIZE = 25')
+      && previousOrdersSource.includes('window.api.getOrderDetail(order.id)')
+      && previousOrdersSource.includes('mapped._historyReadOnly = true')
+      && previousOrdersSource.includes('productionWrite: false')
+      && !previousOrdersSource.includes('hydrateCandidateAssets')
+      && !previousOrdersSource.includes('setInterval'),
+    'Previous Orders must lazy-load 25 lightweight rows, hydrate detail on demand, and remain view-only without polling or list artwork'
+  );
+  assert(
+    source.includes("fulfillmentStatus === 'FULFILLED'")
+      && source.includes("json_extract(commerce_json, '$.commerce.fulfillmentStatus')")
+      && source.includes("ORDER BY COALESCE(shopify_updated_at, updated_at) DESC")
+      && source.includes("JSON.stringify({ view, q, stage, limit })")
+      && source.includes("view === 'active' && ctx?.waitUntil"),
+    'fulfilled source state must control projection activity and history must bind pagination to view/search without asset backfill'
   );
   assert(
     webHtml.includes('detail-close-icon-dismiss')

@@ -86,6 +86,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     <div class="app-brand">PrintMO Order Manager</div>
     <nav class="app-nav" aria-label="Primary navigation">
       <button class="app-nav-tab" type="button" data-view="orders" aria-pressed="true">Orders</button>
+      <button class="app-nav-tab" type="button" data-view="previous" aria-pressed="false">Previous Orders</button>
       <button class="app-nav-tab" type="button" data-view="storage" aria-pressed="false">Storage Browser</button>
       <button id="order-manager-refresh-btn" class="order-manager-refresh-btn" type="button" aria-label="Refresh orders and mockups">Refresh</button>
     </nav>
@@ -115,6 +116,12 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           <img src="./Assets/Storage Browser Icon.svg" alt="" />
         </span>
         <span class="mobile-tab-label">Storage</span>
+      </button>
+      <button class="mobile-tab mobile-stage-tab" type="button" data-tab="history" data-mobile-stage="history" aria-label="History">
+        <span class="mobile-tab-icon" aria-hidden="true">
+          <img src="./Assets/History Icon.svg" alt="" />
+        </span>
+        <span class="mobile-tab-label">History</span>
       </button>
       <button id="mobile-refresh-btn" class="mobile-refresh-btn" type="button" aria-label="Refresh orders and mockups">
         <span aria-hidden="true">↻</span>
@@ -334,6 +341,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
               <span id="badge-financial" class="status-badge">Payment status</span>
               <span id="badge-fulfillment" class="status-badge">Fulfillment status</span>
               <span id="badge-production-complete" class="status-badge is-production-complete hidden">Production complete</span>
+              <span id="badge-history-readonly" class="status-badge history-readonly-badge hidden">View only</span>
             </div>
           </div>
           <div class="detail-header-summary" aria-label="Order summary">
@@ -939,6 +947,31 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   </div>
   </div>
 
+  <section id="previous-orders-view" class="app-view previous-orders" aria-hidden="true">
+    <header class="previous-orders-header">
+      <div>
+        <h1>Previous Orders</h1>
+        <p>Fulfilled Shopify orders are kept here without loading historical artwork into the active dashboard.</p>
+      </div>
+      <span class="previous-orders-view-only">View only</span>
+    </header>
+
+    <form id="previous-orders-search" class="previous-orders-search" role="search">
+      <label for="previous-orders-search-input">Search previous orders</label>
+      <div class="previous-orders-search-row">
+        <input id="previous-orders-search-input" type="search" maxlength="120" placeholder="Order number or customer name" autocomplete="off" />
+        <button type="submit">Search</button>
+        <button id="previous-orders-search-clear" class="previous-orders-search-clear" type="button" hidden>Clear</button>
+      </div>
+    </form>
+
+    <div id="previous-orders-status" class="previous-orders-status" role="status" aria-live="polite">Open Previous Orders to load fulfilled orders.</div>
+    <div id="previous-orders-list" class="previous-orders-list" role="list" aria-label="Fulfilled Shopify orders"></div>
+    <div class="previous-orders-footer">
+      <button id="previous-orders-load-more" type="button" hidden>Load More</button>
+    </div>
+  </section>
+
   <section id="storage-view" class="app-view storage-browser" aria-hidden="true">
     <div class="storage-header">
       <div class="storage-title">
@@ -1016,6 +1049,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./web-shim.js"></script>
   <script src="./storage-browser.js"></script>
   <script src="./renderer.js"></script>
+  <script src="./previous-orders.js"></script>
   <script src="./shopify-preview.js"></script>
   <script src="./dashboard-triage-enhancements.js"></script>
   <script src="./blanks-batches.js"></script>

@@ -434,6 +434,8 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
   return mapped;
 }
 
+window.mapCandidateOrderForDetail = (order) => candidateOrderToBoard(order, { register: false });
+
 async function candidateAssetObjectUrl(asset) {
   if (!asset?.assetId) return "";
   const cached = candidateCachedAssetUrl(asset.assetId);
@@ -839,6 +841,20 @@ window.api.getQueue = async ({ onPage } = {}) => {
   }
   const data = await apiFetch("/order-manager/v1/legacy/queue", { method: "GET" });
   return Array.isArray(data) ? data : (data?.orders || []);
+};
+
+// Fulfilled history is intentionally enumerated separately from the active
+// board. List responses contain no asset summaries; getOrderDetail hydrates
+// complete artwork only after an operator opens one order.
+window.api.getPreviousOrders = async ({ limit = 25, cursor = "", q = "", refresh = false } = {}) => {
+  const query = buildQuery({
+    view: "previous",
+    limit: Math.min(Math.max(Number(limit) || 25, 1), 50),
+    cursor: cursor || undefined,
+    q: String(q || "").trim() || undefined,
+    refresh: refresh ? 1 : undefined,
+  });
+  return apiFetch(`/order-manager/v1/orders${query}`, { method: "GET" });
 };
 
 window.api.invalidateQueueLoads = () => {

@@ -861,6 +861,10 @@
     if (!state.active) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    if (document.body.dataset.activeView === 'previous' && typeof window.refreshPreviousOrders === 'function') {
+      Promise.resolve(window.refreshPreviousOrders()).catch(error => console.error('Previous orders refresh failed', error));
+      return;
+    }
     const refresh = typeof window.refreshOrderManagerNow === 'function'
       ? window.refreshOrderManagerNow()
       : typeof window.renderBoard === 'function' ? window.renderBoard() : null;

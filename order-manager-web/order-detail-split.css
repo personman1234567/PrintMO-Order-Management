@@ -3387,3 +3387,20 @@
     forced-color-adjust: none;
   }
 }
+.history-readonly-badge {
+  border-color: #9fb4ca;
+  background: #eef3f8;
+  color: #34465b;
+}
+
+body.history-detail-readonly .manual-mockup-actions,
+body.history-detail-readonly .manual-design-upload-actions,
+body.history-detail-readonly #detail-edit-notes-btn,
+body.history-detail-readonly #progress-row,
+body.history-detail-readonly .readiness-save-row {
+  display: none !important;
+}
+
+body.history-detail-readonly #ready-controls input:disabled {
+  opacity: 1;
+}

@@ -168,11 +168,12 @@
       }
     }
 
-    body[data-active-view="storage"] #orders-view {
+    body:not([data-active-view="orders"]) #orders-view {
       display: none;
     }
 
-    body[data-active-view="orders"] #storage-view {
+    body:not([data-active-view="storage"]) #storage-view,
+    body:not([data-active-view="previous"]) #previous-orders-view {
       display: none;
     }
 
@@ -3469,7 +3470,8 @@
   body[data-active-tab="blanksCart"] .mobile-tab[data-tab="blanksCart"],
   body[data-active-tab="blanksOrdered"] .mobile-tab[data-tab="blanksOrdered"],
   body[data-active-tab="readyToPrint"] .mobile-tab[data-tab="readyToPrint"],
-  body[data-active-tab="storage"] .mobile-tab[data-tab="storage"] {
+  body[data-active-tab="storage"] .mobile-tab[data-tab="storage"],
+  body[data-active-tab="history"] .mobile-tab[data-tab="history"] {
     background: transparent;
     box-shadow: none;
     transform: translateY(-2px) scale(1.03);
@@ -3480,7 +3482,8 @@
   body[data-active-tab="blanksCart"] .mobile-tab[data-tab="blanksCart"]::before,
   body[data-active-tab="blanksOrdered"] .mobile-tab[data-tab="blanksOrdered"]::before,
   body[data-active-tab="readyToPrint"] .mobile-tab[data-tab="readyToPrint"]::before,
-  body[data-active-tab="storage"] .mobile-tab[data-tab="storage"]::before {
+  body[data-active-tab="storage"] .mobile-tab[data-tab="storage"]::before,
+  body[data-active-tab="history"] .mobile-tab[data-tab="history"]::before {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
   }
@@ -3489,7 +3492,8 @@
   body[data-active-tab="blanksCart"] .mobile-tab[data-tab="blanksCart"] .mobile-tab-icon,
   body[data-active-tab="blanksOrdered"] .mobile-tab[data-tab="blanksOrdered"] .mobile-tab-icon,
   body[data-active-tab="readyToPrint"] .mobile-tab[data-tab="readyToPrint"] .mobile-tab-icon,
-  body[data-active-tab="storage"] .mobile-tab[data-tab="storage"] .mobile-tab-icon {
+  body[data-active-tab="storage"] .mobile-tab[data-tab="storage"] .mobile-tab-icon,
+  body[data-active-tab="history"] .mobile-tab[data-tab="history"] .mobile-tab-icon {
     transform: scale(1.05);
   }
 
@@ -5413,7 +5417,7 @@ body.mobile-mode .mobile-tab-bar {
   width: 100%;
   max-width: none;
   min-height: 54px;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) 52px;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) 48px;
   gap: 2px;
   padding: 4px 6px;
   border: 0;
@@ -5550,8 +5554,100 @@ body.mobile-mode #orders-view {
 }
 
 body.mobile-mode[data-active-view="storage"] #orders-view {
-  display: none;
+  display: none !important;
 }
+
+body.mobile-mode[data-active-view="previous"] #orders-view,
+body.mobile-mode[data-active-view="previous"] #storage-view {
+  display: none !important;
+}
+
+body.mobile-mode[data-active-view="previous"] .app-content {
+  align-items: stretch;
+  justify-content: flex-start;
+  overflow: hidden;
+}
+
+body.mobile-mode[data-active-view="previous"] #previous-orders-view {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  min-height: 0;
+  padding: 14px 12px 20px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  background: #f3f6fa;
+  color: #172033;
+}
+
+body.mobile-mode .previous-orders-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+body.mobile-mode .previous-orders-header h1 { margin: 0 0 4px; font-size: 1.35rem; }
+body.mobile-mode .previous-orders-header p { margin: 0; color: #526174; font-size: 0.84rem; line-height: 1.4; }
+body.mobile-mode .previous-orders-view-only {
+  flex: 0 0 auto;
+  border: 1px solid #9fb4ca;
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: #fff;
+  color: #34465b;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+body.mobile-mode .previous-orders-search { display: grid; gap: 6px; }
+body.mobile-mode .previous-orders-search > label { font-size: 0.78rem; font-weight: 800; }
+body.mobile-mode .previous-orders-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; }
+body.mobile-mode .previous-orders-search input,
+body.mobile-mode .previous-orders-search button,
+body.mobile-mode #previous-orders-load-more {
+  border: 1px solid #b8c7d9;
+  border-radius: 9px;
+  padding: 9px 10px;
+  background: #fff;
+  color: #172033;
+  font: inherit;
+}
+body.mobile-mode .previous-orders-search button,
+body.mobile-mode #previous-orders-load-more { border-color: #1a73e8; background: #1a73e8; color: #fff; font-weight: 800; }
+body.mobile-mode .previous-orders-search .previous-orders-search-clear { border-color: #b8c7d9; background: #fff; color: #34465b; }
+body.mobile-mode .previous-orders-status { min-height: 18px; color: #526174; font-size: 0.8rem; }
+body.mobile-mode .previous-orders-list { display: grid; gap: 8px; }
+body.mobile-mode .previous-order-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  width: 100%;
+  border: 1px solid #d5dde7;
+  border-radius: 11px;
+  padding: 12px;
+  background: #fff;
+  color: #172033;
+  text-align: left;
+  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.08);
+}
+body.mobile-mode .previous-order-identity { display: grid; gap: 3px; min-width: 0; }
+body.mobile-mode .previous-order-number { font-size: 0.96rem; }
+body.mobile-mode .previous-order-customer,
+body.mobile-mode .previous-order-updated { color: #526174; font-size: 0.78rem; }
+body.mobile-mode .previous-order-total { justify-self: end; font-weight: 800; }
+body.mobile-mode .previous-order-fulfillment,
+body.mobile-mode .previous-order-stage { width: fit-content; border-radius: 999px; padding: 4px 8px; font-size: 0.7rem; font-weight: 800; }
+body.mobile-mode .previous-order-fulfillment { background: #e3f3e8; color: #176235; }
+body.mobile-mode .previous-order-stage { justify-self: end; background: #e8f1ff; color: #0f55b4; }
+body.mobile-mode .previous-order-updated { align-self: center; }
+body.mobile-mode .previous-order-open { justify-self: end; align-self: center; color: #0f55b4; font-size: 0.76rem; font-weight: 800; }
+body.mobile-mode .previous-orders-footer { display: flex; justify-content: center; padding: 4px 0 10px; }
 
 /* Storage is the one mobile destination that scrolls as a complete page.
    Keep the app shell fixed, but give this view a top-anchored vertical scroll
