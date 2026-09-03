@@ -26,10 +26,10 @@
 
 ## Current Release Boundary
 
-Current production deployment on 2026-09-02:
+Current production deployment on 2026-09-03:
 
 - Worker version: `d991db45-e13d-40d5-8c3d-6f0e3f335626`
-- Pages deployment: `56f49cab.print-mo-order-manager.pages.dev` (release marker `1788390148290`)
+- Pages deployment: `868f08f5.print-mo-order-manager.pages.dev` (release marker `1788474708519`)
 - Shopify app version: `designer-assets-idempotency-2026-07-23`
 - Stateless supplier gateway commit: `d3a0d5a`
 

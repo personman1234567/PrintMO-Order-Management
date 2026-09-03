@@ -2466,6 +2466,7 @@
     enhancedOpenDetail.__detailSummaryPatched = true;
     openDetail = enhancedOpenDetail;
     window.openDetail = enhancedOpenDetail;
+    window.openOrderManagerDetail = enhancedOpenDetail;
   }
 
   document.addEventListener('DOMContentLoaded', () => {

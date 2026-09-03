@@ -511,6 +511,11 @@
       } else {
         renderStorageResults();
       }
+    } else if (nextView === 'previous') {
+      if (typeof window.setActiveMobileTab === 'function' && window.matchMedia('(max-width: 900px)').matches) {
+        window.setActiveMobileTab('history', { scrollTop: false });
+      }
+      if (typeof window.loadPreviousOrders === 'function') window.loadPreviousOrders();
     } else if (typeof window.setActiveMobileTab === 'function' && window.matchMedia('(max-width: 900px)').matches) {
       window.setActiveMobileTab(state.lastOrdersTab || 'pipeline', { scrollTop: false });
     }
@@ -990,12 +995,6 @@
         setLoading('previews', false);
         scheduleRender();
       }
-    }
-    if (nextView === 'previous') {
-      if (typeof window.setActiveMobileTab === 'function' && window.matchMedia('(max-width: 900px)').matches) {
-        window.setActiveMobileTab('history', { scrollTop: false });
-      }
-      if (typeof window.loadPreviousOrders === 'function') window.loadPreviousOrders();
     }
   }
 

@@ -2757,7 +2757,16 @@ async function run() {
   const accessibilityJs = fs.readFileSync(path.join(root, 'order-manager-web', 'accessibility-hardening.js'), 'utf8');
   const storageBrowserSource = fs.readFileSync(path.join(root, 'order-manager-web', 'storage-browser.js'), 'utf8');
   const previousOrdersSource = fs.readFileSync(path.join(root, 'order-manager-web', 'previous-orders.js'), 'utf8');
+  const detailOverlaySource = fs.readFileSync(path.join(root, 'order-manager-web', 'detail-overlay-enhancements.js'), 'utf8');
   const dashboardTriageSource = fs.readFileSync(path.join(root, 'order-manager-web', 'dashboard-triage-enhancements.js'), 'utf8');
+  const setActiveViewSource = storageBrowserSource.slice(
+    storageBrowserSource.indexOf('function setActiveView'),
+    storageBrowserSource.indexOf('async function fetchList')
+  );
+  const loadPreviewsSource = storageBrowserSource.slice(
+    storageBrowserSource.indexOf('async function loadPreviews'),
+    storageBrowserSource.indexOf('function buildAllCustomerGroups')
+  );
   assert(
     previewHtml.includes("printmo:shopify:embedded-context-v1")
       && previewHtml.includes('window.history.replaceState')
@@ -2784,12 +2793,19 @@ async function run() {
       && webShim.includes('window.api.getPreviousOrders')
       && webShim.includes('view: "previous"')
       && previousOrdersSource.includes('const PAGE_SIZE = 25')
-      && previousOrdersSource.includes('window.api.getOrderDetail(order.id)')
+      && previousOrdersSource.includes('window.mapCandidateOrderForDetail(order)')
+      && previousOrdersSource.includes('const openDetail = window.openDetail || window.openOrderManagerDetail')
+      && previousOrdersSource.includes('appContent.appendChild(overlay)')
       && previousOrdersSource.includes('mapped._historyReadOnly = true')
       && previousOrdersSource.includes('productionWrite: false')
+      && detailOverlaySource.includes('window.openOrderManagerDetail = enhancedOpenDetail')
+      && setActiveViewSource.includes("nextView === 'previous'")
+      && setActiveViewSource.includes('window.loadPreviousOrders()')
+      && !loadPreviewsSource.includes('nextView')
+      && !previousOrdersSource.includes('window.api.getOrderDetail(order.id)')
       && !previousOrdersSource.includes('hydrateCandidateAssets')
       && !previousOrdersSource.includes('setInterval'),
-    'Previous Orders must lazy-load 25 lightweight rows, hydrate detail on demand, and remain view-only without polling or list artwork'
+    'Previous Orders must load on desktop navigation, open shared detail before canonical hydration, and remain view-only without polling or list artwork'
   );
   assert(
     source.includes("fulfillmentStatus === 'FULFILLED'")

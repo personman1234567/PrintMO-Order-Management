@@ -131,14 +131,13 @@
     }
   }
 
-  async function openPreviousOrder(order, button) {
+  function openPreviousOrder(order, button) {
     if (!order?.id || button.disabled) return;
     button.disabled = true;
     const priorStatus = elements.status.textContent;
-    elements.status.textContent = `Loading ${order.displayName || 'order'} details and artwork…`;
+    elements.status.textContent = `Opening ${order.displayName || 'order'}…`;
     try {
-      const detail = await window.api.getOrderDetail(order.id);
-      const mapped = window.mapCandidateOrderForDetail(detail);
+      const mapped = window.mapCandidateOrderForDetail(order);
       mapped._historyReadOnly = true;
       mapped._capabilities = {
         ...(mapped._capabilities || {}),
@@ -146,7 +145,12 @@
         productionWrite: false,
         artworkUpload: false,
       };
-      window.openOrderManagerDetail(mapped);
+      const openDetail = window.openDetail || window.openOrderManagerDetail;
+      if (typeof openDetail !== 'function') throw new Error('Order detail is unavailable. Refresh and try again.');
+      // Open from the lightweight history row immediately. The shared detail
+      // controller then hydrates canonical commerce data and artwork inside the
+      // visible shell instead of holding the entire app behind asset requests.
+      openDetail(mapped);
       elements.status.textContent = priorStatus;
     } catch (error) {
       elements.status.textContent = `${order.displayName || 'Order'} could not open. ${error?.message || 'Try again.'}`;
@@ -155,7 +159,18 @@
     }
   }
 
+  function mountSharedDetailAtAppRoot() {
+    const overlay = document.getElementById('detail-overlay');
+    const appContent = document.querySelector('.app-content');
+    if (!overlay || !appContent || overlay.parentElement === appContent) return;
+    // Order Detail is shared by the active board and history. Keeping it under
+    // #orders-view makes it disappear when history hides that view while the
+    // dialog isolation still inerts the visible history screen.
+    appContent.appendChild(overlay);
+  }
+
   function init() {
+    mountSharedDetailAtAppRoot();
     elements.view = document.getElementById('previous-orders-view');
     elements.form = document.getElementById('previous-orders-search');
     elements.input = document.getElementById('previous-orders-search-input');
