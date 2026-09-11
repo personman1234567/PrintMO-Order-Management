@@ -66,7 +66,10 @@ function parseArgs(args) {
 
 function garmentCount(order) {
   return (order?.commerce?.lineItems || []).reduce((total, item) => {
-    if (PRINT_TITLES.has(item?.title)) return total;
+    const overrides = order?.production?.printEligibility || {};
+    const included = Object.hasOwn(overrides, item.id) ? overrides[item.id]
+      : !PRINT_TITLES.has(item?.title) && Boolean(String(item?.sku || '').trim());
+    if (!included) return total;
     return total + Math.max(0, Number(item?.currentQuantity ?? item?.quantity ?? 0) || 0);
   }, 0);
 }

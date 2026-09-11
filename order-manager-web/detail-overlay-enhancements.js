@@ -918,6 +918,7 @@
   function renderOverview(order, result = null) {
     if (!order || !document.getElementById('tab-overview')) return;
     const counts = itemCounts(order);
+    const printableTotal = typeof printablePieceTotal === 'function' ? printablePieceTotal(order) : counts.apparel;
     const progress = Math.max(0, Number(order.progress || 0));
     const materialCount = overviewMaterialCount();
     const stage = String(result?.production?.stage || order.productionStage || order.status || 'received').toLowerCase();
@@ -929,7 +930,7 @@
     ).toUpperCase();
     const reasons = overviewAttentionReasons(order, result || order.canonicalDetail);
     const recommendation = overviewRecommendation({
-      apparel: counts.apparel,
+      apparel: printableTotal,
       progress,
       materialCount,
       fulfillment,
@@ -950,7 +951,7 @@
 
     setText('overview-order-state', stageLabel, 'Received');
     setText('overview-materials-state', `${materialCount} of ${checkboxIds.length} marked`);
-    setText('overview-printing-state', `${progress} of ${counts.apparel} pieces`);
+    setText('overview-printing-state', `${progress} of ${printableTotal} pieces`);
     setText('overview-fulfillment-state', normalizedStageLabel(fulfillment.toLowerCase()), 'Unfulfilled');
     setOverviewMilestone('overview-milestone-order', stage === 'completed' ? 'complete' : 'current');
     setOverviewMilestone(
@@ -959,7 +960,7 @@
     );
     setOverviewMilestone(
       'overview-milestone-printing',
-      counts.apparel > 0 && progress >= counts.apparel ? 'complete' : progress > 0 || stage === 'print' ? 'current' : 'pending'
+      printableTotal > 0 && progress >= printableTotal ? 'complete' : progress > 0 || stage === 'print' ? 'current' : 'pending'
     );
     setOverviewMilestone(
       'overview-milestone-fulfillment',
@@ -1006,6 +1007,7 @@
   function syncCanonicalProductionControls(order) {
     if (!order) return;
     const counts = itemCounts(order);
+    counts.apparel = typeof printablePieceTotal === 'function' ? printablePieceTotal(order) : counts.apparel;
     order.totalApparel = counts.apparel;
 
     const progress = Math.max(0, Number(order.progress || 0));
@@ -1031,6 +1033,8 @@
     setReadyBaselines();
     syncReadyPendingState();
     syncProductionTimeline();
+    order._updateProgressUI?.();
+    if (typeof renderPrintableItemControls === 'function') renderPrintableItemControls(order);
   }
 
   function orderContextParts(name) {

@@ -56,7 +56,7 @@
     button.className = 'previous-order-row';
     button.setAttribute('role', 'listitem');
     button.dataset.orderId = order.id || '';
-    button.setAttribute('aria-label', `Open ${order.displayName || 'fulfilled order'} for ${customerName(order)} in view-only mode`);
+    button.setAttribute('aria-label', `Open ${order.displayName || 'previous order'} for ${customerName(order)} in view-only mode`);
 
     const identity = document.createElement('span');
     identity.className = 'previous-order-identity';
@@ -66,7 +66,7 @@
     );
 
     const total = createText('span', 'previous-order-total', money(order));
-    const fulfillment = createText('span', 'previous-order-fulfillment', 'Fulfilled');
+    const fulfillment = createText('span', 'previous-order-fulfillment', order.commerce?.fulfillmentStatus === 'FULFILLED' ? 'Fulfilled' : 'Archived in Shopify');
     const stage = createText(
       'span',
       'previous-order-stage',
@@ -86,8 +86,8 @@
     const shown = state.records.length;
     if (!state.loading) {
       elements.status.textContent = shown
-        ? `Showing ${shown} of ${state.total} fulfilled ${state.total === 1 ? 'order' : 'orders'}.`
-        : state.error || (state.query ? `No fulfilled orders match “${state.query}”.` : 'No fulfilled Shopify orders yet.');
+        ? `Showing ${shown} of ${state.total} previous ${state.total === 1 ? 'order' : 'orders'}.`
+        : state.error || (state.query ? `No previous orders match “${state.query}”.` : 'No previous Shopify orders yet.');
     }
     elements.loadMore.hidden = !state.cursor;
     elements.loadMore.disabled = state.loading;
@@ -104,7 +104,7 @@
       state.cursor = '';
       state.total = 0;
     }
-    elements.status.textContent = reset ? 'Loading fulfilled orders…' : 'Loading more fulfilled orders…';
+    elements.status.textContent = reset ? 'Loading previous orders…' : 'Loading more previous orders…';
     elements.loadMore.disabled = true;
     try {
       const page = await window.api.getPreviousOrders({

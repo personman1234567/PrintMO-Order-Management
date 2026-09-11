@@ -2289,7 +2289,7 @@ const SHOPIFY_PREVIEW_DETAIL_TTL_MS = 300000;
 const SHOPIFY_PREVIEW_ORDERS_QUERY = `query PrintMOShopifyPreviewOrders($first: Int!) {
   orders(first: $first, sortKey: CREATED_AT, reverse: true) {
     nodes {
-      id name createdAt updatedAt displayFinancialStatus displayFulfillmentStatus cancelledAt currencyCode
+      id name createdAt updatedAt displayFinancialStatus displayFulfillmentStatus cancelledAt closedAt currencyCode
       currentSubtotalLineItemsQuantity
       currentSubtotalPriceSet { shopMoney { amount currencyCode } }
       currentTotalDiscountsSet { shopMoney { amount currencyCode } }
@@ -2407,7 +2407,7 @@ const SHOPIFY_PREVIEW_ORDER_LINE_ITEMS_QUERY = `query PrintMOShopifyPreviewOrder
 const ORDER_SUMMARIES_QUERY = `query PrintMOOrderSummaries($ids: [ID!]!) {
   nodes(ids: $ids) {
     ... on Order {
-      id name createdAt updatedAt displayFinancialStatus displayFulfillmentStatus cancelledAt currencyCode
+      id name createdAt updatedAt displayFinancialStatus displayFulfillmentStatus cancelledAt closedAt currencyCode
       currentSubtotalLineItemsQuantity
       currentSubtotalPriceSet { shopMoney { amount currencyCode } }
       currentTotalDiscountsSet { shopMoney { amount currencyCode } }
@@ -2505,7 +2505,7 @@ const PRODUCTION_METAFIELD_KEY = 'production_state_v1';
 const BOOTSTRAP_ORDERS_QUERY = `query PrintMOBootstrapOrders($query: String!, $first: Int!) {
   orders(first: $first, sortKey: CREATED_AT, reverse: true, query: $query) {
     nodes {
-      id name createdAt updatedAt displayFinancialStatus displayFulfillmentStatus cancelledAt
+      id name createdAt updatedAt displayFinancialStatus displayFulfillmentStatus cancelledAt closedAt
       metafield(namespace: "${PRODUCTION_METAFIELD_NAMESPACE}", key: "${PRODUCTION_METAFIELD_KEY}") {
         id namespace key type value compareDigest createdAt updatedAt
       }
@@ -2517,7 +2517,7 @@ const BOOTSTRAP_ORDERS_QUERY = `query PrintMOBootstrapOrders($query: String!, $f
 const PRODUCTION_STAGES = new Set(['received', 'to_order', 'blanks_cart', 'blanks_ordered', 'print', 'completed']);
 const PRODUCTION_STATE_QUERY = `query PrintMOProductionState($id: ID!) {
   order(id: $id) {
-    id name createdAt updatedAt displayFulfillmentStatus cancelledAt
+    id name createdAt updatedAt displayFulfillmentStatus cancelledAt closedAt
     lineItems(first: 50) {
       nodes {
         id sku title quantity currentQuantity
@@ -5139,6 +5139,7 @@ function defaultProductionState(actor = 'system') {
         stage: 'received',
         readiness: { blanksOrdered: false, blanksReady: false, printsOrdered: false, printsReady: false },
         printedCount: 0,
+        printEligibility: {},
         bundleId: null,
         batchRefs: [],
         internalNotes: '',
@@ -5170,6 +5171,8 @@ function normalizeProductionState(value, actor = 'system') {
             printsReady: Boolean(readiness.printsReady)
         },
         printedCount: Math.min(Math.max(Number(input.printedCount) || 0, 0), 1000000),
+        printEligibility: Object.fromEntries(Object.entries(input.printEligibility || {})
+            .filter(([id, value]) => validPrintItemId(id) && typeof value === 'boolean').slice(0, 1000)),
         bundleId: input.bundleId ? String(input.bundleId).slice(0, 160) : null,
         batchRefs: Array.isArray(input.batchRefs) ? [...new Set(input.batchRefs.map(String))].slice(0, 100) : [],
         internalNotes: String(input.internalNotes || '').slice(0, 5000),
@@ -5212,6 +5215,7 @@ function productionForClient(gid, state, compareDigest, assets = [], garmentCoun
         blanksPo: state.batchRefs || [],
         garmentCount: Number.isInteger(garmentCount) && garmentCount >= 0 ? garmentCount : null,
         printedCount: state.printedCount,
+        printEligibility: state.printEligibility || {},
         blanksOrdered: state.readiness.blanksOrdered ? 1 : 0,
         blanksStatus: state.readiness.blanksReady ? 1 : 0,
         printsStatus: state.readiness.printsReady ? 1 : 0,
@@ -5246,6 +5250,8 @@ function normalizeProductionPatch(patch) {
         internal_notes: 'internalNotes',
         printedCount: 'printedCount',
         printed_count: 'printedCount',
+        printEligibility: 'printEligibility',
+        print_eligibility: 'printEligibility',
         blanksStatus: 'blanksStatus',
         blanks_status: 'blanksStatus',
         blanksOrdered: 'blanksOrdered',
@@ -5263,6 +5269,17 @@ function normalizeProductionPatch(patch) {
         const target = aliases[key];
         if (!target) throw Object.assign(new Error(`Production field "${key}" is not mutable.`), { code: 'INVALID_PATCH_FIELD', status: 400 });
         normalized[target] = value;
+    }
+    if ('printEligibility' in normalized) {
+        const values = normalized.printEligibility;
+        if (!values || typeof values !== 'object' || Array.isArray(values)
+            || Object.keys(values).length > 1000
+            || Object.entries(values).some(([id, value]) => !validPrintItemId(id)
+                || (typeof value !== 'boolean' && value !== null))) {
+            throw Object.assign(new Error('Printable item overrides require line-item IDs and true, false, or null.'), {
+                code: 'INVALID_PRINT_ELIGIBILITY', status: 400
+            });
+        }
     }
     if ('stage' in normalized && !PRODUCTION_STAGES.has(normalized.stage)) {
         throw Object.assign(new Error('Production stage is invalid.'), { code: 'INVALID_STAGE', status: 400 });
@@ -5301,6 +5318,12 @@ function applyProductionPatch(current, patch, actor, mutationId) {
     if ('bundleId' in patch) next.bundleId = patch.bundleId ? String(patch.bundleId) : null;
     if ('internalNotes' in patch) next.internalNotes = String(patch.internalNotes || '');
     if ('printedCount' in patch) next.printedCount = Number(patch.printedCount);
+    if ('printEligibility' in patch) {
+        for (const [id, value] of Object.entries(patch.printEligibility)) {
+            if (value === null) delete next.printEligibility[id];
+            else next.printEligibility[id] = value;
+        }
+    }
     if ('blanksStatus' in patch) next.readiness.blanksReady = Boolean(Number(patch.blanksStatus));
     if ('blanksOrdered' in patch) next.readiness.blanksOrdered = Boolean(Number(patch.blanksOrdered));
     if ('printsStatus' in patch) next.readiness.printsReady = Boolean(Number(patch.printsStatus));
@@ -5449,6 +5472,7 @@ async function d1AssetsForOrders(env, shopId, gids) {
 }
 
 function shopifyProjectionActiveValue(state, summary, order = {}) {
+    const closedAt = summary?.commerce?.closedAt || order?.closedAt || order?.closed_at || null;
     const cancelledAt = summary?.commerce?.cancelledAt
         || order?.cancelledAt
         || order?.cancelled_at
@@ -5460,7 +5484,7 @@ function shopifyProjectionActiveValue(state, summary, order = {}) {
         || order?.fulfillment_status
         || ''
     ).toUpperCase();
-    return state?.archivedAt || cancelledAt || fulfillmentStatus === 'FULFILLED' ? 0 : 1;
+    return state?.archivedAt || closedAt || cancelledAt || fulfillmentStatus === 'FULFILLED' ? 0 : 1;
 }
 
 async function d1ProjectionUpsert(env, shopId, gid, state, compareDigest, summary = undefined, order = {}) {
@@ -5708,9 +5732,16 @@ async function completeLineItems(env, orderId, connection, graphQL = coordinator
     return { items, complete: true, errors: [] };
 }
 
-function garmentCountFromLineItems(items = []) {
+function validPrintItemId(id) {
+    return typeof id === 'string' && id.length > 0 && id.length <= 160
+        && !['__proto__', 'prototype', 'constructor'].includes(id);
+}
+
+function garmentCountFromLineItems(items = [], eligibility = {}) {
     return items.reduce((total, item) => {
-        if (PRINT_TITLES.has(item?.title) || !safeText(item?.sku, 120)) return total;
+        const included = Object.hasOwn(eligibility, item?.id) ? eligibility[item.id]
+            : !PRINT_TITLES.has(item?.title) && Boolean(safeText(item?.sku, 120));
+        if (!included) return total;
         const quantity = Number(item?.currentQuantity ?? item?.quantity ?? 0);
         return total + (Number.isInteger(quantity) && quantity > 0 ? quantity : 0);
     }, 0);
@@ -5736,7 +5767,32 @@ async function productionGarmentCount(env, productionRead, graphQL = coordinator
             details: lines.errors
         });
     }
-    return garmentCountFromLineItems(lines.items);
+    productionRead.countLineItems = lines.items;
+    return garmentCountFromLineItems(lines.items, productionRead.state?.printEligibility);
+}
+
+function validatePrintablePatch(items, current, patch, next) {
+    if ('printEligibility' in patch) {
+        const ids = new Set(items.map(item => item.id));
+        if (Object.entries(patch.printEligibility).some(([id, value]) => value !== null && !ids.has(id))) {
+            throw Object.assign(new Error('An item is no longer in this order. Refresh and try again.'), {
+                code: 'INVALID_PRINT_ELIGIBILITY', status: 400
+            });
+        }
+        if (Object.keys(next.printEligibility).length > 1000) {
+            throw Object.assign(new Error('Too many printable item overrides.'), { code: 'INVALID_PRINT_ELIGIBILITY', status: 400 });
+        }
+    }
+    const total = garmentCountFromLineItems(items, next.printEligibility);
+    if (('printedCount' in patch || 'printEligibility' in patch) && next.printedCount > total) {
+        throw Object.assign(new Error(`Printed count cannot exceed ${total} printable pieces. Adjust the printed count before excluding items.`), {
+            code: 'INVALID_PRINTED_COUNT', status: 400
+        });
+    }
+    if (('printedCount' in patch || 'printEligibility' in patch) && ['print', 'completed'].includes(next.stage)) {
+        next.stage = total > 0 && next.printedCount === total ? 'completed' : 'print';
+    }
+    return total;
 }
 
 function selectOperationalCustomerName(node) {
@@ -5770,6 +5826,7 @@ async function normalizeShopifySummary(env, node, resultErrors = [], graphQL = c
             financialStatus: node.displayFinancialStatus || null,
             fulfillmentStatus: node.displayFulfillmentStatus || null,
             cancelledAt: node.cancelledAt || null,
+            closedAt: node.closedAt || null,
             currencyCode: currency,
             subtotal: moneyValue(node.currentSubtotalPriceSet, currency)?.amount || null,
             discount: moneyValue(node.currentTotalDiscountsSet, currency)?.amount || null,
@@ -6846,8 +6903,8 @@ function providerProjectionRecord(row) {
     };
 }
 
-function providerGarmentCount(contract) {
-    return garmentCountFromLineItems(contract?.commerce?.lineItems || []);
+function providerGarmentCount(contract, state = {}) {
+    return garmentCountFromLineItems(contract?.commerce?.lineItems || [], state.printEligibility);
 }
 
 async function providerBoardDto(env, record) {
@@ -6857,7 +6914,7 @@ async function providerBoardDto(env, record) {
         record.production,
         null,
         [],
-        providerGarmentCount(contract)
+        providerGarmentCount(contract, record.production)
     );
     const source = {
         provider: record.provider || contract?.source?.provider || 'unknown',
@@ -6921,7 +6978,8 @@ async function loadDataPage(env, { view = 'active', stage = '', q = '', limit, o
         const searchValues = q ? [searchPattern, searchPattern] : [];
         const where = `
           WHERE shop_id = ?
-            AND UPPER(COALESCE(json_extract(commerce_json, '$.commerce.fulfillmentStatus'), '')) = 'FULFILLED'
+            AND (UPPER(COALESCE(json_extract(commerce_json, '$.commerce.fulfillmentStatus'), '')) = 'FULFILLED'
+              OR json_extract(commerce_json, '$.commerce.closedAt') IS NOT NULL)
             AND json_extract(commerce_json, '$.commerce.cancelledAt') IS NULL${searchSql}
         `;
         const [rows, count] = await Promise.all([
@@ -7257,7 +7315,7 @@ async function completeProviderMutation(env, shopId, requestRow, record, nextSta
         nextState,
         null,
         [],
-        providerGarmentCount(contract)
+        providerGarmentCount(contract, nextState)
     );
     const result = {
         ok: true,
@@ -7342,8 +7400,8 @@ async function handleProviderProductionPatch(request, env, orderKey, allowOrigin
     }
     const currentRead = await readProviderOrder(env, orderKey);
     const current = currentRead.record.production;
-    const garmentCount = providerGarmentCount(currentRead.record.contract);
-    if ('printedCount' in patch && patch.printedCount > garmentCount) {
+    const garmentCount = providerGarmentCount(currentRead.record.contract, current);
+    if (!('printEligibility' in patch) && 'printedCount' in patch && patch.printedCount > garmentCount) {
         await db.prepare(`
           UPDATE provider_mutation_requests
           SET state = 'failed', error_code = 'INVALID_PRINTED_COUNT', updated_at = ?
@@ -7351,7 +7409,7 @@ async function handleProviderProductionPatch(request, env, orderKey, allowOrigin
         `).bind(isoNow(), requestRow.id).run();
         return v1Error({
             code: 'INVALID_PRINTED_COUNT',
-            message: `Printed count cannot exceed the current garment count of ${garmentCount}.`
+            message: `Printed count cannot exceed the current printable piece count of ${garmentCount}.`
         }, allowOrigin, reqAllowHeaders, 400);
     }
     if (current.lastMutationId === requestRow.id) {
@@ -7368,6 +7426,7 @@ async function handleProviderProductionPatch(request, env, orderKey, allowOrigin
         });
     }
     const next = applyProductionPatch(current, patch, actor, requestRow.id);
+    validatePrintablePatch(currentRead.record.contract?.commerce?.lineItems || [], current, patch, next);
     const saved = await db.prepare(`
       UPDATE provider_production_state
       SET revision = ?, last_mutation_id = ?, state_json = ?, updated_at = ?
@@ -7381,7 +7440,7 @@ async function handleProviderProductionPatch(request, env, orderKey, allowOrigin
             message: 'Production metadata changed on another client.'
         }, allowOrigin, reqAllowHeaders, 409, {
             currentVersion: conflict.revision,
-            current: productionForClient(orderKey, conflict, null, [], providerGarmentCount(conflictRead.record.contract))
+            current: productionForClient(orderKey, conflict, null, [], providerGarmentCount(conflictRead.record.contract, conflict))
         });
     }
     const result = await completeProviderMutation(env, shop.id, requestRow, currentRead.record, next, patch);
@@ -7560,7 +7619,7 @@ async function handleV1OrderDetailGet(request, env, allowOrigin, reqAllowHeaders
                 productionRead.state,
                 productionRead.compareDigest,
                 assets,
-                garmentCountFromLineItems(detail.summary?.commerce?.lineItems || [])
+                garmentCountFromLineItems(detail.summary?.commerce?.lineItems || [], productionRead.state.printEligibility)
             ),
             attention: productionRead.state.attention,
             productionEvents,
@@ -7693,8 +7752,8 @@ async function handleV1ProductionPatch(request, env, allowOrigin, reqAllowHeader
         }
 
         const current = await readProductionMetafield(env, gid, actor);
-        const garmentCount = await productionGarmentCount(env, current);
-        if ('printedCount' in patch && patch.printedCount > garmentCount) {
+        let garmentCount = await productionGarmentCount(env, current);
+        if (!('printEligibility' in patch) && 'printedCount' in patch && patch.printedCount > garmentCount) {
             await db.prepare(`
               UPDATE mutation_requests
               SET state = 'failed', error_code = 'INVALID_PRINTED_COUNT', updated_at = ?
@@ -7702,7 +7761,7 @@ async function handleV1ProductionPatch(request, env, allowOrigin, reqAllowHeader
             `).bind(isoNow(), requestRow.id).run();
             return v1Error({
                 code: 'INVALID_PRINTED_COUNT',
-                message: `Printed count cannot exceed the current garment count of ${garmentCount}.`
+                message: `Printed count cannot exceed the current printable piece count of ${garmentCount}.`
             }, allowOrigin, reqAllowHeaders, 400);
         }
         if (current.state.lastMutationId === requestRow.id) {
@@ -7725,6 +7784,7 @@ async function handleV1ProductionPatch(request, env, allowOrigin, reqAllowHeader
         }
 
         const nextState = applyProductionPatch(current.state, patch, actor, requestRow.id);
+        garmentCount = validatePrintablePatch(current.countLineItems, current.state, patch, nextState);
         const saved = await setProductionMetafield(env, gid, nextState, current.compareDigest);
         const assets = await d1AssetsForOrder(env, shop.id, gid);
         const production = productionForClient(gid, saved.state, saved.compareDigest, assets, garmentCount);

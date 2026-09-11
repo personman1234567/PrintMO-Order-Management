@@ -46,6 +46,9 @@
 
     if (incomingIsOlder) return order;
     if (hasVersion) order._version = incomingVersion;
+    if (Object.prototype.hasOwnProperty.call(production, 'printEligibility')) {
+      order.printEligibility = { ...production.printEligibility };
+    }
     if (!progressMutationPending) {
       adoptNumber('printedCount', 'progress');
       if (production.stage) order.productionStage = production.stage;

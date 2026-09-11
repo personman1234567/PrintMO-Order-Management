@@ -6517,3 +6517,10 @@ body[data-order-source="shopify"] .pipeline-card .delete-btn::after {
     transform: translateY(-1px);
   }
 }
+/* Per-order production eligibility is independent of supplier purchasing. */
+.printable-items { margin-top: 16px; padding-top: 12px; border-top: 1px solid #dbe3ee; }
+.printable-items summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
+.printable-items p { font-size: 13px; line-height: 1.5; margin: 8px 0; }
+.printable-item-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0; }
+.printable-item-row span { flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; }
+.printable-item-row select { width: 100%; max-width: 240px; min-height: 44px; border: 1px solid #bdcce0; border-radius: 6px; background: white; padding: 8px; color: #162c46; }

@@ -420,6 +420,7 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
     notes: production.internalNotes || "",
     bundle: production.bundleId || "",
     progress: Number(production.printedCount || 0),
+    printEligibility: production.printEligibility || {},
     blanksStatus: Number(production.blanksStatus || 0),
     printsStatus: Number(production.printsStatus || 0),
     blanksOrdered: Number(production.blanksOrdered ?? (production.stage === "blanks_ordered" ? 1 : 0)),
@@ -768,6 +769,7 @@ function applyCandidateProduction(order, production = {}) {
   if ("bundleId" in production) order.bundle = production.bundleId || "";
   if ("internalNotes" in production) order.notes = production.internalNotes || "";
   if ("printedCount" in production) order.progress = Number(production.printedCount || 0);
+  if ("printEligibility" in production) order.printEligibility = { ...production.printEligibility };
   if ("blanksStatus" in production) order.blanksStatus = Number(production.blanksStatus || 0);
   if ("printsStatus" in production) order.printsStatus = Number(production.printsStatus || 0);
   if ("printsOrdered" in production) order.printsOrdered = Number(production.printsOrdered || 0);
@@ -780,6 +782,7 @@ function candidateProductionMatchesPatch(production = {}, patch = {}) {
     bundle_id: "bundleId",
     internal_notes: "internalNotes",
     printed_count: "printedCount",
+    print_eligibility: "printEligibility",
     blanks_status: "blanksStatus",
     blanks_ordered: "blanksOrdered",
     prints_status: "printsStatus",
@@ -789,6 +792,10 @@ function candidateProductionMatchesPatch(production = {}, patch = {}) {
     const productionKey = fields[patchKey];
     if (!productionKey) return false;
     const actual = production[productionKey];
+    if (patchKey === 'print_eligibility') {
+      return Object.entries(expected).every(([id, value]) => value === null
+        ? !Object.hasOwn(actual || {}, id) : actual?.[id] === value);
+    }
     if (typeof expected === "number") return Number(actual || 0) === Number(expected);
     return String(actual ?? "") === String(expected ?? "");
   });
@@ -1054,6 +1061,11 @@ window.api.updateName = async (a, b) => {
     method: "POST",
     body: JSON.stringify({ orderName: payload.name, patch: { custName: payload.newName ?? payload.custName } }),
   });
+};
+
+window.api.updatePrintableItem = async (name, itemId, included) => {
+  if (!isShopifyCandidateView()) throw new Error('Printable item settings require the Shopify board.');
+  return updateCandidateOrder(name, { print_eligibility: { [itemId]: included } });
 };
 
 window.api.deleteOrder = async (a) => {

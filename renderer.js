@@ -56,6 +56,87 @@ function isGarmentItem(li) {
   return !isPrintItem(li) && hasSupplierSku(li);
 }
 
+function printablePieceTotal(order) {
+  return (order.items || []).reduce((total, item) => {
+    const overrides = order._candidate ? order.printEligibility || {} : {};
+    const included = Object.hasOwn(overrides, item.id) ? overrides[item.id] : isGarmentItem(item);
+    return total + (included ? Math.max(0, Number(item.qty) || 0) : 0);
+  }, 0);
+}
+
+function renderPrintableItemControls(order) {
+  let panel = document.getElementById('printable-items');
+  if (!order?._candidate || order._historyReadOnly || typeof window.api.updatePrintableItem !== 'function') {
+    panel?.remove();
+    return;
+  }
+  if (!panel) {
+    panel = document.createElement('details');
+    panel.id = 'printable-items';
+    panel.className = 'printable-items';
+    document.getElementById('detail-production-card')?.appendChild(panel);
+  }
+  const summary = document.createElement('summary');
+  summary.textContent = `Printable pieces · ${printablePieceTotal(order)} — Edit items`;
+  const hint = document.createElement('p');
+  hint.textContent = 'Choose which items count toward pieces printed. Transfers and fees usually stay excluded. Supplier ordering is unchanged.';
+  const status = document.createElement('p');
+  status.setAttribute('role', 'status');
+  const rows = (order.items || []).filter(item => item.id).map(item => {
+    const row = document.createElement('label');
+    row.className = 'printable-item-row';
+    const title = document.createElement('span');
+    title.textContent = `${item.qty} × ${item.title}${item.variantTitle ? ` · ${item.variantTitle}` : ''}`;
+    const select = document.createElement('select');
+    select.dataset.lineItemId = item.id;
+    select.setAttribute('aria-label', `Count ${item.title} toward printable pieces`);
+    const automatic = isGarmentItem(item);
+    for (const [value, text] of [['auto', `Automatic (${automatic ? 'included' : 'excluded'})`], ['true', 'Include in printable pieces'], ['false', 'Exclude from printable pieces']]) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = text;
+      select.appendChild(option);
+    }
+    const prior = Object.hasOwn(order.printEligibility || {}, item.id) ? String(order.printEligibility[item.id]) : 'auto';
+    select.value = prior;
+    select.disabled = Boolean(order._eligibilityMutationPending);
+    select.onchange = async () => {
+      if (order._progressMutationPending) {
+        select.value = prior;
+        status.textContent = 'Wait for the print count to finish saving, then try again.';
+        return;
+      }
+      panel.querySelectorAll('select').forEach(control => { control.disabled = true; });
+      order._eligibilityMutationPending = true;
+      order._updateProgressUI?.();
+      status.textContent = 'Saving printable pieces…';
+      try {
+        const result = await window.api.updatePrintableItem(order.name, item.id, select.value === 'auto' ? null : select.value === 'true');
+        window.OrderDetailState.mergeCanonicalProductionState(order, result.production);
+        order.totalApparel = printablePieceTotal(order);
+        order._eligibilityMutationPending = false;
+        if (detailOrder === order) {
+          order._updateProgressUI?.();
+          renderPrintableItemControls(order);
+          Array.from(panel.querySelectorAll('select')).find(control => control.dataset.lineItemId === item.id)?.focus();
+          progressSaveStatus(`Printable pieces saved: ${order.totalApparel}`, 'success');
+        }
+        await renderBoardFromLocalState([order.status || 'print']);
+      } catch (error) {
+        select.value = prior;
+        status.textContent = error.message || 'Unable to save printable pieces. Try again.';
+        panel.querySelectorAll('select').forEach(control => { control.disabled = false; });
+      } finally {
+        order._eligibilityMutationPending = false;
+        if (detailOrder === order) order._updateProgressUI?.();
+      }
+    };
+    row.append(title, select);
+    return row;
+  });
+  panel.replaceChildren(summary, hint, ...rows, status);
+}
+
 const PRINT_TITLES = new Set([
   'T-shirt Breast Print',
   'T-shirt Chest Print',
@@ -792,7 +873,7 @@ function makeCard(o, style = 'default') {
     }
   } else if (style === 'printProgress') {
     // Ready to Print style with progress percentage
-    const totalApparel = (o.items || []).reduce((sum, it) => sum + (isGarmentItem(it) ? it.qty : 0), 0);
+    const totalApparel = printablePieceTotal(o);
     const prog = typeof o.progress === 'number' ? o.progress : 0;
     const pct = totalApparel ? Math.round((prog / totalApparel) * 100) : 0;
     const showProductionPreview = Boolean(o._candidate);
@@ -2077,7 +2158,7 @@ function openDetail(o) {
   }
 
   // progress
-  const totalApparel = (o.items || []).reduce((sum, it) => sum + (isGarmentItem(it) ? it.qty : 0), 0);
+  const totalApparel = printablePieceTotal(o);
   o.totalApparel = totalApparel;
   if (typeof o.progress !== 'number') o.progress = 0;
   const progressText = document.getElementById('progress-text');
@@ -2087,10 +2168,13 @@ function openDetail(o) {
     progressText.textContent = `${o.progress} / ${currentTotal} pieces printed`;
     const pct = currentTotal ? Math.min(100, (o.progress / currentTotal) * 100) : 0;
     progressBar.style.width = pct + '%';
-    progressPlusOne.disabled = historyReadOnly || currentTotal === 0 || o.progress >= currentTotal;
+    progressPlusOne.disabled = historyReadOnly || o._eligibilityMutationPending || currentTotal === 0 || o.progress >= currentTotal;
+    document.getElementById('progress-custom').disabled = historyReadOnly || Boolean(o._eligibilityMutationPending);
   };
   const progressPlusOne = document.getElementById('progress-plus1');
+  o._updateProgressUI = updateProgressUI;
   updateProgressUI();
+  renderPrintableItemControls(o);
   progressPlusOne.onclick = async () => {
     const currentTotal = Math.max(0, Number(o.totalApparel) || 0);
     if (o.progress >= currentTotal) return false;
@@ -2512,7 +2596,7 @@ function openProgressModal(order, updateFn) {
   input.value = order.progress;
   input.max = String(total);
   summary.textContent = `${order.progress} of ${total} pieces currently printed`;
-  completeBtn.textContent = total ? `Mark all ${total} printed` : 'No garments to mark';
+  completeBtn.textContent = total ? `Mark all ${total} printed` : 'No printable pieces selected';
   completeBtn.disabled = total === 0;
   validation.textContent = '';
 
@@ -2623,10 +2707,10 @@ function showProductionNotice(message, tone = 'success') {
 
 function productionProgressErrorMessage(error) {
   if (error?.code === 'INVALID_PRINTED_COUNT') {
-    return 'The print count is higher than Shopify’s current garment total. Refresh Shopify and try again.';
+    return 'The print count is higher than the printable piece total. Check the selected items and count.';
   }
   if (error?.code === 'GARMENT_COUNT_UNAVAILABLE' || error?.code === 'GARMENT_COUNT_INCOMPLETE') {
-    return 'Shopify’s garment total is temporarily unavailable. Refresh Shopify and try again.';
+    return 'The printable piece total is temporarily unavailable. Refresh Shopify and try again.';
   }
   return 'Print progress could not be saved. Please try again.';
 }
@@ -2685,6 +2769,7 @@ function getProductionProgressCoordinator() {
 }
 
 function saveProductionProgress(order, nextProgress, updateFn) {
+  if (order._eligibilityMutationPending) return Promise.resolve(false);
   return getProductionProgressCoordinator().request(order, nextProgress, {
     total: order.totalApparel,
     update: updateFn

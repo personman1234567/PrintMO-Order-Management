@@ -14,6 +14,8 @@ if (!globalThis.crypto) globalThis.crypto = crypto.webcrypto;
 
 let fixtureShopifyCancelledAt = null;
 let fixtureShopifyFulfillmentStatus = 'UNFULFILLED';
+let fixtureShopifyClosedAt = null;
+let fixtureProductionLines = null;
 
 function createD1(schema) {
   const sqlite = new DatabaseSync(':memory:');
@@ -62,6 +64,7 @@ function shopifyNode() {
     displayFinancialStatus: 'PAID',
     displayFulfillmentStatus: fixtureShopifyFulfillmentStatus,
     cancelledAt: fixtureShopifyCancelledAt,
+    closedAt: fixtureShopifyClosedAt,
     currencyCode: 'USD',
     currentSubtotalLineItemsQuantity: 2,
     currentSubtotalPriceSet: { shopMoney: { amount: '20.00', currencyCode: 'USD' } },
@@ -558,6 +561,7 @@ async function run() {
               updatedAt: shopifyNode().updatedAt,
               displayFulfillmentStatus: shopifyNode().displayFulfillmentStatus,
               cancelledAt: shopifyNode().cancelledAt,
+              closedAt: shopifyNode().closedAt,
               lineItems: {
                 nodes: [
                   shopifyNode().lineItems.nodes[0],
@@ -570,6 +574,7 @@ async function run() {
                 ],
                 pageInfo: { hasNextPage: true, endCursor: 'production-page-1' },
               },
+              ...(fixtureProductionLines ? { lineItems: { nodes: fixtureProductionLines, pageInfo: { hasNextPage: false } } } : {}),
               metafield: {
                 id: 'gid://shopify/Metafield/1',
                 namespace: 'app--fixture--printmo',
@@ -2294,6 +2299,59 @@ async function run() {
       'confirmed-batch integrity reconciliation must not reactivate a Shopify-cancelled order'
     );
 
+    // Archived-but-unfulfilled orders must stay out of the active board on reads and writes.
+    fixtureShopifyCancelledAt = null;
+    fixtureShopifyClosedAt = '2025-05-18T23:39:38Z';
+    const productionUrl = `https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`;
+    const closedRead = await worker.fetch(new Request(productionUrl, { headers }), env);
+    assert.equal(closedRead.status, 200);
+    assert.equal((await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active, 0);
+    await coordinator.refresh([shopifyNode().id]);
+    const closedHistory = await worker.fetch(new Request('https://worker.test/order-manager/v1/orders?view=previous&q=%231001', { headers }), env);
+    assert.equal((await closedHistory.json()).data.length, 1, 'Shopify-archived unfulfilled orders must remain readable in history');
+    const patchProduction = (patch, key, version = productionState.revision) => worker.fetch(new Request(productionUrl, {
+      method: 'PATCH', headers, body: JSON.stringify({ expectedVersion: version, idempotencyKey: key, patch })
+    }), env);
+    assert.equal((await patchProduction({ archived_at: null }, 'closed-cannot-reopen')).status, 200);
+    assert.equal((await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active, 0);
+    fixtureShopifyClosedAt = null;
+
+    // Customer-supplied shirts and koozies have no supplier SKU; transfers count separately.
+    fixtureProductionLines = [{ id: 'custom-shirt', title: 'Customer Supplied Shirt', quantity: 75, currentQuantity: 75, sku: '' }];
+    assert.equal((await patchProduction({ stage: 'print', printed_count: 0 }, 'custom-reset-progress')).status, 200);
+    const includedShirts = await patchProduction({ print_eligibility: { 'custom-shirt': true } }, 'custom-shirt-eligibility');
+    assert.equal(includedShirts.status, 200);
+    const includedJson = await includedShirts.json();
+    assert.equal(includedJson.production.garmentCount, 75);
+    assert.equal(includedJson.production.printedCount, 0, 'eligibility must not mark pieces printed');
+    assert.equal(includedJson.production.stage, 'print');
+    assert.equal((await patchProduction({ printed_count: 76 }, 'custom-over-limit')).status, 400);
+    const printedShirts = await patchProduction({ printed_count: 75 }, 'custom-shirt-complete');
+    assert.equal((await printedShirts.json()).production.stage, 'completed', 'reaching the printable total must move to Printed');
+    assert.equal((await patchProduction({ print_eligibility: { 'custom-shirt': false } }, 'custom-exclude-printed')).status, 400);
+    const staleEligibility = await patchProduction({ print_eligibility: { 'custom-shirt': false } }, 'custom-stale-eligibility', 0);
+    assert.equal(staleEligibility.status, 409);
+    const staleJson = await staleEligibility.json();
+    assert.equal(staleJson.error.details.current.printEligibility['custom-shirt'], true);
+    assert.equal(staleJson.error.details.current.garmentCount, 75);
+    const reducedPrint = await patchProduction({ printed_count: 74 }, 'custom-partially-printed');
+    assert.equal((await reducedPrint.json()).production.stage, 'print');
+    await patchProduction({ printed_count: 0, print_eligibility: { 'custom-shirt': null } }, 'custom-reset-automatic');
+    assert.equal((await (await worker.fetch(new Request(productionUrl, { headers }), env)).json()).production.garmentCount, 0);
+    fixtureProductionLines = [
+      { id: 'koozie', title: 'Sage koozie', quantity: 10, currentQuantity: 10, sku: '' },
+      { id: 'transfer', title: 'DTF Print', quantity: 10, currentQuantity: 10, sku: '' }
+    ];
+    const includedKoozies = await patchProduction({ print_eligibility: { koozie: true } }, 'koozie-include');
+    const koozieResult = await includedKoozies.json();
+    assert.equal(koozieResult.production.garmentCount, 10, 'DTF transfers must not double-count printable objects');
+    assert.equal((await patchProduction({ print_eligibility: { 'missing-item': true } }, 'missing-line-override')).status, 400);
+    assert.equal((await patchProduction({ print_eligibility: { koozie: 'true' } }, 'invalid-override-type')).status, 400);
+    const includedKooziesReplay = await patchProduction({ print_eligibility: { koozie: true } }, 'koozie-include', koozieResult.production.version - 1);
+    assert.equal((await includedKooziesReplay.json()).production.version, koozieResult.production.version, 'replaying an override must not increment its revision');
+    const printedKoozies = await patchProduction({ printed_count: 10 }, 'koozie-complete');
+    assert.equal((await printedKoozies.json()).production.stage, 'completed');
+
     assert(calls.some(call => call.target.endsWith('/admin/oauth/access_token')), 'Worker must exchange client credentials for a runtime token');
     assert(calls.some(call => call.target.includes('/graphql.json')), 'Worker must query Shopify GraphQL');
     assert(calls.some(call => String(call.options?.body || '').includes('PrintMOShopifyPreviewOrders')), 'preview must use the cost-bounded Shopify list query');
@@ -2301,6 +2359,8 @@ async function run() {
   } finally {
     fixtureShopifyCancelledAt = null;
     fixtureShopifyFulfillmentStatus = 'UNFULFILLED';
+    fixtureShopifyClosedAt = null;
+    fixtureProductionLines = null;
     globalThis.fetch = nativeFetch;
   }
 
@@ -3267,7 +3327,7 @@ async function run() {
     displayName: '#1001',
     commerce: {
       lineItems: [
-        { title: 'Fixture Shirt', currentQuantity: 3 },
+        { title: 'Fixture Shirt', sku: 'B001', currentQuantity: 3 },
         { title: 'DTF Print', currentQuantity: 1 }
       ]
     },

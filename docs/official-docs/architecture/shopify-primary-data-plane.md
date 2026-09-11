@@ -28,16 +28,16 @@
 
 Current production deployment on 2026-09-03:
 
-- Worker version: `d991db45-e13d-40d5-8c3d-6f0e3f335626`
+- Worker version: `24b570ed-ac91-4e34-8029-849c88157e78`
 - Pages deployment: `868f08f5.print-mo-order-manager.pages.dev` (release marker `1788474708519`)
 - Shopify app version: `designer-assets-idempotency-2026-07-23`
 - Stateless supplier gateway commit: `d3a0d5a`
 
-This release makes authoritative Shopify cancellation and exact `FULFILLED`
-source-driven: either removes the order from active-board projection reads
+This release adds per-line printable-piece eligibility and includes Shopify `closedAt` alongside cancellation and exact `FULFILLED`
+source-driven: each removes the order from active-board projection reads
 without deleting its D1 projection or production history, and later production
 reconciliation cannot reactivate it while Shopify continues to report the
-terminal state. Fulfilled, non-cancelled Shopify orders remain available through
+terminal state. Fulfilled or Shopify-archived, non-cancelled orders remain available through
 the lazy-loaded, view-only Previous Orders surface.
 
 The production installation has approved the candidate write/all-orders scopes, and canonical Shopify-board/Admin-block writes are live for acceptance. Final cutover, live S&S enablement, and permanent Redis retirement remain owner-gated.
@@ -83,24 +83,19 @@ The JSON metafield contains:
 Allowed stages are `received`, `to_order`, `blanks_cart`, `blanks_ordered`, `print`, and `completed`.
 The Admin order block presents five operator-facing stages by grouping
 `blanks_cart` and `blanks_ordered` under **Blanks** with a required substage.
-Its production DTO also returns a read-only `garmentCount`, calculated from all
-paginated current line-item quantities that have a supplier SKU after excluding
-known print-service lines. The Worker rejects `printedCount` values above that
-current garment total. `PrintMOProductionState` must request `sku` on its first
-50 line items as well as on pagination; omitting it makes valid first-page
-garments indistinguishable from non-supplier lines and falsely reduces the cap.
+Its production DTO retains the compatibility field `garmentCount`, now the printable-piece cap. It sums current line-item quantities using per-item `printEligibility` overrides, defaulting to supplier-SKU garments excluding print-service lines. Overrides are additive schema-v1 production metadata keyed by immutable line-item ID; patch values true/false include/exclude, and null restores automatic detection. They never alter commerce or S&S purchasing. The Worker validates IDs against all paginated lines, preserves compare-digest concurrency, and rejects printed counts above the cap.
 
 `completed` means manufacturing is finished, not that Shopify fulfillment has
 finished. The Ready to Print workspace renders `print` under **To Print** and
 `completed` under **Printed**, so completed but still-unfulfilled work remains
 visible for customer handoff. Exact Shopify `FULFILLED` and Shopify
-`cancelledAt` are separate source-driven terminal conditions: either makes the
+`cancelledAt` / `closedAt` are separate source-driven terminal conditions: any makes the
 D1 projection inactive without deleting production, audit, asset, or projection
 history. Operator archive state also removes a projection from the active board,
 but reopening clears only PrintMO's archive fields; it cannot reactivate an order
-while Shopify still reports it fulfilled or cancelled. If Shopify reverses
+while Shopify still reports it fulfilled, cancelled, or closed. If Shopify reverses
 fulfillment, the preserved production stage becomes active again unless the
-order remains cancelled or operator-archived.
+order remains closed, cancelled, or operator-archived.
 
 Every client mutation supplies an expected revision and idempotency key. Keys use only the Worker-accepted `[A-Za-z0-9._:-]` character set and are generated independently of Shopify GIDs; a GID contains `/` separators and must never be embedded in a fallback key. The Worker records the request in D1, reads the metafield digest, calls Shopify `metafieldsSet` with `compareDigest`, and then commits the D1 projection/audit result. If Shopify commits before D1 finalization, `lastMutationId` lets a retry repair D1. A concurrent edit returns `409 VERSION_CONFLICT`.
 
