@@ -2316,6 +2316,32 @@ async function run() {
     assert.equal((await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active, 0);
     fixtureShopifyClosedAt = null;
 
+    // Targets survive ordinary mutations, reconciliation and board reads.
+    const targetBefore = productionState.revision;
+    const setTarget = await patchProduction({ target_date: '2028-02-29' }, 'target-date-set');
+    assert.equal(setTarget.status, 200);
+    const targetSaved = (await setTarget.json()).production;
+    assert.equal(targetSaved.targetDate, '2028-02-29');
+    const targetReplay = await patchProduction({ target_date: '2028-02-29' }, 'target-date-set', targetBefore);
+    assert.equal((await targetReplay.json()).production.version, targetSaved.version);
+    const targetConflict = await patchProduction({ target_date: '2028-03-01' }, 'target-date-conflict', targetBefore);
+    assert.equal(targetConflict.status, 409);
+    assert.equal((await targetConflict.json()).error.details.current.targetDate, '2028-02-29');
+    for (const [index, invalid] of ['2027-02-29', '2028-04-31', '2028-1-01', '', 123, '2028-02-29T00:00:00Z'].entries()) {
+      const response = await patchProduction({ target_date: invalid }, `target-date-invalid-${index}`);
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).error.code, 'INVALID_TARGET_DATE');
+    }
+    const ordinarySave = await patchProduction({ internal_notes: 'Preserve the shop target' }, 'target-date-notes');
+    assert.equal((await ordinarySave.json()).production.targetDate, '2028-02-29');
+    await coordinator.refresh([shopifyNode().id]);
+    const targetBoard = await worker.fetch(new Request('https://worker.test/order-manager/v1/orders', { headers }), env);
+    assert.equal((await targetBoard.json()).data.find(order => order.id === shopifyNode().id)?.production.targetDate, '2028-02-29');
+    const targetEvent = await env.ORDER_DB.prepare("SELECT changed_fields_json FROM production_events WHERE new_revision = ? AND order_gid = ?")
+      .bind(targetSaved.revision, shopifyNode().id).first();
+    assert(JSON.parse(targetEvent.changed_fields_json).includes('targetDate'));
+    assert.equal((await (await patchProduction({ target_date: null }, 'target-date-clear')).json()).production.targetDate, null);
+
     // Customer-supplied shirts and koozies have no supplier SKU; transfers count separately.
     fixtureProductionLines = [{ id: 'custom-shirt', title: 'Customer Supplied Shirt', quantity: 75, currentQuantity: 75, sku: '' }];
     assert.equal((await patchProduction({ stage: 'print', printed_count: 0 }, 'custom-reset-progress')).status, 200);
@@ -2443,6 +2469,24 @@ async function run() {
     'canonical detail must attach every private asset to its line, repaint Production downloads, and consolidate display rows'
   );
   const detailState = require(path.join(root, 'order-manager-web', 'order-detail-state.js'));
+  const targetAt = (targetDate, now, extra = {}) => detailState.targetDatePresentation(
+    { targetDate, ...extra }, new Date(now)
+  );
+  assert.equal(targetAt(null, '2026-09-15T05:00:00Z'), null);
+  assert.equal(targetAt('2026-02-30', '2026-09-15T05:00:00Z'), null);
+  assert.equal(targetAt('2026-09-15', '2026-09-15T04:59:59Z').label, 'Tomorrow');
+  assert.equal(targetAt('2026-09-15', '2026-09-15T05:00:00Z').label, 'Today');
+  assert.equal(targetAt('2026-09-14', '2026-09-15T05:00:00Z').tone, 'late');
+  assert.equal(targetAt('2026-09-14', '2026-09-15T05:00:00Z', { productionStage: 'completed' }).tone, 'neutral');
+  assert.equal(targetAt('2026-09-14', '2026-09-15T05:00:00Z', { _historyReadOnly: true }).tone, 'neutral');
+  assert.equal(targetAt('2026-03-09', '2026-03-08T07:30:00Z').label, 'Tomorrow', 'spring DST must use calendar days');
+  assert.equal(targetAt('2026-11-02', '2026-11-01T06:30:00Z').label, 'Tomorrow', 'fall DST must use calendar days');
+  assert.equal(targetAt('2027-01-01', '2027-01-01T05:00:00Z').label, 'Tomorrow');
+  const targetOrder = { _version: 3, targetDate: '2026-09-16' };
+  detailState.mergeCanonicalProductionState(targetOrder, { version: 2, targetDate: '2026-09-15' });
+  assert.equal(targetOrder.targetDate, '2026-09-16', 'late hydration must not replace a newer target');
+  detailState.mergeCanonicalProductionState(targetOrder, { version: 4, targetDate: null });
+  assert.equal(targetOrder.targetDate, null, 'clearing must propagate through canonical hydration');
   const draftStore = detailState.createNoteDraftStore();
   const orderA = { _provider: 'shopify', _gid: 'gid://shopify/Order/1', name: '#1001' };
   const orderB = { _provider: 'shopify', _gid: 'gid://shopify/Order/2', name: '#1002' };
@@ -2749,6 +2793,42 @@ async function run() {
     'source-controller initialization must not duplicate the renderer-owned initial queue request'
   );
   const webShim = fs.readFileSync(path.join(root, 'order-manager-web', 'web-shim.js'), 'utf8');
+  const targetMutationSource = webShim.slice(webShim.indexOf('function applyCandidateProduction('), webShim.indexOf('// 1) Populate dashboard'));
+  const runTargetConflict = async (remoteDate, baseline, desired) => {
+    let calls = 0;
+    const cached = { _gid: 'fixture', _version: 1, targetDate: baseline };
+    const sandbox = {
+      candidateByName: () => cached,
+      candidateStageToBoard: stage => stage,
+      newIdempotencyKey: () => 'target-fixture-key',
+      candidateMutationChains: new Map(),
+      window: { api: { updateProductionMetadata: async () => {
+        calls += 1;
+        if (calls === 1) throw Object.assign(new Error('Conflict'), {
+          status: 409, code: 'VERSION_CONFLICT', details: { current: { targetDate: remoteDate, version: 2 } }
+        });
+        return { production: { targetDate: desired, version: 3 } };
+      } } }
+    };
+    vm.runInNewContext(targetMutationSource, sandbox);
+    let error;
+    try { await sandbox.updateCandidateOrder('fixture', { target_date: desired }, { targetDateBaseline: baseline }); }
+    catch (caught) { error = caught; }
+    return { calls, cached, error };
+  };
+  const changedTarget = await runTargetConflict('2026-09-18', null, '2026-09-16');
+  assert.equal(changedTarget.calls, 1, 'a concurrent target edit must never be overwritten automatically');
+  assert.equal(changedTarget.error?.code, 'TARGET_DATE_CONFLICT');
+  assert.equal(changedTarget.cached.targetDate, '2026-09-18');
+  const unrelatedChange = await runTargetConflict(null, null, '2026-09-16');
+  assert.equal(unrelatedChange.calls, 2, 'an unrelated revision may reconcile once');
+  assert.equal(unrelatedChange.error, undefined);
+  assert.equal(unrelatedChange.cached.targetDate, '2026-09-16');
+  const convergedTarget = await runTargetConflict('2026-09-16', null, '2026-09-16');
+  assert.equal(convergedTarget.calls, 1, 'an already matching target needs no duplicate save');
+  assert.equal(convergedTarget.error, undefined);
+  const clearConflict = await runTargetConflict('2026-09-18', '2026-09-16', null);
+  assert.equal(clearConflict.error?.code, 'TARGET_DATE_CONFLICT', 'clearing also protects concurrent edits');
   assert(webShim.includes('apiErrorMessage'), 'web errors must render structured Worker errors instead of [object Object]');
   assert(
     webShim.includes('shopifyIdTokenCache')

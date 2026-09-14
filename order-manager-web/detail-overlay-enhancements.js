@@ -39,6 +39,102 @@
   let detailHydrationGeneration = 0;
   let detailHydrationController = null;
   let overviewProgressObserver = null;
+  let targetDateContext = null;
+
+  function renderTargetDate(order) {
+    const section = document.getElementById('target-date-section');
+    if (!section) return;
+    section.hidden = !order?._candidate;
+    if (section.hidden) return;
+    const form = document.getElementById('target-date-form');
+    const input = document.getElementById('target-date-input');
+    const edit = document.getElementById('target-date-edit');
+    const status = document.getElementById('target-date-status');
+    const clear = document.getElementById('target-date-clear');
+    const cancel = document.getElementById('target-date-cancel');
+    if (targetDateContext?.order !== order) {
+      targetDateContext = { order, baseline: order.targetDate || null, editing: false, saving: false };
+      status.textContent = '';
+    }
+    const context = targetDateContext;
+    const stillActive = () => targetDateContext === context && currentDetailOrder === order
+      && document.getElementById('detail-overlay')?.classList.contains('visible');
+    const date = window.OrderDetailState.targetDatePresentation(order);
+    const readOnly = Boolean(order._historyReadOnly) || typeof window.api?.updateTargetDate !== 'function';
+    document.getElementById('target-date-value').textContent = date?.full || 'No target date';
+    edit.textContent = order.targetDate ? 'Edit' : 'Set date';
+    edit.hidden = readOnly || context.editing;
+    form.hidden = readOnly || !context.editing;
+    clear.hidden = !order.targetDate;
+    for (const control of form.elements) control.disabled = context.saving;
+
+    edit.onclick = () => {
+      context.baseline = order.targetDate || null;
+      context.editing = true;
+      input.value = order.targetDate || '';
+      status.textContent = '';
+      renderTargetDate(order);
+      input.focus();
+    };
+    cancel.onclick = () => {
+      context.editing = false;
+      status.textContent = '';
+      renderTargetDate(order);
+      edit.focus();
+    };
+    const save = async value => {
+      if (context.saving || readOnly || targetDateContext !== context) return;
+      context.saving = true;
+      status.textContent = 'Saving target date…';
+      renderTargetDate(order);
+      try {
+        const result = await window.api.updateTargetDate(order.name, value, context.baseline);
+        window.OrderDetailState.mergeCanonicalProductionState(order, result.production);
+        context.baseline = order.targetDate || null;
+        // Polling can replace the board object while this detail remains open.
+        let touchedStatuses = [order.status || 'received'];
+        if (typeof patchLocalOrders === 'function') {
+          touchedStatuses = patchLocalOrders([order.name], cached => {
+            window.OrderDetailState.mergeCanonicalProductionState(cached, {
+              targetDate: result.production.targetDate, version: result.production.version ?? result.production.revision
+            });
+          });
+        }
+        context.editing = false;
+        if (stillActive()) {
+          status.textContent = result.syncPending
+            ? 'Target date saved. The board is syncing.'
+            : value ? 'Target date saved.' : 'Target date cleared.';
+        }
+        if (typeof renderBoardFromLocalState === 'function') {
+          try { await renderBoardFromLocalState(touchedStatuses); }
+          catch (_) {
+            if (stillActive()) status.textContent = 'Target date saved. Refresh the board to see it.';
+          }
+        }
+      } catch (error) {
+        const latest = error.production || error.details?.current;
+        if (latest) window.OrderDetailState.mergeCanonicalProductionState(order, latest);
+        if (stillActive()) {
+          context.baseline = order.targetDate || null;
+          status.textContent = error.code === 'TARGET_DATE_CONFLICT' || error.code === 'VERSION_CONFLICT'
+            ? 'The target date changed on another device. The saved date is shown above. Review your choice, then Save again to replace it.'
+            : error.message || 'Target date could not be saved. Try again.';
+        }
+      } finally {
+        context.saving = false;
+        if (stillActive()) {
+          renderTargetDate(order);
+          (context.editing ? input : edit).focus();
+        }
+      }
+    };
+    form.onsubmit = event => {
+      event.preventDefault();
+      if (form.reportValidity()) void save(input.value);
+    };
+    clear.onclick = () => void save(null);
+  }
 
   function normalizedStatusClass(value) {
     return `is-${String(value || 'unknown')
@@ -917,6 +1013,7 @@
 
   function renderOverview(order, result = null) {
     if (!order || !document.getElementById('tab-overview')) return;
+    renderTargetDate(order);
     const counts = itemCounts(order);
     const printableTotal = typeof printablePieceTotal === 'function' ? printablePieceTotal(order) : counts.apparel;
     const progress = Math.max(0, Number(order.progress || 0));
@@ -2440,6 +2537,7 @@
     if (typeof currentOpenDetail !== 'function' || currentOpenDetail.__detailSummaryPatched) return;
     const originalOpenDetail = currentOpenDetail;
     const enhancedOpenDetail = function enhancedOpenDetail(order, ...args) {
+      targetDateContext = null;
       const result = originalOpenDetail.call(this, order, ...args);
       const overlay = document.getElementById('detail-overlay');
       overlay?.setAttribute('aria-hidden', 'false');

@@ -164,7 +164,7 @@
       "id": "kanban-ui",
       "description": "Shared Kanban rendering, cards, drag-and-drop, board columns, and detail opening",
       "taskTypes": ["change", "diagnosis", "design"],
-      "keywords": ["kanban", "card", "drag", "drop", "column", "detail modal", "renderer", "board"],
+      "keywords": ["kanban", "card", "drag", "drop", "column", "detail modal", "renderer", "board", "target date", "targetDate", "finish by", "due date"],
       "paths": ["renderer.js", "index.html", "order-manager-web/renderer.js"],
       "symbols": ["renderBoard", "openDetail", "updateBoardMove"],
       "errors": ["card reverts", "detail overlay does not open", "board is blank"],
@@ -172,6 +172,10 @@
         {
           "path": "docs/official-docs/workflows/order-ingestion-kanban.md",
           "anchor": "shared-board-render-and-mutation-flow"
+        },
+        {
+          "path": "docs/official-docs/workflows/order-ingestion-kanban.md",
+          "anchor": "manual-target-dates"
         },
         {
           "path": "docs/official-docs/reference/ui-containers-and-views.md",

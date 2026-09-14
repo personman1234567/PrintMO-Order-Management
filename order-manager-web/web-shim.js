@@ -421,6 +421,7 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
     bundle: production.bundleId || "",
     progress: Number(production.printedCount || 0),
     printEligibility: production.printEligibility || {},
+    targetDate: production.targetDate || null,
     blanksStatus: Number(production.blanksStatus || 0),
     printsStatus: Number(production.printsStatus || 0),
     blanksOrdered: Number(production.blanksOrdered ?? (production.stage === "blanks_ordered" ? 1 : 0)),
@@ -768,6 +769,7 @@ function applyCandidateProduction(order, production = {}) {
   }
   if ("bundleId" in production) order.bundle = production.bundleId || "";
   if ("internalNotes" in production) order.notes = production.internalNotes || "";
+  if ("targetDate" in production) order.targetDate = production.targetDate || null;
   if ("printedCount" in production) order.progress = Number(production.printedCount || 0);
   if ("printEligibility" in production) order.printEligibility = { ...production.printEligibility };
   if ("blanksStatus" in production) order.blanksStatus = Number(production.blanksStatus || 0);
@@ -783,6 +785,7 @@ function candidateProductionMatchesPatch(production = {}, patch = {}) {
     internal_notes: "internalNotes",
     printed_count: "printedCount",
     print_eligibility: "printEligibility",
+    target_date: "targetDate",
     blanks_status: "blanksStatus",
     blanks_ordered: "blanksOrdered",
     prints_status: "printsStatus",
@@ -801,9 +804,19 @@ function candidateProductionMatchesPatch(production = {}, patch = {}) {
   });
 }
 
-async function performCandidateOrderUpdate(name, patch) {
+async function performCandidateOrderUpdate(name, patch, options = {}) {
   const order = candidateByName(name);
   if (!patch || Object.keys(patch).length === 0) return true;
+  const checkTargetDateConflict = () => {
+    if ('target_date' in patch && Object.hasOwn(options, 'targetDateBaseline')
+        && (order.targetDate || null) !== options.targetDateBaseline
+        && (order.targetDate || null) !== patch.target_date) {
+      throw Object.assign(new Error('The target date changed on another device. Review the saved date before saving again.'), {
+        code: 'TARGET_DATE_CONFLICT', production: { targetDate: order.targetDate, version: order._version }
+      });
+    }
+  };
+  checkTargetDateConflict();
   const send = () => window.api.updateProductionMetadata(order._gid, {
     expectedVersion: order._version,
     patch,
@@ -823,15 +836,16 @@ async function performCandidateOrderUpdate(name, patch) {
     const current = currentResult?.production || currentResult || {};
     applyCandidateProduction(order, current);
     if (candidateProductionMatchesPatch(current, patch)) return { ok: true, production: current };
+    checkTargetDateConflict();
     const retry = await send();
     applyCandidateProduction(order, retry?.production || {});
     return retry;
   }
 }
 
-function updateCandidateOrder(name, patch) {
+function updateCandidateOrder(name, patch, options = {}) {
   const previous = candidateMutationChains.get(name) || Promise.resolve();
-  const next = previous.catch(() => {}).then(() => performCandidateOrderUpdate(name, patch));
+  const next = previous.catch(() => {}).then(() => performCandidateOrderUpdate(name, patch, options));
   const settled = next.catch(() => {}).finally(() => {
     if (candidateMutationChains.get(name) === settled) candidateMutationChains.delete(name);
   });
@@ -1061,6 +1075,13 @@ window.api.updateName = async (a, b) => {
     method: "POST",
     body: JSON.stringify({ orderName: payload.name, patch: { custName: payload.newName ?? payload.custName } }),
   });
+};
+
+window.api.updateTargetDate = async (name, targetDate, baseline) => {
+  if (!isShopifyCandidateView() || candidateByName(name)._historyReadOnly) {
+    throw new Error('Target dates can only be changed on the active production board.');
+  }
+  return updateCandidateOrder(name, { target_date: targetDate }, { targetDateBaseline: baseline || null });
 };
 
 window.api.updatePrintableItem = async (name, itemId, included) => {

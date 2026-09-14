@@ -402,6 +402,11 @@ These data points are not Shopify commerce even when some are stored on a Shopif
 
 ## Production-Control Fields Not Yet Modeled
 
+The optional internal `targetDate` is now implemented in local production code,
+with an Overview editor and card badge; see [Manual target dates](../workflows/order-ingestion-kanban.md#manual-target-dates)
+for release status. This supplies a manually set shop finish-by day only. Customer
+promise hierarchy, assignment, and formal next-action/blocker contracts remain unmodeled.
+
 The 2026-08-17 repository-grounded order-detail audit confirmed that these concepts do not have an authoritative end-to-end contract in the current shared detail. They are important design inputs, but their exact names, granularity, transition authority, and storage location require owner/workflow validation before implementation.
 
 | Candidate family | Missing or incomplete information | Why it matters |

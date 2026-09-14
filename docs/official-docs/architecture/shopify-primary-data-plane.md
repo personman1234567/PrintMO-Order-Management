@@ -78,9 +78,20 @@ The JSON metafield contains:
 - `stage`;
 - `readiness.blanksOrdered`, `readiness.blanksReady`, `readiness.printsOrdered`, and `readiness.printsReady`;
 - `printedCount`, `bundleId`, `batchRefs`, and `internalNotes`;
+- optional `targetDate` (a valid calendar date in `YYYY-MM-DD` format, or `null`);
 - attention/archive fields and actor/timestamps.
 
 Allowed stages are `received`, `to_order`, `blanks_cart`, `blanks_ordered`, `print`, and `completed`.
+`targetDate` is an internal shop finish-by day, interpreted in `America/Chicago`.
+It is an additive schema-v1 field: older records default to `null`, no backfill is
+required, and unrelated production saves preserve it. `target_date`/`targetDate`
+patches use the existing revision, compare-digest, idempotency, and actor/event
+contracts. Both board and detail DTOs include the value through
+`productionForClient`; D1 stores it in the existing production JSON. It does not
+set Shopify delivery promises, fulfillment dates, or production stages. The
+shared provider contract retains provider authority (Shopify metafield for
+Shopify; provider-owned D1 state for enrolled Etsy orders).
+
 The Admin order block presents five operator-facing stages by grouping
 `blanks_cart` and `blanks_ordered` under **Blanks** with a required substage.
 Its production DTO retains the compatibility field `garmentCount`, now the printable-piece cap. It sums current line-item quantities using per-item `printEligibility` overrides, defaulting to supplier-SKU garments excluding print-service lines. Overrides are additive schema-v1 production metadata keyed by immutable line-item ID; patch values true/false include/exclude, and null restores automatic detection. They never alter commerce or S&S purchasing. The Worker validates IDs against all paginated lines, preserves compare-digest concurrency, and rejects printed counts above the cap.

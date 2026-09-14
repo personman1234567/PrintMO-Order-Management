@@ -28,6 +28,37 @@
     };
   }
 
+  // Calendar dates stay literal; urgency is evaluated in the shop's timezone.
+  function targetDatePresentation(order, now = new Date()) {
+    const value = order?.targetDate;
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value < '0001-01-01') return null;
+    const date = new Date(`${value}T00:00:00Z`);
+    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) return null;
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(now);
+    const part = type => parts.find(entry => entry.type === type).value;
+    const today = `${part('year')}-${part('month')}-${part('day')}`;
+    const dayDifference = Math.round((date.getTime() - Date.parse(`${today}T00:00:00Z`)) / 86400000);
+    const full = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'UTC', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+    }).format(date);
+    const short = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'UTC', month: 'short', day: 'numeric',
+      ...(value.slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' } : {})
+    }).format(date);
+    const neutral = order.productionStage === 'completed' || order._historyReadOnly
+      || String(order.displayFulfillmentStatus || '').toUpperCase() === 'FULFILLED';
+    let label = `Target ${short}`;
+    let tone = 'neutral';
+    if (!neutral) {
+      if (dayDifference < 0) { label = `Late · ${short}`; tone = 'late'; }
+      else if (dayDifference === 0) { label = 'Today'; tone = 'soon'; }
+      else if (dayDifference === 1) { label = 'Tomorrow'; tone = 'soon'; }
+    }
+    return { label, tone, full, accessible: `Target date: ${full}${tone === 'late' ? ', overdue' : ''}` };
+  }
+
   function mergeCanonicalProductionState(order, production) {
     if (!order || !production) return order;
     const hasVersion = Object.prototype.hasOwnProperty.call(production, 'version')
@@ -46,6 +77,9 @@
 
     if (incomingIsOlder) return order;
     if (hasVersion) order._version = incomingVersion;
+    if (Object.prototype.hasOwnProperty.call(production, 'targetDate')) {
+      order.targetDate = production.targetDate || null;
+    }
     if (Object.prototype.hasOwnProperty.call(production, 'printEligibility')) {
       order.printEligibility = { ...production.printEligibility };
     }
@@ -204,6 +238,7 @@
   }
 
   return {
+    targetDatePresentation,
     createProgressSaveCoordinator,
     createNoteDraftStore,
     mergeCanonicalProductionState,

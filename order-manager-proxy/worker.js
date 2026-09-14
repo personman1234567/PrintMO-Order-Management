@@ -5130,6 +5130,12 @@ async function d1Shop(env, { allowUninstalled = false } = {}) {
     return row;
 }
 
+function validTargetDate(value) {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value < '0001-01-01') return false;
+    const date = new Date(`${value}T00:00:00Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 function defaultProductionState(actor = 'system') {
     const now = isoNow();
     return {
@@ -5140,6 +5146,7 @@ function defaultProductionState(actor = 'system') {
         readiness: { blanksOrdered: false, blanksReady: false, printsOrdered: false, printsReady: false },
         printedCount: 0,
         printEligibility: {},
+        targetDate: null,
         bundleId: null,
         batchRefs: [],
         internalNotes: '',
@@ -5174,6 +5181,7 @@ function normalizeProductionState(value, actor = 'system') {
         printEligibility: Object.fromEntries(Object.entries(input.printEligibility || {})
             .filter(([id, value]) => validPrintItemId(id) && typeof value === 'boolean').slice(0, 1000)),
         bundleId: input.bundleId ? String(input.bundleId).slice(0, 160) : null,
+        targetDate: validTargetDate(input.targetDate) ? input.targetDate : null,
         batchRefs: Array.isArray(input.batchRefs) ? [...new Set(input.batchRefs.map(String))].slice(0, 100) : [],
         internalNotes: String(input.internalNotes || '').slice(0, 5000),
         attention: {
@@ -5216,6 +5224,7 @@ function productionForClient(gid, state, compareDigest, assets = [], garmentCoun
         garmentCount: Number.isInteger(garmentCount) && garmentCount >= 0 ? garmentCount : null,
         printedCount: state.printedCount,
         printEligibility: state.printEligibility || {},
+        targetDate: state.targetDate || null,
         blanksOrdered: state.readiness.blanksOrdered ? 1 : 0,
         blanksStatus: state.readiness.blanksReady ? 1 : 0,
         printsStatus: state.readiness.printsReady ? 1 : 0,
@@ -5252,6 +5261,8 @@ function normalizeProductionPatch(patch) {
         printed_count: 'printedCount',
         printEligibility: 'printEligibility',
         print_eligibility: 'printEligibility',
+        targetDate: 'targetDate',
+        target_date: 'targetDate',
         blanksStatus: 'blanksStatus',
         blanks_status: 'blanksStatus',
         blanksOrdered: 'blanksOrdered',
@@ -5269,6 +5280,11 @@ function normalizeProductionPatch(patch) {
         const target = aliases[key];
         if (!target) throw Object.assign(new Error(`Production field "${key}" is not mutable.`), { code: 'INVALID_PATCH_FIELD', status: 400 });
         normalized[target] = value;
+    }
+    if ('targetDate' in normalized && normalized.targetDate !== null && !validTargetDate(normalized.targetDate)) {
+        throw Object.assign(new Error('Choose a valid target date, or clear the date.'), {
+            code: 'INVALID_TARGET_DATE', status: 400
+        });
     }
     if ('printEligibility' in normalized) {
         const values = normalized.printEligibility;
@@ -5317,6 +5333,7 @@ function applyProductionPatch(current, patch, actor, mutationId) {
     if ('stage' in patch) next.stage = patch.stage;
     if ('bundleId' in patch) next.bundleId = patch.bundleId ? String(patch.bundleId) : null;
     if ('internalNotes' in patch) next.internalNotes = String(patch.internalNotes || '');
+    if ('targetDate' in patch) next.targetDate = patch.targetDate;
     if ('printedCount' in patch) next.printedCount = Number(patch.printedCount);
     if ('printEligibility' in patch) {
         for (const [id, value] of Object.entries(patch.printEligibility)) {

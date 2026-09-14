@@ -1,5 +1,68 @@
 /* Canonical order-detail workbench shared by the Shopify board and Electron shell. */
 
+body[data-order-source="shopify"] .target-date-badge {
+  padding: 3px 7px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: var(--board-text, #334155);
+  background: var(--board-surface-muted, #f1f5f9);
+}
+
+body[data-order-source="shopify"] .target-date-badge.target-date-soon {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+body[data-order-source="shopify"] .target-date-badge.target-date-late {
+  color: #b42318;
+  background: #fee4e2;
+}
+
+#detail-overlay .target-date-section {
+  border-block-end: 1px solid var(--detail-border);
+  padding-block: 14px;
+  color: var(--detail-text);
+}
+
+#detail-overlay .target-date-summary,
+#detail-overlay .target-date-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#detail-overlay .target-date-section h3 { margin: 0; font-size: 14px; }
+#detail-overlay .target-date-section p { margin: 5px 0; font-size: 13px; }
+#detail-overlay #target-date-form { margin-block-start: 12px; }
+#detail-overlay #target-date-form[hidden],
+#detail-overlay .target-date-section[hidden],
+#detail-overlay .target-date-section button[hidden] { display: none; }
+#detail-overlay #target-date-form label { font-weight: 600; }
+#detail-overlay #target-date-hint { color: var(--detail-muted); }
+#detail-overlay #target-date-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 260px;
+  min-width: 0;
+  min-height: 44px;
+  margin-block: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--detail-border-strong);
+  border-radius: 6px;
+  background: var(--detail-surface);
+  color: var(--detail-ink);
+  font: inherit;
+}
+#detail-overlay .target-date-actions { justify-content: flex-start; }
+#detail-overlay .target-date-section button { min-height: 44px; padding-inline: 12px; }
+#detail-overlay #target-date-status:empty { display: none; }
+
 .source-badge-group {
   display: inline-flex;
   align-items: center;

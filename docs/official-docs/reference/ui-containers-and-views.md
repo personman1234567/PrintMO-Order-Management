@@ -90,6 +90,7 @@ An **Order Card** (`.pipeline-card`, `.card`) is the fundamental visual unit dis
 | **Garment Count** | `.counts .count-items` | Garment icon + total apparel piece count. | Source: Calculated by summing `item.qty` for all line items in `order.items`. |
 | **Print Count** | `.counts .count-prints` | Printer icon + total print impressions needed. | Source: Calculated by inspecting `order.items[].prints` or print location tags. |
 | **Footer Bar** | `.card-footer` | Item count summary or production progress. | Displays item total; on `Ready To Print` cards (`.print-card`), displays percentage complete progress bar (`75%`). |
+| **Target date** | `.target-date-badge` within `.production-card-statuses` | Optional internal shop finish-by day, with text for today, tomorrow, or late. | `production.targetDate`; completed/history orders stay neutral. See [Manual target dates](../workflows/order-ingestion-kanban.md#manual-target-dates) for the save and release contract. |
 
 ---
 
@@ -118,6 +119,7 @@ Below is the complete inventory of all 10 modal overlays and secondary screens e
   - **Surface-specific file access**: The desktop detail retains the legacy aggregate `#detail-files-btn` and attachments modal. The Shopify web detail intentionally omits that button because mockups and design files render inline. Shared renderer code treats `#detail-files-btn` as optional.
 
 - **Current reliability and semantic boundaries**:
+  - Overview exposes a native date editor with Save, Clear date, and Cancel for the optional internal Target date. History is read-only. The card badge uses the saved production field and Chicago calendar-day boundaries; it is independent of Shopify shipping/fulfillment promises.
   - Overview derives only from existing order, material-readiness, print-progress, fulfillment, attention, and freshness fields. Its recommendation is a transparent navigation aid into an existing workspace, not an enforced production gate or a persisted next-action rule.
   - The readiness summary is deliberately scoped to `Materials marked ready`. It reflects only the two Blanks and two Prints Ordered/Ready sequences and does not claim approved artwork, an ordered/received gang sheet, quantity reconciliation, quality acceptance, or formal work release.
   - Canonical detail hydration adopts the canonical revision, printed count, and all four readiness flags into the local control model before repainting production controls and save baselines.

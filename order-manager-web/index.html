@@ -529,6 +529,27 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                     <button id="overview-primary-action" class="overview-primary-action" type="button" data-overview-target="tab-production">Open production</button>
                   </section>
 
+                  <section id="target-date-section" class="target-date-section" aria-labelledby="target-date-title" hidden>
+                    <div class="target-date-summary">
+                      <div>
+                        <h3 id="target-date-title">Target date</h3>
+                        <p id="target-date-value">No target date</p>
+                      </div>
+                      <button id="target-date-edit" class="overview-text-action" type="button">Set date</button>
+                    </div>
+                    <form id="target-date-form" hidden>
+                      <label for="target-date-input">Finish by</label>
+                      <p id="target-date-hint">Internal shop target, by the end of this day (Central time).</p>
+                      <input id="target-date-input" type="date" required min="0001-01-01" max="9999-12-31" aria-describedby="target-date-hint target-date-status">
+                      <div class="target-date-actions">
+                        <button id="target-date-save" class="overview-primary-action" type="submit">Save</button>
+                        <button id="target-date-clear" class="overview-text-action" type="button">Clear date</button>
+                        <button id="target-date-cancel" class="overview-text-action" type="button">Cancel</button>
+                      </div>
+                    </form>
+                    <p id="target-date-status" role="status" aria-live="polite"></p>
+                  </section>
+
                   <section class="overview-workflow" aria-labelledby="overview-workflow-title">
                     <div class="overview-section-heading">
                       <div>
@@ -1048,12 +1069,12 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <!-- existing renderer logic -->
   <script src="./web-shim.js"></script>
   <script src="./storage-browser.js"></script>
+  <script src="./order-detail-state.js"></script>
   <script src="./renderer.js"></script>
   <script src="./previous-orders.js"></script>
   <script src="./shopify-preview.js"></script>
   <script src="./dashboard-triage-enhancements.js"></script>
   <script src="./blanks-batches.js"></script>
-  <script src="./order-detail-state.js"></script>
   <script src="./detail-overlay-enhancements.js"></script>
   <script src="./desktop-drag-polish.js"></script>
   <script src="./manual-add-checklist.js"></script>

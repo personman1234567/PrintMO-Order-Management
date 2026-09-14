@@ -17,6 +17,7 @@
 - [Shared Board Render and Mutation Flow](#shared-board-render-and-mutation-flow)
 - [Stage and View Semantics](#stage-and-view-semantics)
 - [Card and Detail Interactions](#card-and-detail-interactions)
+- [Manual Target Dates](#manual-target-dates)
 - [Common Failure Modes & Recovery](#common-failure-modes--recovery)
 
 ## Order Enrollment
@@ -108,6 +109,34 @@ Legacy status values remain compatibility data for the Legacy Redis view only.
 - Provider identity uses `_orderKey`/`orderKey`; combined customer/order display names remain presentation text only.
 - Candidate source switching preserves the last usable board if the requested source fails.
 - The shared detail's current limitations and the reliability-first redesign path are documented in [Order Detail Digital Traveler Redesign](../future-plans/order-detail-digital-traveler-redesign-plan.md). Do not infer complete production eligibility from the current four readiness flags.
+
+### Manual Target Dates
+
+Implementation status: available in local code; requires the updated Worker followed
+by a Pages release before production use.
+
+The Overview **Target date** section lets an active production-board operator set,
+edit, cancel an edit, or clear an internal finish-by day with a native date picker.
+The day ends in `America/Chicago`; no time-of-day or customer promise is inferred.
+No date is assigned by default. History displays the saved date without editing.
+
+Cards display one read-only badge in their existing status region: a neutral
+`Target Sep 16`, amber `Today`/`Tomorrow`, or red `Late · Sep 12`. Completed and
+history orders keep a neutral date, and orders without dates have no badge.
+Dates in a different year include that year. Text and accessible full-date labels
+carry the meaning independently of color. Normal board refreshes update urgency
+even when the order itself did not change.
+
+Saving uses the canonical production update chain. The card changes after the
+server confirms the save; failures retain the old badge and the chosen editor
+date. A concurrent change to this same field is shown for explicit review before
+replacement; unrelated revision changes can reconcile once. Saving while switching
+orders updates only the originating order and never moves focus into another order.
+
+Verification: Phase 2 covers valid/invalid dates, leap days, Chicago midnight and
+DST, set/clear, revision conflicts, idempotency, unrelated saves, and board refresh
+persistence. Browser fixtures cover editor actions, failure recovery, history,
+and desktop/mobile geometry.
 
 ## Common Failure Modes & Recovery
 

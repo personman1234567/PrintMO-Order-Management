@@ -471,6 +471,7 @@ function candidateOrderRenderFingerprint(order) {
     receivedAt: order.receivedAt || '',
     status: order.status || 'received',
     productionStage: order.productionStage || '',
+    targetDate: order.targetDate || null,
     items: (order.items || []).map(item => ({
       id: item.id || '',
       title: item.title || '',
@@ -535,6 +536,24 @@ function refreshVisibleRelativeTimes() {
     const order = ordersByName.get(orderName);
     if (order?.receivedAt) pill.textContent = timeAgo(order.receivedAt);
   });
+  document.querySelectorAll('.card[data-order-id]').forEach(card => {
+    const order = ordersByName.get(card.dataset.orderId);
+    if (order) renderCardTargetDate(card, order);
+  });
+}
+
+function renderCardTargetDate(card, order) {
+  const date = order?._candidate ? window.OrderDetailState?.targetDatePresentation(order) : null;
+  const existing = card.querySelector('.target-date-badge');
+  if (!date) { existing?.remove(); return; }
+  const region = card.querySelector('.production-card-statuses');
+  if (!region) return;
+  const badge = existing || document.createElement('span');
+  badge.className = `card-status-badge target-date-badge target-date-${date.tone}`;
+  badge.textContent = date.label;
+  badge.title = date.accessible;
+  badge.setAttribute('aria-label', date.accessible);
+  if (!existing) region.prepend(badge);
 }
 
 /**
@@ -958,6 +977,7 @@ function makeCard(o, style = 'default') {
     });
   }
 
+  renderCardTargetDate(card, o);
   const mockupSlot = card.querySelector('.mockup-slot');
   const mockupAssetIdentity = getFirstMockupAssetIdentity(o);
   if (mockupSlot && mockupAssetIdentity) mockupSlot.dataset.assetId = mockupAssetIdentity;
