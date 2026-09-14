@@ -1186,6 +1186,11 @@ function getManualMockupsForOrder(order) {
   return manualMockupsByOrderNumber.get(orderNumberFromOrder(order)) || [];
 }
 
+function canReadManualMockupsForOrder(order) {
+  const provider = String(order?._provider || order?.source?.provider || '').toLowerCase();
+  return provider !== 'etsy' && typeof window.api?.listManualMockups === 'function';
+}
+
 async function refreshManualMockupsForOrder(order) {
   const orderNumber = orderNumberFromOrder(order);
   if (!orderNumber || typeof window.api?.listManualMockups !== 'function') return false;
@@ -2095,7 +2100,10 @@ function openDetail(o) {
   const historyReadOnly = Boolean(o?._historyReadOnly);
   detailOrder = o;
   renderOrderAssets(o);
-  if (o?._capabilities?.artworkUpload !== false) {
+  // Reading existing manual mockups is independent of permission to upload or
+  // remove artwork. Fulfilled history is intentionally view-only, but it must
+  // still display the private mockups already attached to the Shopify order.
+  if (canReadManualMockupsForOrder(o)) {
     refreshManualMockupsForOrder(o).then(changed => {
       if (changed && detailOrder === o) renderOrderAssets(o);
     }).catch(err => console.warn('Unable to refresh manual mockups', err));

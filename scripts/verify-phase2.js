@@ -2591,6 +2591,39 @@ async function run() {
     'readiness copy must stay scoped to material milestones and programmatic tab scrolling must respect reduced motion'
   );
   const sharedDetailRenderer = fs.readFileSync(path.join(root, 'renderer.js'), 'utf8');
+  const sharedOpenDetailSource = sharedDetailRenderer.slice(
+    sharedDetailRenderer.indexOf('function openDetail'),
+    sharedDetailRenderer.indexOf('\nfunction closeDetail', sharedDetailRenderer.indexOf('function openDetail'))
+  );
+  const manualMockupReadPredicateSource = sharedDetailRenderer.slice(
+    sharedDetailRenderer.indexOf('function canReadManualMockupsForOrder'),
+    sharedDetailRenderer.indexOf('\nasync function refreshManualMockupsForOrder')
+  );
+  const canReadManualMockups = (order, api) => vm.runInNewContext(
+    `${manualMockupReadPredicateSource}\ncanReadManualMockupsForOrder(order);`,
+    { order, window: { api } },
+    { filename: 'manual-mockup-read-capability-fixture.js' }
+  );
+  assert(
+    sharedDetailRenderer.includes('function canReadManualMockupsForOrder(order)')
+      && sharedDetailRenderer.includes("return provider !== 'etsy' && typeof window.api?.listManualMockups === 'function'")
+      && sharedOpenDetailSource.includes('if (canReadManualMockupsForOrder(o))')
+      && !sharedOpenDetailSource.includes("if (o?._capabilities?.artworkUpload !== false)"),
+    'view-only Shopify history must read existing manual mockups without enabling artwork uploads'
+  );
+  assert.equal(
+    canReadManualMockups(
+      { _provider: 'shopify', _historyReadOnly: true, _capabilities: { artworkUpload: false } },
+      { listManualMockups() {} }
+    ),
+    true,
+    'read-only Shopify history must still be eligible to load existing manual mockups'
+  );
+  assert.equal(
+    canReadManualMockups({ _provider: 'etsy', _capabilities: { artworkUpload: false } }, { listManualMockups() {} }),
+    false,
+    'manual Shopify mockup reads must remain isolated from Etsy orders'
+  );
   assert(
     sharedDetailRenderer.includes("const canEditCustomerName = o?._candidate !== true")
       && sharedDetailRenderer.includes("nameSourceNote.textContent = canEditCustomerName ? '' : `Managed by ${sourceLabel}`")

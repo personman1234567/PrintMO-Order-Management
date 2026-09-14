@@ -29,7 +29,7 @@
 Current production deployment on 2026-09-03:
 
 - Worker version: `24b570ed-ac91-4e34-8029-849c88157e78`
-- Pages deployment: `868f08f5.print-mo-order-manager.pages.dev` (release marker `1788474708519`)
+- Pages deployment: `67c73fcb.print-mo-order-manager.pages.dev` (release marker `1788475312134`)
 - Shopify app version: `designer-assets-idempotency-2026-07-23`
 - Stateless supplier gateway commit: `d3a0d5a`
 
