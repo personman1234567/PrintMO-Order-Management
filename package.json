@@ -17,7 +17,10 @@
     "docs:check": "node scripts/check-docs.js",
     "verify:phase1": "node scripts/verify-phase1.js",
     "verify:phase2": "node scripts/verify-phase2.js",
-    "simulate:ss-feedback": "node scripts/simulate-ss-feedback.js"
+    "simulate:ss-feedback": "node scripts/simulate-ss-feedback.js",
+    "inventory:audit": "node inventory-sync/cli.mjs audit",
+    "inventory:dry-run": "node inventory-sync/cli.mjs dry-run",
+    "inventory:test": "node --test inventory-sync/inventory-sync.test.mjs"
   },
   "dependencies": {
     "dotenv": "^16.5.0",
@@ -39,7 +42,9 @@
       {
         "from": ".build/app-config.json",
         "to": "app-config.json",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "Assets/ApparelCount.svg",
@@ -62,15 +67,22 @@
       "**/*",
       "!.env",
       "!backups/**",
-      "!.build/**"
+      "!.build/**",
+      "!inventory-sync/**"
     ],
     "mac": {
       "icon": "PrintMO_Orders.icns",
-      "target": ["dmg", "zip"]
+      "target": [
+        "dmg",
+        "zip"
+      ]
     },
     "win": {
       "icon": "PrintMO_Orders.ico",
-      "target": ["nsis", "zip"]
+      "target": [
+        "nsis",
+        "zip"
+      ]
     }
   }
 }

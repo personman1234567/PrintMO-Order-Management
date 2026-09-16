@@ -10,12 +10,13 @@ npm run repo -- route "<task, symptom, error, path, or symbol>"
 
 The command ranks exact document sections, source symbols, registered tools, verification, and stop conditions. Use this table when browsing manually.
 
-<!-- route:electron-ipc route:legacy-redis route:order-data-inventory route:order-detail-workbench route:kanban-ui route:shopify-data-plane route:etsy-integration route:blanks-batching route:web-shopify-port route:shopify-detail-scope-failure route:idempotency-key-rejection route:codex-browser-gpu-crash route:troubleshooting route:build-and-setup route:feature-progression route:candidate-cutover route:repository-tools route:documentation-system route:domain-language route:legacy-history -->
+<!-- route:supplier-inventory-sync route:electron-ipc route:legacy-redis route:order-data-inventory route:order-detail-workbench route:kanban-ui route:shopify-data-plane route:etsy-integration route:blanks-batching route:web-shopify-port route:shopify-detail-scope-failure route:idempotency-key-rejection route:codex-browser-gpu-crash route:troubleshooting route:build-and-setup route:feature-progression route:candidate-cutover route:repository-tools route:documentation-system route:domain-language route:legacy-history -->
 
 ## Task and Symptom Routing
 
 | Task, symptom, or focus | First section | Primary symbols/files | Tool / verification | Stop condition |
 |---|---|---|---|---|
+| Supplier inventory sync, S&S stockouts, supplier Shopify location, or inventory observation | [Supplier inventory continuation](future-plans/supplier-inventory-sync-plan.md#current-continuation-state) | `inventory-sync/worker.mjs → runDryRun`; `core.mjs → makePlan`; `gateway-handler.mjs → gatewayInventoryHandler` | `npm run repo -- inventory test`; docs check | Live writes require verified pilot, locations, commitments, shared blanks and runtime permissions |
 | Manual target date, finish-by day, or overdue card badge | [Manual target dates](workflows/order-ingestion-kanban.md#manual-target-dates) | `worker.js → normalizeProductionPatch`; `web-shim.js → updateTargetDate`; `detail-overlay-enhancements.js → renderTargetDate`; `renderer.js → renderCardTargetDate` | Phase 2; desktop/mobile editor checks; docs check | Broader customer-promise or workflow authority changes |
 | Electron IPC, preload, OIDC, desktop initialization | [IPC bridge and Electron transport](architecture/ipc-and-storage.md#ipc-bridge-and-electron-transport) | `main.js → workerFetch, createWindow`; `preload.js → contextBridge.exposeInMainWorld` | `npm run repo -- verify phase1` | Authentication authority, secrets, or Worker trust-boundary change |
 | Legacy Redis queue, Base64 assets, fallback behavior | [Legacy Redis boundary](architecture/ipc-and-storage.md#legacy-redis-boundary) | `worker.js → shopifyOrdersQueue`; `renderer.js → splitOrderAssets` | `npm run repo -- redis backup`; Phase 1 | Restore, deletion, or schema rewrite |

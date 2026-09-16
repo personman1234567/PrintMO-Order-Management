@@ -85,6 +85,20 @@
       "purpose": "Exercise the real supplier-result normalizer with synthetic shirts and print item-level accepted/rejected reasons without network or database access.",
       "mode": "read-only",
       "script": "scripts/simulate-ss-feedback.js"
+    },
+    {
+      "id": "inventory-observation",
+      "command": "npm run repo -- inventory audit|dry-run [--env-file PATH] [--shop DOMAIN]",
+      "purpose": "Read a bounded inventory sample or run a pilot observation through the supplier gateway; no inventory writes.",
+      "mode": "remote-read-only",
+      "script": "inventory-sync/cli.mjs"
+    },
+    {
+      "id": "inventory-tests",
+      "command": "npm run repo -- inventory test",
+      "purpose": "Verify isolated inventory observation, gateway auth, missing-data, and no-write contracts locally.",
+      "mode": "read-only",
+      "script": "inventory-sync/inventory-sync.test.mjs"
     }
   ],
   "routes": [
@@ -564,6 +578,73 @@
       "tools": [],
       "verify": [],
       "stop": ["Never revive a deprecated pattern without verifying it against live code and current architecture."]
+    },
+    {
+      "id": "supplier-inventory-sync",
+      "description": "S&S inventory availability observation and separate supplier-location sync pilot",
+      "taskTypes": [
+        "implementation",
+        "diagnosis",
+        "inventory"
+      ],
+      "keywords": [
+        "inventory sync",
+        "supplier stock",
+        "S&S availability",
+        "supplier location",
+        "dry-run inventory"
+      ],
+      "paths": [
+        "inventory-sync/"
+      ],
+      "symbols": [
+        "runDryRun",
+        "makePlan",
+        "gatewayInventoryHandler"
+      ],
+      "errors": [
+        "SUPPLIER_GATEWAY_UNCONFIGURED",
+        "LIVE_WRITES_NOT_IMPLEMENTED",
+        "SHOPIFY_ACCESS_DENIED",
+        "PROTECTED_LOCATION"
+      ],
+      "read": [
+        {
+          "path": "docs/official-docs/future-plans/supplier-inventory-sync-plan.md",
+          "anchor": "current-continuation-state"
+        }
+      ],
+      "inspect": [
+        {
+          "path": "inventory-sync/worker.mjs",
+          "symbols": [
+            "runDryRun"
+          ]
+        },
+        {
+          "path": "inventory-sync/core.mjs",
+          "symbols": [
+            "makePlan"
+          ]
+        },
+        {
+          "path": "inventory-sync/gateway-handler.mjs",
+          "symbols": [
+            "gatewayInventoryHandler"
+          ]
+        }
+      ],
+      "tools": [
+        "inventory-observation",
+        "inventory-tests"
+      ],
+      "verify": [
+        "npm run repo -- inventory test",
+        "npm run docs:check"
+      ],
+      "stop": [
+        "Stop before live inventory writes until exact pilot/location scope, commitments, shared blanks, shipping/pickup and approved runtime access are verified."
+      ]
     }
   ]
 }

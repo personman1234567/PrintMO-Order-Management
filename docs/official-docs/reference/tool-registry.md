@@ -123,6 +123,22 @@ The machine-readable authority is `../retrieval-manifest.json`. Run `npm run rep
 - Scenarios: `random`, `partial`, `out-of-stock`, `invalid-sku`, `accepted`, and `timeout`; use `--seed <integer>` for a repeatable random result or `--json` for structured output.
 - Safety: performs no network requests and writes no files, databases, Shopify state, or S&S orders.
 
+<!-- tool:inventory-observation -->
+### `inventory-observation`
+
+- Command: `npm run repo -- inventory audit|dry-run [--env-file PATH] [--shop DOMAIN]`.
+- Mode: remote read-only; neither command mutates Shopify, S&S or local files.
+- Audit samples at most 25 active variants and reports incomplete coverage; optional `--direct-ss` probes S&S using existing local credentials. Dry-run uses the server gateway.
+- Prerequisites and unresolved live setup: [supplier inventory plan](../future-plans/supplier-inventory-sync-plan.md#commands-and-configuration).
+- Exit 0: checks ran, not rollout approval; 2: an audit check is blocked; 1: configuration/command failure.
+
+<!-- tool:inventory-tests -->
+### `inventory-tests`
+
+- Command: `npm run repo -- inventory test`.
+- Mode: read-only and fully local, using synthetic supplier/Shopify responses.
+- Verifies location isolation, missing stock versus zero, malformed data, freshness, gateway authentication, bounded retries and absence of live writes.
+
 ## Tool Promotion Contract
 
 Promote a helper only when it is likely to recur, encodes non-obvious repository knowledge, replaces an error-prone sequence, or provides important validation.
