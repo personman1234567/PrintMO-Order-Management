@@ -12,10 +12,11 @@ This candidate is observation-only: no inventory mutation exists, no new Worker 
 ## Current Continuation State
 
 - **Current state**: A bounded read-only audit CLI, explicit-pilot dry-run Worker, supplier normalization/planning module, and a candidate authenticated Render gateway handler exist locally. Fourteen focused tests passed during initial construction; final verification is reported by the owning test command.
-- **Next safe action**: Locate the actual `shopify-ss-integration` checkout/deployment access, adapt and mount the candidate inventory handler in its existing authenticated router, and verify a read through that deployed gateway. Reuse server-held S&S credentials. Then configure one verified pilot and run the Worker in dry-run mode.
-- **Remaining blockers**: Gateway source/deployment access is unavailable on this Mac. The local Shopify credential authenticates with read_products/read_inventory but no write_inventory; it is not proof of the production Worker's installed scopes. The checked-in Order Manager app configuration requests order scopes only. Location reads encountered ACCESS_DENIED. A subsequent split audit read 25 active variants, all untracked, and matched all 25 to S&S responses. Location reads remain blocked. Full catalog coverage, supplier warehouse eligibility/quantity semantics, commitment accounting, local-stock policy and fulfillment behavior are not settled.
-- **Owner / external actions**: Configure/release the required Shopify scopes through the chosen existing installation, provide access to the actual gateway source/deployment, select eligible warehouses and local-stock policy, then configure supplier location/fulfillment and authorize the reviewed pilot writes. No need to paste secrets into chat.
-- **Last verified evidence**: 2026-09-16: bounded Shopify health and S&S inventory reads authenticated using existing local environment credentials; initial combined catalog/location read hit an access restriction. One narrowed follow-up successfully read 25 active variants and matched 25 supplier inventory records; all sampled variants were untracked. The catalog has more pages, and the location check still returned ACCESS_DENIED. Remote lookup of the presumed sibling gateway repository returned repository-not-found; no further repository hunting was performed. This does not establish that the actual repository is missing. No live commerce state changed.
+- **Next safe action**: Adapt and mount the candidate inventory handler in the now-verified `PrintMO-Wholesale-API-Integration` Express checkout, establish deployment access, and verify an authenticated inventory read. Reuse server-held S&S credentials. Use that repository's `docs/shopify-inventory-handoff.md` to have the Shopify agent do the pilot audit and safe setup through its connected plugin, then run the Worker in dry-run mode.
+- **Remaining blockers**: Gateway source is now available on this Mac; the inventory-read adapter is not mounted and deployment access remains unverified. The local Shopify credential authenticates with read_products/read_inventory but no write_inventory; it is not proof of the production Worker's installed scopes. The checked-in Order Manager app configuration requests order scopes only. Location reads encountered ACCESS_DENIED. A subsequent split audit read 25 active variants, all untracked, and matched all 25 to S&S responses. Location reads remain blocked. Full catalog coverage, supplier warehouse eligibility/quantity semantics, commitment accounting, local-stock policy and fulfillment behavior are not settled.
+- **Owner / external actions**: Establish gateway deployment access and settle eligible warehouses and local-stock policy. The Shopify agent can work through its connected plugin without listing app scopes. At Worker integration, test the Worker's own Shopify token through real operations; change its app permissions only if those operations are denied. Configure supplier location/fulfillment and reviewed pilot writes after the commerce model is ready. No need to paste secrets into chat.
+- **Latest source/setup evidence**: 2026-09-22: owner supplied `https://github.com/personman1234567/PrintMO-Wholesale-API-Integration.git`; cloned at `d3a0d5a` to `/Users/tjreid/Documents/GitHub/PrintMO-Wholesale-API-Integration`. Package name and authenticated S&S routes confirm the gateway source. Locked dependencies, existing phase2 verification and source syntax checks passed on Node 22.23.2. Local development documentation, a blank environment template and Shopify agent handoff are prepared. No adapter was mounted, no production credentials copied, and no live service started or deployed.
+- **Last live audit evidence**: 2026-09-16: bounded Shopify health and S&S inventory reads authenticated using existing local environment credentials; initial combined catalog/location read hit an access restriction. One narrowed follow-up successfully read 25 active variants and matched 25 supplier inventory records; all sampled variants were untracked. The catalog has more pages, and the location check still returned ACCESS_DENIED. Remote lookup of the presumed sibling gateway repository returned repository-not-found; no further repository hunting was performed. This does not establish that the actual repository is missing. No live commerce state changed.
 
 ## Open Questions & Brainstorming
 
@@ -33,8 +34,9 @@ This candidate is observation-only: no inventory mutation exists, no new Worker 
 - [x] Trace existing Worker-to-Render authentication (`X-Order-Manager-Key`) and server-held S&S credential ownership.
 - [x] Check existing local credential presence without emitting values; verify bounded read access.
 - [x] Add `npm run repo -- inventory audit --help` with explicit environment-file input and optional `--direct-ss` local diagnostic.
-- [ ] Verify gateway source and authenticated live inventory endpoint.
-- [ ] Verify the chosen installation's read_products, read_inventory, read_locations and eventual write_inventory access. Do not silently reuse a different app as the production authority.
+- [x] Locate and set up the actual gateway source (2026-09-22).
+- [ ] Mount the inventory adapter and verify the authenticated live inventory endpoint.
+- [ ] During Worker integration, verify the Worker's own Shopify credential can perform the required pilot reads and, when the write path is ready, exact-location inventory writes. Resolve a real access error in the chosen installation; the separate Shopify agent need not list app scopes before performing its plugin-based work. Do not silently reuse a different app as production authority.
 - [ ] Complete exact-SKU mapping, shared-blank inventory and pending-order accounting for the pilot.
 
 ### 2. Observation Worker
@@ -44,7 +46,7 @@ This candidate is observation-only: no inventory mutation exists, no new Worker 
 - [x] Exact supplier SKU mapping, warehouse allowlist, integer validation, missing-data and stale-data rejection.
 - [x] Protected location guard; no fallback to HQ and no write-capable mode.
 - [x] Bounded upstream requests (15-second timeout and at most one retry for short throttles/server errors), redacted errors and summary logs.
-- [x] Candidate gateway handler plus contract tests; not mounted in the inaccessible gateway repository.
+- [x] Candidate gateway handler plus contract tests; not yet mounted in the now-accessible gateway repository.
 - [ ] Wire the actual gateway, configure secrets and pilot, deploy dry-run Worker, enable observation schedule and alerts.
 - [ ] Persist last-success/status before unattended operation. Current version logs run summaries only; CLI returns the detailed report. No D1 table was created solely for the prototype.
 
@@ -86,3 +88,5 @@ A missing requested SKU or eligible warehouse remains unknown. Duplicate rows, i
 ## Progress Log
 
 - 2026-09-16: Implemented the observation candidate and bounded audit; preserved existing server credential boundaries. Live reads established partial access, while gateway access and Shopify location/write permission remain unresolved. Production inventory, purchasing and deployments remain unchanged.
+
+- 2026-09-22: Gateway source access resolved using the owner-provided repository. Local dependency installation and existing gateway tests passed; prepared development setup and Shopify agent handoff. Adapter integration, deployment access, runtime permissions and live inventory rollout remain pending.
