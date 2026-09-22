@@ -402,6 +402,7 @@
 
     lineItems.forEach(item => {
       const row = document.createElement('tr');
+      row.dataset.instructionKey = item._displayInstructionKey || '';
       const quantity = Number(item.currentQuantity ?? item.quantity ?? 0);
       const unitPrice = item.unitPrice?.amount ?? item.unitPrice ?? 0;
       const allocatedDiscount = (item.discountAllocations || []).reduce((total, allocation) => {
@@ -429,6 +430,7 @@
 
     });
     tbody.replaceChildren(fragment);
+    if (typeof renderCustomerItemInstructions === 'function') renderCustomerItemInstructions(order, rawLineItems);
 
     const shippingLine = Array.isArray(delivery.shippingLines) ? delivery.shippingLines[0] : null;
     const fulfillmentOrder = Array.isArray(delivery.fulfillmentOrders) ? delivery.fulfillmentOrders[0] : null;
@@ -2365,7 +2367,7 @@
       const itemLabel = itemRows.length === 1 ? 'grouped item' : 'grouped items';
       const pieceLabel = quantity === 1 ? 'piece' : 'pieces';
       count.textContent = `${itemRows.length} ${itemLabel} · ${quantity} ${pieceLabel}`;
-      count.title = 'Batch-split lines are combined by item, SKU, and variant';
+      count.title = 'Sizes are combined within each designed item; separate designs stay separate';
     }
 
     wrapper?.classList.toggle('has-many-items', itemRows.length > 12);

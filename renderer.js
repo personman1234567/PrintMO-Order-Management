@@ -978,6 +978,12 @@ function makeCard(o, style = 'default') {
   }
 
   renderCardTargetDate(card, o);
+  if (o._candidate && (o._provider || 'shopify') === 'shopify' && customerItemInstructionGroups(o.items).length) {
+    const indicator = document.createElement('span');
+    indicator.className = 'customer-item-instructions-indicator';
+    indicator.textContent = 'Item instructions';
+    (card.querySelector('.production-card-statuses') || card.querySelector('.counts') || card).appendChild(indicator);
+  }
   const mockupSlot = card.querySelector('.mockup-slot');
   const mockupAssetIdentity = getFirstMockupAssetIdentity(o);
   if (mockupSlot && mockupAssetIdentity) mockupSlot.dataset.assetId = mockupAssetIdentity;
@@ -2054,6 +2060,101 @@ function setupManualDesignControls() {
  * needs to read. The underlying order items and their IDs remain untouched;
  * this helper is presentation-only.
  */
+function customerItemAttributes(item) {
+  return Object.fromEntries((item?.customAttributes || []).map(attribute => [attribute.key, attribute.value]));
+}
+
+function customerItemInstructionKey(item, index) {
+  const attributes = customerItemAttributes(item);
+  const role = attributes.batch_role || attributes.group_role;
+  if (role && role !== 'garment') return '';
+  return attributes.group_id ? `group:${attributes.group_id}` : `line:${item.id || index}`;
+}
+
+function customerItemInstructionGroups(items = []) {
+  const groups = new Map();
+  (items || []).forEach((item, index) => {
+    const attributes = customerItemAttributes(item);
+    const key = customerItemInstructionKey(item, index);
+    const text = String(attributes._designer_item_instructions || '').replace(/\r\n?/g, '\n').trim();
+    const qty = Number(item.currentQuantity ?? item.qty ?? item.quantity ?? 0);
+    if (!key || !text || qty <= 0) return;
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, name: String(attributes._designerItemName || item.title || 'Item'),
+        description: [attributes._designerItemName ? item.title : '', attributes.garment_color].filter(Boolean).join(' · '), notes: [] };
+      groups.set(key, group);
+    }
+    let note = group.notes.find(note => note.text === text);
+    if (!note) { note = { text, sizes: Object.create(null) }; group.notes.push(note); }
+    const size = String(attributes.garment_size || item.variantTitle || 'Items');
+    note.sizes[size] = (note.sizes[size] || 0) + qty;
+  });
+  return [...groups.values()];
+}
+
+function customerInstructionContent(group) {
+  const block = document.createElement('div');
+  block.className = 'customer-item-instruction';
+  const title = document.createElement('strong');
+  title.textContent = group.name;
+  block.appendChild(title);
+  if (group.description) {
+    const description = document.createElement('div');
+    description.className = 'customer-item-instruction-context';
+    description.textContent = group.description;
+    block.appendChild(description);
+  }
+  group.notes.forEach(note => {
+    const sizes = document.createElement('div');
+    sizes.className = 'customer-item-instruction-context';
+    sizes.textContent = Object.entries(note.sizes).map(([size, qty]) => `${size} × ${qty}`).join(' · ');
+    const text = document.createElement('p');
+    text.textContent = note.text;
+    block.append(sizes, text);
+  });
+  return block;
+}
+
+function renderCustomerItemInstructions(order, items = order?.items || []) {
+  document.getElementById('customer-item-instructions')?.remove();
+  document.querySelectorAll('.customer-item-instructions-row').forEach(row => row.remove());
+  if (!order?._candidate || (order._provider || 'shopify') !== 'shopify') return;
+  const groups = customerItemInstructionGroups(items);
+  if (!groups.length) return;
+  const designPanel = document.getElementById('detail-design-panel');
+  if (designPanel) {
+    const section = document.createElement('section');
+    section.id = 'customer-item-instructions';
+    section.className = 'customer-item-instructions';
+    section.setAttribute('aria-labelledby', 'customer-item-instructions-title');
+    const heading = document.createElement('h3');
+    heading.id = 'customer-item-instructions-title';
+    heading.textContent = 'Customer item instructions';
+    section.append(heading, ...groups.map(customerInstructionContent));
+    designPanel.before(section);
+  }
+  const rows = [...document.querySelectorAll('#detail-items tbody tr[data-instruction-key]')];
+  groups.forEach(group => {
+    const anchor = rows.filter(row => row.dataset.instructionKey === group.key).at(-1);
+    if (!anchor) return;
+    const row = document.createElement('tr');
+    row.className = 'customer-item-instructions-row';
+    const cell = document.createElement('td');
+    cell.colSpan = anchor.cells.length;
+    const label = document.createElement('div');
+    label.className = 'customer-item-instruction-label';
+    label.textContent = 'Customer item instructions';
+    cell.append(label, customerInstructionContent(group));
+    row.appendChild(cell);
+    anchor.after(row);
+  });
+}
+
+function escapeItemDetailText(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
+}
+
 function consolidateLineItemsForDisplay(items = []) {
   const groups = new Map();
   const amount = value => Number(value?.amount ?? value ?? 0) || 0;
@@ -2063,11 +2164,16 @@ function consolidateLineItemsForDisplay(items = []) {
     .toLowerCase()
     .replace(/[\s-]+/g, '_');
   const hiddenAttributeKeys = new Set([
-    'group_id', 'batch_id', 'role', 'group_role', 'batch_role'
+    'group_id', 'batch_id', 'role', 'group_role', 'batch_role', '_designer_item_instructions', '_designeritemname'
   ]);
 
-  (Array.isArray(items) ? items : []).forEach(item => {
+  (Array.isArray(items) ? items : []).forEach((item, index) => {
+    const attributes = customerItemAttributes(item);
+    const instructionKey = customerItemInstructionKey(item, index);
+    const designerIdentity = (attributes.batch_role || attributes.group_role) === 'garment' && attributes.group_id
+      ? instructionKey : attributes._designer_item_instructions ? instructionKey : '';
     const key = JSON.stringify([
+      designerIdentity,
       String(item?.title || '').trim().toLowerCase(),
       String(item?.sku || '').trim().toLowerCase(),
       String(item?.variantTitle || '').trim().toLowerCase()
@@ -2090,6 +2196,7 @@ function consolidateLineItemsForDisplay(items = []) {
         currentQuantity: 0,
         _displayCurrentTotal: 0,
         _displayLineCount: 0,
+        _displayInstructionKey: instructionKey,
         customAttributes: [],
         _displayAttributeKeys: new Set()
       };
@@ -2225,26 +2332,28 @@ function openDetail(o) {
       ? i._displayCurrentTotal.toFixed(2)
       : (p * i.qty).toFixed(2) || 0;
     const skuLabel = !separateSkuColumn && i.sku
-      ? `<br><small style="color:#64748b;">SKU: ${i.sku}</small>`
+      ? `<br><small style="color:#64748b;">SKU: ${escapeItemDetailText(i.sku)}</small>`
       : '';
     const skuCell = separateSkuColumn
-      ? `<td style="padding:8px;">${i.sku || '–'}</td>`
+      ? `<td style="padding:8px;">${escapeItemDetailText(i.sku || '–')}</td>`
       : '';
     let attrsHtml = '';
     if (Array.isArray(i.customAttributes) && i.customAttributes.length > 0) {
-      const chips = i.customAttributes.map(a => `<span class="attribute-chip"><strong>${a.key}:</strong> ${a.value}</span>`).join('');
+      const chips = i.customAttributes.map(a => `<span class="attribute-chip"><strong>${escapeItemDetailText(a.key)}:</strong> ${escapeItemDetailText(a.value)}</span>`).join('');
       attrsHtml = `<tr><td colspan="${itemColumnCount}" class="line-item-attributes">${chips}</td></tr>`;
     }
     return `
-      <tr>
+      <tr data-instruction-key="${escapeItemDetailText(i._displayInstructionKey)}">
         <td style="padding:8px;">${i.qty}</td>
-        <td style="padding:8px;"><strong>${i.title}</strong>${skuLabel}</td>
+        <td style="padding:8px;"><strong>${escapeItemDetailText(i.title)}</strong>${skuLabel}</td>
         ${skuCell}
-        <td style="padding:8px;">${i.variantTitle || '–'}</td>
+        <td style="padding:8px;">${escapeItemDetailText(i.variantTitle || '–')}</td>
         <td style="padding:8px; text-align:right;">$${lineTotal}</td>
       </tr>
       ${attrsHtml}`;
   }).join('');
+
+  renderCustomerItemInstructions(o);
 
   // discount & total
   const disc = Number(o.discount) || 0;

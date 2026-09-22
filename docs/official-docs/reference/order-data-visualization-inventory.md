@@ -99,6 +99,7 @@ The board uses the bounded Shopify/D1 summary mapped through `web-shim.js` into 
 - PrintMO internal production notes.
 - Print progress as printed pieces versus total apparel.
 - Line-item quantity, title, SKU, variant title, and calculated line total; internal asset metadata stays out of the item table.
+- Customer item instructions from `_designer_item_instructions`, grouped by Designer `group_id`, visible above Design files in Production and beneath the associated item rows. Separate designs and conflicting size-specific text remain distinct; empty instructions are omitted. Shopify board cards show a presence indicator only.
 - Current subtotal, named shipping or local-pickup selection, discount when applied, tax total, and total. Tax breakdown is available behind a collapsed disclosure.
 - Shopify delivery/fulfillment, conversion, discounts, and timeline data when returned, plus a separate PrintMO production history.
 - PrintMO blanks/prints ordered and ready controls.

@@ -3086,7 +3086,7 @@ async function run() {
       && !sharedRenderer.includes('pendingManualMockupStatuses'),
     'manual mockup hydration must reconcile one card without rebuilding status columns over Designer previews'
   );
-  const consolidatorStart = sharedRenderer.indexOf('function consolidateLineItemsForDisplay');
+  const consolidatorStart = sharedRenderer.indexOf('function customerItemAttributes');
   const consolidatorEnd = sharedRenderer.indexOf('\nfunction openDetail', consolidatorStart);
   assert(consolidatorStart >= 0 && consolidatorEnd > consolidatorStart, 'shared renderer must expose display-only line consolidation');
   const consolidationInput = [
@@ -3105,6 +3105,39 @@ async function run() {
   assert.equal(consolidationResult[0].qty, 3, 'matching print quantities must be summed visually');
   assert.equal(consolidationResult[0]._displayCurrentTotal, 24, 'consolidated print totals must remain financially exact');
   assert.equal(consolidationResult[0].customAttributes.length, 0, 'batch identifiers must stay out of the operator-facing table');
+  const instructionFixture = (id, group, size, note, quantity = 1) => ({
+    id, title: 'Team tee', sku: 'TEE', variantTitle: `Black / ${size}`, qty: quantity, unitPrice: 10,
+    customAttributes: [
+      { key: 'group_id', value: group }, { key: 'batch_role', value: 'garment' },
+      { key: 'garment_size', value: size }, { key: 'garment_color', value: 'Black' },
+      { key: '_designerItemName', value: 'Staff shirts' }, { key: '_designer_item_instructions', value: note }
+    ]
+  });
+  const instructionInput = [
+    instructionFixture('1', 'staff', 'M', 'Pack separately\nKeep flat', 4),
+    instructionFixture('2', 'staff', 'L', 'Pack separately\nKeep flat', 6),
+    instructionFixture('3', 'volunteers', 'M', '<script>customer text</script>', 2),
+    instructionFixture('4', 'staff', 'XL', 'Different instruction', 1),
+    instructionFixture('5', '', 'M', 'No group', 1),
+    instructionFixture('6', '', 'M', 'No group', 1),
+    instructionFixture('7', 'empty', 'M', '   ', 1),
+    instructionFixture('8', 'removed', 'M', 'Removed', 0)
+  ];
+  const instructionResults = vm.runInNewContext(
+    `${sharedRenderer.slice(consolidatorStart, consolidatorEnd)}\n({ groups: customerItemInstructionGroups(input), rows: consolidateLineItemsForDisplay(input), escaped: escapeItemDetailText('<img src=x onerror=alert(1)>') });`,
+    { input: instructionInput }
+  );
+  assert.equal(instructionResults.groups.length, 4, 'only nonempty current items should produce instruction groups; absent IDs must remain separate');
+  assert.equal(instructionResults.groups[0].notes.length, 2, 'conflicting instructions must both survive');
+  assert.equal(instructionResults.groups[0].notes[0].sizes.M, 4);
+  assert.equal(instructionResults.groups[0].notes[0].sizes.L, 6);
+  assert.equal(instructionResults.groups[0].notes[1].sizes.XL, 1);
+  assert.equal(instructionResults.groups[1].notes[0].text, '<script>customer text</script>', 'instructions must stay plain text');
+  assert.equal(instructionResults.rows.length, 8, 'identical products in independent designs must not merge');
+  assert(instructionResults.rows.every(row => !row.customAttributes.some(attribute => attribute.key === '_designer_item_instructions')), 'raw instructions must not leak into generic attribute HTML');
+  assert.equal(instructionResults.escaped, '&lt;img src=x onerror=alert(1)&gt;');
+  assert(sharedRenderer.includes('text.textContent = note.text') && sharedRenderer.includes('renderCustomerItemInstructions(o)'), 'initial instructions must render safely');
+  assert(detailEnhancements.includes('renderCustomerItemInstructions(order, rawLineItems)'), 'canonical hydration must restore instructions after table replacement');
   assert(
     sharedRenderer.includes("const itemColumnCount = document.querySelectorAll('#detail-items thead th').length || 4")
       && sharedRenderer.includes('const separateSkuColumn = itemColumnCount >= 5'),

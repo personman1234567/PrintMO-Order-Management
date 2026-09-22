@@ -79,6 +79,8 @@ An **Order Card** (`.pipeline-card`, `.card`) is the fundamental visual unit dis
 
 ### Card Elements & Data Sources
 
+Shopify candidate cards with nonempty customer item instructions display a neutral `Item instructions` indicator in the existing status area. Instruction text stays inside order detail. Legacy and Etsy cards do not gain this indicator.
+
 | Visual Component | DOM Class / Element | Information Displayed | Data Source & Logic |
 |---|---|---|---|
 | **Header Bar** | `.card-header` | Order identifier & time-ago pill. | Background color reflects status enum or bundle state (`.bundle-card`, `.status-yellow`). |
@@ -99,6 +101,10 @@ An **Order Card** (`.pipeline-card`, `.card`) is the fundamental visual unit dis
 Below is the complete inventory of all 10 modal overlays and secondary screens embedded in `index.html`.
 
 ### 1. Order Detail Workbench (`#detail-overlay`, `#detail-card`)
+
+Customer item instructions are displayed read-only above Design files in Production and once beneath their associated garment group in Items & financials. Empty instructions create no section or placeholder. Each entry uses the optional customer item name, product/color, and size quantities; multiline text wraps naturally without an internal scroller. These instructions are distinct from the whole-order customer checkout note and editable internal production notes.
+
+The shared renderer reads `_designer_item_instructions` from Shopify custom attributes and deduplicates identical text within `group_id`. Display consolidation preserves separate Designer garment groups even for identical SKUs and variants. Conflicting instruction text is retained with its corresponding sizes; missing group IDs keep line-item association. Zero-current-quantity rows do not contribute instructions. Both initial and canonical-detail rendering use the same helper, and customer content is inserted as plain text. The implementation is code-verified; mobile visual acceptance remains owner-tested.
 - **Purpose**: Responsive order workbench for production decisions and Shopify commerce inspection. Desktop uses a modal split canvas; mobile uses a drill-in screen beneath the persistent workflow navigation.
 - **Displayed Data & Topology**:
   - **Header Bar** (`#detail-header`, `#detail-header-bar`): Order identifier (`#detail-order-id`), customer name (`#detail-header-customer`), financial and fulfillment badges (`#badge-financial`, `#badge-fulfillment`), received timestamp (`#detail-timestamp`), item and total summaries, readiness summary, and the canonical close control (`#detail-close`).
