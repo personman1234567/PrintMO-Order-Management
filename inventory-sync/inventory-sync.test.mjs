@@ -16,7 +16,7 @@ const base = { variants: [variant], inventory, observedAt: new Date(now).toISOSt
 const env = { INVENTORY_SYNC_MODE: 'dry-run', PILOT_VARIANT_IDS: JSON.stringify([id]), SS_WAREHOUSES: '["IL","KS"]',
   PROTECTED_LOCATION_IDS: JSON.stringify([localId]), SS_SAFETY_BUFFER: '2', SUPPLIER_LOCATION_ID: supplierId,
   SHOPIFY_SHOP_DOMAIN: 'example.myshopify.com', SHOPIFY_ACCESS_TOKEN: 'shop-secret',
-  SUPPLIER_INVENTORY_URL: 'https://gateway.example/order-manager/v1/supplier/ss/inventory', ORDER_MANAGER_ADMIN_KEY: 'gateway-secret' };
+  SUPPLIER_INVENTORY_URL: 'https://gateway.example/order-manager/v1/supplier/ss/inventory', INVENTORY_READ_KEY: 'gateway-secret' };
 const response = (body, status = 200, headers) => Response.json(body, { status, headers });
 
 test('uses only selected warehouses and keeps commitments unknown, never proposes writes', () => {
@@ -76,7 +76,7 @@ test('dry-run end to end queries Shopify and GETs the gateway; no secrets in rep
       assert.equal(options.headers['X-Shopify-Access-Token'],'shop-secret');
       return response({data:{nodes:[variant]}});
     }
-    assert.equal(options.headers['X-Order-Manager-Key'],'gateway-secret');
+    assert.equal(options.headers['X-Inventory-Read-Key'],'gateway-secret');
     assert.equal(options.redirect,'error');
     assert.equal(new URL(url).searchParams.get('skus'),variant.sku);
     return response({observedAt:new Date().toISOString(),items:inventory});

@@ -57,10 +57,10 @@ export async function readSupplierGateway(env, skus, deps) {
   try { url = new URL(env.SUPPLIER_INVENTORY_URL); } catch { throw new SyncError('SUPPLIER_GATEWAY_UNCONFIGURED'); }
   requireValue(url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash
     && url.pathname === '/order-manager/v1/supplier/ss/inventory', 'INVALID_GATEWAY_URL');
-  requireValue(env.ORDER_MANAGER_ADMIN_KEY, 'GATEWAY_CREDENTIAL_MISSING');
+  requireValue(env.INVENTORY_READ_KEY, 'GATEWAY_CREDENTIAL_MISSING');
   url.searchParams.set('skus', skus.join(','));
   const data = await requestJson(url.href, { headers: {
-    'X-Order-Manager-Key': env.ORDER_MANAGER_ADMIN_KEY,
+    'X-Inventory-Read-Key': env.INVENTORY_READ_KEY,
     'X-Shopify-Shop-Domain': shopDomain(env), Accept: 'application/json'
   } }, deps);
   return { observedAt: data?.observedAt, items: normalizeInventory(data?.items, skus) };

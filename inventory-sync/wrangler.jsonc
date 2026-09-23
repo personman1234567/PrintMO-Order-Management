@@ -4,13 +4,20 @@
   "compatibility_date": "2026-09-16",
   "workers_dev": false,
   "preview_urls": false,
-  "observability": { "enabled": true },
+  "observability": {
+    "enabled": true
+  },
   "vars": {
     "INVENTORY_SYNC_MODE": "disabled",
-    "PILOT_VARIANT_IDS": "[]",
+    "PILOT_VARIANT_IDS": "[\"gid://shopify/ProductVariant/46257399660792\",\"gid://shopify/ProductVariant/46257399693560\",\"gid://shopify/ProductVariant/46257399726328\",\"gid://shopify/ProductVariant/46257399759096\",\"gid://shopify/ProductVariant/46257399791864\",\"gid://shopify/ProductVariant/46257399824632\",\"gid://shopify/ProductVariant/46257399857400\",\"gid://shopify/ProductVariant/46257399890168\",\"gid://shopify/ProductVariant/46257399922936\",\"gid://shopify/ProductVariant/46257399955704\",\"gid://shopify/ProductVariant/46257399988472\",\"gid://shopify/ProductVariant/46257400021240\",\"gid://shopify/ProductVariant/46257400054008\",\"gid://shopify/ProductVariant/46257400086776\",\"gid://shopify/ProductVariant/46257400119544\",\"gid://shopify/ProductVariant/46257400152312\",\"gid://shopify/ProductVariant/46257400185080\",\"gid://shopify/ProductVariant/46257400217848\",\"gid://shopify/ProductVariant/46257400250616\",\"gid://shopify/ProductVariant/46257400283384\",\"gid://shopify/ProductVariant/46257400316152\",\"gid://shopify/ProductVariant/46257400348920\",\"gid://shopify/ProductVariant/46257400381688\",\"gid://shopify/ProductVariant/46257400414456\",\"gid://shopify/ProductVariant/46257400447224\"]",
     "SS_WAREHOUSES": "[]",
     "PROTECTED_LOCATION_IDS": "[]",
-    "SS_SAFETY_BUFFER": "0"
+    "SS_SAFETY_BUFFER": "0",
+    "SHOPIFY_SHOP_DOMAIN": "429cc0-3.myshopify.com",
+    "SUPPLIER_INVENTORY_URL": "https://printmo-wholesale-api-integration.onrender.com/order-manager/v1/supplier/ss/inventory",
+    "SUPPLIER_LOCATION_ID": "gid://shopify/Location/95240290552"
   },
-  "triggers": { "crons": [] }
+  "triggers": {
+    "crons": []
+  }
 }
