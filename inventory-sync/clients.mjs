@@ -46,8 +46,13 @@ export async function shopifyRead(env, token, query, variables = {}, deps) {
   return data.data;
 }
 export const VARIANT_FIELDS = 'id sku inventoryPolicy product { status } inventoryItem { id tracked }';
+const PILOT_VARIANT_FIELDS = `id sku inventoryPolicy availableForSale sellableOnlineQuantity product { status }
+  inventoryItem { id tracked inventoryLevels(first: 10, includeInactive: true) {
+    nodes { isActive location { id } quantities(names: ["available", "committed", "on_hand"]) { name quantity } }
+    pageInfo { hasNextPage }
+  } }`;
 export async function readPilot(env, token, ids, deps) {
-  const data = await shopifyRead(env, token, `query InventoryPilot($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { ${VARIANT_FIELDS} } } }`, { ids }, deps);
+  const data = await shopifyRead(env, token, `query InventoryPilot($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { ${PILOT_VARIANT_FIELDS} } } }`, { ids }, deps);
   requireValue(Array.isArray(data.nodes) && data.nodes.length === ids.length
     && data.nodes.every((v, i) => v?.id === ids[i] && v.product?.status === 'ACTIVE' && v.inventoryItem?.id), 'PILOT_VARIANT_MISSING_OR_INACTIVE');
   return data.nodes;

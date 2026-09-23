@@ -10,9 +10,16 @@ const id = 'gid://shopify/ProductVariant/1';
 const itemId = 'gid://shopify/InventoryItem/1';
 const localId = 'gid://shopify/Location/1';
 const supplierId = 'gid://shopify/Location/2';
-const variant = { id, sku: 'B00760004', product: { status: 'ACTIVE' }, inventoryPolicy: 'DENY', inventoryItem: { id: itemId, tracked: true } };
+const variant = { id, sku: 'B00760004', product: { status: 'ACTIVE' }, inventoryPolicy: 'DENY',
+  availableForSale: true, sellableOnlineQuantity: 8,
+  inventoryItem: { id: itemId, tracked: true, inventoryLevels: { pageInfo: { hasNextPage: false }, nodes: [
+    { isActive: true, location: { id: localId, fulfillsOnlineOrders: true }, quantities: [{ name: 'available', quantity: 0 }] },
+    { isActive: true, location: { id: supplierId, fulfillsOnlineOrders: true }, quantities: [
+      { name: 'available', quantity: 8 }, { name: 'committed', quantity: 0 }] },
+  ] } } };
 const inventory = [{ sku: variant.sku, warehouses: [{ warehouseAbbr: 'IL', qty: 8, dropship: false }, { warehouseAbbr: 'KS', qty: 0, dropship: false }] }];
-const base = { variants: [variant], inventory, observedAt: new Date(now).toISOString(), warehouses: ['IL', 'KS'], safetyBuffer: 2, supplierLocationId: supplierId, protectedLocationIds: [localId], now };
+const base = { variants: [variant], inventory, observedAt: new Date(now).toISOString(), warehouses: ['IL', 'KS'], safetyBuffer: 2,
+  supplierLocationId: supplierId, supplierLocation: { id: supplierId, isActive: true, fulfillsOnlineOrders: true }, protectedLocationIds: [localId], now };
 const env = { INVENTORY_SYNC_MODE: 'dry-run', PILOT_VARIANT_IDS: JSON.stringify([id]), SS_WAREHOUSES: '["IL","KS"]',
   PROTECTED_LOCATION_IDS: JSON.stringify([localId]), SS_SAFETY_BUFFER: '2', SUPPLIER_LOCATION_ID: supplierId,
   SHOPIFY_SHOP_DOMAIN: 'example.myshopify.com', SHOPIFY_ACCESS_TOKEN: 'shop-secret',
@@ -32,6 +39,45 @@ test('confirmed zero remains zero; missing SKU and warehouse remain unknown', ()
   assert.equal(makePlan({ ...base, inventory: [{ sku: variant.sku, warehouses: [{ warehouseAbbr: 'IL', qty: 0, dropship: false }, { warehouseAbbr: 'KS', qty: 0, dropship: false }] }] }).rows[0].supplierAvailable, 0);
   assert.equal(makePlan({ ...base, inventory: [] }).rows[0].supplierAvailable, null);
   assert.equal(makePlan({ ...base, warehouses: ['TX'] }).rows[0].supplierAvailable, null);
+});
+test('stockout gate identifies a zero-at-supplier candidate but never marks a write ready', () => {
+  const row = makePlan({ ...base, inventory: [{ sku: variant.sku, warehouses: [
+    { warehouseAbbr: 'IL', qty: 0, dropship: false }, { warehouseAbbr: 'KS', qty: 0, dropship: false }
+  ] }] }).rows[0];
+  assert.equal(row.gate.desired, 'BLOCK');
+  assert.equal(row.gate.candidate, 'ZERO_SUPPLIER_AVAILABLE');
+  assert.equal(row.gate.otherLocationAvailable, 0);
+  assert.equal(row.gate.shopifyAvailableForSale, true);
+  assert.equal(row.writeReady, false);
+  assert.equal(row.proposedQuantity, null);
+});
+test('other location stock can defeat a supplier-only stockout; incomplete levels cannot certify one', () => {
+  const zero = [{ sku: variant.sku, warehouses: [
+    { warehouseAbbr: 'IL', qty: 0, dropship: false }, { warehouseAbbr: 'KS', qty: 0, dropship: false }
+  ] }];
+  const withHQ = structuredClone(variant);
+  withHQ.inventoryItem.inventoryLevels.nodes[0].quantities[0].quantity = 2;
+  const row = makePlan({ ...base, variants: [withHQ], inventory: zero }).rows[0];
+  assert.equal(row.gate.otherLocationAvailable, 2);
+  assert.ok(row.blockers.includes('OTHER_LOCATION_STOCK_MAY_SELL'));
+  const incomplete = structuredClone(variant);
+  incomplete.inventoryItem.inventoryLevels.pageInfo.hasNextPage = true;
+  assert.ok(makePlan({ ...base, variants: [incomplete], inventory: zero }).rows[0].blockers.includes('SHOPIFY_LEVELS_UNVERIFIED'));
+});
+test('restock is not converted into a sellable quantity without commitment accounting', () => {
+  const row = makePlan(base).rows[0];
+  assert.equal(row.gate.desired, 'REOPEN');
+  assert.equal(row.gate.candidate, 'QUANTITY_REQUIRES_COMMITMENT_MODEL');
+  assert.ok(row.blockers.includes('COMMITMENT_MODEL_REQUIRED_FOR_REOPEN'));
+  assert.equal(row.proposedQuantity, null);
+});
+test('offline supplier location and an untracked variant cannot pass the gate', () => {
+  const untracked = structuredClone(variant);
+  untracked.inventoryItem.tracked = false;
+  const row = makePlan({ ...base, variants: [untracked], supplierLocation: { ...base.supplierLocation, fulfillsOnlineOrders: false } }).rows[0];
+  assert.ok(row.blockers.includes('TRACKING_DISABLED'));
+  assert.ok(row.blockers.includes('SUPPLIER_LOCATION_NOT_ONLINE'));
+  assert.equal(row.writeReady, false);
 });
 test('never substitutes HQ for supplier location', () => {
   assert.throws(() => makePlan({ ...base, supplierLocationId: localId }), /PROTECTED_LOCATION/);
@@ -73,8 +119,9 @@ test('dry-run end to end queries Shopify and GETs the gateway; no secrets in rep
   const result=await runDryRun(env,{fetchImpl:async(url,options)=>{
     calls.push({url,options});
     if(url.includes('myshopify')) {
-      assert.match(JSON.parse(options.body).query,/^query InventoryPilot/);
+      const query = JSON.parse(options.body).query;
       assert.equal(options.headers['X-Shopify-Access-Token'],'shop-secret');
+      assert.match(query,/^query InventoryPilot/);
       return response({data:{nodes:[variant]}});
     }
     assert.equal(options.headers['X-Inventory-Read-Key'],'gateway-secret');

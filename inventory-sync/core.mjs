@@ -32,7 +32,56 @@ export function normalizeInventory(payload, skus) {
     }) };
   });
 }
-export function makePlan({ variants, inventory, observedAt, warehouses, safetyBuffer, supplierLocationId, protectedLocationIds, now = Date.now() }) {
+function quantity(level, name) {
+  const values = level?.quantities?.filter(q => q.name === name);
+  return values?.length === 1 && Number.isSafeInteger(values[0].quantity) ? values[0].quantity : null;
+}
+function gateEvidence(variant, capacityBeforeCommitments, supplierLocationId, supplierLocation) {
+  const levels = variant.inventoryItem?.inventoryLevels;
+  const desired = capacityBeforeCommitments === null ? 'HOLD' : capacityBeforeCommitments === 0 ? 'BLOCK' : 'REOPEN';
+  const evidence = {
+    desired,
+    candidate: desired === 'BLOCK' ? 'ZERO_SUPPLIER_AVAILABLE' :
+      desired === 'REOPEN' ? 'QUANTITY_REQUIRES_COMMITMENT_MODEL' : 'NO_CHANGE',
+    shopifyAvailableForSale: typeof variant.availableForSale === 'boolean' ? variant.availableForSale : null,
+    sellableOnlineQuantity: Number.isSafeInteger(variant.sellableOnlineQuantity) ? variant.sellableOnlineQuantity : null,
+    supplierAvailable: null, supplierCommitted: null, otherLocationAvailable: null, blockers: []
+  };
+  if (!supplierLocation || supplierLocation.id !== supplierLocationId)
+    evidence.blockers.push('SUPPLIER_LOCATION_ONLINE_UNVERIFIED');
+  else if (!supplierLocation.isActive || !supplierLocation.fulfillsOnlineOrders)
+    evidence.blockers.push('SUPPLIER_LOCATION_NOT_ONLINE');
+  if (!levels || !Array.isArray(levels.nodes) || levels.pageInfo?.hasNextPage !== false)
+    evidence.blockers.push('SHOPIFY_LEVELS_UNVERIFIED');
+  else {
+    const ids = levels.nodes.map(level => level?.location?.id);
+    if (ids.some(id => !id) || new Set(ids).size !== ids.length ||
+      levels.nodes.some(level => typeof level.isActive !== 'boolean'))
+      evidence.blockers.push('SHOPIFY_LEVELS_UNVERIFIED');
+    else {
+      const supplierLevel = levels.nodes.find(level => level.location.id === supplierLocationId);
+      if (!supplierLevel?.isActive) evidence.blockers.push('SUPPLIER_LEVEL_INACTIVE');
+      else {
+        evidence.supplierAvailable = quantity(supplierLevel, 'available');
+        evidence.supplierCommitted = quantity(supplierLevel, 'committed');
+        if (evidence.supplierAvailable === null) evidence.blockers.push('SUPPLIER_AVAILABLE_UNVERIFIED');
+      }
+      const otherLocations = levels.nodes.filter(level => level.isActive && level.location.id !== supplierLocationId);
+      if (otherLocations.some(level => quantity(level, 'available') === null)) evidence.blockers.push('OTHER_LOCATION_STOCK_UNKNOWN');
+      else {
+        const total = otherLocations.reduce((sum, level) => sum + Math.max(0, quantity(level, 'available')), 0);
+        if (Number.isSafeInteger(total)) evidence.otherLocationAvailable = total;
+        else evidence.blockers.push('OTHER_LOCATION_STOCK_UNKNOWN');
+      }
+      if (evidence.otherLocationAvailable > 0 && evidence.desired === 'BLOCK') evidence.blockers.push('OTHER_LOCATION_STOCK_MAY_SELL');
+    }
+  }
+  if (evidence.shopifyAvailableForSale === null || evidence.sellableOnlineQuantity === null)
+    evidence.blockers.push('SHOPIFY_AVAILABILITY_UNVERIFIED');
+  if (evidence.desired === 'REOPEN') evidence.blockers.push('COMMITMENT_MODEL_REQUIRED_FOR_REOPEN');
+  return evidence;
+}
+export function makePlan({ variants, inventory, observedAt, warehouses, safetyBuffer, supplierLocationId, supplierLocation = null, protectedLocationIds, now = Date.now() }) {
   warehouseList(warehouses);
   requireValue(Number.isSafeInteger(safetyBuffer) && safetyBuffer >= 0, 'INVALID_BUFFER');
   requireValue(Array.isArray(variants) && variants.length > 0 && variants.length <= 25, 'INVALID_PILOT');
@@ -64,12 +113,15 @@ export function makePlan({ variants, inventory, observedAt, warehouses, safetyBu
       supplierAvailable = selected.reduce((sum, w) => sum + w.qty, 0);
       requireValue(Number.isSafeInteger(supplierAvailable), 'INVALID_SUPPLIER_RESPONSE');
     }
+    const supplierStockStatus = supplierAvailable === null ? 'UNKNOWN' : supplierAvailable === 0 ? 'OUT_OF_STOCK' : 'IN_STOCK';
+    const capacityBeforeCommitments = supplierAvailable === null ? null : Math.max(0, supplierAvailable - safetyBuffer);
+    const gate = gateEvidence(v, capacityBeforeCommitments, supplierLocationId, supplierLocation);
     return {
       variantId: v.id, inventoryItemId: v.inventoryItem?.id ?? null, sku: v.sku,
       supplierLocationId: supplierLocationId || null, supplierAvailable,
-      supplierStockStatus: supplierAvailable === null ? 'UNKNOWN' : supplierAvailable === 0 ? 'OUT_OF_STOCK' : 'IN_STOCK',
-      capacityBeforeCommitments: supplierAvailable === null ? null : Math.max(0, supplierAvailable - safetyBuffer),
-      proposedQuantity: null, writeReady: false, blockers
+      supplierStockStatus, gate,
+      capacityBeforeCommitments,
+      proposedQuantity: null, writeReady: false, blockers: [...blockers, ...gate.blockers]
     };
   });
   return { mode: 'dry-run', observedAt, generatedAt: new Date(now).toISOString(), writes: 0, rows };
