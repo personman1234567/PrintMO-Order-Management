@@ -28,8 +28,15 @@ export default {
   async scheduled(_event, env) {
     try {
       const result = await runDryRun(env);
+      const statuses = { inStock: 0, outOfStock: 0, unknown: 0 };
+      for (const row of result.rows || []) {
+        if (row.supplierStockStatus === 'IN_STOCK') statuses.inStock++;
+        else if (row.supplierStockStatus === 'OUT_OF_STOCK') statuses.outOfStock++;
+        else statuses.unknown++;
+      }
       console.log(JSON.stringify({ event: 'inventory-observation', mode: result.mode, writes: 0,
-        variants: result.rows?.length || 0, blocked: result.rows?.filter(r => r.blockers.length).length || 0 }));
+        variants: result.rows?.length || 0, blocked: result.rows?.filter(r => r.blockers.length).length || 0,
+        ...statuses }));
     } catch (error) {
       // Never emit upstream bodies, tokens, URLs, product data, or user-controlled error strings.
       const code = error instanceof SyncError ? error.code : 'INVENTORY_OBSERVATION_FAILED';
