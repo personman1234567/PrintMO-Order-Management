@@ -4,7 +4,8 @@ import { SyncError, requireValue, skuList, normalizeInventory } from './core.mjs
 export async function requestJson(url, options = {}, { fetchImpl = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
   for (let attempt = 0; attempt < 2; attempt++) {
     let response;
-    try { response = await fetchImpl(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(15000) }); }
+    // Workers reject redirect: 'error'. Manual mode also keeps credentials off redirected hosts.
+    try { response = await fetchImpl(url, { ...options, redirect: 'manual', signal: AbortSignal.timeout(15000) }); }
     catch { throw new SyncError('UPSTREAM_TRANSPORT_FAILED'); }
     if ((response.status === 429 || response.status >= 500) && attempt === 0) {
       const header = response.headers.get('Retry-After');

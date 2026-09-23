@@ -77,7 +77,7 @@ test('dry-run end to end queries Shopify and GETs the gateway; no secrets in rep
       return response({data:{nodes:[variant]}});
     }
     assert.equal(options.headers['X-Inventory-Read-Key'],'gateway-secret');
-    assert.equal(options.redirect,'error');
+    assert.equal(options.redirect,'manual');
     assert.equal(new URL(url).searchParams.get('skus'),variant.sku);
     return response({observedAt:new Date().toISOString(),items:inventory});
   }});
@@ -98,6 +98,10 @@ test('one bounded retry; long Retry-After and auth failures do not retry', async
   assert.equal(calls,1);
   await assert.rejects(requestJson('https://example.test',{}, {fetchImpl:async()=>response({},429,{'Retry-After':new Date(Date.now()+60000).toUTCString()})}), /UPSTREAM_RETRY_DEFERRED/);
   await assert.rejects(requestJson('https://example.test',{}, {fetchImpl:async()=>response({error:'secret'},401)}), /UPSTREAM_HTTP_401/);
+  await assert.rejects(requestJson('https://example.test',{}, {fetchImpl:async(_url,options)=>{
+    assert.equal(options.redirect,'manual');
+    return new Response(null,{status:302,headers:{Location:'https://unexpected.example/'}});
+  }}), /UPSTREAM_HTTP_302/);
 });
 test('gateway enforces auth and read method before upstream requests', async () => {
   let calls=0;
