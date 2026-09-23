@@ -1,7 +1,7 @@
 // Adapter candidate for the separate Render gateway. NOT mounted or deployed here.
 // Node 22+ / Web Request and Response. Mount inside the gateway's authenticated router.
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { SyncError, skuList, normalizeInventory } from './core.mjs';
+import { SyncError, requireValue, skuList, normalizeInventory } from './core.mjs';
 import { requestJson } from './clients.mjs';
 function authorized(request, env) {
   const supplied = request.headers.get('X-Order-Manager-Key') || '';
@@ -20,10 +20,31 @@ export async function gatewayInventoryHandler(request, env, deps) {
   try { skus = skuList((url.searchParams.get('skus') || '').split(',')); }
   catch { return reply({ error: 'INVALID_SKUS' }, 400); }
   try {
-    const payload = await requestJson(`https://api.ssactivewear.com/v2/inventory/${skus.map(encodeURIComponent).join(',')}`, {
+    const suffix = skus.map(encodeURIComponent).join(',');
+    const options = {
       method: 'GET', headers: { Accept: 'application/json', Authorization: `Basic ${Buffer.from(`${env.SS_ACCOUNT_NUMBER}:${env.SS_API_KEY}`).toString('base64')}` }
-    }, deps);
-    return reply({ observedAt: new Date().toISOString(), items: normalizeInventory(payload, skus) }, 200);
+    };
+    const payload = await requestJson(`https://api.ssactivewear.com/v2/inventory/${suffix}`, options, deps);
+    const products = await requestJson(`https://api.ssactivewear.com/v2/products/${suffix}`, options, deps);
+    requireValue(Array.isArray(products) && products.length <= skus.length, 'INVALID_SUPPLIER_RESPONSE');
+    const flags = new Map();
+    for (const product of products) {
+      requireValue(product && skus.includes(product.sku) && !flags.has(product.sku)
+        && Array.isArray(product.warehouses), 'INVALID_SUPPLIER_RESPONSE');
+      const byCode = new Map();
+      for (const warehouse of product.warehouses) {
+        requireValue(warehouse && typeof warehouse.dropship === 'boolean'
+          && !byCode.has(warehouse.warehouseAbbr), 'INVALID_SUPPLIER_RESPONSE');
+        byCode.set(warehouse.warehouseAbbr, warehouse.dropship);
+      }
+      flags.set(product.sku, byCode);
+    }
+    requireValue(Array.isArray(payload), 'INVALID_SUPPLIER_RESPONSE');
+    const merged = payload.map(item => ({ ...item, warehouses: item.warehouses?.map(warehouse => {
+      requireValue(flags.get(item.sku)?.has(warehouse.warehouseAbbr), 'INVALID_SUPPLIER_RESPONSE');
+      return { ...warehouse, dropship: flags.get(item.sku).get(warehouse.warehouseAbbr) };
+    }) }));
+    return reply({ observedAt: new Date().toISOString(), items: normalizeInventory(merged, skus) }, 200);
   } catch (error) {
     // Supplier 404 can mean invalid/discontinued, never translate it to zero quantity.
     return reply({ error: error instanceof SyncError ? error.code : 'SUPPLIER_READ_FAILED' }, 502);
