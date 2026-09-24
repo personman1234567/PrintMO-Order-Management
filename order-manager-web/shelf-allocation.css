@@ -80,7 +80,7 @@ body:not([data-active-view="inventory"]) #inventory-view { display: none !import
 .shelf-line-hint,
 .shelf-empty { color: #64748B; font-size: .84rem; line-height: 1.45; }
 
-.shelf-inventory-view { width: 100%; max-width: 1180px; margin: 0 auto; padding: 24px 28px 40px; overflow-y: auto; background: #F8FAFC; }
+.shelf-inventory-view { width: 100%; margin: 0; padding: 24px 28px 40px; overflow-y: auto; background: #F8FAFC; }
 .shelf-inventory-header h1 { font-size: 1.45rem; }
 .shelf-inventory-pulls,
 .shelf-inventory-stock { margin-top: 20px; padding: 18px 20px; border: 1px solid #CBD5E1; border-radius: 12px; background: #FFFFFF; }

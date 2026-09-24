@@ -524,7 +524,7 @@ function pickAllowOrigin(origin, env) {
 function corsHeaders(allowOrigin, allowHeaders) {
     return {
         "Access-Control-Allow-Origin": allowOrigin,
-        "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS, HEAD",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD",
         "Access-Control-Allow-Headers": allowHeaders || "Content-Type",
         "Access-Control-Max-Age": "86400",
         "Vary": "Origin",

@@ -1500,6 +1500,25 @@ async function run() {
       '',
       'CORS suffix matching must require a hostname label boundary'
     );
+    const shelfPreflight = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/shelf-stock/gid%3A%2F%2Fshopify%2FProductVariant%2F46246466060536',
+      { method: 'OPTIONS', headers: {
+        Origin: 'https://print-mo-order-manager.pages.dev',
+        'Access-Control-Request-Method': 'PUT',
+        'Access-Control-Request-Headers': 'authorization,content-type'
+      } }
+    ), { ...env, ALLOW_ORIGIN_SUFFIX: 'print-mo-order-manager.pages.dev' });
+    assert.equal(shelfPreflight.status, 204, 'physical count preflight should succeed');
+    assert.equal(shelfPreflight.headers.get('Access-Control-Allow-Origin'),
+      'https://print-mo-order-manager.pages.dev');
+    assert(shelfPreflight.headers.get('Access-Control-Allow-Methods').split(/,\s*/).includes('PUT'),
+      'the browser must be permitted to PUT physical shelf counts');
+    assert.equal(shelfPreflight.headers.get('Access-Control-Allow-Headers'), 'authorization,content-type');
+    const rejectedShelfPreflight = await worker.fetch(new Request(
+      'https://worker.test/order-manager/v1/shelf-stock/gid%3A%2F%2Fshopify%2FProductVariant%2F46246466060536',
+      { method: 'OPTIONS', headers: { Origin: 'https://evilpages.dev', 'Access-Control-Request-Method': 'PUT' } }
+    ), { ...env, ALLOW_ORIGIN_SUFFIX: 'print-mo-order-manager.pages.dev' });
+    assert.equal(rejectedShelfPreflight.status, 403, 'untrusted origins remain blocked');
 
     const untargetedShadowSync = await worker.fetch(new Request(
       'https://worker.test/order-manager/v1/integrations/etsy/shadow-sync',
