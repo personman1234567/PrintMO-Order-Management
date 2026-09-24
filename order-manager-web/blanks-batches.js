@@ -397,10 +397,22 @@
     };
   }
 
-  function buildBlanksBatchPayload(orders) {
+  function buildBlanksBatchPayload(orders, shelfByOrder = new Map()) {
     const cleanOrders = (Array.isArray(orders) ? orders : [])
-      .map(orderPayload)
-      .filter(order => order.name);
+      .map(order => {
+        const payload = orderPayload(order);
+        const snapshot = shelfByOrder.get(payload.orderId);
+        if (snapshot?.lines?.length) {
+          if (snapshot.needsReview || snapshot.lines.some(line => line.needsReview))
+            throw new Error('A shelf claim needs review before receiving this order.');
+          const claimed = new Map(snapshot.lines.map(line => [line.lineItemId, line.claimed]));
+          payload.items = payload.items.map(item => ({ ...item,
+            qty: Math.max(0, item.qty - (claimed.get(item.id || item.lineItemId || item.shopifyLineItemId) || 0))
+          })).filter(item => item.qty > 0);
+        }
+        return payload;
+      })
+      .filter(order => order.name && order.items.length > 0);
     const expectedGarments = cleanOrders.reduce((sum, order) => {
       return sum + order.items.reduce((itemSum, item) => itemSum + item.qty, 0);
     }, 0);
@@ -414,8 +426,18 @@
 
   async function saveBatchForOrders(orders) {
     if (!window.api || typeof window.api.createBlanksBatch !== 'function') return null;
-
-    const payload = buildBlanksBatchPayload(orders);
+    const shelfByOrder = new Map();
+    if (typeof window.api.getShelfOrder === 'function') {
+      for (const order of orders) {
+        if (!order?._candidate || order?._provider !== 'shopify' || !order._gid) continue;
+        try {
+          shelfByOrder.set(order._gid, await window.api.getShelfOrder(order._gid));
+        } catch (error) {
+          if (error?.status !== 404) throw error;
+        }
+      }
+    }
+    const payload = buildBlanksBatchPayload(orders, shelfByOrder);
     if (!payload.orders.length || !payload.expectedGarments) return null;
 
     const result = await window.api.createBlanksBatch(payload);

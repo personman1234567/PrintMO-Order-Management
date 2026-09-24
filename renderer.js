@@ -2354,6 +2354,7 @@ function openDetail(o) {
   }).join('');
 
   renderCustomerItemInstructions(o);
+  window.renderShelfAllocationForOrder?.(o);
 
   // discount & total
   const disc = Number(o.discount) || 0;

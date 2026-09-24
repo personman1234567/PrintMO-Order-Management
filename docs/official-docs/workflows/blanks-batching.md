@@ -11,6 +11,7 @@
 ## Section Map
 - [Blanks Batching Sequence](#blanks-batching-sequence)
 - [SKU Aggregation Algorithm](#sku-aggregation-algorithm)
+- [Tultex 202 Shelf Claims](#tultex-202-shelf-claims)
 - [Batch Submission & State Update](#batch-submission--state-update)
 - [Safe Local Feedback Simulation](#safe-local-feedback-simulation)
 - [Receiving Manifest and Batch Correction](#receiving-manifest-and-batch-correction)
@@ -56,6 +57,16 @@ When orders are dragged into the batch zone:
 4. Group by `sku` and aggregate total required quantities:
    $$\text{TotalQty}(\text{SKU}_k) = \sum_{i \in \text{SelectedOrders}} \text{ItemQty}_i(\text{SKU}_k)$$
 5. Hash the canonical sorted line set and capture every selected production revision.
+
+---
+
+## Tultex 202 Shelf Claims
+
+For exact Tultex 202 Shopify variants, staff can record physically counted **free** shelf units in Order Detail and explicitly claim a whole or partial order-line quantity. The authenticated D1 ledger records every count, claim, and release with an actor and idempotency key. An uncounted variant cannot be claimed. Releasing units requires staff to confirm they are physically back on the shelf; cancellation never returns them automatically. Shopify inventory, checkout availability, and supplier inventory observations are unaffected.
+
+The Worker subtracts active shelf claims from both the S&S aggregate request and its per-order line sources. The browser subtracts the same quantities from a new receiving manifest. Claims are locked once an order enters a prepared, submitting, confirmed, or uncertain supplier batch. A changed or missing Shopify line blocks submission for review. An order fully covered by shelf claims is omitted from an S&S batch; staff verify the blanks and use the existing Order Detail readiness control to mark them ready without a PO.
+
+The `SHELF_ALLOCATION_ENABLED` Worker flag gates this first release to Tultex 202. Free counts begin uncounted and must come from a physical shelf count, never Shopify HQ balances.
 
 ---
 

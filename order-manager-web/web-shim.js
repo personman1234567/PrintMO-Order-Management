@@ -969,6 +969,18 @@ window.api.updateProductionMetadata = async (orderId, payload = {}) => {
   );
 };
 
+window.api.getShelfOrder = (orderId) => apiFetch(
+  `/order-manager/v1/orders/${encodeURIComponent(orderId)}/shelf`, { method: "GET" }
+);
+window.api.setShelfClaim = (orderId, payload) => apiFetch(
+  `/order-manager/v1/orders/${encodeURIComponent(orderId)}/shelf`,
+  { method: "PUT", body: JSON.stringify(payload) }
+);
+window.api.setShelfCount = (variantId, payload) => apiFetch(
+  `/order-manager/v1/shelf-stock/${encodeURIComponent(variantId)}`,
+  { method: "PUT", body: JSON.stringify(payload) }
+);
+
 // 2) Drag/drop persistence
 window.api.updateStatus = async (name, status) => {
   if (isShopifyCandidateView()) {

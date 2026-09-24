@@ -1,6 +1,6 @@
 # In-House Blank Inventory Tracking & Digital Whiteboard Grid Plan
 
-- **Status**: `[Spec Ready]`
+- **Status**: `[Implemented Candidate]`
 - **Owner / Target Milestone**: `v1.5 Backlog`
 - **Last Updated**: `2026-07-22`
 
@@ -11,31 +11,31 @@
 This specification outlines the architecture for **Live In-House Blank Inventory Tracking**, replacing the physical dry-erase whiteboard grid with a **Digital Inventory Grid UI** embedded in PrintMO Order Management.
 
 ### Operational Goal
-Provide a fast, non-clunky digital representation of physical shop shelf inventory (focusing on core stock like Tultex 202 color/size matrices and miscellaneous overstock). In-house stock counts are synchronized with Shopify's Multi-Location Inventory API, allowing manual assignment of shelf blanks to incoming orders, low-stock visual alerts, and one-click shelf restocking via S&S Activewear batch ordering.
+Provide a fast digital representation of physical shop shelf inventory. The first implementation covers Tultex 202 only: staff enter physically counted free units in Order Manager and explicitly claim them for Shopify order lines. The separate S&S supplier inventory observation never includes these local counts. A broader inventory grid and Shopify-location synchronization remain future work.
 
 ---
 
 ## Current Continuation State
 
-- **Current state**: The UI concept and manual assignment direction are spec-ready; Shopify inventory semantics and production-allocation contracts still require implementation-level verification.
-- **Next safe action**: Verify Shopify location/inventory mutation contracts and define an idempotent allocation ledger linking shelf adjustments to canonical order GIDs.
-- **Remaining blockers**: Inventory authority, adjustment reasons/audit, concurrent allocation, returns/corrections, and supplier-restock integration.
-- **Owner / external actions**: Confirm the physical shelf location model, initial stocked catalog, reorder thresholds, and who may adjust counts.
-- **Last verified evidence**: No inventory implementation exists; this remains a spec targeting Shopify plus Worker-mediated operations.
+- **Current state**: The first Tultex 202 release uses D1 as the staff-only shelf count and claim authority. Exact Shopify product ID `gid://shopify/Product/8984050729208` was read live on 2026-09-24; sampled variants were untracked. Authenticated Worker endpoints and browser Order Detail controls are limited to this exact product. Claims are tied to Shopify order and line IDs, and S&S batch lines and receiving quantities subtract claims.
+- **Next safe action**: Physically count the stocked Tultex 202 variants and enter their **free** shelf quantities in Order Detail. Then verify the first real partial claim and receiving manifest with staff.
+- **Remaining blockers**: No verified physical shelf counts are available. The broader whiteboard grid, restock suggestions, other garments and Shopify-location synchronization remain out of this first release.
+- **Owner / external actions**: Enter actual free shelf counts after a physical count. No Shopify HQ balances should be used as a substitute.
+- **Last verified evidence**: Focused shelf ledger, actual Worker S&S request, receiving-manifest, and phase-two tests passed locally on 2026-09-24. Production D1 migration `0010` applied with zero stock, claim, and event rows. No Shopify inventory values, tracking flags, location settings or supplier sync Worker state changed.
 
 ## Open Questions & Brainstorming
 
-1. Is Shopify inventory alone sufficient for allocation history, or is a D1 app-only allocation ledger required?
+1. If physical shelf stock is later mirrored into Shopify, how should that offline location be reconciled without making local rush stock available to online order routing?
 2. How should corrections, returns, damaged stock, and abandoned production assignments reverse counts?
 3. What concurrency rule prevents two operators from assigning the same final unit?
 4. Should restock suggestions enter an existing batch draft or create a separate replenishment intent?
 
-## Current Shop Workflow vs Target Solution
+## Current Shop Workflow vs Longer-Term Target
 
 | Aspect | Current Shop Workflow | Target PrintMO Feature |
 |---|---|---|
 | **Inventory Tracking** | Manual physical whiteboard grid with color/size columns. | Interactive Digital Whiteboard Grid UI with 1-click `+` / `-` adjustments. |
-| **Backend Storage** | Physical dry-erase markers. | **Shopify Multi-Location API** (`"Print Shop Floor Shelf"` location ID). |
+| **Backend Storage** | Physical dry-erase markers. | First release: audited Order Manager D1 shelf ledger. A later Shopify mirror is undecided. |
 | **Core Stocked Items** | Tultex 202 (White, Black, Red, Slate Blue, Kelly Green in XS–3XL). | Pre-configured fast-entry matrix views for core shop blank lines. |
 | **Claiming Mechanism** | Verbal / mental note. | **Manual "Assign from Shelf"** button on order cards / detail modal. |
 | **Low-Stock Restocking** | Manual reminder to order more. | Visual low-stock alert cells + **"Restock to S&S Cart"** 1-click refill button. |
@@ -45,18 +45,16 @@ Provide a fast, non-clunky digital representation of physical shop shelf invento
 
 ## Resolved Architectural Decisions
 
-### 1. Storage Backend: Shopify Multi-Location Inventory API
-- **Location Separation**: Rather than storing inventory only in isolated Redis keys, all counts sync directly to Shopify using **Shopify Locations**.
-  - Location A: `"Print Shop Floor Shelf"` (Your in-house physical blanks).
-  - Location B (Future): `"S&S Distributor Sync"` (Synced live supplier stock).
-  - Location C (Future): `"SanMar Distributor Sync"` (Synced live supplier stock).
-- **Single Source of Truth**: PrintMO queries Shopify's `inventoryLevels` via GraphQL API, keeping e-commerce and shop-floor inventory perfectly unified in Shopify.
+### 1. Storage Backend: Order Manager D1 for the first release
+- **Authority**: D1 stores counted free shelf stock, per-order line claims, and an append-only audit trail. Claims decrement free stock when staff assign units; they can be released only by explicit staff action when the units are physically back on the shelf.
+- **Isolation**: This first release does not write Shopify inventory or change tracking, HQ, fulfillment routing, or online availability. The S&S Supplier location and its read-only observation Worker remain separate.
+- **Rollout**: `SHELF_ALLOCATION_ENABLED` gates the endpoints and controls and can be set to `0` to pause the feature. Exact Tultex 202 product identity is checked live by the Worker; no title-based matching is accepted. All variants remain uncounted until a staff member records a physical free count.
 
 ### 2. Allocation Strategy: Manual "Assign from Shelf" Workflow
-- **No Automatic Blind Reservation**: Supplier stock is assumed to be ordered via S&S batches by default. In-house shelf stock is assigned **manually** by shop operators.
+- **No Automatic Blind Reservation**: Supplier stock is assumed to be ordered via S&S batches by default. In-house shelf stock is assigned **manually** by shop operators; partial claims leave the remainder for S&S.
 - **Assignment Action**:
-  - Opening an order card displays an **"Assign from Shelf"** action if in-house stock exists for those SKUs.
-  - Clicking "Assign" decrements the `"Print Shop Floor Shelf"` quantity in Shopify and tags the order card with a 🟢 **"Assigned from Shelf"** status pill.
+  - The first release shows Tultex 202 lines in Order Detail with free, claimed and supplier-needed quantities. A board-card shortcut is future work.
+  - Saving a claim decrements free D1 shelf stock, leaves Shopify checkout untouched, and records order, line, actor, time and idempotency key.
 
 ### 3. Low-Stock Visual Alerts & One-Click S&S Batch Restock
 - **Visual Threshold Highlights**:
@@ -97,7 +95,7 @@ Provide a fast, non-clunky digital representation of physical shop shelf invento
 - **Manual Assignment Pill**:
   - Renders 🟢 `Shelf Stock Available (Manual Claim)` on Kanban cards when matching SKUs are found at the `"Print Shop Floor Shelf"` Shopify Location.
 - **S&S Batch Deduction**:
-  - When batching orders for S&S Activewear purchasing, assigned shelf items are automatically excluded from the supplier PO payload.
+  - When batching orders for S&S Activewear purchasing, assigned shelf units are excluded from both the supplier PO payload and the receiving manifest. Claims lock when supplier submission starts or its result is uncertain.
 - **Batch Receiving Restock Integration**:
   - Extra or unused garments from received S&S shipments can be credited directly to the `"Print Shop Floor Shelf"` location in Shopify with a single click.
 
@@ -105,7 +103,7 @@ Provide a fast, non-clunky digital representation of physical shop shelf invento
 
 ## Implementation Roadmap & Task Checklist
 
-### Phase 1: Shopify Location & Inventory GraphQL Setup
+### Future Phase: Shopify Location & Inventory GraphQL Setup
 - [ ] Configure Shopify Location ID (`"Print Shop Floor Shelf"`) in Cloudflare Worker environment bindings.
 - [ ] Implement GraphQL mutations for `inventorySetQuantities` / `inventoryAdjustQuantities`.
 
@@ -123,5 +121,6 @@ Provide a fast, non-clunky digital representation of physical shop shelf invento
 
 ## Progress Log
 
+- **2026-09-24**: Implemented a feature-flagged Tultex 202 D1 shelf-count and manual-claim candidate. Supplier batch and receiving quantities subtract claims; Shopify inventory remains untouched. Physical counts and staff acceptance are required before enabling it.
 - **2026-07-22**: Initial draft created.
 - **2026-07-22**: Updated to `[Spec Ready]`. Resolved architectural decisions: Shopify Multi-Location API for storage, manual order assignment workflow, low-stock highlights, and 1-click S&S batch restock buttons.

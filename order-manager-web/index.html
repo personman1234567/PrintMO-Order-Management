@@ -80,6 +80,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./accessibility-hardening.css" />
   <link rel="stylesheet" href="./shopify-preview.css" />
   <link rel="stylesheet" href="./order-detail-split.css" />
+  <link rel="stylesheet" href="./shelf-allocation.css" />
 </head>
 <body data-active-tab="pipeline" data-active-view="orders" data-order-source="shopify" data-board-load-state="loading">
   <header class="app-header">
@@ -702,6 +703,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                         <tbody></tbody>
                       </table>
                     </div>
+                    <section id="shelf-allocation" class="shelf-allocation" aria-label="In-house shelf stock" hidden></section>
                     <table id="detail-summary">
                       <tbody>
                         <tr>
@@ -1076,6 +1078,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./dashboard-triage-enhancements.js"></script>
   <script src="./blanks-batches.js"></script>
   <script src="./detail-overlay-enhancements.js"></script>
+  <script src="./shelf-allocation.js"></script>
   <script src="./desktop-drag-polish.js"></script>
   <script src="./manual-add-checklist.js"></script>
   <script src="./accessibility-hardening.js"></script>

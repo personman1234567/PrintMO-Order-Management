@@ -210,7 +210,7 @@ async function run() {
 
   const root = path.join(__dirname, '..');
   const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8');
-  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql', '0007_etsy_webhook_delivery.sql', '0008_etsy_catalog_previews.sql', '0009_etsy_preview_refresh_and_supplier_skus.sql']
+  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql', '0007_etsy_webhook_delivery.sql', '0008_etsy_catalog_previews.sql', '0009_etsy_preview_refresh_and_supplier_skus.sql', '0010_tultex_shelf_allocation.sql']
     .map(file => fs.readFileSync(path.join(root, 'order-manager-proxy', 'migrations', file), 'utf8'))
     .join('\n');
   const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
@@ -228,6 +228,49 @@ async function run() {
     false,
     'cancelled orders must not enter the active board even when a paid webhook is replayed'
   );
+
+  const shelfLedgerDb = createD1(schema);
+  await shelfLedgerDb.prepare(`INSERT INTO shops (id,shop_domain,installed_at,created_at,updated_at)
+    VALUES (1,'shelf-test.myshopify.com','2026-09-24','2026-09-24','2026-09-24')`).run();
+  const shelfVariantId = 'gid://shopify/ProductVariant/46246466060536';
+  await shelfLedgerDb.prepare(`INSERT INTO shelf_stock
+    (shop_id,variant_gid,sku,available,version,counted_at,updated_at,updated_by,mutation_key,reason)
+    VALUES (1,?,'B10259243',2,0,'2026-09-24','2026-09-24','staff:1','count:fixture','physical count')`)
+    .bind(shelfVariantId).run();
+  const shelfInsert = shelfLedgerDb.prepare(`INSERT INTO shelf_claims
+    (shop_id,order_gid,line_item_gid,variant_gid,sku,qty,version,updated_at,updated_by,mutation_key)
+    VALUES (1,'gid://shopify/Order/1',?,?,'B10259243',?,0,'2026-09-24','staff:1',?)`);
+  await shelfInsert.bind('gid://shopify/LineItem/1', shelfVariantId, 1, 'claim:one').run();
+  assert.equal((await shelfLedgerDb.prepare('SELECT available FROM shelf_stock').first()).available, 1);
+  await assert.rejects(shelfInsert.bind('gid://shopify/LineItem/2', shelfVariantId, 2, 'claim:two').run(),
+    /SHELF_STOCK_INSUFFICIENT/, 'two operators cannot oversubscribe the last free unit');
+  await shelfLedgerDb.prepare(`UPDATE shelf_claims SET qty = 0, version = 1, updated_at = '2026-09-24',
+    updated_by = 'staff:1', mutation_key = 'claim:release' WHERE shop_id = 1`).run();
+  assert.equal((await shelfLedgerDb.prepare('SELECT available FROM shelf_stock').first()).available, 2,
+    'explicit release returns stock');
+  const shelfEvents = (await shelfLedgerDb.prepare('SELECT kind,free_delta FROM shelf_events ORDER BY rowid').all()).results;
+  assert.deepEqual(shelfEvents.map(event => [event.kind, event.free_delta]),
+    [['count', 2], ['claim', -1], ['release', 1]], 'count and claim changes have one audit event each');
+  const shelfSourceRow = { order_gid: 'gid://shopify/Order/1', commerce_json: JSON.stringify({
+    displayName: '#1', commerce: { lineItemsComplete: true, lineItems: [
+      { id: 'gid://shopify/LineItem/1', variantId: shelfVariantId, sku: 'B10259243', title: 'Tultex 202', currentQuantity: 5 },
+      { id: 'gid://shopify/LineItem/2', sku: 'OTHER', title: 'Other shirt', currentQuantity: 1 }
+    ] }
+  }) };
+  const shelfSourceClaim = [{ order_gid: 'gid://shopify/Order/1',
+    line_item_gid: 'gid://shopify/LineItem/1', variant_gid: shelfVariantId, sku: 'B10259243', qty: 2 }];
+  assert.deepEqual(module.supplierLinesFromProjectionRows([shelfSourceRow], shelfSourceClaim),
+    [{ sku: 'B10259243', qty: 3 }, { sku: 'OTHER', qty: 1 }],
+    'partial shelf claims leave only unclaimed units for S&S');
+  assert.deepEqual(module.supplierLinesFromProjectionRows([shelfSourceRow],
+    [{ ...shelfSourceClaim[0], qty: 5 }]), [{ sku: 'OTHER', qty: 1 }],
+    'fully claimed lines are absent from S&S');
+  assert.throws(() => module.supplierLinesFromProjectionRows([shelfSourceRow],
+    [{ ...shelfSourceClaim[0], qty: 6 }]), /Shelf claim no longer matches/,
+    'changed order quantities block supplier submission');
+  assert.throws(() => module.supplierLinesFromProjectionRows([shelfSourceRow],
+    [{ ...shelfSourceClaim[0], variant_gid: 'gid://shopify/ProductVariant/999' }]),
+    /Shelf claim no longer matches/, 'changed variants block supplier submission');
 
   const supplierReportFixture = {
     requestedLines: [{ sku: 'B001', qty: 2 }, { sku: 'B002', qty: 1 }],
@@ -423,6 +466,8 @@ async function run() {
   let heldSummaryRefresh = Promise.resolve();
   let etsyReconciliationReceipts = [];
   let etsyTransientReceiptFailures = 0;
+  let shelfCancelledAt = null;
+  let shelfLiveQuantity = 5;
   const calls = [];
   const nativeFetch = globalThis.fetch;
   globalThis.fetch = async (url, options = {}) => {
@@ -550,6 +595,16 @@ async function run() {
     }
     if (target.includes('/graphql.json')) {
       const request = JSON.parse(options.body);
+      if (request.query.includes('PrintMOShelfVariant')) return Response.json({ data: { productVariant: {
+        id: 'gid://shopify/ProductVariant/46246466060536', sku: 'B10259243',
+        product: { id: 'gid://shopify/Product/8984050729208' }
+      } } });
+      if (request.query.includes('PrintMOShelfOrder')) return Response.json({ data: { order: {
+        id: 'gid://shopify/Order/60129381', cancelledAt: shelfCancelledAt,
+        lineItems: { nodes: [{ id: 'gid://shopify/LineItem/101', sku: 'B10259243', currentQuantity: shelfLiveQuantity,
+          variant: { id: 'gid://shopify/ProductVariant/46246466060536', product: { id: 'gid://shopify/Product/8984050729208' } }
+        }], pageInfo: { hasNextPage: false, endCursor: null } }
+      } } });
       if (request.query.includes('PrintMOProductionState')) {
         assert(request.query.includes('sku'), 'production validation must request SKU before counting garments');
         return Response.json({
@@ -699,6 +754,11 @@ async function run() {
     }
     if (target.endsWith('/order-manager/v1/supplier/ss/commit')) {
       const request = JSON.parse(options.body);
+      if (request.lines?.some(line => line.sku === 'B10259243')) {
+        assert.deepEqual(request.lines, [{ sku: 'B10259243', qty: 3 }, { sku: 'OTHER', qty: 1 }],
+          'the actual S&S request must exclude two shelf-claimed Tultex units');
+        throw new Error('Simulated uncertain supplier response for shelf allocation');
+      }
       const providerBatch = request.lines?.length === 1 && request.lines[0]?.sku === 'B10259505';
       assert.deepEqual(request.lines, providerBatch ? [{ sku: 'B10259505', qty: 2 }] : [{ sku: 'B001', qty: 2 }, { sku: 'B002', qty: 1 }]);
       return Response.json({
@@ -715,6 +775,96 @@ async function run() {
   };
 
   try {
+    const shelfDb = createD1(schema);
+    const shelfEnv = { ...env, ORDER_DB: shelfDb, SHELF_ALLOCATION_ENABLED: '1' };
+    const shelfOrder = 'gid://shopify/Order/60129381';
+    const shelfVariant = 'gid://shopify/ProductVariant/46246466060536';
+    const shelfPath = `https://worker.test/order-manager/v1/orders/${encodeURIComponent(shelfOrder)}/shelf`;
+    const shelfCountPath = `https://worker.test/order-manager/v1/shelf-stock/${encodeURIComponent(shelfVariant)}`;
+    const shelfRequest = (url, method = 'GET', body) => worker.fetch(new Request(url, {
+      method, headers, ...(body ? { body: JSON.stringify(body) } : {})
+    }), shelfEnv);
+    const shelfShop = await shelfDb.prepare(`INSERT INTO shops (shop_domain,installed_at,created_at,updated_at)
+      VALUES ('printmo-test.myshopify.com','2026-09-24','2026-09-24','2026-09-24')`).run();
+    const shelfShopId = shelfShop.meta.last_row_id;
+    const shelfCommerce = JSON.stringify({ displayName: '#1001', commerce: { lineItemsComplete: true,
+      lineItems: [
+        { id: 'gid://shopify/LineItem/101', variantId: shelfVariant, sku: 'B10259243', title: 'Tultex 202', currentQuantity: 5 },
+        { id: 'gid://shopify/LineItem/102', variantId: 'gid://shopify/ProductVariant/999', sku: 'OTHER', title: 'Other shirt', currentQuantity: 1 }
+      ] } });
+    await shelfDb.prepare(`INSERT INTO order_projection
+      (shop_id,order_gid,stage,active,production_json,commerce_json,created_at,updated_at)
+      VALUES (?,?,'to_order',1,'{"stage":"to_order"}',?,'2026-09-24','2026-09-24')`)
+      .bind(shelfShopId, shelfOrder, shelfCommerce).run();
+    const uncounted = await shelfRequest(shelfPath);
+    assert.equal(uncounted.status, 200);
+    assert.equal((await uncounted.json()).lines[0].available, null, 'shelf stock begins uncounted');
+    assert.equal((await worker.fetch(new Request(shelfPath, { headers }),
+      { ...shelfEnv, SHELF_ALLOCATION_ENABLED: '0' })).status, 404, 'shelf controls are disabled by default');
+    assert.equal((await worker.fetch(new Request(shelfPath), shelfEnv)).status, 401,
+      'shelf stock is never publicly readable');
+    const counted = await shelfRequest(shelfCountPath, 'PUT', {
+      available: 3, expectedVersion: -1, reason: 'physical shelf count', idempotencyKey: 'count:first'
+    });
+    assert.equal(counted.status, 200, JSON.stringify(await counted.clone().json()));
+    const countReplay = await shelfRequest(shelfCountPath, 'PUT', {
+      available: 3, expectedVersion: -1, reason: 'physical shelf count', idempotencyKey: 'count:first'
+    });
+    assert.equal((await countReplay.json()).replayed, true, 'count retry does not reset stock');
+    const claimBody = { lineItemId: 'gid://shopify/LineItem/101', qty: 2,
+      expectedVersion: -1, idempotencyKey: 'claim:first' };
+    const claimed = await shelfRequest(shelfPath, 'PUT', claimBody);
+    assert.equal(claimed.status, 200, JSON.stringify(await claimed.clone().json()));
+    const claimedView = await claimed.json();
+    assert.equal(claimedView.lines[0].available, 1);
+    assert.equal(claimedView.lines[0].supplierNeeded, 3);
+    const duplicate = await shelfRequest(shelfPath, 'PUT', claimBody);
+    assert.equal(duplicate.status, 200);
+    assert.equal((await duplicate.json()).replayed, true, 'duplicate key does not claim twice');
+    const staleClaim = await shelfRequest(shelfPath, 'PUT', { ...claimBody,
+      idempotencyKey: 'claim:stale' });
+    assert.equal(staleClaim.status, 409, 'competing staff updates require a fresh claim version');
+    const tooMany = await shelfRequest(shelfPath, 'PUT', { ...claimBody, qty: 4,
+      expectedVersion: 0, idempotencyKey: 'claim:too-many' });
+    assert.equal(tooMany.status, 409, 'cannot claim beyond free shelf stock');
+    const released = await shelfRequest(shelfPath, 'PUT', { ...claimBody, qty: 0,
+      expectedVersion: 0, idempotencyKey: 'claim:release' });
+    assert.equal(released.status, 200, JSON.stringify(await released.clone().json()));
+    assert.equal((await released.json()).lines[0].available, 3);
+    const claimedAgain = await shelfRequest(shelfPath, 'PUT', { ...claimBody, qty: 1,
+      expectedVersion: 1, idempotencyKey: 'claim:again' });
+    assert.equal(claimedAgain.status, 200);
+    shelfCancelledAt = '2026-09-24T12:00:00Z';
+    shelfLiveQuantity = 0;
+    const canceledIncrease = await shelfRequest(shelfPath, 'PUT', { ...claimBody, qty: 2,
+      expectedVersion: 2, idempotencyKey: 'claim:canceled' });
+    assert.equal(canceledIncrease.status, 409, 'canceled order cannot gain a claim');
+    await shelfDb.prepare('UPDATE order_projection SET active = 0 WHERE shop_id = ? AND order_gid = ?')
+      .bind(shelfShopId, shelfOrder).run();
+    const canceledRelease = await shelfRequest(shelfPath, 'PUT', { ...claimBody, qty: 0,
+      expectedVersion: 2, idempotencyKey: 'claim:canceled-release' });
+    assert.equal(canceledRelease.status, 200, 'staff can explicitly return stock from an inactive canceled order');
+    await shelfDb.prepare('UPDATE order_projection SET active = 1 WHERE shop_id = ? AND order_gid = ?')
+      .bind(shelfShopId, shelfOrder).run();
+    shelfCancelledAt = null;
+    shelfLiveQuantity = 5;
+    const mixedClaim = await shelfRequest(shelfPath, 'PUT', { ...claimBody, qty: 2,
+      expectedVersion: 3, idempotencyKey: 'claim:mixed-batch' });
+    assert.equal(mixedClaim.status, 200);
+    const mixedBatch = await worker.fetch(new Request('https://worker.test/order-manager/v1/batches/commit', {
+      method: 'POST', headers,
+      body: JSON.stringify({ orderIds: [shelfOrder], idempotencyKey: 'batch-shelf-mixed-1' })
+    }), shelfEnv);
+    assert.equal(mixedBatch.status, 502, JSON.stringify(await mixedBatch.clone().json()));
+    const mixedBatchRow = await shelfDb.prepare("SELECT state, request_json FROM batches WHERE shop_id = ? AND state = 'unknown'")
+      .bind(shelfShopId).first();
+    assert(mixedBatchRow, 'supplier request must persist for reconciliation');
+    assert.deepEqual(JSON.parse(mixedBatchRow.request_json).lineSources.map(line => [line.sku, line.qty]),
+      [['B10259243', 3], ['OTHER', 1]], 'receiving sources must exclude the same shelf-claimed units');
+    const lockedClaim = await shelfRequest(shelfPath, 'PUT', { ...claimBody, qty: 3,
+      expectedVersion: 4, idempotencyKey: 'claim:after-batch' });
+    assert.equal(lockedClaim.status, 409, 'unknown supplier batch locks further claims');
+
     const disconnectedEtsyStatus = await worker.fetch(
       new Request('https://worker.test/order-manager/v1/integrations/etsy/status', { headers }),
       env
@@ -3200,6 +3350,23 @@ async function run() {
     'Shopify source must keep the shared operational board visible'
   );
   const blanksFoundation = fs.readFileSync(path.join(root, 'order-manager-web', 'blanks-batches.js'), 'utf8');
+  const shelfReceivingContext = vm.createContext({
+    window: {}, document: { addEventListener() {}, body: { dataset: {} } }, console
+  });
+  vm.runInContext(blanksFoundation, shelfReceivingContext);
+  const receivingOrder = { _gid: 'gid://shopify/Order/1', name: '#1 – Test',
+    items: [
+      { id: 'gid://shopify/LineItem/1', sku: 'B10259243', title: 'Tultex 202', qty: 5 },
+      { id: 'gid://shopify/LineItem/2', sku: 'OTHER', title: 'Other shirt', qty: 1 }
+    ] };
+  const receivingShelf = new Map([['gid://shopify/Order/1', { lines: [
+    { lineItemId: 'gid://shopify/LineItem/1', claimed: 2, needsReview: false }
+  ] }]]);
+  const receivingPayload = shelfReceivingContext.window.blanksBatchFoundation.buildPayload(
+    [receivingOrder], receivingShelf);
+  assert.equal(receivingPayload.expectedGarments, 4, 'receiving manifest excludes shelf-claimed units');
+  assert.deepEqual(Array.from(receivingPayload.orders[0].items, item => [item.sku, item.qty]),
+    [['B10259243', 3], ['OTHER', 1]], 'receiving manifest retains only supplier quantities');
   assert(blanksFoundation.includes('setActiveBlanksView'), 'In-cart and Ordered controls must be functioning Shopify board tabs');
   assert(
     blanksFoundation.includes('blanksOrderedValueForActiveView'),

@@ -1,0 +1,10 @@
+.shelf-allocation { margin: 16px 0; padding: 16px; border: 1px solid #cbd5e1; border-radius: 12px; background: #f8fafc; color: #0f172a; }
+.shelf-allocation h4 { margin: 0 0 6px; font-size: 1rem; }
+.shelf-allocation p { margin: 4px 0 10px; color: #475569; }
+.shelf-line { border-top: 1px solid #e2e8f0; padding: 12px 0; }
+.shelf-line:first-of-type { border-top: 0; }
+.shelf-line label { display: inline-flex; align-items: center; gap: 6px; margin: 6px 8px 6px 0; }
+.shelf-line input { width: 5rem; min-height: 36px; padding: 4px 7px; }
+.shelf-line input.shelf-reason { width: min(18rem, 90%); }
+.shelf-line button { min-height: 36px; padding: 6px 12px; margin: 6px 0; cursor: pointer; }
+.shelf-status { min-height: 1.4em; font-size: .9rem; }

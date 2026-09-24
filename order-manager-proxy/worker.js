@@ -351,6 +351,15 @@ export default {
             return handleV1DesignAssetUpload(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
         }
 
+        if (url.pathname.startsWith("/order-manager/v1/orders/") && url.pathname.endsWith("/shelf")
+            && ["GET", "PUT"].includes(request.method)) {
+            return handleShelfOrder(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
+        }
+
+        if (url.pathname.startsWith("/order-manager/v1/shelf-stock/") && request.method === "PUT") {
+            return handleShelfCount(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
+        }
+
         if (url.pathname.startsWith("/order-manager/v1/orders/") && request.method === "GET") {
             return handleV1OrderDetailGet(request, env, allowOrigin || origin || "*");
         }
@@ -7826,19 +7835,270 @@ async function handleV1ProductionPatch(request, env, allowOrigin, reqAllowHeader
     }
 }
 
-function supplierLinesFromProjectionRows(rows) {
-    const aggregate = new Map();
+const TULTEX_202_PRODUCT_GID = 'gid://shopify/Product/8984050729208';
+const SHELF_ORDER_QUERY = `query PrintMOShelfOrder($id: ID!, $after: String) {
+  order(id: $id) { id cancelledAt lineItems(first: 100, after: $after) {
+    nodes { id sku currentQuantity variant { id product { id } } }
+    pageInfo { hasNextPage endCursor }
+  } }
+}`;
+const SHELF_VARIANT_QUERY = `query PrintMOShelfVariant($id: ID!) {
+  productVariant(id: $id) { id sku product { id } }
+}`;
+
+function shelfEnabled(env) { return env.SHELF_ALLOCATION_ENABLED === '1'; }
+function shelfActor(identity) { return `${identity?.kind || 'unknown'}:${identity?.subject || 'unknown'}`; }
+function shelfValidKey(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{8,200}$/.test(value); }
+function shelfVariantGid(value) {
+    return /^gid:\/\/shopify\/ProductVariant\/\d+$/.test(String(value || '')) ? value : null;
+}
+function shelfLineGid(value) {
+    return /^gid:\/\/shopify\/LineItem\/\d+$/.test(String(value || '')) ? value : null;
+}
+function shelfOrderId(request) {
+    const part = new URL(request.url).pathname.split('/').at(-2);
+    try { return canonicalOrderGid(decodeURIComponent(part)); } catch { return null; }
+}
+function shelfVariantId(request) {
+    try { return shelfVariantGid(decodeURIComponent(new URL(request.url).pathname.split('/').at(-1))); }
+    catch { return null; }
+}
+
+async function shelfLiveOrder(env, orderGid, graphQL = coordinatorGraphQL) {
+    const lines = [];
+    let after = null;
+    let cancelledAt = null;
+    for (let page = 0; page < 10; page++) {
+        const result = await graphQL(env, SHELF_ORDER_QUERY, { id: orderGid, after }, 'PrintMOShelfOrder');
+        const order = requireShopifyData(result, 'PrintMOShelfOrder').order;
+        if (!order || order.id !== orderGid) throw Object.assign(new Error('Order not found'), { code: 'ORDER_NOT_FOUND', status: 404 });
+        cancelledAt = order.cancelledAt;
+        const connection = order.lineItems;
+        if (!connection || !Array.isArray(connection.nodes)) throw Object.assign(new Error('Incomplete order'), { code: 'ORDER_LINES_UNVERIFIED', status: 409 });
+        lines.push(...connection.nodes.filter(line => line?.variant?.product?.id === TULTEX_202_PRODUCT_GID)
+            .map(line => ({ lineItemId: line.id, variantId: line.variant.id, sku: line.sku,
+                quantity: Number(line.currentQuantity) })));
+        if (!connection.pageInfo?.hasNextPage) return { cancelledAt, lines };
+        after = connection.pageInfo.endCursor;
+        if (!after) break;
+    }
+    throw Object.assign(new Error('Order lines require pagination'), { code: 'ORDER_LINES_UNVERIFIED', status: 409 });
+}
+
+async function shelfOrderSnapshot(env, shopId, orderGid, live) {
+    const db = requireOrderDb(env);
+    const [stock, claims, projection, batch] = await Promise.all([
+        db.prepare('SELECT variant_gid, sku, available, version, counted_at FROM shelf_stock WHERE shop_id = ?')
+            .bind(shopId).all(),
+        db.prepare('SELECT line_item_gid, variant_gid, sku, qty, version FROM shelf_claims WHERE shop_id = ? AND order_gid = ?')
+            .bind(shopId, orderGid).all(),
+        db.prepare('SELECT active, stage FROM order_projection WHERE shop_id = ? AND order_gid = ?')
+            .bind(shopId, orderGid).first(),
+        db.prepare(`SELECT 1 AS found FROM batch_orders bo JOIN batches b ON b.id = bo.batch_id
+            WHERE b.shop_id = ? AND bo.order_gid = ? AND b.state IN ('prepared','submitting','confirmed','unknown') LIMIT 1`)
+            .bind(shopId, orderGid).first()
+    ]);
+    const stockByVariant = new Map((stock.results || []).map(row => [row.variant_gid, row]));
+    const claimByLine = new Map((claims.results || []).map(row => [row.line_item_gid, row]));
+    const liveLineIds = new Set(live.lines.map(line => line.lineItemId));
+    const orphanedClaim = (claims.results || []).some(row => row.qty > 0 && !liveLineIds.has(row.line_item_gid));
+    return { orderId: orderGid, cancelled: Boolean(live.cancelledAt),
+        locked: (!projection?.active && !live.cancelledAt) ||
+            !['received', 'to_order'].includes(projection?.stage) || Boolean(batch),
+        needsReview: orphanedClaim || live.lines.some(line => {
+            const held = claimByLine.get(line.lineItemId);
+            return Boolean(held && (held.variant_gid !== line.variantId || held.sku !== line.sku || held.qty > line.quantity));
+        }),
+        lines: live.lines.map(line => {
+        const held = claimByLine.get(line.lineItemId);
+        const counted = stockByVariant.get(line.variantId);
+        return { ...line, available: counted?.available ?? null, stockVersion: counted?.version ?? -1,
+            countedAt: counted?.counted_at || null, claimed: held?.qty || 0, claimVersion: held?.version ?? -1,
+            supplierNeeded: Math.max(0, line.quantity - (held?.qty || 0)),
+            needsReview: Boolean(held && (held.variant_gid !== line.variantId || held.sku !== line.sku || held.qty > line.quantity)) };
+    }) };
+}
+
+async function shelfReplay(db, shopId, key, fingerprint) {
+    const old = await db.prepare('SELECT fingerprint FROM shelf_operations WHERE shop_id = ? AND idempotency_key = ?')
+        .bind(shopId, key).first();
+    if (!old) return false;
+    if (old.fingerprint !== fingerprint) throw Object.assign(new Error('Idempotency key was reused'), { code: 'SHELF_IDEMPOTENCY_CONFLICT', status: 409 });
+    return true;
+}
+
+async function handleShelfCount(request, env, allowOrigin, reqAllowHeaders, identity) {
+    if (!shelfEnabled(env)) return v1Error({ code: 'SHELF_DISABLED', message: 'Shelf allocation is disabled.' }, allowOrigin, reqAllowHeaders, 404);
+    try {
+        const variantId = shelfVariantId(request);
+        const body = await request.json().catch(() => ({}));
+        const qty = body.available;
+        const expected = body.expectedVersion;
+        const key = body.idempotencyKey;
+        const reason = String(body.reason || '').trim();
+        if (!variantId || !Number.isSafeInteger(qty) || qty < 0 || qty > 100000 ||
+            !Number.isSafeInteger(expected) || expected < -1 || !shelfValidKey(key) || !reason || reason.length > 240)
+            return v1Error({ code: 'INVALID_SHELF_COUNT', message: 'Enter a counted free quantity and reason.' }, allowOrigin, reqAllowHeaders, 400);
+        const variantResult = await coordinatorGraphQL(env, SHELF_VARIANT_QUERY, { id: variantId }, 'PrintMOShelfVariant');
+        const variant = requireShopifyData(variantResult, 'PrintMOShelfVariant').productVariant;
+        if (!variant || variant.id !== variantId || variant.product?.id !== TULTEX_202_PRODUCT_GID || !variant.sku)
+            return v1Error({ code: 'NOT_TULTEX_202', message: 'Only exact Tultex 202 variants can be counted.' }, allowOrigin, reqAllowHeaders, 409);
+        const shop = await d1Shop(env);
+        const db = requireOrderDb(env);
+        const fingerprint = JSON.stringify(['count', variantId, qty, expected, reason]);
+        if (await shelfReplay(db, shop.id, key, fingerprint))
+            return jsonResponse({ ok: true, replayed: true }, allowOrigin, reqAllowHeaders);
+        const existing = await db.prepare('SELECT version FROM shelf_stock WHERE shop_id = ? AND variant_gid = ?')
+            .bind(shop.id, variantId).first();
+        if ((existing?.version ?? -1) !== expected)
+            return v1Error({ code: 'SHELF_VERSION_CONFLICT', message: 'Shelf count changed. Refresh before saving.' }, allowOrigin, reqAllowHeaders, 409);
+        const now = isoNow();
+        const mutationKey = `count:${key}`;
+        try {
+            await db.batch([
+                db.prepare(`INSERT INTO shelf_stock (shop_id, variant_gid, sku, available, version, counted_at, updated_at, updated_by, mutation_key, reason)
+                    VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+                    ON CONFLICT(shop_id, variant_gid) DO UPDATE SET available = excluded.available,
+                    version = shelf_stock.version + 1, counted_at = excluded.counted_at, updated_at = excluded.updated_at,
+                    updated_by = excluded.updated_by, mutation_key = excluded.mutation_key, reason = excluded.reason
+                    WHERE shelf_stock.version = ? AND shelf_stock.sku = excluded.sku`)
+                    .bind(shop.id, variantId, variant.sku, qty, now, now, shelfActor(identity), mutationKey, reason, expected),
+                db.prepare('INSERT INTO shelf_operations VALUES (?, ?, ?, changes(), ?)')
+                    .bind(shop.id, key, fingerprint, now)
+            ]);
+        } catch (error) {
+            if (await shelfReplay(db, shop.id, key, fingerprint))
+                return jsonResponse({ ok: true, replayed: true }, allowOrigin, reqAllowHeaders);
+            return v1Error({ code: 'SHELF_VERSION_CONFLICT', message: 'Shelf count changed. Refresh before saving.' }, allowOrigin, reqAllowHeaders, 409);
+        }
+        const current = await db.prepare('SELECT available, version, counted_at FROM shelf_stock WHERE shop_id = ? AND variant_gid = ?')
+            .bind(shop.id, variantId).first();
+        return jsonResponse({ ok: true, variantId, ...current }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error({ code: error.code || 'SHELF_COUNT_FAILED', message: error.message }, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+async function handleShelfOrder(request, env, allowOrigin, reqAllowHeaders, identity) {
+    if (!shelfEnabled(env)) return v1Error({ code: 'SHELF_DISABLED', message: 'Shelf allocation is disabled.' }, allowOrigin, reqAllowHeaders, 404);
+    try {
+        const orderGid = shelfOrderId(request);
+        if (!orderGid) return v1Error({ code: 'INVALID_ORDER', message: 'Invalid Shopify order.' }, allowOrigin, reqAllowHeaders, 400);
+        const shop = await d1Shop(env);
+        const db = requireOrderDb(env);
+        const live = await shelfLiveOrder(env, orderGid);
+        if (request.method === 'GET')
+            return jsonResponse(await shelfOrderSnapshot(env, shop.id, orderGid, live), allowOrigin, reqAllowHeaders);
+        const body = await request.json().catch(() => ({}));
+        const lineId = shelfLineGid(body.lineItemId);
+        const qty = body.qty;
+        const expected = body.expectedVersion;
+        const key = body.idempotencyKey;
+        if (!lineId || !Number.isSafeInteger(qty) || qty < 0 || !Number.isSafeInteger(expected) || expected < -1 || !shelfValidKey(key))
+            return v1Error({ code: 'INVALID_SHELF_CLAIM', message: 'Choose a valid line and quantity.' }, allowOrigin, reqAllowHeaders, 400);
+        const line = live.lines.find(candidate => candidate.lineItemId === lineId);
+        if (!line || !line.sku || !Number.isSafeInteger(line.quantity))
+            return v1Error({ code: 'NOT_TULTEX_202', message: 'Only exact Tultex 202 order lines can use shelf stock.' }, allowOrigin, reqAllowHeaders, 409);
+        const fingerprint = JSON.stringify(['claim', orderGid, lineId, line.variantId, qty, expected]);
+        if (await shelfReplay(db, shop.id, key, fingerprint))
+            return jsonResponse({ ok: true, replayed: true, ...await shelfOrderSnapshot(env, shop.id, orderGid, live) }, allowOrigin, reqAllowHeaders);
+        const old = await db.prepare('SELECT qty, version FROM shelf_claims WHERE shop_id = ? AND order_gid = ? AND line_item_gid = ?')
+            .bind(shop.id, orderGid, lineId).first();
+        const releasing = Boolean(old && qty < old.qty);
+        if ((qty > line.quantity && !releasing) || (live.cancelledAt && qty > (old?.qty || 0)) ||
+            (old?.version ?? -1) !== expected || (!old && qty === 0))
+            return v1Error({ code: 'SHELF_CLAIM_CONFLICT', message: 'Order or claim changed. Refresh before saving.' }, allowOrigin, reqAllowHeaders, 409);
+        if (old?.qty === qty)
+            return jsonResponse({ ok: true, unchanged: true, ...await shelfOrderSnapshot(env, shop.id, orderGid, live) }, allowOrigin, reqAllowHeaders);
+        const projection = await db.prepare('SELECT active, stage, commerce_json FROM order_projection WHERE shop_id = ? AND order_gid = ?')
+            .bind(shop.id, orderGid).first();
+        const batch = await db.prepare(`SELECT 1 AS found FROM batch_orders bo JOIN batches b ON b.id = bo.batch_id
+            WHERE b.shop_id = ? AND bo.order_gid = ? AND b.state IN ('prepared','submitting','confirmed','unknown') LIMIT 1`)
+            .bind(shop.id, orderGid).first();
+        if ((!projection?.active && !(releasing && live.cancelledAt)) ||
+            !['received', 'to_order'].includes(projection?.stage) || batch)
+            return v1Error({ code: 'SHELF_ORDER_LOCKED', message: 'This order has entered supplier purchasing or production.' }, allowOrigin, reqAllowHeaders, 409);
+        let summary;
+        try { summary = JSON.parse(projection.commerce_json || '{}'); } catch { summary = null; }
+        if (!releasing && (summary?.commerce?.lineItemsComplete !== true ||
+            !summary.commerce.lineItems.some(item => item.id === lineId && item.sku === line.sku &&
+                Number(item.currentQuantity ?? item.quantity) === line.quantity)))
+            return v1Error({ code: 'SHELF_ORDER_STALE', message: 'Refresh the order before assigning shelf stock.' }, allowOrigin, reqAllowHeaders, 409);
+        const stock = await db.prepare('SELECT available FROM shelf_stock WHERE shop_id = ? AND variant_gid = ?')
+            .bind(shop.id, line.variantId).first();
+        if (!stock) return v1Error({ code: 'SHELF_UNCOUNTED', message: 'Count the free shelf stock first.' }, allowOrigin, reqAllowHeaders, 409);
+        const now = isoNow();
+        try {
+            await db.batch([
+                db.prepare(`INSERT INTO shelf_claims (shop_id, order_gid, line_item_gid, variant_gid, sku, qty, version, updated_at, updated_by, mutation_key)
+                    SELECT ?, ?, ?, ?, ?, ?, 0, ?, ?, ? WHERE ? = -1 OR EXISTS (
+                        SELECT 1 FROM shelf_claims WHERE shop_id = ? AND order_gid = ? AND line_item_gid = ? AND version = ?)
+                    ON CONFLICT(shop_id, order_gid, line_item_gid) DO UPDATE SET qty = excluded.qty,
+                    version = shelf_claims.version + 1, updated_at = excluded.updated_at,
+                    updated_by = excluded.updated_by, mutation_key = excluded.mutation_key
+                    WHERE shelf_claims.version = ?`)
+                    .bind(shop.id, orderGid, lineId, line.variantId, line.sku, qty, now,
+                        shelfActor(identity), `claim:${key}`, expected, shop.id, orderGid, lineId, expected, expected),
+                db.prepare(`INSERT INTO shelf_operations
+                    SELECT ?, ?, ?, changes() * CASE WHEN NOT EXISTS (
+                        SELECT 1 FROM batch_orders bo JOIN batches b ON b.id = bo.batch_id
+                        WHERE b.shop_id = ? AND bo.order_gid = ?
+                        AND b.state IN ('prepared','submitting','confirmed','unknown')
+                    ) THEN 1 ELSE 0 END, ?`)
+                    .bind(shop.id, key, fingerprint, shop.id, orderGid, now)
+            ]);
+        } catch (error) {
+            if (await shelfReplay(db, shop.id, key, fingerprint))
+                return jsonResponse({ ok: true, replayed: true, ...await shelfOrderSnapshot(env, shop.id, orderGid, live) }, allowOrigin, reqAllowHeaders);
+            const insufficient = String(error?.message || '').includes('SHELF_STOCK_INSUFFICIENT');
+            return v1Error({ code: insufficient ? 'SHELF_STOCK_INSUFFICIENT' : 'SHELF_CLAIM_CONFLICT',
+                message: insufficient ? 'Not enough free shelf stock remains.' : 'Shelf claim changed. Refresh before saving.' },
+                allowOrigin, reqAllowHeaders, 409);
+        }
+        return jsonResponse({ ok: true, ...await shelfOrderSnapshot(env, shop.id, orderGid, live) }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error({ code: error.code || 'SHELF_CLAIM_FAILED', message: error.message }, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+function supplierSourcesWithShelfClaims(rows, claims = []) {
+    const held = new Map(claims.filter(claim => claim.qty > 0)
+        .map(claim => [`${claim.order_gid}|${claim.line_item_gid}`, claim]));
+    const seen = new Set();
+    const sources = [];
     for (const row of rows) {
         let summary;
         try { summary = JSON.parse(row.commerce_json || '{}'); } catch (_) { summary = {}; }
+        if (summary?.commerce?.lineItemsComplete !== true && held.size)
+            throw Object.assign(new Error('Order lines are incomplete'), { code: 'SHELF_ORDER_STALE', status: 409 });
+        const orderName = String(summary?.displayName || row.order_gid || '').trim();
         for (const item of summary?.commerce?.lineItems || []) {
             if (PRINT_TITLES.has(item?.title)) continue;
             const sku = String(item?.sku || '').trim();
-            const qty = Number(item?.currentQuantity ?? item?.quantity ?? 0);
-            if (!sku || !Number.isInteger(qty) || qty <= 0) continue;
-            aggregate.set(sku, (aggregate.get(sku) || 0) + qty);
+            const total = Number(item?.currentQuantity ?? item?.quantity ?? 0);
+            const claimKey = `${row.order_gid}|${item?.id}`;
+            const claim = held.get(claimKey);
+            if (claim) seen.add(claimKey);
+            if (claim && (claim.sku !== sku || claim.variant_gid !== item?.variantId ||
+                !Number.isSafeInteger(total) || total < claim.qty))
+                throw Object.assign(new Error('Shelf claim no longer matches the order'), { code: 'SHELF_ORDER_STALE', status: 409 });
+            const qty = total - (claim?.qty || 0);
+            if (!sku || !Number.isSafeInteger(qty) || qty <= 0) continue;
+            sources.push({ orderId: row.order_gid, orderName,
+                lineItemId: String(item?.id || '').trim() || null, sku,
+                title: String(item?.title || 'Garment').trim().slice(0, 160),
+                variantTitle: String(item?.variantTitle || '').trim().slice(0, 160), qty });
         }
     }
+    if (seen.size !== held.size)
+        throw Object.assign(new Error('Shelf claim line is missing'), { code: 'SHELF_ORDER_STALE', status: 409 });
+    return sources;
+}
+
+function supplierLinesFromProjectionRows(rows, claims = []) {
+    const aggregate = new Map();
+    for (const source of supplierSourcesWithShelfClaims(rows, claims))
+        aggregate.set(source.sku, (aggregate.get(source.sku) || 0) + source.qty);
     return [...aggregate.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([sku, qty]) => ({ sku, qty }));
@@ -7908,8 +8168,34 @@ async function handleV1BatchCommit(request, env, allowOrigin, reqAllowHeaders, i
                 }, allowOrigin, reqAllowHeaders, 409);
             }
         }
-        const lines = supplierLinesFromProjectionRows(rows);
-        const lineSources = supplierLineSourcesFromProjectionRows(rows);
+        const claimedRows = await db.prepare(`SELECT order_gid, line_item_gid, variant_gid, sku, qty FROM shelf_claims
+            WHERE shop_id = ? AND qty > 0 AND order_gid IN (${placeholders})`)
+            .bind(shop.id, ...gids).all();
+        const claims = claimedRows.results || [];
+        for (const gid of new Set(claims.map(claim => claim.order_gid))) {
+            const live = await shelfLiveOrder(env, gid);
+            const row = rows.find(candidate => candidate.order_gid === gid);
+            let commerce;
+            try { commerce = JSON.parse(row?.commerce_json || '{}')?.commerce; } catch { commerce = null; }
+            if (live.cancelledAt || claims.filter(claim => claim.order_gid === gid).some(claim => {
+                const line = live.lines.find(item => item.lineItemId === claim.line_item_gid);
+                const projected = commerce?.lineItems?.find(item => item.id === claim.line_item_gid);
+                return commerce?.lineItemsComplete !== true || !line || !projected ||
+                    line.variantId !== claim.variant_gid || line.sku !== claim.sku ||
+                    line.quantity !== Number(projected.currentQuantity ?? projected.quantity) ||
+                    line.quantity < claim.qty;
+            })) return v1Error({ code: 'SHELF_ORDER_STALE',
+                message: 'A shelf claim no longer matches its live Shopify order. Review it before supplier submission.' },
+                allowOrigin, reqAllowHeaders, 409);
+        }
+        const lines = supplierLinesFromProjectionRows(rows, claims);
+        const lineSources = supplierLineSourcesFromProjectionRows(rows, claims);
+        if (gids.some(gid => claims.some(claim => claim.order_gid === gid)
+            && !lineSources.some(source => source.orderId === gid))) {
+            return v1Error({ code: 'SHELF_FULLY_CLAIMED',
+                message: 'Remove orders fully covered by shelf stock from this S&S batch and mark their blanks ready explicitly.' },
+                allowOrigin, reqAllowHeaders, 409);
+        }
         if (!lines.length) {
             return v1Error({
                 code: 'BATCH_HAS_NO_SUPPLIER_SKUS',
@@ -7957,14 +8243,26 @@ async function handleV1BatchCommit(request, env, allowOrigin, reqAllowHeaders, i
                 message: 'This batch may already have reached S&S and must be reconciled before retrying.'
             }, allowOrigin, reqAllowHeaders, 409);
         }
-        await db.batch([
-            ...rows.map(row => db.prepare(`
-              INSERT OR IGNORE INTO batch_orders (batch_id, order_gid, production_revision, quantity_hash)
-              VALUES (?, ?, ?, ?)
-            `).bind(batchId, row.order_gid, Number(row.production_revision || 0), lineHash)),
-            db.prepare(`UPDATE batches SET state = 'submitting', updated_at = ? WHERE id = ?`)
-                .bind(isoNow(), batchId)
-        ]);
+        // Membership closes the claim gate before the supplier payload is sent. Recheck
+        // after acquiring it so a claim made during preparation cannot be purchased too.
+        await db.batch(rows.map(row => db.prepare(`
+            INSERT OR IGNORE INTO batch_orders (batch_id, order_gid, production_revision, quantity_hash)
+            VALUES (?, ?, ?, ?)
+        `).bind(batchId, row.order_gid, Number(row.production_revision || 0), lineHash)));
+        const lockedClaims = await db.prepare(`SELECT order_gid, line_item_gid, variant_gid, sku, qty FROM shelf_claims
+            WHERE shop_id = ? AND qty > 0 AND order_gid IN (${placeholders})`)
+            .bind(shop.id, ...gids).all();
+        if (JSON.stringify(supplierLineSourcesFromProjectionRows(rows, lockedClaims.results || [])) !== JSON.stringify(lineSources)) {
+            await db.prepare("DELETE FROM batches WHERE id = ? AND shop_id = ? AND state = 'prepared'")
+                .bind(batchId, shop.id).run();
+            return v1Error({ code: 'SHELF_CLAIM_CHANGED', message: 'A shelf claim changed while preparing this batch. Refresh and retry.' },
+                allowOrigin, reqAllowHeaders, 409);
+        }
+        const claimed = await db.prepare("UPDATE batches SET state = 'submitting', updated_at = ? WHERE id = ? AND state = 'prepared'")
+            .bind(isoNow(), batchId).run();
+        if (claimed.meta?.changes !== 1)
+            return v1Error({ code: 'BATCH_RECONCILIATION_REQUIRED', message: 'This batch must be reconciled before retrying.' },
+                allowOrigin, reqAllowHeaders, 409);
 
         let supplier;
         try {
@@ -8079,29 +8377,8 @@ function assetIdFromPath(pathname) {
     return decodeURIComponent(pathname.replace(/^\/order-manager\/v1\/assets\//, '').replace(/\/(read-ticket|read)$/, ''));
 }
 
-function supplierLineSourcesFromProjectionRows(rows) {
-    const sources = [];
-    for (const row of rows) {
-        let summary;
-        try { summary = JSON.parse(row.commerce_json || '{}'); } catch (_) { summary = {}; }
-        const orderName = String(summary?.displayName || row.order_gid || '').trim();
-        for (const item of summary?.commerce?.lineItems || []) {
-            if (PRINT_TITLES.has(item?.title)) continue;
-            const sku = String(item?.sku || '').trim();
-            const qty = Number(item?.currentQuantity ?? item?.quantity ?? 0);
-            if (!sku || !Number.isInteger(qty) || qty <= 0) continue;
-            sources.push({
-                orderId: row.order_gid,
-                orderName,
-                lineItemId: String(item?.id || '').trim() || null,
-                sku,
-                title: String(item?.title || 'Garment').trim().slice(0, 160),
-                variantTitle: String(item?.variantTitle || '').trim().slice(0, 160),
-                qty
-            });
-        }
-    }
-    return sources;
+function supplierLineSourcesFromProjectionRows(rows, claims = []) {
+    return supplierSourcesWithShelfClaims(rows, claims);
 }
 
 function supplierValue(object, names) {
@@ -9480,6 +9757,8 @@ export {
     designerAssetCandidates,
     normalizeEtsyOrderContract,
     normalizeSupplierCommitReport,
+    supplierLineSourcesFromProjectionRows,
+    supplierLinesFromProjectionRows,
     orderCanEnterCandidateBoard,
     parseEtsyWebhookResource,
     pickAllowOrigin,
