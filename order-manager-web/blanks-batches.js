@@ -39,6 +39,7 @@
   let newlyCompleteOrders = [];
   let newlyCompleteBatchId = '';
   let receiveSearch = '';
+  let outsideOrderSelection = [];
   const batchDetailsById = new Map();
   const orderAccountingByName = new Map();
   let accountingHydratePromise = null;
@@ -1438,6 +1439,7 @@
 
   function closeOutsideOrderForm() {
     document.getElementById('blanks-receive-create-panel').hidden = true;
+    outsideOrderSelection = [];
   }
 
   function openOutsideOrderForm() {
@@ -1445,6 +1447,7 @@
     const panel = document.getElementById('blanks-receive-create-panel');
     const options = document.getElementById('blanks-receive-create-options');
     const candidates = outsideOrderCandidates();
+    outsideOrderSelection = candidates;
     options.replaceChildren();
     candidates.forEach((order, index) => {
       const label = document.createElement('label');
@@ -1470,11 +1473,19 @@
     const number = document.getElementById('blanks-receive-create-number')?.value.trim();
     const message = document.getElementById('blanks-receive-create-message');
     const button = document.getElementById('blanks-receive-create-confirm');
-    const candidates = outsideOrderCandidates();
-    const selected = Array.from(document.querySelectorAll('#blanks-receive-create-options input:checked'))
-      .map(input => candidates[Number(input.dataset.orderIndex)]).filter(Boolean);
-    if (!number || !selected.length) {
+    const current = currentOrders();
+    const checked = Array.from(document.querySelectorAll('#blanks-receive-create-options input:checked'));
+    const selected = checked
+      .map(input => outsideOrderSelection[Number(input.dataset.orderIndex)])
+      .map(snapshot => current.find(order => snapshot?._gid
+        ? order?._gid === snapshot._gid : order?.name === snapshot?.name))
+      .filter(Boolean);
+    if (!number || !checked.length) {
       message.textContent = 'Enter the S&S order number and select at least one customer order.';
+      return;
+    }
+    if (selected.length !== checked.length) {
+      message.textContent = 'The board changed. Reopen this form and select the orders again.';
       return;
     }
     button.disabled = true;

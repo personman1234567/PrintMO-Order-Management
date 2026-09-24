@@ -13,7 +13,7 @@ This is the broad design proposal for making Order Manager easier to use on the 
 - **Next safe action**: Validate receiving with real shop staff, then choose the next independent area.
 - **Remaining blockers**: Carrier delivery and packing-slip feeds are not integrated.
 - **Owner / external actions**: Confirm any future supplier integration scope before enabling automated delivery events.
-- **Last verified evidence**: `scripts/verify-phase2.js` passed; Worker version `5429ec7c-6375-48b4-af2b-49f5ea308803` and Pages release `17902781023N` were served on 2026-09-24. Live shop acceptance remains separate.
+- **Last verified evidence**: `scripts/verify-phase2.js` passed; Worker version `5429ec7c-6375-48b4-af2b-49f5ea308803` and Pages release `17902782473N` were served on 2026-09-24. Live shop acceptance remains separate.
 
 ## Open Questions & Brainstorming
 
