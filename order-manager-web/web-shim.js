@@ -972,6 +972,7 @@ window.api.updateProductionMetadata = async (orderId, payload = {}) => {
 window.api.getShelfOrder = (orderId) => apiFetch(
   `/order-manager/v1/orders/${encodeURIComponent(orderId)}/shelf`, { method: "GET" }
 );
+window.api.getShelfInventory = () => apiFetch('/order-manager/v1/shelf-stock', { method: 'GET' });
 window.api.setShelfClaim = (orderId, payload) => apiFetch(
   `/order-manager/v1/orders/${encodeURIComponent(orderId)}/shelf`,
   { method: "PUT", body: JSON.stringify(payload) }
@@ -979,6 +980,14 @@ window.api.setShelfClaim = (orderId, payload) => apiFetch(
 window.api.setShelfCount = (variantId, payload) => apiFetch(
   `/order-manager/v1/shelf-stock/${encodeURIComponent(variantId)}`,
   { method: "PUT", body: JSON.stringify(payload) }
+);
+window.api.receiveShelfStock = (variantId, payload) => apiFetch(
+  `/order-manager/v1/shelf-stock/${encodeURIComponent(variantId)}`,
+  { method: 'POST', body: JSON.stringify(payload) }
+);
+window.api.setShelfPulled = (orderId, payload) => apiFetch(
+  `/order-manager/v1/orders/${encodeURIComponent(orderId)}/shelf`,
+  { method: 'PATCH', body: JSON.stringify(payload) }
 );
 
 // 2) Drag/drop persistence

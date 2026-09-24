@@ -210,7 +210,7 @@ async function run() {
 
   const root = path.join(__dirname, '..');
   const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8');
-  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql', '0007_etsy_webhook_delivery.sql', '0008_etsy_catalog_previews.sql', '0009_etsy_preview_refresh_and_supplier_skus.sql', '0010_tultex_shelf_allocation.sql']
+  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql', '0007_etsy_webhook_delivery.sql', '0008_etsy_catalog_previews.sql', '0009_etsy_preview_refresh_and_supplier_skus.sql', '0010_tultex_shelf_allocation.sql', '0011_shelf_physical_reservations.sql']
     .map(file => fs.readFileSync(path.join(root, 'order-manager-proxy', 'migrations', file), 'utf8'))
     .join('\n');
   const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
@@ -234,23 +234,35 @@ async function run() {
     VALUES (1,'shelf-test.myshopify.com','2026-09-24','2026-09-24','2026-09-24')`).run();
   const shelfVariantId = 'gid://shopify/ProductVariant/46246466060536';
   await shelfLedgerDb.prepare(`INSERT INTO shelf_stock
-    (shop_id,variant_gid,sku,available,version,counted_at,updated_at,updated_by,mutation_key,reason)
-    VALUES (1,?,'B10259243',2,0,'2026-09-24','2026-09-24','staff:1','count:fixture','physical count')`)
+    (shop_id,variant_gid,sku,available,on_shelf,version,counted_at,updated_at,updated_by,mutation_key,reason)
+    VALUES (1,?,'B10259243',2,2,0,'2026-09-24','2026-09-24','staff:1','count:fixture','physical count')`)
     .bind(shelfVariantId).run();
   const shelfInsert = shelfLedgerDb.prepare(`INSERT INTO shelf_claims
     (shop_id,order_gid,line_item_gid,variant_gid,sku,qty,version,updated_at,updated_by,mutation_key)
     VALUES (1,'gid://shopify/Order/1',?,?,'B10259243',?,0,'2026-09-24','staff:1',?)`);
   await shelfInsert.bind('gid://shopify/LineItem/1', shelfVariantId, 1, 'claim:one').run();
   assert.equal((await shelfLedgerDb.prepare('SELECT available FROM shelf_stock').first()).available, 1);
+  assert.equal((await shelfLedgerDb.prepare('SELECT on_shelf FROM shelf_stock').first()).on_shelf, 2,
+    'reservation does not change the physical shelf count');
+  await shelfLedgerDb.prepare(`UPDATE shelf_claims SET pulled_qty = 1, version = 1, updated_at = '2026-09-24',
+    updated_by = 'staff:1', mutation_key = 'pull:one' WHERE shop_id = 1`).run();
+  assert.deepEqual(await shelfLedgerDb.prepare('SELECT available, on_shelf FROM shelf_stock').first(),
+    { available: 1, on_shelf: 1 }, 'pull lowers physical shelf quantity without freeing the reservation');
   await assert.rejects(shelfInsert.bind('gid://shopify/LineItem/2', shelfVariantId, 2, 'claim:two').run(),
     /SHELF_STOCK_INSUFFICIENT/, 'two operators cannot oversubscribe the last free unit');
-  await shelfLedgerDb.prepare(`UPDATE shelf_claims SET qty = 0, version = 1, updated_at = '2026-09-24',
+  await assert.rejects(shelfLedgerDb.prepare(`UPDATE shelf_claims SET qty = 0, version = 2,
+    updated_at = '2026-09-24', updated_by = 'staff:1', mutation_key = 'claim:early-release' WHERE shop_id = 1`).run(),
+    /SHELF_PULL_CONFLICT/, 'pulled units cannot be released before physical return');
+  await shelfLedgerDb.prepare(`UPDATE shelf_claims SET pulled_qty = 0, version = 2,
+    updated_at = '2026-09-24', updated_by = 'staff:1', mutation_key = 'return:one' WHERE shop_id = 1`).run();
+  await shelfLedgerDb.prepare(`UPDATE shelf_claims SET qty = 0, version = 3, updated_at = '2026-09-24',
     updated_by = 'staff:1', mutation_key = 'claim:release' WHERE shop_id = 1`).run();
-  assert.equal((await shelfLedgerDb.prepare('SELECT available FROM shelf_stock').first()).available, 2,
-    'explicit release returns stock');
+  assert.deepEqual(await shelfLedgerDb.prepare('SELECT available, on_shelf FROM shelf_stock').first(),
+    { available: 2, on_shelf: 2 }, 'return restores physical quantity; release restores availability');
   const shelfEvents = (await shelfLedgerDb.prepare('SELECT kind,free_delta FROM shelf_events ORDER BY rowid').all()).results;
   assert.deepEqual(shelfEvents.map(event => [event.kind, event.free_delta]),
-    [['count', 2], ['claim', -1], ['release', 1]], 'count and claim changes have one audit event each');
+    [['count', 2], ['reserve', -1], ['pull', 0], ['return', 0], ['release', 1]],
+    'every physical and reservation change has one audit event');
   const shelfSourceRow = { order_gid: 'gid://shopify/Order/1', commerce_json: JSON.stringify({
     displayName: '#1', commerce: { lineItemsComplete: true, lineItems: [
       { id: 'gid://shopify/LineItem/1', variantId: shelfVariantId, sku: 'B10259243', title: 'Tultex 202', currentQuantity: 5 },
@@ -604,6 +616,12 @@ async function run() {
         id: 'gid://shopify/ProductVariant/46246466060536', sku: 'B10259243',
         product: { id: 'gid://shopify/Product/8984050729208' }
       } } });
+      if (request.query.includes('PrintMOShelfCatalog')) return Response.json({ data: { product: {
+        id: 'gid://shopify/Product/8984050729208', title: 'Tultex 202',
+        variants: { nodes: [{ id: 'gid://shopify/ProductVariant/46246466060536', sku: 'B10259243',
+          title: 'Black / Large', selectedOptions: [{ name: 'Color', value: 'Black' }, { name: 'Size', value: 'Large' }] }],
+          pageInfo: { hasNextPage: false } }
+      } } });
       if (request.query.includes('PrintMOShelfOrder')) return Response.json({ data: { order: {
         id: 'gid://shopify/Order/60129381', cancelledAt: shelfCancelledAt,
         lineItems: { nodes: [{ id: 'gid://shopify/LineItem/101', sku: 'B10259243', currentQuantity: shelfLiveQuantity,
@@ -817,11 +835,11 @@ async function run() {
     assert.equal((await worker.fetch(new Request(shelfPath), shelfEnv)).status, 401,
       'shelf stock is never publicly readable');
     const counted = await shelfRequest(shelfCountPath, 'PUT', {
-      available: 3, expectedVersion: -1, reason: 'physical shelf count', idempotencyKey: 'count:first'
+      onShelf: 3, expectedVersion: -1, reason: 'physical shelf count', idempotencyKey: 'count:first'
     });
     assert.equal(counted.status, 200, JSON.stringify(await counted.clone().json()));
     const countReplay = await shelfRequest(shelfCountPath, 'PUT', {
-      available: 3, expectedVersion: -1, reason: 'physical shelf count', idempotencyKey: 'count:first'
+      onShelf: 3, expectedVersion: -1, reason: 'physical shelf count', idempotencyKey: 'count:first'
     });
     assert.equal((await countReplay.json()).replayed, true, 'count retry does not reset stock');
     const claimBody = { lineItemId: 'gid://shopify/LineItem/101', qty: 2,
@@ -830,7 +848,18 @@ async function run() {
     assert.equal(claimed.status, 200, JSON.stringify(await claimed.clone().json()));
     const claimedView = await claimed.json();
     assert.equal(claimedView.lines[0].available, 1);
+    assert.equal(claimedView.lines[0].onShelf, 3, 'reserving does not change physical stock');
+    assert.equal(claimedView.lines[0].reserved, 2);
     assert.equal(claimedView.lines[0].supplierNeeded, 3);
+    const inventoryView = await shelfRequest('https://worker.test/order-manager/v1/shelf-stock');
+    assert.equal(inventoryView.status, 200);
+    const inventoryData = await inventoryView.json();
+    assert.deepEqual([inventoryData.variants[0].onShelf, inventoryData.variants[0].available,
+      inventoryData.toPull[0].reserved], [3, 1, 2], 'inventory view separates physical stock from reserved units');
+    const belowReserved = await shelfRequest(shelfCountPath, 'PUT', {
+      onShelf: 1, expectedVersion: 1, reason: 'recount', idempotencyKey: 'count:below-reserved'
+    });
+    assert.equal(belowReserved.status, 409, 'physical count cannot silently erase reserved units');
     const duplicate = await shelfRequest(shelfPath, 'PUT', claimBody);
     assert.equal(duplicate.status, 200);
     assert.equal((await duplicate.json()).replayed, true, 'duplicate key does not claim twice');
@@ -877,6 +906,36 @@ async function run() {
     const lockedClaim = await shelfRequest(shelfPath, 'PUT', { ...claimBody, qty: 3,
       expectedVersion: 4, idempotencyKey: 'claim:after-batch' });
     assert.equal(lockedClaim.status, 409, 'unknown supplier batch locks further claims');
+    const pulled = await shelfRequest(shelfPath, 'PATCH', { lineItemId: claimBody.lineItemId,
+      pulledQty: 1, physicallyPulled: true, expectedVersion: 4, idempotencyKey: 'pull:after-batch' });
+    assert.equal(pulled.status, 200, 'physical pulls remain possible after supplier submission');
+    const pulledLine = (await pulled.json()).lines[0];
+    assert.deepEqual([pulledLine.onShelf, pulledLine.available, pulledLine.reserved, pulledLine.pulled],
+      [2, 1, 1, 1], 'pull reduces physical shelf stock but does not change supplier remainder');
+    const duplicatePull = await shelfRequest(shelfPath, 'PATCH', { lineItemId: claimBody.lineItemId,
+      pulledQty: 1, physicallyPulled: true, expectedVersion: 4, idempotencyKey: 'pull:after-batch' });
+    assert.equal((await duplicatePull.json()).replayed, true);
+    await shelfDb.prepare('UPDATE order_projection SET active = 0 WHERE shop_id = ? AND order_gid = ?')
+      .bind(shelfShopId, shelfOrder).run();
+    const inactivePull = await shelfRequest(shelfPath, 'PATCH', { lineItemId: claimBody.lineItemId,
+      pulledQty: 2, physicallyPulled: true, expectedVersion: 5, idempotencyKey: 'pull:inactive' });
+    assert.equal(inactivePull.status, 409, 'inactive orders cannot pull additional blanks');
+    const returned = await shelfRequest(shelfPath, 'PATCH', { lineItemId: claimBody.lineItemId,
+      pulledQty: 0, returnedToShelf: true, expectedVersion: 5, idempotencyKey: 'return:physical' });
+    assert.equal(returned.status, 200, 'physically returned units restore on-shelf stock');
+    assert.deepEqual([(await returned.json()).lines[0].onShelf,
+      (await shelfDb.prepare('SELECT available FROM shelf_stock WHERE shop_id = ? AND variant_gid = ?')
+        .bind(shelfShopId, shelfVariant).first()).available], [3, 1],
+      'returned units remain reserved until explicitly released');
+    const currentStock = await shelfDb.prepare('SELECT version FROM shelf_stock WHERE shop_id = ? AND variant_gid = ?')
+      .bind(shelfShopId, shelfVariant).first();
+    const receipt = await shelfRequest(shelfCountPath, 'POST', {
+      qty: 2, expectedVersion: currentStock.version, idempotencyKey: 'receive:two'
+    });
+    assert.equal(receipt.status, 200, 'receiving adds physical stock separately from counts');
+    const receivedStock = await shelfDb.prepare('SELECT on_shelf, available FROM shelf_stock WHERE shop_id = ? AND variant_gid = ?')
+      .bind(shelfShopId, shelfVariant).first();
+    assert.deepEqual([receivedStock.on_shelf, receivedStock.available], [5, 3]);
 
     const disconnectedEtsyStatus = await worker.fetch(
       new Request('https://worker.test/order-manager/v1/integrations/etsy/status', { headers }),

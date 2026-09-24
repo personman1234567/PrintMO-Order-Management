@@ -1,115 +1,172 @@
 (() => {
   const root = document.getElementById('shelf-allocation');
   if (!root) return;
-  const node = (tag, text, className) => {
-    const el = document.createElement(tag);
-    if (text !== undefined) el.textContent = text;
-    if (className) el.className = className;
-    return el;
+  const el = (tag, copy, className) => {
+    const item = document.createElement(tag);
+    if (copy !== undefined) item.textContent = copy;
+    if (className) item.className = className;
+    return item;
   };
-  const key = () => `shelf:${crypto.randomUUID()}`;
+  const mutationKey = () => `shelf:${crypto.randomUUID()}`;
   let serial = 0;
 
-  function show(order, snapshot) {
+  function metric(label, value) {
+    const item = el('div');
+    item.append(el('dt', label), el('dd', String(value)));
+    return item;
+  }
+
+  function show(order, snapshot, notice = '') {
     root.replaceChildren();
     root.hidden = false;
-    root.append(node('h4', 'In-house shelf stock · Tultex 202'));
-    root.append(node('p', 'Staff claims only. Shelf stock never changes Shopify checkout availability.'));
-    const status = node('p', '', 'shelf-status');
+    const header = el('div', undefined, 'shelf-order-header');
+    const title = el('div');
+    title.append(el('h3', 'Blanks for this order'),
+      el('p', 'Reserve shop stock for this order, then mark it pulled when it leaves the shelf.'));
+    const inventory = el('button', 'Open inventory', 'shelf-quiet-button');
+    inventory.type = 'button'; inventory.onclick = () => window.openShelfInventory?.();
+    header.append(title, inventory); root.append(header);
+
+    const totals = snapshot.lines.reduce((acc, line) => ({
+      ordered: acc.ordered + line.quantity, reserved: acc.reserved + line.reserved,
+      pulled: acc.pulled + line.pulled, supplier: acc.supplier + line.supplierNeeded
+    }), { ordered: 0, reserved: 0, pulled: 0, supplier: 0 });
+    const summary = el('dl', undefined, 'shelf-order-summary');
+    summary.append(metric('Tultex 202 needed', totals.ordered), metric('Reserved to pull', totals.reserved),
+      metric('Pulled', totals.pulled), metric('For S&S', totals.supplier));
+    root.append(summary);
+    const status = el('p', notice, 'shelf-status');
+    status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
     root.append(status);
-    if (snapshot.needsReview && !snapshot.lines.some(line => line.needsReview))
-      status.textContent = 'A previous shelf claim no longer matches this order. Review it before purchasing or receiving.';
+    if (snapshot.needsReview) status.textContent = 'A reservation no longer matches the Shopify order. Review it before purchasing or pulling.';
+    else if (snapshot.cancelled) status.textContent = 'This order was canceled. Return and release blanks explicitly; stock does not return automatically.';
+    else if (snapshot.locked) status.textContent = 'Supplier purchasing has started. Reservations are locked; reserved blanks can still be marked pulled.';
+
     const itemById = new Map((order.items || []).map(item => [item.id, item]));
     for (const line of snapshot.lines) {
-      const section = node('div', undefined, 'shelf-line');
       const item = itemById.get(line.lineItemId);
-      section.append(node('strong', `${item?.variantTitle || line.sku} · ${line.sku}`));
-      section.append(node('p', `${line.quantity} ordered · ${line.claimed} claimed · ${line.supplierNeeded} for S&S · ${line.available === null ? 'Shelf uncounted' : `${line.available} free on shelf`}`));
-      if (line.needsReview) section.append(node('p', 'Claim no longer matches this order. Review before purchasing.'));
-      const disabled = snapshot.locked || order._historyReadOnly;
-      if (line.available === null || !disabled) {
-        const claimLabel = node('label', 'Use shelf stock:');
-        const claimInput = node('input');
-        claimInput.type = 'number'; claimInput.min = '0'; claimInput.max = String(snapshot.cancelled ? line.claimed : line.quantity);
-        claimInput.step = '1'; claimInput.value = String(line.claimed);
-        claimInput.disabled = disabled || line.available === null || (snapshot.cancelled && line.claimed === 0);
-        claimLabel.append(claimInput);
-        section.append(claimLabel);
-        const save = node('button', 'Save shelf claim');
-        save.type = 'button'; save.disabled = claimInput.disabled;
+      const section = el('article', undefined, 'shelf-order-line');
+      const identity = el('div', undefined, 'shelf-order-identity');
+      identity.append(el('strong', item?.variantTitle || line.sku), el('span', line.sku));
+      section.append(identity);
+      const counts = el('dl', undefined, 'shelf-line-counts');
+      counts.append(metric('Needed', line.quantity),
+        metric('On shelf', line.onShelf === null ? 'Not counted' : line.onShelf),
+        metric('Free', line.available === null ? '—' : line.available),
+        metric('Reserved', line.reserved), metric('Pulled', line.pulled),
+        metric('For S&S', line.supplierNeeded));
+      section.append(counts);
+      if (line.needsReview) section.append(el('p', 'This line changed in Shopify. Review it before changing its reservation.', 'shelf-line-warning'));
+
+      const controls = el('div', undefined, 'shelf-line-controls');
+      const canReserve = !snapshot.locked && !order._historyReadOnly &&
+        (!line.needsReview || (snapshot.cancelled && line.claimed > line.pulled)) &&
+        (!snapshot.cancelled || line.claimed > line.pulled);
+      if (line.onShelf === null) {
+        controls.append(el('p', 'Count this variant in Inventory before reserving it.', 'shelf-line-hint'));
+      } else if (canReserve) {
+        const label = el('label', 'Reserve for this order');
+        const amount = el('input'); amount.type = 'number'; amount.min = String(line.pulled);
+        amount.max = String(snapshot.cancelled ? line.claimed : line.quantity);
+        amount.step = '1'; amount.value = String(line.claimed);
+        label.append(amount);
+        const save = el('button', snapshot.cancelled ? 'Release reservation' :
+          line.claimed ? 'Update reservation' : 'Reserve blanks', 'shelf-primary-button');
+        save.type = 'button';
         save.onclick = async () => {
-          const qty = Number(claimInput.value);
-          if (!Number.isSafeInteger(qty) || qty < 0 || qty > (snapshot.cancelled ? line.claimed : line.quantity)) {
-            status.textContent = 'Enter a whole number within the order quantity.'; return;
+          const qty = Number(amount.value);
+          const maximum = snapshot.cancelled ? line.claimed : line.quantity;
+          if (!Number.isSafeInteger(qty) || qty < line.pulled || qty > maximum) {
+            status.textContent = `Choose between ${line.pulled} and ${maximum} units for ${item?.variantTitle || line.sku}.`;
+            return;
           }
-          if (qty < line.claimed && !window.confirm('Return these units to free shelf stock only if they are physically back on the shelf. Continue?')) return;
+          if (qty === line.claimed) { status.textContent = 'Choose a different quantity before saving.'; return; }
           save.disabled = true;
           try {
             const result = await window.api.setShelfClaim(order._gid, {
-              lineItemId: line.lineItemId, qty, expectedVersion: line.claimVersion, idempotencyKey: key()
+              lineItemId: line.lineItemId, qty, expectedVersion: line.claimVersion, idempotencyKey: mutationKey()
             });
-            if (root.dataset.orderId === order._gid) show(order, result);
-          } catch (error) { status.textContent = error.message || 'Could not save shelf claim. Refresh and retry.'; save.disabled = false; }
+            if (root.dataset.orderId === order._gid) show(order, result,
+              qty < line.claimed ? 'Reservation released. Units remain physically on the shelf.' : 'Blanks reserved for this order. Mark them pulled when removed from the shelf.');
+          } catch (error) { status.textContent = error.message || 'Reservation not saved. Refresh and try again.'; save.disabled = false; }
         };
-        section.append(save);
+        controls.append(label, save);
       }
-      if (!disabled) {
-        const countLabel = node('label', 'Free units physically counted:');
-        const countInput = node('input');
-        countInput.type = 'number'; countInput.min = '0'; countInput.step = '1';
-        countInput.value = line.available === null ? '' : String(line.available);
-        countLabel.append(countInput);
-        const reason = node('input', undefined, 'shelf-reason');
-        reason.type = 'text'; reason.maxLength = 240; reason.placeholder = 'Reason for count or correction';
-        reason.setAttribute('aria-label', 'Reason for shelf count');
-        const count = node('button', line.available === null ? 'Record physical count' : 'Correct free count');
-        count.type = 'button';
-        count.onclick = async () => {
-          const available = Number(countInput.value);
-          if (countInput.value === '' || !Number.isSafeInteger(available) || available < 0 || !reason.value.trim()) {
-            status.textContent = 'Enter a free shelf count and a reason.'; return;
+
+      if (line.reserved > 0 && !order._historyReadOnly && !snapshot.cancelled && !line.needsReview) {
+        const pullLabel = el('label', 'Units physically pulled');
+        const pullAmount = el('input'); pullAmount.type = 'number'; pullAmount.min = '1';
+        pullAmount.max = String(line.reserved); pullAmount.step = '1'; pullAmount.value = String(line.reserved);
+        pullLabel.append(pullAmount);
+        const pull = el('button', 'Mark pulled', 'shelf-quiet-button'); pull.type = 'button';
+        pull.onclick = async () => {
+          const qty = Number(pullAmount.value);
+          if (!Number.isSafeInteger(qty) || qty < 1 || qty > line.reserved) {
+            status.textContent = 'Enter the number of reserved units physically removed from the shelf.'; return;
           }
-          count.disabled = true;
+          pull.disabled = true;
           try {
-            await window.api.setShelfCount(line.variantId, {
-              available, expectedVersion: line.stockVersion, reason: reason.value.trim(), idempotencyKey: key()
+            const result = await window.api.setShelfPulled(order._gid, {
+              lineItemId: line.lineItemId, pulledQty: line.pulled + qty, physicallyPulled: true,
+              expectedVersion: line.claimVersion, idempotencyKey: mutationKey()
             });
-            if (root.dataset.orderId === order._gid) await window.renderShelfAllocationForOrder(order);
-          } catch (error) { status.textContent = error.message || 'Could not save shelf count. Refresh and retry.'; count.disabled = false; }
+            if (root.dataset.orderId === order._gid) show(order, result, `${qty} ${qty === 1 ? 'blank' : 'blanks'} marked pulled. Physical shelf stock was reduced.`);
+          } catch (error) { status.textContent = error.message || 'Pull not saved. Refresh and try again.'; pull.disabled = false; }
         };
-        section.append(countLabel, reason, count);
+        controls.append(pullLabel, pull);
       }
-      root.append(section);
+
+      if (line.pulled > 0 && !order._historyReadOnly) {
+        const returnLabel = el('label', 'Units physically returned');
+        const returnAmount = el('input'); returnAmount.type = 'number'; returnAmount.min = '1';
+        returnAmount.max = String(line.pulled); returnAmount.step = '1'; returnAmount.value = String(line.pulled);
+        returnLabel.append(returnAmount);
+        const returned = el('button', 'Return to shelf', 'shelf-quiet-button'); returned.type = 'button';
+        returned.onclick = async () => {
+          const qty = Number(returnAmount.value);
+          if (!Number.isSafeInteger(qty) || qty < 1 || qty > line.pulled) {
+            status.textContent = 'Enter the number of pulled units physically returned to the shelf.'; return;
+          }
+          if (!window.confirm(`Are ${qty} ${qty === 1 ? 'blank' : 'blanks'} physically back on the shelf? This keeps them reserved until you release the reservation.`)) return;
+          returned.disabled = true;
+          try {
+            const result = await window.api.setShelfPulled(order._gid, {
+              lineItemId: line.lineItemId, pulledQty: line.pulled - qty, returnedToShelf: true,
+              expectedVersion: line.claimVersion, idempotencyKey: mutationKey()
+            });
+            if (root.dataset.orderId === order._gid) show(order, result,
+              'Physical shelf count restored. These blanks remain reserved until the reservation is released.');
+          } catch (error) { status.textContent = error.message || 'Return not saved. Refresh and try again.'; returned.disabled = false; }
+        };
+        controls.append(returnLabel, returned);
+      }
+      section.append(controls); root.append(section);
     }
-    if (snapshot.locked) status.textContent = 'Supplier purchasing or production has started. Shelf claims are locked.';
-    else if (snapshot.cancelled) status.textContent = 'This order was canceled. Shelf units are never returned automatically.';
-    else if (snapshot.lines.length && snapshot.lines.every(line => line.supplierNeeded === 0))
-      status.textContent = 'All Tultex 202 units are claimed. Verify the blanks, then mark them ready in the order controls.';
   }
 
-  window.renderShelfAllocationForOrder = async (order) => {
+  window.renderShelfAllocationForOrder = async order => {
     const id = order?._gid;
     const turn = ++serial;
     root.dataset.orderId = id || '';
     root.hidden = true;
     if (!(order?.items || []).some(item => item?.title === 'Tultex - Fine Jersey T-Shirt - 202')) return;
     root.hidden = false;
-    root.replaceChildren(node('p', 'Loading Tultex 202 shelf stock…'));
+    root.replaceChildren(el('p', 'Loading in-house blank inventory…', 'shelf-status'));
     if (!order?._candidate || order?._provider !== 'shopify' || !id || !window.api?.getShelfOrder) {
-      root.replaceChildren(node('p', 'Shelf stock is unavailable for this order. Refresh Order Manager and try again.'));
+      root.replaceChildren(el('p', 'In-house inventory is unavailable for this order. Refresh Order Manager and try again.'));
       return;
     }
     try {
       const snapshot = await window.api.getShelfOrder(id);
       if (turn !== serial || root.dataset.orderId !== id) return;
       if (!snapshot?.lines?.length) {
-        root.replaceChildren(node('p', 'This Tultex 202 order could not be matched to live Shopify variants. Shelf claims are unavailable.'));
+        root.replaceChildren(el('p', 'This order could not be matched to current Tultex 202 variants. Reservations are unavailable.'));
         return;
       }
       show(order, snapshot);
     } catch (error) {
       if (turn !== serial || root.dataset.orderId !== id) return;
-      root.replaceChildren(node('p', error.message || 'Shelf stock is unavailable.'));
+      root.replaceChildren(el('p', error.message || 'In-house inventory could not load.'));
     }
   };
 })();

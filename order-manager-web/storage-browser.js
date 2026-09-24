@@ -478,7 +478,7 @@
   }
 
   function setActiveView(view) {
-    const nextView = ['storage', 'previous'].includes(view) ? view : 'orders';
+    const nextView = ['storage', 'previous', 'inventory'].includes(view) ? view : 'orders';
     if (nextView !== 'orders') {
       const currentTab = document.body.dataset.activeTab || 'pipeline';
       if (currentTab && !['storage', 'history'].includes(currentTab)) state.lastOrdersTab = currentTab;
@@ -500,8 +500,12 @@
     if (elements.previousView) {
       elements.previousView.setAttribute('aria-hidden', nextView !== 'previous');
     }
+    document.getElementById('inventory-view')?.setAttribute('aria-hidden', nextView !== 'inventory');
 
-    if (nextView === 'storage') {
+    if (nextView === 'inventory') {
+      if (document.body.classList.contains('detail-open')) document.getElementById('detail-close')?.click();
+      window.loadShelfInventory?.();
+    } else if (nextView === 'storage') {
       if (typeof window.setActiveMobileTab === 'function' && window.matchMedia('(max-width: 900px)').matches) {
         window.setActiveMobileTab('storage', { scrollTop: false });
       }

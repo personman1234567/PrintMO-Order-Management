@@ -87,6 +87,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     <div class="app-brand">PrintMO Order Manager</div>
     <nav class="app-nav" aria-label="Primary navigation">
       <button class="app-nav-tab" type="button" data-view="orders" aria-pressed="true">Orders</button>
+      <button class="app-nav-tab" type="button" data-view="inventory" aria-pressed="false">Inventory</button>
       <button class="app-nav-tab" type="button" data-view="previous" aria-pressed="false">Previous Orders</button>
       <button class="app-nav-tab" type="button" data-view="storage" aria-pressed="false">Storage Browser</button>
       <button id="order-manager-refresh-btn" class="order-manager-refresh-btn" type="button" aria-label="Refresh orders and mockups">Refresh</button>
@@ -635,6 +636,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                       <div><dt>Last production update</dt><dd id="production-updated-val">—</dd></div>
                     </dl>
                   </section>
+                  <section id="shelf-allocation" class="shelf-allocation" aria-label="In-house blank inventory" hidden></section>
                   <section id="detail-design-panel" class="vector-files-card" aria-labelledby="detail-design-title">
                     <div class="design-panel-header">
                       <div>
@@ -703,7 +705,6 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                         <tbody></tbody>
                       </table>
                     </div>
-                    <section id="shelf-allocation" class="shelf-allocation" aria-label="In-house shelf stock" hidden></section>
                     <table id="detail-summary">
                       <tbody>
                         <tr>
@@ -970,6 +971,27 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   </div>
   </div>
 
+  <section id="inventory-view" class="app-view shelf-inventory-view" aria-hidden="true">
+    <header class="shelf-inventory-header">
+      <div>
+        <h1>In-house inventory</h1>
+        <p>Physical Tultex 202 stock for shop orders. S&amp;S supplier availability is tracked separately.</p>
+      </div>
+      <button id="shelf-inventory-refresh" type="button">Refresh stock</button>
+    </header>
+    <div id="shelf-inventory-status" class="shelf-inventory-status" role="status" aria-live="polite"></div>
+    <section class="shelf-inventory-pulls" aria-labelledby="shelf-to-pull-title">
+      <div class="shelf-inventory-section-heading"><h2 id="shelf-to-pull-title">Reserved to pull</h2><span id="shelf-to-pull-count">0</span></div>
+      <div id="shelf-to-pull-list" class="shelf-to-pull-list"></div>
+    </section>
+    <section class="shelf-inventory-stock" aria-labelledby="shelf-stock-title">
+      <div class="shelf-inventory-section-heading"><h2 id="shelf-stock-title">Stock by variant</h2><span id="shelf-counted-summary"></span></div>
+      <label class="shelf-inventory-search-label" for="shelf-inventory-search">Find a color, size, or SKU</label>
+      <input id="shelf-inventory-search" type="search" autocomplete="off" placeholder="Search Tultex 202 stock" />
+      <div id="shelf-inventory-list" class="shelf-inventory-list"></div>
+    </section>
+  </section>
+
   <section id="previous-orders-view" class="app-view previous-orders" aria-hidden="true">
     <header class="previous-orders-header">
       <div>
@@ -1079,6 +1101,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./blanks-batches.js"></script>
   <script src="./detail-overlay-enhancements.js"></script>
   <script src="./shelf-allocation.js"></script>
+  <script src="./shelf-inventory.js"></script>
   <script src="./desktop-drag-polish.js"></script>
   <script src="./manual-add-checklist.js"></script>
   <script src="./accessibility-hardening.js"></script>

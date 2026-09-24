@@ -62,13 +62,13 @@ When orders are dragged into the batch zone:
 
 ## Tultex 202 Shelf Claims
 
-For exact Tultex 202 Shopify variants, staff can record physically counted **free** shelf units in Order Detail and explicitly claim a whole or partial order-line quantity. The authenticated D1 ledger records every count, claim, and release with an actor and idempotency key. An uncounted variant cannot be claimed. Releasing units requires staff to confirm they are physically back on the shelf; cancellation never returns them automatically. Shopify inventory, checkout availability, and supplier inventory observations are unaffected.
+For exact Tultex 202 Shopify variants, staff record the **physical on-shelf** count in Order Manager's Inventory tab and reserve a whole or partial order-line quantity from the Production tab. Reservations reduce free units without changing the physical count. Staff then mark blanks pulled when they physically leave the shelf, reducing on-shelf stock. A physical return restores on-shelf stock but keeps the reservation until an explicit release. The authenticated D1 ledger audits each step with an actor and idempotency key. Uncounted variants cannot be reserved. Cancellation never returns stock automatically. Shopify inventory, checkout availability, and supplier inventory observations are unaffected.
 
 The Worker subtracts active shelf claims from both the S&S aggregate request and its per-order line sources. The browser subtracts the same quantities from a new receiving manifest. Claims are locked once an order enters a prepared, submitting, confirmed, or uncertain supplier batch. A changed or missing Shopify line blocks submission for review. An order fully covered by shelf claims is omitted from an S&S batch; staff verify the blanks and use the existing Order Detail readiness control to mark them ready without a PO.
 
-The `SHELF_ALLOCATION_ENABLED` Worker flag gates this first release to Tultex 202. Free counts begin uncounted and must come from a physical shelf count, never Shopify HQ balances.
+The `SHELF_ALLOCATION_ENABLED` Worker flag gates this first release to Tultex 202. Physical counts begin uncounted and must come from a shelf count, never Shopify HQ balances. The Inventory tab shows on-shelf, reserved, and free quantities and a queue of reservations still waiting to be pulled.
 
-The installed Order Manager app must have Shopify `read_products` as well as order access. Shopify can return order-line SKUs while returning `null` for `LineItem.variant` without that scope. The Worker requires the variant and its exact product ID before accepting a count or claim; when the scope is missing, Order Detail shows `SHELF_PRODUCT_ACCESS_REQUIRED`. Release the updated Shopify app version and approve its permission request before staff enter shelf counts.
+The installed Order Manager app must have Shopify `read_products` as well as order access. Shopify can return order-line SKUs while returning `null` for `LineItem.variant` without that scope. The Worker requires the variant and its exact product ID before accepting a count or reservation; when the scope is missing, Order Detail shows `SHELF_PRODUCT_ACCESS_REQUIRED`.
 
 ---
 

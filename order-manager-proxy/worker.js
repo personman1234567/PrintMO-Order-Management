@@ -351,13 +351,20 @@ export default {
             return handleV1DesignAssetUpload(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
         }
 
+        if (url.pathname === "/order-manager/v1/shelf-stock" && request.method === "GET") {
+            return handleShelfInventory(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
+
         if (url.pathname.startsWith("/order-manager/v1/orders/") && url.pathname.endsWith("/shelf")
-            && ["GET", "PUT"].includes(request.method)) {
+            && ["GET", "PUT", "PATCH"].includes(request.method)) {
             return handleShelfOrder(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
         }
 
-        if (url.pathname.startsWith("/order-manager/v1/shelf-stock/") && request.method === "PUT") {
-            return handleShelfCount(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
+        if (url.pathname.startsWith("/order-manager/v1/shelf-stock/")) {
+            if (request.method === "PUT")
+                return handleShelfCount(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
+            if (request.method === "POST")
+                return handleShelfReceive(request, env, allowOrigin || origin || "*", reqAllowHeaders, identity);
         }
 
         if (url.pathname.startsWith("/order-manager/v1/orders/") && request.method === "GET") {
@@ -7845,6 +7852,12 @@ const SHELF_ORDER_QUERY = `query PrintMOShelfOrder($id: ID!, $after: String) {
 const SHELF_VARIANT_QUERY = `query PrintMOShelfVariant($id: ID!) {
   productVariant(id: $id) { id sku product { id } }
 }`;
+const SHELF_CATALOG_QUERY = `query PrintMOShelfCatalog($id: ID!, $after: String) {
+  product(id: $id) { id title variants(first: 100, after: $after) {
+    nodes { id sku title selectedOptions { name value } }
+    pageInfo { hasNextPage endCursor }
+  } }
+}`;
 const SHELF_ACCESS_QUERY = `query PrintMOShelfAccess {
   currentAppInstallation { accessScopes { handle } }
 }`;
@@ -7901,9 +7914,9 @@ async function shelfLiveOrder(env, orderGid, graphQL = coordinatorGraphQL) {
 async function shelfOrderSnapshot(env, shopId, orderGid, live) {
     const db = requireOrderDb(env);
     const [stock, claims, projection, batch] = await Promise.all([
-        db.prepare('SELECT variant_gid, sku, available, version, counted_at FROM shelf_stock WHERE shop_id = ?')
+        db.prepare('SELECT variant_gid, sku, available, on_shelf, version, counted_at FROM shelf_stock WHERE shop_id = ?')
             .bind(shopId).all(),
-        db.prepare('SELECT line_item_gid, variant_gid, sku, qty, version FROM shelf_claims WHERE shop_id = ? AND order_gid = ?')
+        db.prepare('SELECT line_item_gid, variant_gid, sku, qty, pulled_qty, version FROM shelf_claims WHERE shop_id = ? AND order_gid = ?')
             .bind(shopId, orderGid).all(),
         db.prepare('SELECT active, stage FROM order_projection WHERE shop_id = ? AND order_gid = ?')
             .bind(shopId, orderGid).first(),
@@ -7916,8 +7929,8 @@ async function shelfOrderSnapshot(env, shopId, orderGid, live) {
     const liveLineIds = new Set(live.lines.map(line => line.lineItemId));
     const orphanedClaim = (claims.results || []).some(row => row.qty > 0 && !liveLineIds.has(row.line_item_gid));
     return { orderId: orderGid, cancelled: Boolean(live.cancelledAt),
-        locked: (!projection?.active && !live.cancelledAt) ||
-            !['received', 'to_order'].includes(projection?.stage) || Boolean(batch),
+        locked: ((!projection?.active || !['received', 'to_order'].includes(projection?.stage)) &&
+            !live.cancelledAt) || Boolean(batch),
         needsReview: orphanedClaim || live.lines.some(line => {
             const held = claimByLine.get(line.lineItemId);
             return Boolean(held && (held.variant_gid !== line.variantId || held.sku !== line.sku || held.qty > line.quantity));
@@ -7925,11 +7938,77 @@ async function shelfOrderSnapshot(env, shopId, orderGid, live) {
         lines: live.lines.map(line => {
         const held = claimByLine.get(line.lineItemId);
         const counted = stockByVariant.get(line.variantId);
-        return { ...line, available: counted?.available ?? null, stockVersion: counted?.version ?? -1,
-            countedAt: counted?.counted_at || null, claimed: held?.qty || 0, claimVersion: held?.version ?? -1,
+        return { ...line, available: counted?.available ?? null, onShelf: counted?.on_shelf ?? null,
+            stockVersion: counted?.version ?? -1, countedAt: counted?.counted_at || null,
+            claimed: held?.qty || 0, reserved: (held?.qty || 0) - (held?.pulled_qty || 0),
+            pulled: held?.pulled_qty || 0, claimVersion: held?.version ?? -1,
             supplierNeeded: Math.max(0, line.quantity - (held?.qty || 0)),
             needsReview: Boolean(held && (held.variant_gid !== line.variantId || held.sku !== line.sku || held.qty > line.quantity)) };
     }) };
+}
+
+async function shelfVerifiedVariant(env, variantId) {
+    const result = await coordinatorGraphQL(env, SHELF_VARIANT_QUERY, { id: variantId }, 'PrintMOShelfVariant');
+    const variant = requireShopifyData(result, 'PrintMOShelfVariant').productVariant;
+    if (!variant || variant.id !== variantId || variant.product?.id !== TULTEX_202_PRODUCT_GID || !variant.sku)
+        throw Object.assign(new Error('Only exact Tultex 202 variants can be counted.'), { code: 'NOT_TULTEX_202', status: 409 });
+    return variant;
+}
+
+async function handleShelfInventory(request, env, allowOrigin, reqAllowHeaders) {
+    if (!shelfEnabled(env)) return v1Error({ code: 'SHELF_DISABLED', message: 'Shelf inventory is disabled.' }, allowOrigin, reqAllowHeaders, 404);
+    try {
+        const variants = [];
+        let after = null;
+        let productTitle = '';
+        let complete = false;
+        for (let page = 0; page < 10; page++) {
+            const result = await coordinatorGraphQL(env, SHELF_CATALOG_QUERY,
+                { id: TULTEX_202_PRODUCT_GID, after }, 'PrintMOShelfCatalog');
+            const product = requireShopifyData(result, 'PrintMOShelfCatalog').product;
+            if (!product || product.id !== TULTEX_202_PRODUCT_GID || !Array.isArray(product.variants?.nodes))
+                throw Object.assign(new Error('Tultex 202 catalog is incomplete.'), { code: 'SHELF_CATALOG_UNVERIFIED', status: 409 });
+            productTitle = product.title;
+            variants.push(...product.variants.nodes);
+            if (!product.variants.pageInfo?.hasNextPage) { complete = true; break; }
+            after = product.variants.pageInfo.endCursor;
+            if (!after) break;
+        }
+        if (!complete) throw Object.assign(new Error('Tultex 202 catalog needs more pages.'),
+            { code: 'SHELF_CATALOG_UNVERIFIED', status: 409 });
+        const shop = await d1Shop(env);
+        const db = requireOrderDb(env);
+        const [stock, pending] = await Promise.all([
+            db.prepare('SELECT variant_gid, sku, on_shelf, available, version, counted_at FROM shelf_stock WHERE shop_id = ?')
+                .bind(shop.id).all(),
+            db.prepare(`SELECT c.order_gid, c.line_item_gid, c.variant_gid, c.sku, c.qty, c.pulled_qty, c.version,
+                p.commerce_json, p.active, p.stage FROM shelf_claims c
+                LEFT JOIN order_projection p ON p.shop_id = c.shop_id AND p.order_gid = c.order_gid
+                WHERE c.shop_id = ? AND c.qty > c.pulled_qty ORDER BY c.updated_at DESC`)
+                .bind(shop.id).all()
+        ]);
+        const stockByVariant = new Map((stock.results || []).map(row => [row.variant_gid, row]));
+        const catalog = variants.filter(variant => variant?.id && variant.sku).map(variant => {
+            const row = stockByVariant.get(variant.id);
+            return { variantId: variant.id, sku: variant.sku, title: variant.title,
+                selectedOptions: variant.selectedOptions || [], onShelf: row?.on_shelf ?? null,
+                available: row?.available ?? null, stockVersion: row?.version ?? -1,
+                countedAt: row?.counted_at || null };
+        });
+        const ids = new Set(catalog.map(item => item.variantId));
+        const toPull = (pending.results || []).filter(row => ids.has(row.variant_gid)).map(row => {
+            let summary;
+            try { summary = JSON.parse(row.commerce_json || '{}'); } catch { summary = null; }
+            return { orderId: row.order_gid, orderName: summary?.displayName || 'Shopify order',
+                lineItemId: row.line_item_gid, variantId: row.variant_gid, sku: row.sku,
+                reserved: row.qty - row.pulled_qty, pulled: row.pulled_qty, claimVersion: row.version,
+                active: Boolean(row.active), stage: row.stage || null };
+        });
+        return jsonResponse({ product: productTitle, variants: catalog, toPull }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error({ code: error.code || 'SHELF_INVENTORY_FAILED', message: error.message },
+            allowOrigin, reqAllowHeaders, error.status || 500);
+    }
 }
 
 async function shelfReplay(db, shopId, key, fingerprint) {
@@ -7945,17 +8024,14 @@ async function handleShelfCount(request, env, allowOrigin, reqAllowHeaders, iden
     try {
         const variantId = shelfVariantId(request);
         const body = await request.json().catch(() => ({}));
-        const qty = body.available;
+        const qty = body.onShelf;
         const expected = body.expectedVersion;
         const key = body.idempotencyKey;
         const reason = String(body.reason || '').trim();
         if (!variantId || !Number.isSafeInteger(qty) || qty < 0 || qty > 100000 ||
             !Number.isSafeInteger(expected) || expected < -1 || !shelfValidKey(key) || !reason || reason.length > 240)
-            return v1Error({ code: 'INVALID_SHELF_COUNT', message: 'Enter a counted free quantity and reason.' }, allowOrigin, reqAllowHeaders, 400);
-        const variantResult = await coordinatorGraphQL(env, SHELF_VARIANT_QUERY, { id: variantId }, 'PrintMOShelfVariant');
-        const variant = requireShopifyData(variantResult, 'PrintMOShelfVariant').productVariant;
-        if (!variant || variant.id !== variantId || variant.product?.id !== TULTEX_202_PRODUCT_GID || !variant.sku)
-            return v1Error({ code: 'NOT_TULTEX_202', message: 'Only exact Tultex 202 variants can be counted.' }, allowOrigin, reqAllowHeaders, 409);
+            return v1Error({ code: 'INVALID_SHELF_COUNT', message: 'Enter the physical on-shelf quantity and a reason.' }, allowOrigin, reqAllowHeaders, 400);
+        const variant = await shelfVerifiedVariant(env, variantId);
         const shop = await d1Shop(env);
         const db = requireOrderDb(env);
         const fingerprint = JSON.stringify(['count', variantId, qty, expected, reason]);
@@ -7965,30 +8041,82 @@ async function handleShelfCount(request, env, allowOrigin, reqAllowHeaders, iden
             .bind(shop.id, variantId).first();
         if ((existing?.version ?? -1) !== expected)
             return v1Error({ code: 'SHELF_VERSION_CONFLICT', message: 'Shelf count changed. Refresh before saving.' }, allowOrigin, reqAllowHeaders, 409);
+        const reserved = await db.prepare('SELECT COALESCE(SUM(qty - pulled_qty), 0) AS units FROM shelf_claims WHERE shop_id = ? AND variant_gid = ?')
+            .bind(shop.id, variantId).first();
+        if (qty < Number(reserved?.units || 0))
+            return v1Error({ code: 'SHELF_COUNT_BELOW_RESERVED',
+                message: 'The physical shelf count is below units reserved for orders. Review those reservations first.' },
+                allowOrigin, reqAllowHeaders, 409);
         const now = isoNow();
         const mutationKey = `count:${key}`;
         try {
             await db.batch([
-                db.prepare(`INSERT INTO shelf_stock (shop_id, variant_gid, sku, available, version, counted_at, updated_at, updated_by, mutation_key, reason)
-                    VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
-                    ON CONFLICT(shop_id, variant_gid) DO UPDATE SET available = excluded.available,
+                db.prepare(`INSERT INTO shelf_stock (shop_id, variant_gid, sku, available, on_shelf, version, counted_at, updated_at, updated_by, mutation_key, reason)
+                    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+                    ON CONFLICT(shop_id, variant_gid) DO UPDATE SET on_shelf = excluded.on_shelf,
+                    available = excluded.on_shelf - COALESCE((SELECT SUM(qty - pulled_qty) FROM shelf_claims
+                        WHERE shop_id = excluded.shop_id AND variant_gid = excluded.variant_gid), 0),
                     version = shelf_stock.version + 1, counted_at = excluded.counted_at, updated_at = excluded.updated_at,
                     updated_by = excluded.updated_by, mutation_key = excluded.mutation_key, reason = excluded.reason
                     WHERE shelf_stock.version = ? AND shelf_stock.sku = excluded.sku`)
-                    .bind(shop.id, variantId, variant.sku, qty, now, now, shelfActor(identity), mutationKey, reason, expected),
+                    .bind(shop.id, variantId, variant.sku, qty, qty, now, now, shelfActor(identity), mutationKey, reason, expected),
                 db.prepare('INSERT INTO shelf_operations VALUES (?, ?, ?, changes(), ?)')
                     .bind(shop.id, key, fingerprint, now)
             ]);
         } catch (error) {
             if (await shelfReplay(db, shop.id, key, fingerprint))
                 return jsonResponse({ ok: true, replayed: true }, allowOrigin, reqAllowHeaders);
-            return v1Error({ code: 'SHELF_VERSION_CONFLICT', message: 'Shelf count changed. Refresh before saving.' }, allowOrigin, reqAllowHeaders, 409);
+            const belowReserved = /SHELF_COUNT_INCONSISTENT|CHECK constraint failed/.test(String(error?.message || ''));
+            return v1Error({ code: belowReserved ? 'SHELF_COUNT_BELOW_RESERVED' : 'SHELF_VERSION_CONFLICT',
+                message: belowReserved ? 'Shelf count is below reserved units. Refresh and review reservations.' : 'Shelf count changed. Refresh before saving.' },
+                allowOrigin, reqAllowHeaders, 409);
         }
-        const current = await db.prepare('SELECT available, version, counted_at FROM shelf_stock WHERE shop_id = ? AND variant_gid = ?')
+        const current = await db.prepare('SELECT on_shelf AS onShelf, available, version, counted_at FROM shelf_stock WHERE shop_id = ? AND variant_gid = ?')
             .bind(shop.id, variantId).first();
         return jsonResponse({ ok: true, variantId, ...current }, allowOrigin, reqAllowHeaders);
     } catch (error) {
         return v1Error({ code: error.code || 'SHELF_COUNT_FAILED', message: error.message }, allowOrigin, reqAllowHeaders, error.status || 500);
+    }
+}
+
+async function handleShelfReceive(request, env, allowOrigin, reqAllowHeaders, identity) {
+    if (!shelfEnabled(env)) return v1Error({ code: 'SHELF_DISABLED', message: 'Shelf inventory is disabled.' }, allowOrigin, reqAllowHeaders, 404);
+    try {
+        const variantId = shelfVariantId(request);
+        const body = await request.json().catch(() => ({}));
+        const qty = body.qty;
+        const expected = body.expectedVersion;
+        const key = body.idempotencyKey;
+        if (!variantId || !Number.isSafeInteger(qty) || qty < 1 || qty > 100000 ||
+            !Number.isSafeInteger(expected) || expected < 0 || !shelfValidKey(key))
+            return v1Error({ code: 'INVALID_SHELF_RECEIPT', message: 'Enter a positive whole number of received units.' },
+                allowOrigin, reqAllowHeaders, 400);
+        const variant = await shelfVerifiedVariant(env, variantId);
+        const shop = await d1Shop(env);
+        const db = requireOrderDb(env);
+        const fingerprint = JSON.stringify(['receive', variantId, qty, expected]);
+        if (await shelfReplay(db, shop.id, key, fingerprint))
+            return jsonResponse({ ok: true, replayed: true }, allowOrigin, reqAllowHeaders);
+        const now = isoNow();
+        try {
+            await db.batch([
+                db.prepare(`UPDATE shelf_stock SET on_shelf = on_shelf + ?, available = available + ?,
+                    version = version + 1, updated_at = ?, updated_by = ?, mutation_key = ?, reason = 'Received stock'
+                    WHERE shop_id = ? AND variant_gid = ? AND sku = ? AND version = ?`)
+                    .bind(qty, qty, now, shelfActor(identity), `receive:${key}`, shop.id, variantId, variant.sku, expected),
+                db.prepare('INSERT INTO shelf_operations VALUES (?, ?, ?, changes(), ?)')
+                    .bind(shop.id, key, fingerprint, now)
+            ]);
+        } catch (error) {
+            if (await shelfReplay(db, shop.id, key, fingerprint))
+                return jsonResponse({ ok: true, replayed: true }, allowOrigin, reqAllowHeaders);
+            return v1Error({ code: 'SHELF_VERSION_CONFLICT', message: 'Shelf stock changed. Refresh before receiving.' },
+                allowOrigin, reqAllowHeaders, 409);
+        }
+        return jsonResponse({ ok: true }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return v1Error({ code: error.code || 'SHELF_RECEIVE_FAILED', message: error.message },
+            allowOrigin, reqAllowHeaders, error.status || 500);
     }
 }
 
@@ -8004,6 +8132,8 @@ async function handleShelfOrder(request, env, allowOrigin, reqAllowHeaders, iden
             return jsonResponse(await shelfOrderSnapshot(env, shop.id, orderGid, live), allowOrigin, reqAllowHeaders);
         const body = await request.json().catch(() => ({}));
         const lineId = shelfLineGid(body.lineItemId);
+        if (request.method === 'PATCH')
+            return handleShelfPull(env, allowOrigin, reqAllowHeaders, identity, shop.id, orderGid, live, lineId, body);
         const qty = body.qty;
         const expected = body.expectedVersion;
         const key = body.idempotencyKey;
@@ -8015,9 +8145,13 @@ async function handleShelfOrder(request, env, allowOrigin, reqAllowHeaders, iden
         const fingerprint = JSON.stringify(['claim', orderGid, lineId, line.variantId, qty, expected]);
         if (await shelfReplay(db, shop.id, key, fingerprint))
             return jsonResponse({ ok: true, replayed: true, ...await shelfOrderSnapshot(env, shop.id, orderGid, live) }, allowOrigin, reqAllowHeaders);
-        const old = await db.prepare('SELECT qty, version FROM shelf_claims WHERE shop_id = ? AND order_gid = ? AND line_item_gid = ?')
+        const old = await db.prepare('SELECT qty, pulled_qty, version FROM shelf_claims WHERE shop_id = ? AND order_gid = ? AND line_item_gid = ?')
             .bind(shop.id, orderGid, lineId).first();
         const releasing = Boolean(old && qty < old.qty);
+        if (old && qty < old.pulled_qty)
+            return v1Error({ code: 'SHELF_ALREADY_PULLED',
+                message: 'Return pulled units to the shelf before releasing this reservation.' },
+                allowOrigin, reqAllowHeaders, 409);
         if ((qty > line.quantity && !releasing) || (live.cancelledAt && qty > (old?.qty || 0)) ||
             (old?.version ?? -1) !== expected || (!old && qty === 0))
             return v1Error({ code: 'SHELF_CLAIM_CONFLICT', message: 'Order or claim changed. Refresh before saving.' }, allowOrigin, reqAllowHeaders, 409);
@@ -8028,8 +8162,8 @@ async function handleShelfOrder(request, env, allowOrigin, reqAllowHeaders, iden
         const batch = await db.prepare(`SELECT 1 AS found FROM batch_orders bo JOIN batches b ON b.id = bo.batch_id
             WHERE b.shop_id = ? AND bo.order_gid = ? AND b.state IN ('prepared','submitting','confirmed','unknown') LIMIT 1`)
             .bind(shop.id, orderGid).first();
-        if ((!projection?.active && !(releasing && live.cancelledAt)) ||
-            !['received', 'to_order'].includes(projection?.stage) || batch)
+        if ((!projection?.active || !['received', 'to_order'].includes(projection?.stage)) &&
+            !(releasing && live.cancelledAt) || batch)
             return v1Error({ code: 'SHELF_ORDER_LOCKED', message: 'This order has entered supplier purchasing or production.' }, allowOrigin, reqAllowHeaders, 409);
         let summary;
         try { summary = JSON.parse(projection.commerce_json || '{}'); } catch { summary = null; }
@@ -8072,6 +8206,68 @@ async function handleShelfOrder(request, env, allowOrigin, reqAllowHeaders, iden
     } catch (error) {
         return v1Error({ code: error.code || 'SHELF_CLAIM_FAILED', message: error.message }, allowOrigin, reqAllowHeaders, error.status || 500);
     }
+}
+
+async function handleShelfPull(env, allowOrigin, reqAllowHeaders, identity, shopId, orderGid, live, lineId, body) {
+    const pulledQty = body.pulledQty;
+    const expected = body.expectedVersion;
+    const key = body.idempotencyKey;
+    if (!lineId || !Number.isSafeInteger(pulledQty) || pulledQty < 0 ||
+        !Number.isSafeInteger(expected) || expected < 0 || !shelfValidKey(key))
+        return v1Error({ code: 'INVALID_SHELF_PULL', message: 'Choose a reserved line and a valid pulled quantity.' },
+            allowOrigin, reqAllowHeaders, 400);
+    const db = requireOrderDb(env);
+    const line = live.lines.find(candidate => candidate.lineItemId === lineId);
+    if (!line) return v1Error({ code: 'NOT_TULTEX_202', message: 'This is not a current Tultex 202 order line.' },
+        allowOrigin, reqAllowHeaders, 409);
+    const fingerprint = JSON.stringify(['pull', orderGid, lineId, pulledQty, expected]);
+    if (await shelfReplay(db, shopId, key, fingerprint))
+        return jsonResponse({ ok: true, replayed: true, ...await shelfOrderSnapshot(env, shopId, orderGid, live) },
+            allowOrigin, reqAllowHeaders);
+    const claim = await db.prepare(`SELECT variant_gid, sku, qty, pulled_qty, version FROM shelf_claims
+        WHERE shop_id = ? AND order_gid = ? AND line_item_gid = ?`).bind(shopId, orderGid, lineId).first();
+    if (!claim || claim.variant_gid !== line.variantId || claim.sku !== line.sku ||
+        claim.version !== expected || pulledQty > claim.qty)
+        return v1Error({ code: 'SHELF_PULL_CONFLICT', message: 'Reservation changed. Refresh before updating the pull.' },
+            allowOrigin, reqAllowHeaders, 409);
+    if (pulledQty === claim.pulled_qty)
+        return jsonResponse({ ok: true, unchanged: true, ...await shelfOrderSnapshot(env, shopId, orderGid, live) },
+            allowOrigin, reqAllowHeaders);
+    const increasing = pulledQty > claim.pulled_qty;
+    const projection = increasing ? await db.prepare('SELECT active FROM order_projection WHERE shop_id = ? AND order_gid = ?')
+        .bind(shopId, orderGid).first() : null;
+    if (increasing && (body.physicallyPulled !== true || live.cancelledAt || !projection?.active ||
+        claim.qty > line.quantity))
+        return v1Error({ code: 'SHELF_PULL_CONFLICT',
+            message: 'Confirm the blanks were physically pulled and the order still needs them.' },
+            allowOrigin, reqAllowHeaders, 409);
+    if (!increasing && body.returnedToShelf !== true)
+        return v1Error({ code: 'SHELF_RETURN_UNCONFIRMED',
+            message: 'Confirm the blanks are physically back on the shelf before recording a return.' },
+            allowOrigin, reqAllowHeaders, 409);
+    const now = isoNow();
+    try {
+        await db.batch([
+            db.prepare(`UPDATE shelf_claims SET pulled_qty = ?, version = version + 1,
+                updated_at = ?, updated_by = ?, mutation_key = ?
+                WHERE shop_id = ? AND order_gid = ? AND line_item_gid = ? AND version = ? AND qty = ?`)
+                .bind(pulledQty, now, shelfActor(identity), `${increasing ? 'pull' : 'return'}:${key}`,
+                    shopId, orderGid, lineId, expected, claim.qty),
+            db.prepare('INSERT INTO shelf_operations VALUES (?, ?, ?, changes(), ?)')
+                .bind(shopId, key, fingerprint, now)
+        ]);
+    } catch (error) {
+        if (await shelfReplay(db, shopId, key, fingerprint))
+            return jsonResponse({ ok: true, replayed: true, ...await shelfOrderSnapshot(env, shopId, orderGid, live) },
+                allowOrigin, reqAllowHeaders);
+        const insufficient = String(error?.message || '').includes('SHELF_PHYSICAL_INSUFFICIENT');
+        return v1Error({ code: insufficient ? 'SHELF_PHYSICAL_INSUFFICIENT' : 'SHELF_PULL_CONFLICT',
+            message: insufficient ? 'The physical shelf count is too low. Recount this variant before pulling.'
+                : 'Reservation changed. Refresh before updating the pull.' },
+            allowOrigin, reqAllowHeaders, 409);
+    }
+    return jsonResponse({ ok: true, ...await shelfOrderSnapshot(env, shopId, orderGid, live) },
+        allowOrigin, reqAllowHeaders);
 }
 
 function supplierSourcesWithShelfClaims(rows, claims = []) {

@@ -2565,6 +2565,7 @@
       setTimeout(scheduleDesignFilesEnhancement, 250);
       setTimeout(scheduleDesignFilesEnhancement, 1000);
       hydrateCanonicalDetail(order);
+      window.renderShelfAllocationForOrder?.(order);
       return result;
     };
     enhancedOpenDetail.__detailSummaryPatched = true;
