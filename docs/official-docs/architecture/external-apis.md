@@ -56,7 +56,7 @@ Embedded client
 
 The Legacy Redis view continues using its isolated legacy batch route until final cutover.
 
-Automated shipment tracking, SanMar, PromoStandards, threshold optimization, and multi-supplier receiving are future work and belong only in the multi-supplier plan.
+For linked numeric S&S order numbers, the five-minute Worker schedule calls the authenticated gateway's read-only `/order-manager/v1/supplier/ss/order-status` route. The gateway reads S&S Orders and TrackingDataByOrderNum, including box data, and returns only redacted order/delivery status, tracking events, and an observation timestamp. The Worker stores snapshots in private R2 objects separate from receiving manifests. It checks at most 25 order numbers per run and never makes a carrier event a physical receipt or a Shopify production-stage mutation. Operators can request a rate-limited status check from the receiving workspace. Multi-order purchases can be linked with comma-separated numeric S&S order numbers; the aggregate stays partial until all linked orders and expected boxes are delivered. A stale or failed read preserves the last observed state and its timestamp. SanMar, PromoStandards, threshold optimization, and multi-supplier receiving remain future work.
 
 ## Credential and Trust Boundaries
 

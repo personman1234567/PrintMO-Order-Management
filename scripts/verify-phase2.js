@@ -794,6 +794,14 @@ async function run() {
         testOrder: true,
       });
     }
+    if (target.includes('/order-manager/v1/supplier/ss/order-status?orders=')) {
+      const numbers = target.split('orders=')[1].split(',');
+      return Response.json({ observedAt: new Date().toISOString(), items: numbers.map(orderNumber => ({
+        orderNumber, state: orderNumber === '32526736' ? 'delivered' : 'partially_delivered',
+        totalBoxes: orderNumber === '32526736' ? 1 : 2,
+        deliveredBoxes: 1, boxes: [], observedAt: new Date().toISOString(),
+      })) });
+    }
     if (target.includes('/order-manager/v1/data/legacy?')) return Response.json({ records: [], total: 0, nextOffset: null });
     throw new Error(`Unexpected fetch: ${target}`);
   };
@@ -2135,6 +2143,21 @@ async function run() {
     assert.equal(referenced.supplierOrderNumber, 'SS-2001');
     const referencedIndex = await (await worker.fetch(new Request('https://worker.test/order-manager/blanks-batches', { headers }), env)).json();
     assert.equal(referencedIndex.batches[0].trackingNumber, 'TRACK-9', 'tracking lookup is indexed');
+
+    const numericReference = await worker.fetch(new Request('https://worker.test/order-manager/blanks-batches', {
+      method: 'PATCH', headers,
+      body: JSON.stringify({ id: firstBatch.id, action: 'update-reference', supplierOrderNumber: '32526736,32526740' })
+    }), env);
+    assert.equal(numericReference.status, 200);
+    const statusRefresh = await worker.fetch(new Request('https://worker.test/order-manager/blanks-batches/status-refresh', {
+      method: 'POST', headers, body: JSON.stringify({ id: firstBatch.id })
+    }), env);
+    assert.equal(statusRefresh.status, 200, 'linked S&S orders can be checked on demand');
+    const statusResult = await statusRefresh.json();
+    assert.equal(statusResult.supplierStatus.state, 'partially_delivered', 'one delivered supplier order does not complete a split purchase');
+    const withStatus = await (await worker.fetch(new Request('https://worker.test/order-manager/blanks-batches', { headers }), env)).json();
+    assert.equal(withStatus.batches[0].supplierStatus.state, 'partially_delivered', 'board-facing index includes observed delivery');
+    assert.equal(withStatus.batches[0].receivedGarments, 1, 'carrier events do not check in physical garments');
 
     const sharedReceipt = await worker.fetch(new Request('https://worker.test/order-manager/blanks-batches', {
       method: 'PATCH', headers,

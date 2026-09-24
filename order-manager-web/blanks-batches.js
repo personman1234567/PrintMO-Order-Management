@@ -35,6 +35,8 @@
   let draftReceived = new Map();
   let dirty = false;
   let receiveAutoSaveTimer = null;
+  let receiveStatusPollTimer = null;
+  let receiveStatusPollBusy = false;
   let receivingSavePromise = null;
   let newlyCompleteOrders = [];
   let newlyCompleteBatchId = '';
@@ -695,6 +697,7 @@
       const orderName = card.dataset.orderId;
       const accounting = accountingForOrder(orderName);
       upsertAccountingChip(card, accounting);
+      upsertSupplierDeliveryBadge(card, orderName);
       const order = currentOrders().find(item => item?.name === orderName);
       const pending = card.closest('#col-print') && order && !Number(order.printsStatus || 0);
       upsertPrintsPendingBadge(card, pending);
@@ -707,6 +710,35 @@
         .some(order => order?.bundle === card.dataset.bundleName && !Number(order.printsStatus || 0));
       upsertPrintsPendingBadge(card, pending);
     });
+  }
+
+  function supplierStatusLabel(status, missing) {
+    const labels = {
+      pending: 'Checking S&S', processing: 'Preparing at S&S', in_transit: 'In transit',
+      out_for_delivery: 'Out for delivery', partially_delivered: 'Partly delivered',
+      delivered: missing ? 'Delivered · check in' : 'Delivered',
+      pickup_ready: 'Ready for pickup', exception: 'Delivery exception',
+      canceled: 'S&S canceled', not_found: 'S&S order not found',
+    };
+    return labels[status?.state] || '';
+  }
+
+  function upsertSupplierDeliveryBadge(card, orderName) {
+    const matches = batchIndex.filter(batch => (batch.orderNames || []).includes(orderName) && batch.supplierStatus);
+    const batch = matches.length === 1 ? matches[0] : null;
+    const label = supplierStatusLabel(batch?.supplierStatus, Number(batch?.missingGarments) > 0);
+    let badge = card.querySelector('.blanks-supplier-delivery');
+    if (!label) { badge?.remove(); return; }
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'blanks-supplier-delivery';
+      (card.querySelector('.production-card-statuses') || card.querySelector('.card-body') || card).appendChild(badge);
+    }
+    const stale = batch.supplierStatus.observedAt && Date.now() - Date.parse(batch.supplierStatus.observedAt) > 30 * 60 * 1000;
+    badge.textContent = `S&S: ${label}${stale ? ' · check overdue' : ''}`;
+    badge.dataset.state = batch.supplierStatus.state || 'pending';
+    const checked = batch.supplierStatus.observedAt;
+    badge.title = checked ? `Checked ${new Date(checked).toLocaleString()}. Carrier delivery does not confirm garment check-in.` : 'Awaiting the next S&S status check';
   }
 
   function upsertPrintsPendingBadge(card, pending) {
@@ -1340,7 +1372,7 @@
         <section id="blanks-receive-create-panel" class="blanks-receive-order-picker" hidden aria-labelledby="blanks-receive-create-title">
           <h3 id="blanks-receive-create-title">Outside S&amp;S purchase</h3>
           <p>Link a purchase made outside Order Manager to customer orders already on the board. This does not place another supplier order.</p>
-          <label>S&amp;S order number <input id="blanks-receive-create-number" type="text" maxlength="80" autocomplete="off"></label>
+          <label>S&amp;S order number(s) <input id="blanks-receive-create-number" type="text" maxlength="80" autocomplete="off" placeholder="Separate multiple numbers with commas"></label>
           <label>Print-MO PO (optional) <input id="blanks-receive-create-po" type="text" maxlength="80"></label>
           <label>Tracking number (optional) <input id="blanks-receive-create-tracking" type="text" maxlength="120"></label>
           <div id="blanks-receive-create-options" class="blanks-receive-order-options"></div>
@@ -1351,7 +1383,7 @@
           </div>
         </section>
         <section id="blanks-receive-reference" class="blanks-receive-order-picker" hidden aria-label="Shipment reference">
-          <label>S&amp;S order number <input id="blanks-receive-reference-number" type="text" maxlength="80"></label>
+          <label>S&amp;S order number(s) <input id="blanks-receive-reference-number" type="text" maxlength="80" placeholder="Separate multiple numbers with commas"></label>
           <label>Print-MO PO (optional) <input id="blanks-receive-reference-po" type="text" maxlength="80"></label>
           <label>Tracking number (optional) <input id="blanks-receive-reference-tracking" type="text" maxlength="120"></label>
           <div class="blanks-receive-order-picker-actions">
@@ -1359,6 +1391,7 @@
             <button id="blanks-receive-reference-save" class="manual-add-action" type="button">Save reference</button>
           </div>
         </section>
+        <section id="blanks-receive-supplier-status" class="blanks-receive-order-picker" hidden aria-live="polite"></section>
         <section id="blanks-receive-ready" class="blanks-receive-order-picker" hidden aria-label="Newly ready orders">
           <h3>Newly complete after check-in</h3>
           <div id="blanks-receive-ready-list"></div>
@@ -1395,6 +1428,9 @@
     overlay.querySelector('#blanks-receive-close')?.addEventListener('click', closeReceiveOverlay);
     overlay.querySelector('#blanks-receive-back')?.addEventListener('click', showBatchList);
     overlay.querySelector('#blanks-receive-refresh')?.addEventListener('click', refreshReceiveOverlay);
+    overlay.querySelector('#blanks-receive-supplier-status')?.addEventListener('click', event => {
+      if (event.target.closest('[data-check-ss-status]')) checkSupplierStatusNow();
+    });
     overlay.querySelector('#blanks-receive-create')?.addEventListener('click', openOutsideOrderForm);
     overlay.querySelector('#blanks-receive-create-cancel')?.addEventListener('click', closeOutsideOrderForm);
     overlay.querySelector('#blanks-receive-create-confirm')?.addEventListener('click', createOutsideOrder);
@@ -1534,6 +1570,8 @@
       activeBatch = result.batch;
       batchDetailsById.set(activeBatch.id, activeBatch);
       await loadBatchIndex();
+      activeBatch.supplierStatus = batchIndex.find(batch => batch.id === activeBatch.id)?.supplierStatus || null;
+      renderSupplierStatusPanel();
       message.textContent = 'Saved';
       setHeaderMode('detail');
     } catch (error) {
@@ -1552,6 +1590,7 @@
     try {
       await loadBatchIndex();
       showBatchList();
+      if (!receiveStatusPollTimer) receiveStatusPollTimer = window.setInterval(pollVisibleSupplierStatuses, 60000);
     } catch (error) {
       console.error('Unable to load blanks batches', error);
       alert(`Could not load batches: ${error?.message || error}`);
@@ -1564,9 +1603,29 @@
   async function closeReceiveOverlay() {
     if (!(await saveDraftBeforeNavigation())) return;
     closeOrderPicker({ focus: false });
+    if (receiveStatusPollTimer) window.clearInterval(receiveStatusPollTimer);
+    receiveStatusPollTimer = null;
     document.getElementById('blanks-receive-overlay')?.classList.add('hidden');
     document.body.classList.remove('blanks-receive-open', 'manual-add-open');
     document.getElementById('blanks-receive-batches-btn')?.focus();
+  }
+
+  async function pollVisibleSupplierStatuses() {
+    if (receiveStatusPollBusy || document.getElementById('blanks-receive-overlay')?.classList.contains('hidden')) return;
+    receiveStatusPollBusy = true;
+    try {
+      await loadBatchIndex();
+      if (activeBatch?.id) {
+        const current = batchIndex.find(batch => batch.id === activeBatch.id);
+        if (current) activeBatch.supplierStatus = current.supplierStatus;
+        renderSupplierStatusPanel();
+      } else renderBatchList();
+      annotateAccountingCards();
+    } catch (error) {
+      console.warn('S&S status display refresh failed', error);
+    } finally {
+      receiveStatusPollBusy = false;
+    }
   }
 
   async function refreshReceiveOverlay() {
@@ -1583,6 +1642,28 @@
       }
     } finally {
       if (refresh) refresh.disabled = false;
+    }
+  }
+
+  async function checkSupplierStatusNow() {
+    if (!activeBatch?.id || !window.api?.refreshBlanksBatchSupplierStatus) return;
+    const panel = document.getElementById('blanks-receive-supplier-status');
+    const button = panel?.querySelector('[data-check-ss-status]');
+    if (button) { button.disabled = true; button.textContent = 'Checking S&S…'; }
+    try {
+      await window.api.refreshBlanksBatchSupplierStatus(activeBatch.id);
+      await loadBatchIndex();
+      await loadBatch(activeBatch.id);
+      renderBatchDetail();
+      const message = document.querySelector('#blanks-receive-supplier-status [data-ss-message]');
+      if (message) message.textContent = 'Latest S&S check shown.';
+      annotateAccountingCards();
+    } catch (error) {
+      if (panel) {
+        const message = panel.querySelector('[data-ss-message]');
+        if (message) message.textContent = error?.message || 'S&S status is unavailable. Try again later.';
+      }
+      if (button) { button.disabled = false; button.textContent = 'Check S&S now'; }
     }
   }
 
@@ -1684,11 +1765,13 @@
     const missing = Math.max(0, Number(batch.missingGarments) || 0);
     const allocationReview = Math.max(0, Number(batch.pendingAllocationLines) || 0);
     const created = batch.createdAt ? new Date(batch.createdAt).toLocaleDateString() : '';
+    const delivery = supplierStatusLabel(batch.supplierStatus, missing > 0);
 
     card.innerHTML = `
       <span class="blanks-receive-batch-main">
         <strong>${escapeHtml(batch.supplierOrderNumber ? `S&S ${batch.supplierOrderNumber}` : batch.label || batch.id)}</strong>
         <span>${batch.orderCount || 0} orders${batch.purchaseOrderNumber ? ` · PO ${escapeHtml(batch.purchaseOrderNumber)}` : ''}${batch.trackingNumber ? ` · Tracking ${escapeHtml(batch.trackingNumber)}` : ''}${created ? ` · ${escapeHtml(created)}` : ''}</span>
+        ${delivery ? `<span class="blanks-supplier-delivery" data-state="${escapeHtml(batch.supplierStatus.state || 'pending')}">S&amp;S: ${escapeHtml(delivery)}</span>` : ''}
       </span>
       <span class="blanks-receive-batch-counts">
         <span>${received}/${expected}</span>
@@ -1724,9 +1807,37 @@
     document.getElementById('blanks-receive-reference-number').value = activeBatch.supplierOrderNumber || '';
     document.getElementById('blanks-receive-reference-po').value = activeBatch.purchaseOrderNumber || '';
     document.getElementById('blanks-receive-reference-tracking').value = activeBatch.trackingNumber || '';
+    renderSupplierStatusPanel();
     renderNewlyComplete();
     syncDraftStats();
     syncAddCartOrdersState();
+  }
+
+  function renderSupplierStatusPanel() {
+    const panel = document.getElementById('blanks-receive-supplier-status');
+    if (!panel || !activeBatch) return;
+    const hasNumber = Boolean(activeBatch.supplierOrderNumber);
+    panel.hidden = !hasNumber;
+    if (!hasNumber) return;
+    const status = activeBatch.supplierStatus;
+    const trackable = activeBatch.supplierOrderNumber.split(',').map(value => value.trim()).every(value => /^\d{5,12}$/.test(value));
+    const missing = Number(activeBatch.totals?.missingGarments) > 0;
+    const checked = status?.observedAt ? new Date(status.observedAt) : null;
+    const stale = checked && Date.now() - checked.getTime() > 30 * 60 * 1000;
+    const items = (status?.items || []).filter(Boolean);
+    panel.innerHTML = `
+      <div class="blanks-supplier-status-heading">
+        <div><strong>S&amp;S delivery</strong><span>${escapeHtml(supplierStatusLabel(status, missing) || 'Waiting for first status check')}</span></div>
+        ${trackable ? '<button class="manual-add-action manual-add-action-secondary" type="button" data-check-ss-status>Check S&amp;S now</button>' : ''}
+      </div>
+      <p>${!trackable ? 'Enter the numeric S&amp;S order number to enable automatic status updates.' : checked ? `${stale ? 'Last checked' : 'Checked'} ${escapeHtml(checked.toLocaleString())}` : 'Order Manager checks linked S&amp;S orders automatically every few minutes.'} Carrier delivery does not check garments in.</p>
+      ${items.map(item => `<div class="blanks-supplier-status-item">
+        <strong>Order ${escapeHtml(item.orderNumber)}</strong>
+        <span>${escapeHtml(supplierStatusLabel(item, missing))}${item.totalBoxes > 1 ? ` · ${Number(item.deliveredBoxes)}/${Number(item.totalBoxes)} boxes delivered` : ''}</span>
+        ${(item.boxes || []).map(box => `<small>${escapeHtml(box.carrier || 'Carrier')} ${escapeHtml(box.trackingNumber)}${box.boxNumber ? ` · Box ${escapeHtml(box.boxNumber)}` : ''} · ${escapeHtml(box.deliveredAt ? 'Delivered' : box.checkpoint || 'In transit')}</small>`).join('')}
+      </div>`).join('')}
+      <span data-ss-message class="blanks-receive-order-picker-message" role="status"></span>
+    `;
   }
 
   function availableOrdersForActiveBatch() {

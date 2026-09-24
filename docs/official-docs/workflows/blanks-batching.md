@@ -97,7 +97,7 @@ Run `npm run repo -- simulate ss-feedback -- --scenario random` to pass three sy
 
 ## Receiving Manifest and Batch Correction
 
-After **Mark In Cart Ordered**, the browser records an authenticated receiving manifest through `/order-manager/blanks-batches`. This compatibility manifest currently lives in the private `PREVIEWS` R2 binding; it is separate from the durable supplier-order state machine in D1. Each new manifest stores both the immutable Shopify order GID and the display name so legacy name-only manifests remain readable while new membership checks use stable identity. Manifests also carry S&S order number, optional Print-MO PO, and optional tracking number. The receiving workspace searches those references without claiming a live carrier connection.
+After **Mark In Cart Ordered**, the browser records an authenticated receiving manifest through `/order-manager/blanks-batches`. This compatibility manifest currently lives in the private `PREVIEWS` R2 binding; it is separate from the durable supplier-order state machine in D1. Each new manifest stores both the immutable Shopify order GID and the display name so legacy name-only manifests remain readable while new membership checks use stable identity. Manifests also carry S&S order number(s), optional Print-MO PO, and optional tracking number. Linked numeric S&S order numbers receive automatic read-only order and carrier updates through the supplier gateway; the receiving workspace shows the observed status and check time.
 
 The receiving UI has two levels:
 

@@ -4043,6 +4043,37 @@
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
 }
 
+.blanks-supplier-delivery {
+  display: inline-flex;
+  width: fit-content;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.blanks-supplier-delivery[data-state="delivered"] { background: #dcfce7; color: #166534; }
+.blanks-supplier-delivery[data-state="exception"],
+.blanks-supplier-delivery[data-state="canceled"] { background: #fef2f2; color: #b42318; }
+.blanks-supplier-delivery[data-state="partially_delivered"],
+.blanks-supplier-delivery[data-state="not_found"] { background: #fff7ed; color: #92400e; }
+
+.blanks-supplier-status-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.blanks-supplier-status-heading div,
+.blanks-supplier-status-item { display: grid; gap: 4px; }
+#blanks-receive-supplier-status p,
+.blanks-supplier-status-item span,
+.blanks-supplier-status-item small { margin: 0; color: #475569; font-size: 0.76rem; }
+.blanks-supplier-status-item { padding-top: 8px; border-top: 1px solid #dbe3ee; min-width: 0; overflow-wrap: anywhere; }
+
 .blanks-receive-batch-main,
 .blanks-receive-batch-counts,
 .blanks-receive-line-copy,

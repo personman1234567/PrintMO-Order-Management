@@ -304,6 +304,9 @@ export default {
                 reqAllowHeaders
             );
         }
+        if (url.pathname === "/order-manager/blanks-batches/status-refresh") {
+            return handleBlanksBatchStatusRefresh(request, env, allowOrigin || origin || "*", reqAllowHeaders);
+        }
 
         // -----------------------------
         // UNIFIED LEGACY QUEUE & S&S ENDPOINTS (PHASE 1)
@@ -484,6 +487,9 @@ export default {
             }
         }
         if (event.cron === "*/5 * * * *") {
+            ctx.waitUntil(syncSupplierOrderStatuses(env).catch(err => {
+                console.error('S&S order status sync error:', String(err?.message || err));
+            }));
             ctx.waitUntil(runEtsyWebhookMaintenance(env, 'incremental').catch(err => {
                 console.error('Etsy webhook maintenance error:', String(err?.code || 'ETSY_MAINTENANCE_FAILED'));
             }));
@@ -559,6 +565,7 @@ function guessContentTypeFromKey(key) {
 
 const MANUAL_ASSETS_PREFIX = "manual-order-assets/";
 const BLANKS_BATCHES_PREFIX = `${MANUAL_ASSETS_PREFIX}blanks-batches/`;
+const SUPPLIER_STATUS_PREFIX = `${BLANKS_BATCHES_PREFIX}supplier-status/`;
 const BLANKS_BATCH_INDEX_KEY = `${BLANKS_BATCHES_PREFIX}index.json`;
 const MANUAL_MOCKUP_CONTENT_TYPES = new Set([
     "image/png",
@@ -1357,6 +1364,102 @@ async function readBlanksBatchIndex(env) {
     }
 }
 
+function supplierNumbers(reference) {
+    const parts = String(reference || '').split(',').map(value => value.trim()).filter(Boolean);
+    if (parts.length > 25 || new Set(parts).size !== parts.length) return [];
+    return parts.every(value => /^\d{5,12}$/.test(value)) ? parts : [];
+}
+
+function supplierReferencesOverlap(left, right) {
+    const leftNumbers = supplierNumbers(left);
+    const rightNumbers = supplierNumbers(right);
+    if (leftNumbers.length && rightNumbers.length) return leftNumbers.some(number => rightNumbers.includes(number));
+    return Boolean(String(left || '').trim()) && String(left || '').trim() === String(right || '').trim();
+}
+
+async function readSupplierStatus(env, number) {
+    const object = await env.PREVIEWS.get(`${SUPPLIER_STATUS_PREFIX}${number}.json`);
+    if (!object) return null;
+    try { return JSON.parse(await object.text()); }
+    catch { return null; }
+}
+
+async function writeSupplierStatus(env, item) {
+    if (!item || !/^\d{5,12}$/.test(String(item.orderNumber || '')) || !item.observedAt) return;
+    await env.PREVIEWS.put(`${SUPPLIER_STATUS_PREFIX}${item.orderNumber}.json`, JSON.stringify(item), {
+        httpMetadata: { contentType: 'application/json' },
+    });
+}
+
+function summarizeSupplierStatuses(items) {
+    if (!items.length) return null;
+    const known = items.filter(Boolean);
+    if (!known.length) return { state: 'pending', items: [], observedAt: '' };
+    const states = known.map(item => item.state);
+    let state = 'processing';
+    if (states.includes('exception')) state = 'exception';
+    else if (states.includes('canceled')) state = 'canceled';
+    else if (known.length === items.length && states.every(value => value === 'delivered')) state = 'delivered';
+    else if (states.includes('delivered') || states.includes('partially_delivered')) state = 'partially_delivered';
+    else if (states.includes('out_for_delivery')) state = 'out_for_delivery';
+    else if (states.includes('in_transit')) state = 'in_transit';
+    else if (states.includes('pickup_ready')) state = 'pickup_ready';
+    else if (states.every(value => value === 'not_found')) state = 'not_found';
+    return {
+        state,
+        observedAt: known.map(item => item.observedAt || '').sort()[0] || '',
+        items: items.map(item => item || null),
+    };
+}
+
+async function supplierStatusForReference(env, reference) {
+    const numbers = supplierNumbers(reference);
+    if (!numbers.length) return null;
+    const items = await Promise.all(numbers.map(number => readSupplierStatus(env, number)));
+    return summarizeSupplierStatuses(items);
+}
+
+async function syncSupplierOrderStatuses(env, requestedNumbers = null) {
+    if (!env.PREVIEWS || !env.UPSTREAM_BASE || !env.ORDER_MANAGER_ADMIN_KEY) return { checked: 0 };
+    const index = await readBlanksBatchIndex(env);
+    const active = requestedNumbers ? index.batches : index.batches.filter(batch => Number(batch.missingGarments) > 0);
+    const numbers = [...new Set(active.flatMap(batch => supplierNumbers(batch.supplierOrderNumber)))];
+    const candidates = requestedNumbers ? numbers.filter(number => requestedNumbers.includes(number)) : numbers;
+    if (!candidates.length) return { checked: 0 };
+    const snapshots = await Promise.all(candidates.map(async number => ({ number, status: await readSupplierStatus(env, number) })));
+    snapshots.sort((a, b) => String(a.status?.observedAt || '').localeCompare(String(b.status?.observedAt || '')));
+    const due = snapshots.filter(({ status }) => !status?.observedAt || Date.now() - Date.parse(status.observedAt) >= 60000);
+    const chosen = due.slice(0, 25).map(entry => entry.number);
+    if (!chosen.length) return { checked: 0 };
+    const result = await upstreamDataRequest(env, `/order-manager/v1/supplier/ss/order-status?orders=${chosen.join(',')}`);
+    const items = Array.isArray(result?.items) ? result.items : [];
+    if (items.length !== chosen.length || items.some(item => !chosen.includes(item?.orderNumber))) {
+        throw new Error('Invalid S&S status gateway response');
+    }
+    await Promise.all(items.map(item => writeSupplierStatus(env, item)));
+    return { checked: chosen.length };
+}
+
+async function handleBlanksBatchStatusRefresh(request, env, allowOrigin, reqAllowHeaders) {
+    if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+    let body;
+    try { body = await request.json(); }
+    catch { return jsonResponse({ error: 'Invalid JSON body' }, allowOrigin, reqAllowHeaders, 400); }
+    const id = normalizeBlanksBatchId(body?.id);
+    if (!id) return jsonResponse({ error: 'Missing batch id' }, allowOrigin, reqAllowHeaders, 400);
+    const index = await readBlanksBatchIndex(env);
+    const batch = index.batches.find(entry => entry.id === id);
+    if (!batch) return jsonResponse({ error: 'Not Found' }, allowOrigin, reqAllowHeaders, 404);
+    const numbers = supplierNumbers(batch.supplierOrderNumber);
+    if (!numbers.length) return jsonResponse({ error: 'Enter a valid S&S order number first' }, allowOrigin, reqAllowHeaders, 400);
+    try {
+        await syncSupplierOrderStatuses(env, numbers);
+        return jsonResponse({ supplierStatus: await supplierStatusForReference(env, batch.supplierOrderNumber) }, allowOrigin, reqAllowHeaders);
+    } catch (error) {
+        return jsonResponse({ error: 'S&S status is temporarily unavailable' }, allowOrigin, reqAllowHeaders, 502);
+    }
+}
+
 async function writeBlanksBatchIndex(env, index) {
     const updatedAt = new Date().toISOString();
     const body = JSON.stringify({
@@ -1622,11 +1725,13 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
                 return jsonResponse({ error: "Not Found", id: batchId }, allowOrigin, reqAllowHeaders, 404);
             }
 
-            return jsonResponse({ batch }, allowOrigin, reqAllowHeaders, 200);
+            return jsonResponse({ batch: { ...batch, supplierStatus: await supplierStatusForReference(env, batch.supplierOrderNumber) } }, allowOrigin, reqAllowHeaders, 200);
         }
 
         const index = await readBlanksBatchIndex(env);
-        return jsonResponse(index, allowOrigin, reqAllowHeaders, 200);
+        return jsonResponse({ ...index, batches: await Promise.all(index.batches.map(async batch => ({
+            ...batch, supplierStatus: await supplierStatusForReference(env, batch.supplierOrderNumber),
+        }))) }, allowOrigin, reqAllowHeaders, 200);
     }
 
     if (request.method === "POST") {
@@ -1650,7 +1755,7 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
 
         const currentIndex = await readBlanksBatchIndex(env);
         if (batch.supplierOrderNumber && currentIndex.batches.some(entry =>
-            entry.supplierOrderNumber === batch.supplierOrderNumber)) {
+            supplierReferencesOverlap(entry.supplierOrderNumber, batch.supplierOrderNumber))) {
             return jsonResponse({ error: "This S&S order number already has a receiving record" }, allowOrigin, reqAllowHeaders, 409);
         }
         const duplicateEntries = currentIndex.batches.filter(entry => {
@@ -1711,7 +1816,7 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
             const reference = safeText(body?.supplierOrderNumber, 80);
             const currentIndex = await readBlanksBatchIndex(env);
             if (reference && currentIndex.batches.some(entry =>
-                entry.id !== batchId && entry.supplierOrderNumber === reference)) {
+                entry.id !== batchId && supplierReferencesOverlap(entry.supplierOrderNumber, reference))) {
                 return jsonResponse({ error: "This S&S order number already has a receiving record" }, allowOrigin, reqAllowHeaders, 409);
             }
         }

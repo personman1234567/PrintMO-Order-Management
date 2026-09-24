@@ -1197,6 +1197,14 @@ window.api.getBlanksBatch = async (id) => {
   return apiFetch(`/order-manager/blanks-batches${query}`, { method: "GET" });
 };
 
+window.api.refreshBlanksBatchSupplierStatus = async (id) => {
+  if (!id) throw new Error("Batch ID is required");
+  return apiFetch("/order-manager/blanks-batches/status-refresh", {
+    method: "POST",
+    body: JSON.stringify({ id }),
+  });
+};
+
 window.api.updateBlanksBatchReceiving = async (id, updates = []) => {
   if (!id) throw new Error("Batch ID is required");
   const cleanUpdates = Array.isArray(updates) ? updates.filter(Boolean) : [];
