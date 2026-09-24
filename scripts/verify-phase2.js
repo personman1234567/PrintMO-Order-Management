@@ -468,6 +468,8 @@ async function run() {
   let etsyTransientReceiptFailures = 0;
   let shelfCancelledAt = null;
   let shelfLiveQuantity = 5;
+  let shelfVariantVisible = true;
+  let shelfProductScopeGranted = true;
   const calls = [];
   const nativeFetch = globalThis.fetch;
   globalThis.fetch = async (url, options = {}) => {
@@ -595,6 +597,9 @@ async function run() {
     }
     if (target.includes('/graphql.json')) {
       const request = JSON.parse(options.body);
+      if (request.query.includes('PrintMOShelfAccess')) return Response.json({ data: { currentAppInstallation: {
+        accessScopes: [{ handle: 'read_orders' }, ...(shelfProductScopeGranted ? [{ handle: 'read_products' }] : [])]
+      } } });
       if (request.query.includes('PrintMOShelfVariant')) return Response.json({ data: { productVariant: {
         id: 'gid://shopify/ProductVariant/46246466060536', sku: 'B10259243',
         product: { id: 'gid://shopify/Product/8984050729208' }
@@ -602,7 +607,8 @@ async function run() {
       if (request.query.includes('PrintMOShelfOrder')) return Response.json({ data: { order: {
         id: 'gid://shopify/Order/60129381', cancelledAt: shelfCancelledAt,
         lineItems: { nodes: [{ id: 'gid://shopify/LineItem/101', sku: 'B10259243', currentQuantity: shelfLiveQuantity,
-          variant: { id: 'gid://shopify/ProductVariant/46246466060536', product: { id: 'gid://shopify/Product/8984050729208' } }
+          variant: shelfVariantVisible ? { id: 'gid://shopify/ProductVariant/46246466060536',
+            product: { id: 'gid://shopify/Product/8984050729208' } } : null
         }], pageInfo: { hasNextPage: false, endCursor: null } }
       } } });
       if (request.query.includes('PrintMOProductionState')) {
@@ -799,6 +805,13 @@ async function run() {
     const uncounted = await shelfRequest(shelfPath);
     assert.equal(uncounted.status, 200);
     assert.equal((await uncounted.json()).lines[0].available, null, 'shelf stock begins uncounted');
+    shelfVariantVisible = false;
+    shelfProductScopeGranted = false;
+    const missingScope = await shelfRequest(shelfPath);
+    assert.equal(missingScope.status, 503, 'missing product access must not silently hide shelf lines');
+    assert.equal((await missingScope.json()).error.code, 'SHELF_PRODUCT_ACCESS_REQUIRED');
+    shelfVariantVisible = true;
+    shelfProductScopeGranted = true;
     assert.equal((await worker.fetch(new Request(shelfPath, { headers }),
       { ...shelfEnv, SHELF_ALLOCATION_ENABLED: '0' })).status, 404, 'shelf controls are disabled by default');
     assert.equal((await worker.fetch(new Request(shelfPath), shelfEnv)).status, 401,

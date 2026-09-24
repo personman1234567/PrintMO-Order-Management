@@ -68,6 +68,8 @@ The Worker subtracts active shelf claims from both the S&S aggregate request and
 
 The `SHELF_ALLOCATION_ENABLED` Worker flag gates this first release to Tultex 202. Free counts begin uncounted and must come from a physical shelf count, never Shopify HQ balances.
 
+The installed Order Manager app must have Shopify `read_products` as well as order access. Shopify can return order-line SKUs while returning `null` for `LineItem.variant` without that scope. The Worker requires the variant and its exact product ID before accepting a count or claim; when the scope is missing, Order Detail shows `SHELF_PRODUCT_ACCESS_REQUIRED`. Release the updated Shopify app version and approve its permission request before staff enter shelf counts.
+
 ---
 
 ## Batch Submission & State Update

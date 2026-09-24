@@ -7845,6 +7845,9 @@ const SHELF_ORDER_QUERY = `query PrintMOShelfOrder($id: ID!, $after: String) {
 const SHELF_VARIANT_QUERY = `query PrintMOShelfVariant($id: ID!) {
   productVariant(id: $id) { id sku product { id } }
 }`;
+const SHELF_ACCESS_QUERY = `query PrintMOShelfAccess {
+  currentAppInstallation { accessScopes { handle } }
+}`;
 
 function shelfEnabled(env) { return env.SHELF_ALLOCATION_ENABLED === '1'; }
 function shelfActor(identity) { return `${identity?.kind || 'unknown'}:${identity?.subject || 'unknown'}`; }
@@ -7866,6 +7869,7 @@ function shelfVariantId(request) {
 
 async function shelfLiveOrder(env, orderGid, graphQL = coordinatorGraphQL) {
     const lines = [];
+    let missingVariant = false;
     let after = null;
     let cancelledAt = null;
     for (let page = 0; page < 10; page++) {
@@ -7875,10 +7879,19 @@ async function shelfLiveOrder(env, orderGid, graphQL = coordinatorGraphQL) {
         cancelledAt = order.cancelledAt;
         const connection = order.lineItems;
         if (!connection || !Array.isArray(connection.nodes)) throw Object.assign(new Error('Incomplete order'), { code: 'ORDER_LINES_UNVERIFIED', status: 409 });
+        missingVariant ||= connection.nodes.some(line => line?.sku && !line?.variant);
         lines.push(...connection.nodes.filter(line => line?.variant?.product?.id === TULTEX_202_PRODUCT_GID)
             .map(line => ({ lineItemId: line.id, variantId: line.variant.id, sku: line.sku,
                 quantity: Number(line.currentQuantity) })));
-        if (!connection.pageInfo?.hasNextPage) return { cancelledAt, lines };
+        if (!connection.pageInfo?.hasNextPage) {
+            if (!lines.length && missingVariant) {
+                const access = requireShopifyData(await graphQL(env, SHELF_ACCESS_QUERY, {}, 'PrintMOShelfAccess'), 'PrintMOShelfAccess');
+                if (!access.currentAppInstallation?.accessScopes?.some(scope => scope.handle === 'read_products'))
+                    throw Object.assign(new Error('Shelf allocation needs product read access. An owner must approve the updated Print-MO Order Manager permissions in Shopify.'),
+                        { code: 'SHELF_PRODUCT_ACCESS_REQUIRED', status: 503 });
+            }
+            return { cancelledAt, lines };
+        }
         after = connection.pageInfo.endCursor;
         if (!after) break;
     }

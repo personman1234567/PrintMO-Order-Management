@@ -2,7 +2,7 @@
 
 - **Status**: `[Implemented Candidate]`
 - **Owner / Target Milestone**: `v1.5 Backlog`
-- **Last Updated**: `2026-07-22`
+- **Last Updated**: `2026-09-24`
 
 ---
 
@@ -18,10 +18,10 @@ Provide a fast digital representation of physical shop shelf inventory. The firs
 ## Current Continuation State
 
 - **Current state**: The first Tultex 202 release uses D1 as the staff-only shelf count and claim authority. Exact Shopify product ID `gid://shopify/Product/8984050729208` was read live on 2026-09-24; sampled variants were untracked. Authenticated Worker endpoints and browser Order Detail controls are limited to this exact product. Claims are tied to Shopify order and line IDs, and S&S batch lines and receiving quantities subtract claims.
-- **Next safe action**: Physically count the stocked Tultex 202 variants and enter their **free** shelf quantities in Order Detail. Then verify the first real partial claim and receiving manifest with staff.
-- **Remaining blockers**: No verified physical shelf counts are available. The broader whiteboard grid, restock suggestions, other garments and Shopify-location synchronization remain out of this first release.
-- **Owner / external actions**: Enter actual free shelf counts after a physical count. No Shopify HQ balances should be used as a substitute.
-- **Last verified evidence**: Focused shelf ledger, actual Worker S&S request, receiving-manifest, and phase-two tests passed locally on 2026-09-24. Production D1 migration `0010` applied with zero stock, claim, and event rows. No Shopify inventory values, tracking flags, location settings or supplier sync Worker state changed.
+- **Next safe action**: Release Shopify app version `tultex-shelf-read-products-2026-09-24` and approve its added `read_products` permission on the installed Print-MO Order Manager app. Refresh the embedded app and verify order #1715 shows both Tultex 202 lines as uncounted. Then physically count free shelf units and enter those counts in Order Detail.
+- **Remaining blockers**: The installed Order Manager app lacks `read_products`, so Shopify returns `null` for order-line variants and the Worker cannot verify exact Tultex 202 product identity. No verified physical shelf counts are available. The broader whiteboard grid, restock suggestions, other garments and Shopify-location synchronization remain out of this first release.
+- **Owner / external actions**: Release the draft app version in Shopify Dev Dashboard, approve the new permission in the store, and enter actual free shelf counts after a physical count. No Shopify HQ balances should be used as a substitute.
+- **Last verified evidence**: Focused shelf ledger, actual Worker S&S request, receiving-manifest, and phase-two tests passed locally on 2026-09-24. Production D1 migration `0010` applied with zero stock, claim, and event rows. Shopify order #1715 returned its Tultex SKUs but `null` variants to the installed Order Manager app; the live embedded UI now reports `SHELF_PRODUCT_ACCESS_REQUIRED` instead of silently hiding the shelf section. Shopify app config validated and draft version `tultex-shelf-read-products-2026-09-24` was created without release. Worker `d82e19cb-dbd3-49d1-8005-75ba6d4885f0` and Pages marker `1790267901886` serve the explicit error state. No Shopify inventory values, tracking flags, location settings or supplier sync Worker state changed.
 
 ## Open Questions & Brainstorming
 

@@ -92,14 +92,23 @@
     const turn = ++serial;
     root.dataset.orderId = id || '';
     root.hidden = true;
-    if (!order?._candidate || order?._provider !== 'shopify' || !id || !window.api?.getShelfOrder) return;
+    if (!(order?.items || []).some(item => item?.title === 'Tultex - Fine Jersey T-Shirt - 202')) return;
+    root.hidden = false;
+    root.replaceChildren(node('p', 'Loading Tultex 202 shelf stock…'));
+    if (!order?._candidate || order?._provider !== 'shopify' || !id || !window.api?.getShelfOrder) {
+      root.replaceChildren(node('p', 'Shelf stock is unavailable for this order. Refresh Order Manager and try again.'));
+      return;
+    }
     try {
       const snapshot = await window.api.getShelfOrder(id);
-      if (turn !== serial || root.dataset.orderId !== id || !snapshot?.lines?.length) return;
+      if (turn !== serial || root.dataset.orderId !== id) return;
+      if (!snapshot?.lines?.length) {
+        root.replaceChildren(node('p', 'This Tultex 202 order could not be matched to live Shopify variants. Shelf claims are unavailable.'));
+        return;
+      }
       show(order, snapshot);
     } catch (error) {
-      if (turn !== serial || root.dataset.orderId !== id || error?.status === 404) return;
-      root.hidden = false;
+      if (turn !== serial || root.dataset.orderId !== id) return;
       root.replaceChildren(node('p', error.message || 'Shelf stock is unavailable.'));
     }
   };
