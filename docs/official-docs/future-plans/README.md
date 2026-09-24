@@ -26,6 +26,7 @@
 |---|---|---|---|---|
 | Supplier Inventory Sync | `[Implemented Candidate]` | Observation pilot | Verified supplier/local separation and checkout acceptance | [supplier-inventory-sync-plan.md](supplier-inventory-sync-plan.md) |
 | Blanks Batch Receiving Workflow | `[Implemented Candidate]` | v1.4 Backlog | `features/batch-receiving.md` | [blanks-batch-receiving-plan.md](blanks-batch-receiving-plan.md) |
+| Order Manager UX Overhaul | `[In Progress]` | Staged improvements | Current workflow and UI reference docs after shop acceptance | [order-manager-ux-overhaul-master-spec.md](order-manager-ux-overhaul-master-spec.md) |
 | Date Range and Customer Filters | `[Draft / Idea]` | v1.4 Backlog | `features/dashboard-filtering.md` | [date-range-customer-filters-plan.md](date-range-customer-filters-plan.md) |
 | Multi-Supplier Routing and Threshold Batching | `[Draft / Idea]` | v1.4 Backlog | `workflows/multi-supplier-batching.md` | [multi-supplier-routing-and-batching-plan.md](multi-supplier-routing-and-batching-plan.md) |
 | Quality of Life and Shop Efficiency | `[Draft / Idea]` | v1.5 Backlog | `workflows/qol-shop-efficiency.md` | [qol-workflow-and-shop-efficiency-plan.md](qol-workflow-and-shop-efficiency-plan.md) |

@@ -2125,12 +2125,55 @@ async function run() {
     assert.equal(receivingBatchIndex.batches.length, 1, 'unique batch membership must leave one active receiving batch');
     assert.equal(receivingBatchIndex.batches[0].id, firstBatch.id);
 
+    const referenceResponse = await worker.fetch(new Request('https://worker.test/order-manager/blanks-batches', {
+      method: 'PATCH', headers,
+      body: JSON.stringify({ id: firstBatch.id, action: 'update-reference', supplierOrderNumber: 'SS-2001',
+        purchaseOrderNumber: 'PM-77', trackingNumber: 'TRACK-9' })
+    }), env);
+    assert.equal(referenceResponse.status, 200, 'an existing manifest can be linked to its physical S&S shipment');
+    const referenced = (await referenceResponse.json()).batch;
+    assert.equal(referenced.supplierOrderNumber, 'SS-2001');
+    const referencedIndex = await (await worker.fetch(new Request('https://worker.test/order-manager/blanks-batches', { headers }), env)).json();
+    assert.equal(referencedIndex.batches[0].trackingNumber, 'TRACK-9', 'tracking lookup is indexed');
+
+    const sharedReceipt = await worker.fetch(new Request('https://worker.test/order-manager/blanks-batches', {
+      method: 'PATCH', headers,
+      body: JSON.stringify({ id: firstBatch.id, updates: [{ itemKey: referenced.manifest[0].itemKey, receivedQty: 3 }] })
+    }), env);
+    assert.equal(sharedReceipt.status, 200);
+    const suggested = (await sharedReceipt.json()).batch;
+    assert.equal(suggested.orders.filter(order => order.fullyAccounted).length, 0,
+      'shared SKU suggestions must not make customer orders ready before staff confirms allocation');
+
+    const badAllocation = await worker.fetch(new Request('https://worker.test/order-manager/blanks-batches', {
+      method: 'PATCH', headers,
+      body: JSON.stringify({ id: firstBatch.id, action: 'confirm-allocation', itemKey: suggested.manifest[0].itemKey,
+        allocations: { '#2001': 1, '#2002': 1 } })
+    }), env);
+    assert.equal(badAllocation.status, 400, 'partial assignment cannot silently lose received garments');
+    const confirmedResponse = await worker.fetch(new Request('https://worker.test/order-manager/blanks-batches', {
+      method: 'PATCH', headers,
+      body: JSON.stringify({ id: firstBatch.id, action: 'confirm-allocation', itemKey: suggested.manifest[0].itemKey,
+        allocations: { '#2001': 2, '#2002': 1 } })
+    }), env);
+    assert.equal(confirmedResponse.status, 200);
+    const confirmed = (await confirmedResponse.json()).batch;
+    assert.equal(confirmed.orders.filter(order => order.fullyAccounted).length, 2,
+      'staff-confirmed shared SKU allocation makes exactly its assigned orders complete');
+
+    const prematurePrint = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
+      method: 'PATCH', headers,
+      body: JSON.stringify({ expectedVersion: 2, patch: { printed_count: 1 }, idempotencyKey: 'mutation-print-before-materials-1' })
+    }), env);
+    assert.equal(prematurePrint.status, 409, 'printed pieces require physically ready prints');
+    assert.equal((await prematurePrint.json()).error.code, 'PRINTS_NOT_READY');
+
     const completedMutation = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
       method: 'PATCH',
       headers,
       body: JSON.stringify({
         expectedVersion: 2,
-        patch: { stage: 'completed', printed_count: 3 },
+        patch: { stage: 'completed', printed_count: 3, prints_status: 1 },
         idempotencyKey: 'mutation-completed-1'
       })
     }), env);

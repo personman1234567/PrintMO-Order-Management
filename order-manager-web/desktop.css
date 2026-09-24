@@ -4375,6 +4375,99 @@
       background: #f8fafc;
     }
 
+    .blanks-receive-lookup {
+      display: grid;
+      gap: 6px;
+      padding: 0 18px 14px;
+    }
+
+    .blanks-receive-lookup[hidden] { display: none; }
+
+    .blanks-receive-lookup label,
+    .blanks-receive-order-picker label {
+      color: #334155;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+
+    .blanks-receive-lookup input,
+    .blanks-receive-order-picker > label input,
+    .blanks-receive-allocation input {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 40px;
+      padding: 8px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 7px;
+      background: #fff;
+      color: #0f172a;
+      font: inherit;
+    }
+
+    .blanks-receive-order-picker > label { display: grid; gap: 5px; }
+
+    .blanks-receive-allocation {
+      grid-column: 1 / -1;
+      display: grid;
+      gap: 7px;
+      padding: 12px;
+      border: 1px solid #f59e0b;
+      border-radius: 8px;
+      background: #fffbeb;
+    }
+
+    .blanks-receive-allocation label {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 80px;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .blanks-receive-allocation button { justify-self: start; min-height: 40px; }
+
+    .blanks-receive-ready-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 6px 0;
+      border-bottom: 1px solid #e2e8f0;
+      font-size: 0.82rem;
+    }
+
+    .blanks-receive-ready-row span { color: #475569; }
+
+    .blanks-prints-pending {
+      display: inline-flex;
+      padding: 4px 7px;
+      border-radius: 6px;
+      background: #fef3c7;
+      color: #92400e;
+      font-size: 0.73rem;
+      font-weight: 800;
+    }
+
+    .blanks-newly-complete-toast {
+      position: fixed;
+      z-index: 12000;
+      right: 16px;
+      bottom: 16px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      max-width: min(94vw, 560px);
+      padding: 12px;
+      border: 1px solid #99f6e4;
+      border-radius: 10px;
+      background: #f0fdfa;
+      box-shadow: 0 8px 26px rgba(15, 23, 42, 0.18);
+      color: #134e4a;
+      font-size: 0.82rem;
+      font-weight: 700;
+    }
+
+    .blanks-newly-complete-toast button { min-height: 40px; }
+
     .blanks-receive-order-picker[hidden] {
       display: none;
     }

@@ -34,6 +34,11 @@
   let activeBatch = null;
   let draftReceived = new Map();
   let dirty = false;
+  let receiveAutoSaveTimer = null;
+  let receivingSavePromise = null;
+  let newlyCompleteOrders = [];
+  let newlyCompleteBatchId = '';
+  let receiveSearch = '';
   const batchDetailsById = new Map();
   const orderAccountingByName = new Map();
   let accountingHydratePromise = null;
@@ -424,7 +429,7 @@
     };
   }
 
-  async function saveBatchForOrders(orders) {
+  async function saveBatchForOrders(orders, options = {}) {
     if (!window.api || typeof window.api.createBlanksBatch !== 'function') return null;
     const shelfByOrder = new Map();
     if (typeof window.api.getShelfOrder === 'function') {
@@ -437,7 +442,7 @@
         }
       }
     }
-    const payload = buildBlanksBatchPayload(orders, shelfByOrder);
+    const payload = { ...buildBlanksBatchPayload(orders, shelfByOrder), ...options };
     if (!payload.orders.length || !payload.expectedGarments) return null;
 
     const result = await window.api.createBlanksBatch(payload);
@@ -522,7 +527,8 @@
             variantTitle: orderLine.variantTitle || line.variantTitle || '',
             sku: orderLine.sku || line.sku || '',
             expectedQty: Number(orderLine.expectedQty) || 0,
-            accountedQty: Number(orderLine.accountedQty) || 0
+            accountedQty: Number(orderLine.accountedQty) || 0,
+            allocationPending: line.allocationConfirmed === false
           });
         });
       });
@@ -534,7 +540,8 @@
       accounting.expectedGarments = expected;
       accounting.accountedGarments = Math.min(expected, accounted);
       accounting.missingGarments = Math.max(0, expected - accounting.accountedGarments);
-      accounting.fullyAccounted = expected > 0 && accounting.missingGarments === 0;
+      accounting.fullyAccounted = expected > 0 && accounting.missingGarments === 0
+        && !accounting.lines.some(line => line.allocationPending);
     });
   }
 
@@ -549,8 +556,10 @@
 
   async function refreshAccountingAfterReceiving(batch) {
     if (batch?.id) {
+      const before = batchDetailsById.get(batch.id);
       batchDetailsById.set(batch.id, batch);
       if (activeBatch?.id === batch.id) activeBatch = batch;
+      if (before) captureNewlyComplete(before, batch);
     }
     await loadBatchIndex();
     buildOrderAccounting();
@@ -685,12 +694,33 @@
       const orderName = card.dataset.orderId;
       const accounting = accountingForOrder(orderName);
       upsertAccountingChip(card, accounting);
+      const order = currentOrders().find(item => item?.name === orderName);
+      const pending = card.closest('#col-print') && order && !Number(order.printsStatus || 0);
+      upsertPrintsPendingBadge(card, pending);
     });
 
     document.querySelectorAll('#col-blanks .bundle-card[data-bundle-name], #col-print .bundle-card[data-bundle-name]').forEach(card => {
       const accounting = accountingForBundle(card.dataset.bundleName);
       upsertAccountingChip(card, accounting);
+      const pending = Boolean(card.closest('#col-print')) && currentOrders()
+        .some(order => order?.bundle === card.dataset.bundleName && !Number(order.printsStatus || 0));
+      upsertPrintsPendingBadge(card, pending);
     });
+  }
+
+  function upsertPrintsPendingBadge(card, pending) {
+    let badge = card.querySelector('.blanks-prints-pending');
+    if (pending && !badge) {
+      badge = document.createElement('span');
+      badge.className = 'blanks-prints-pending';
+      (card.querySelector('.production-card-statuses') || card.querySelector('.card-body') || card).appendChild(badge);
+    }
+    if (badge) {
+      if (pending) {
+        badge.textContent = 'Prints pending · do not press';
+        badge.title = 'Transfer or print materials have not been marked ready';
+      } else badge.remove();
+    }
   }
 
   function accountingForBundle(bundleName) {
@@ -705,7 +735,7 @@
       expectedGarments,
       accountedGarments,
       missingGarments,
-      fullyAccounted: expectedGarments > 0 && missingGarments === 0
+      fullyAccounted: expectedGarments > 0 && missingGarments === 0 && entries.every(entry => entry.fullyAccounted)
     };
   }
 
@@ -721,9 +751,11 @@
     chip.className = `blanks-accounting-chip ${accounting.fullyAccounted ? 'is-complete' : 'is-missing'}`;
     chip.textContent = accounting.fullyAccounted
       ? 'Garments accounted'
+      : !accounting.missingGarments ? 'Allocation needs review'
       : `Supplies ${accounting.accountedGarments}/${accounting.expectedGarments}`;
     chip.title = accounting.fullyAccounted
       ? 'All garments are accounted for in the S&S batch'
+      : !accounting.missingGarments ? 'Confirm the suggested customer-order allocation before moving cards'
       : `${accounting.missingGarments} garment${accounting.missingGarments === 1 ? '' : 's'} still missing`;
 
     const statusRegion = card.querySelector('.production-card-statuses');
@@ -1295,10 +1327,45 @@
         <div class="manual-add-actions blanks-receive-actions">
           <button id="blanks-receive-back" class="manual-add-action manual-add-action-secondary hidden" type="button">Back</button>
           <button id="blanks-receive-refresh" class="manual-add-action" type="button">Refresh</button>
+          <button id="blanks-receive-create" class="manual-add-action" type="button">Add outside S&amp;S order</button>
           <button id="blanks-receive-add-cart" class="manual-add-action hidden" type="button">Add Orders</button>
-          <button id="blanks-receive-mark-all" class="manual-add-action hidden" type="button">Mark All Received</button>
+          <button id="blanks-receive-mark-all" class="manual-add-action hidden" type="button" title="Use only when this delivery contains every outstanding garment in the receiving record">Check in all remaining</button>
           <button id="blanks-receive-save" class="manual-add-action blanks-receive-save hidden" type="button" disabled>Save Receiving</button>
         </div>
+        <section id="blanks-receive-lookup" class="blanks-receive-lookup" aria-label="Find a shipment">
+          <label for="blanks-receive-search">Find by S&amp;S order number, PO, or tracking</label>
+          <input id="blanks-receive-search" type="search" autocomplete="off" placeholder="Enter shipment number">
+        </section>
+        <section id="blanks-receive-create-panel" class="blanks-receive-order-picker" hidden aria-labelledby="blanks-receive-create-title">
+          <h3 id="blanks-receive-create-title">Outside S&amp;S purchase</h3>
+          <p>Link a purchase made outside Order Manager to customer orders already on the board. This does not place another supplier order.</p>
+          <label>S&amp;S order number <input id="blanks-receive-create-number" type="text" maxlength="80" autocomplete="off"></label>
+          <label>Print-MO PO (optional) <input id="blanks-receive-create-po" type="text" maxlength="80"></label>
+          <label>Tracking number (optional) <input id="blanks-receive-create-tracking" type="text" maxlength="120"></label>
+          <div id="blanks-receive-create-options" class="blanks-receive-order-options"></div>
+          <div class="blanks-receive-order-picker-actions">
+            <span id="blanks-receive-create-message" class="blanks-receive-order-picker-message" aria-live="polite"></span>
+            <button id="blanks-receive-create-cancel" class="manual-add-action manual-add-action-secondary" type="button">Cancel</button>
+            <button id="blanks-receive-create-confirm" class="manual-add-action" type="button">Create receiving record</button>
+          </div>
+        </section>
+        <section id="blanks-receive-reference" class="blanks-receive-order-picker" hidden aria-label="Shipment reference">
+          <label>S&amp;S order number <input id="blanks-receive-reference-number" type="text" maxlength="80"></label>
+          <label>Print-MO PO (optional) <input id="blanks-receive-reference-po" type="text" maxlength="80"></label>
+          <label>Tracking number (optional) <input id="blanks-receive-reference-tracking" type="text" maxlength="120"></label>
+          <div class="blanks-receive-order-picker-actions">
+            <span id="blanks-receive-reference-message" class="blanks-receive-order-picker-message" aria-live="polite"></span>
+            <button id="blanks-receive-reference-save" class="manual-add-action" type="button">Save reference</button>
+          </div>
+        </section>
+        <section id="blanks-receive-ready" class="blanks-receive-order-picker" hidden aria-label="Newly ready orders">
+          <h3>Newly complete after check-in</h3>
+          <div id="blanks-receive-ready-list"></div>
+          <div class="blanks-receive-order-picker-actions">
+            <button id="blanks-receive-ready-review" class="manual-add-action manual-add-action-secondary" type="button">Review</button>
+            <button id="blanks-receive-ready-move" class="manual-add-action" type="button">Move all newly complete</button>
+          </div>
+        </section>
         <section id="blanks-receive-order-picker" class="blanks-receive-order-picker" hidden aria-labelledby="blanks-receive-order-picker-title">
           <div>
             <h3 id="blanks-receive-order-picker-title">Add or move orders</h3>
@@ -1315,7 +1382,7 @@
           <div id="blanks-receive-list" class="blanks-receive-list"></div>
           <div id="blanks-receive-empty" class="manual-add-empty" hidden>
             <strong>No S&amp;S batches yet</strong>
-            <span>Use Mark In Cart Ordered to create a receiving batch.</span>
+            <span>Mark an S&amp;S cart ordered or link a purchase made outside Order Manager.</span>
           </div>
         </div>
       </div>
@@ -1327,11 +1394,24 @@
     overlay.querySelector('#blanks-receive-close')?.addEventListener('click', closeReceiveOverlay);
     overlay.querySelector('#blanks-receive-back')?.addEventListener('click', showBatchList);
     overlay.querySelector('#blanks-receive-refresh')?.addEventListener('click', refreshReceiveOverlay);
+    overlay.querySelector('#blanks-receive-create')?.addEventListener('click', openOutsideOrderForm);
+    overlay.querySelector('#blanks-receive-create-cancel')?.addEventListener('click', closeOutsideOrderForm);
+    overlay.querySelector('#blanks-receive-create-confirm')?.addEventListener('click', createOutsideOrder);
+    overlay.querySelector('#blanks-receive-reference-save')?.addEventListener('click', saveBatchReference);
+    overlay.querySelector('#blanks-receive-ready-review')?.addEventListener('click', reviewNewlyComplete);
+    overlay.querySelector('#blanks-receive-ready-move')?.addEventListener('click', moveNewlyComplete);
+    overlay.querySelector('#blanks-receive-search')?.addEventListener('input', event => {
+      receiveSearch = event.target.value.trim().toLowerCase();
+      renderBatchList();
+    });
     overlay.querySelector('#blanks-receive-add-cart')?.addEventListener('click', openOrderPicker);
     overlay.querySelector('#blanks-receive-order-cancel')?.addEventListener('click', closeOrderPicker);
     overlay.querySelector('#blanks-receive-order-confirm')?.addEventListener('click', assignSelectedOrdersToActiveBatch);
     overlay.querySelector('#blanks-receive-order-options')?.addEventListener('change', syncOrderPickerSelection);
-    overlay.querySelector('#blanks-receive-mark-all')?.addEventListener('click', markAllManifestReceived);
+    overlay.querySelector('#blanks-receive-mark-all')?.addEventListener('click', async () => {
+      markAllManifestReceived();
+      await saveReceiving();
+    });
     overlay.querySelector('#blanks-receive-save')?.addEventListener('click', saveReceiving);
     overlay.addEventListener('click', handleReceiveClick);
     overlay.addEventListener('input', handleReceiveInput);
@@ -1344,6 +1424,113 @@
 
   function isReceiveOverlayOpen() {
     return !document.getElementById('blanks-receive-overlay')?.classList.contains('hidden');
+  }
+
+  function outsideOrderCandidates() {
+    const assigned = new Set(batchIndex.flatMap(batch => batch.orderIds || []));
+    const assignedNames = new Set(batchIndex.flatMap(batch => batch.orderNames || []));
+    return currentOrders().filter(order => {
+      if (!['received', 'toOrder', 'blanks'].includes(order?.status || 'received')) return false;
+      const payload = orderPayload(order);
+      return payload.items.length > 0 && !assigned.has(payload.orderId) && !assignedNames.has(payload.name);
+    });
+  }
+
+  function closeOutsideOrderForm() {
+    document.getElementById('blanks-receive-create-panel').hidden = true;
+  }
+
+  function openOutsideOrderForm() {
+    closeOrderPicker({ focus: false });
+    const panel = document.getElementById('blanks-receive-create-panel');
+    const options = document.getElementById('blanks-receive-create-options');
+    const candidates = outsideOrderCandidates();
+    options.replaceChildren();
+    candidates.forEach((order, index) => {
+      const label = document.createElement('label');
+      label.className = 'blanks-receive-order-option';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.dataset.orderIndex = String(index);
+      const name = document.createElement('span');
+      name.textContent = `${order.name} · ${order.status === 'blanks' ? 'Supplies' : 'On board'}`;
+      label.append(checkbox, name);
+      options.appendChild(label);
+    });
+    if (!candidates.length) {
+      const message = document.createElement('p');
+      message.textContent = 'No unlinked customer orders with garments are available.';
+      options.appendChild(message);
+    }
+    panel.hidden = false;
+    document.getElementById('blanks-receive-create-number')?.focus();
+  }
+
+  async function createOutsideOrder() {
+    const number = document.getElementById('blanks-receive-create-number')?.value.trim();
+    const message = document.getElementById('blanks-receive-create-message');
+    const button = document.getElementById('blanks-receive-create-confirm');
+    const candidates = outsideOrderCandidates();
+    const selected = Array.from(document.querySelectorAll('#blanks-receive-create-options input:checked'))
+      .map(input => candidates[Number(input.dataset.orderIndex)]).filter(Boolean);
+    if (!number || !selected.length) {
+      message.textContent = 'Enter the S&S order number and select at least one customer order.';
+      return;
+    }
+    button.disabled = true;
+    message.textContent = 'Saving receiving record…';
+    try {
+      const result = await saveBatchForOrders(selected, {
+        source: 'outside-order',
+        supplierOrderNumber: number,
+        purchaseOrderNumber: document.getElementById('blanks-receive-create-po')?.value.trim() || '',
+        trackingNumber: document.getElementById('blanks-receive-create-tracking')?.value.trim() || ''
+      });
+      if (!result?.batch) throw new Error('Selected orders have no supplier garments to receive.');
+      closeOutsideOrderForm();
+      await loadBatchIndex();
+      const names = selected.map(order => order.name).filter(Boolean);
+      try {
+        for (const name of names) {
+          const moved = await applyBatchAwareOrderMove([name], 'blanks', { blanksOrdered: 1 });
+          if (!moved) throw new Error(`${name} could not be marked ordered`);
+        }
+      } catch (error) {
+        showMoveNotice(`Receiving record saved, but a card could not be moved: ${error?.message || error}`);
+      }
+      await loadBatch(result.batch.id);
+      renderBatchDetail();
+    } catch (error) {
+      message.textContent = `Could not create receiving record. ${error?.message || error}`;
+      message.setAttribute('role', 'alert');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function saveBatchReference() {
+    if (!activeBatch?.id) return;
+    const message = document.getElementById('blanks-receive-reference-message');
+    const button = document.getElementById('blanks-receive-reference-save');
+    button.disabled = true;
+    message.textContent = 'Saving…';
+    try {
+      const result = await window.api.updateBlanksBatchReference(activeBatch.id, {
+        supplierOrderNumber: document.getElementById('blanks-receive-reference-number').value.trim(),
+        purchaseOrderNumber: document.getElementById('blanks-receive-reference-po').value.trim(),
+        trackingNumber: document.getElementById('blanks-receive-reference-tracking').value.trim()
+      });
+      activeBatch = result.batch;
+      batchDetailsById.set(activeBatch.id, activeBatch);
+      await loadBatchIndex();
+      message.textContent = 'Saved';
+      setHeaderMode('detail');
+    } catch (error) {
+      message.textContent = `Could not save reference. ${error?.message || error}`;
+      message.setAttribute('role', 'alert');
+    } finally {
+      button.disabled = false;
+    }
   }
 
   async function openReceiveOverlay() {
@@ -1363,8 +1550,8 @@
     });
   }
 
-  function closeReceiveOverlay() {
-    if (!confirmDiscardDraft()) return;
+  async function closeReceiveOverlay() {
+    if (!(await saveDraftBeforeNavigation())) return;
     closeOrderPicker({ focus: false });
     document.getElementById('blanks-receive-overlay')?.classList.add('hidden');
     document.body.classList.remove('blanks-receive-open', 'manual-add-open');
@@ -1372,7 +1559,7 @@
   }
 
   async function refreshReceiveOverlay() {
-    if (!confirmDiscardDraft()) return;
+    if (!(await saveDraftBeforeNavigation())) return;
     const refresh = document.getElementById('blanks-receive-refresh');
     if (refresh) refresh.disabled = true;
     try {
@@ -1415,8 +1602,8 @@
     return activeBatch;
   }
 
-  function showBatchList() {
-    if (!confirmDiscardDraft()) return;
+  async function showBatchList() {
+    if (!(await saveDraftBeforeNavigation())) return;
     closeOrderPicker({ focus: false });
     activeBatch = null;
     draftReceived = new Map();
@@ -1429,6 +1616,9 @@
     const isDetail = mode === 'detail';
     document.getElementById('blanks-receive-eyebrow').textContent = isDetail ? 'Batch Manifest' : 'S&S Batches';
     document.getElementById('blanks-receive-title').textContent = isDetail && activeBatch ? activeBatch.label : 'Receive Batches';
+    document.getElementById('blanks-receive-lookup').hidden = isDetail;
+    document.getElementById('blanks-receive-create').classList.toggle('hidden', isDetail);
+    document.getElementById('blanks-receive-reference').hidden = !isDetail;
     document.getElementById('blanks-receive-back')?.classList.toggle('hidden', !isDetail);
     document.getElementById('blanks-receive-add-cart')?.classList.toggle('hidden', !isDetail);
     document.getElementById('blanks-receive-mark-all')?.classList.toggle('hidden', !isDetail);
@@ -1460,11 +1650,14 @@
     syncStats(expected, received, missing);
 
     list.replaceChildren();
-    const hasBatches = batchIndex.length > 0;
+    const filtered = batchIndex.filter(batch => [batch.supplierOrderNumber, batch.purchaseOrderNumber,
+      batch.trackingNumber, batch.label, batch.id].some(value => String(value || '').toLowerCase().includes(receiveSearch)));
+    const hasBatches = filtered.length > 0;
     empty.hidden = hasBatches;
+    empty.querySelector('strong').textContent = batchIndex.length ? 'No matching shipments' : 'No S&S batches yet';
     list.hidden = !hasBatches;
 
-    batchIndex.forEach(batch => {
+    filtered.forEach(batch => {
       list.appendChild(renderBatchCard(batch));
     });
   }
@@ -1478,16 +1671,17 @@
     const expected = Number(batch.expectedGarments) || 0;
     const received = Number(batch.receivedGarments) || 0;
     const missing = Math.max(0, Number(batch.missingGarments) || 0);
+    const allocationReview = Math.max(0, Number(batch.pendingAllocationLines) || 0);
     const created = batch.createdAt ? new Date(batch.createdAt).toLocaleDateString() : '';
 
     card.innerHTML = `
       <span class="blanks-receive-batch-main">
-        <strong>${escapeHtml(batch.label || batch.id)}</strong>
-        <span>${batch.orderCount || 0} orders${created ? ` · ${escapeHtml(created)}` : ''}</span>
+        <strong>${escapeHtml(batch.supplierOrderNumber ? `S&S ${batch.supplierOrderNumber}` : batch.label || batch.id)}</strong>
+        <span>${batch.orderCount || 0} orders${batch.purchaseOrderNumber ? ` · PO ${escapeHtml(batch.purchaseOrderNumber)}` : ''}${batch.trackingNumber ? ` · Tracking ${escapeHtml(batch.trackingNumber)}` : ''}${created ? ` · ${escapeHtml(created)}` : ''}</span>
       </span>
       <span class="blanks-receive-batch-counts">
         <span>${received}/${expected}</span>
-        <span class="${missing ? 'is-missing' : 'is-complete'}">${missing ? `${missing} missing` : 'Complete'}</span>
+        <span class="${missing || allocationReview ? 'is-missing' : 'is-complete'}">${allocationReview ? 'Review allocation' : missing ? `${missing} missing` : 'Complete'}</span>
       </span>
     `;
     return card;
@@ -1495,7 +1689,7 @@
 
   async function openBatchFromList(batchId) {
     if (!batchId) return;
-    if (!confirmDiscardDraft()) return;
+    if (!(await saveDraftBeforeNavigation())) return;
     await loadBatch(batchId);
     renderBatchDetail();
   }
@@ -1516,6 +1710,10 @@
       fragment.appendChild(renderManifestLine(line));
     });
     list.appendChild(fragment);
+    document.getElementById('blanks-receive-reference-number').value = activeBatch.supplierOrderNumber || '';
+    document.getElementById('blanks-receive-reference-po').value = activeBatch.purchaseOrderNumber || '';
+    document.getElementById('blanks-receive-reference-tracking').value = activeBatch.trackingNumber || '';
+    renderNewlyComplete();
     syncDraftStats();
     syncAddCartOrdersState();
   }
@@ -1702,10 +1900,76 @@
         <button type="button" data-receive-action="all">All</button>
       </div>
     `;
+    const byOrder = new Map();
+    (line.orderLines || []).forEach(orderLine => {
+      const entry = byOrder.get(orderLine.orderName) || { expected: 0, accounted: 0 };
+      entry.expected += Number(orderLine.expectedQty) || 0;
+      entry.accounted += Number(orderLine.accountedQty) || 0;
+      byOrder.set(orderLine.orderName, entry);
+    });
+    if (byOrder.size > 1 && Number(line.receivedQty) > 0) {
+      const allocation = document.createElement('div');
+      allocation.className = 'blanks-receive-allocation';
+      const title = document.createElement('strong');
+      title.textContent = line.allocationConfirmed
+        ? 'Allocation confirmed'
+        : 'Suggested allocation · review before orders become ready';
+      allocation.appendChild(title);
+      byOrder.forEach((quantities, orderName) => {
+        const label = document.createElement('label');
+        label.textContent = `${orderName} · needs ${quantities.expected}`;
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '0';
+        input.max = String(quantities.expected);
+        input.step = '1';
+        input.value = String(quantities.accounted);
+        input.dataset.allocationOrder = orderName;
+        label.appendChild(input);
+        allocation.appendChild(label);
+      });
+      const confirm = document.createElement('button');
+      confirm.type = 'button';
+      confirm.dataset.confirmAllocation = line.itemKey;
+      confirm.textContent = line.allocationConfirmed ? 'Update allocation' : 'Confirm allocation';
+      allocation.appendChild(confirm);
+      row.appendChild(allocation);
+    }
     return row;
   }
 
+  async function confirmManifestAllocation(button) {
+    if (!activeBatch?.id || dirty) {
+      showMoveNotice('Save the receiving quantities before confirming the allocation.');
+      return;
+    }
+    const row = button.closest('.blanks-receive-line');
+    const allocations = {};
+    row.querySelectorAll('[data-allocation-order]').forEach(input => {
+      allocations[input.dataset.allocationOrder] = Number(input.value);
+    });
+    button.disabled = true;
+    try {
+      const before = activeBatch;
+      const result = await window.api.confirmBlanksBatchAllocation(activeBatch.id, button.dataset.confirmAllocation, allocations);
+      activeBatch = result.batch;
+      batchDetailsById.set(activeBatch.id, activeBatch);
+      captureNewlyComplete(before, activeBatch);
+      buildOrderAccounting();
+      annotateAccountingCards();
+      renderBatchDetail();
+    } catch (error) {
+      showMoveNotice(`Could not confirm allocation. ${error?.message || error}`);
+      button.disabled = false;
+    }
+  }
+
   function handleReceiveClick(event) {
+    const allocationButton = event.target.closest?.('[data-confirm-allocation]');
+    if (allocationButton) {
+      confirmManifestAllocation(allocationButton).catch(error => console.error('Allocation confirmation failed', error));
+      return;
+    }
     const batchCard = event.target.closest?.('.blanks-receive-batch-card');
     if (batchCard) {
       openBatchFromList(batchCard.dataset.batchId).catch(error => {
@@ -1755,6 +2019,10 @@
     if (input && document.activeElement !== input) input.value = String(numeric);
     syncDraftStats();
     syncSaveState();
+    window.clearTimeout(receiveAutoSaveTimer);
+    receiveAutoSaveTimer = window.setTimeout(() => {
+      saveReceiving().catch(error => console.error('Automatic receiving save failed', error));
+    }, 1200);
   }
 
   function syncDraftStats() {
@@ -1779,16 +2047,153 @@
   function markAllManifestReceived() {
     if (!activeBatch) return;
     (activeBatch.manifest || []).forEach(line => {
-      draftReceived.set(line.itemKey, Number(line.expectedQty) || 0);
+      draftReceived.set(line.itemKey, Math.max(Number(line.receivedQty) || 0, Number(line.expectedQty) || 0));
     });
     dirty = true;
     renderBatchDetail();
     syncSaveState();
   }
 
+  function captureNewlyComplete(before, after) {
+    if (newlyCompleteBatchId !== after?.id) {
+      newlyCompleteBatchId = after?.id || '';
+      newlyCompleteOrders = [];
+    }
+    const prior = new Map((before?.orders || []).map(order => [order.name, Boolean(order.fullyAccounted)]));
+    const added = (after?.orders || []).filter(order => order.fullyAccounted && !prior.get(order.name))
+      .map(order => order.name);
+    newlyCompleteOrders = Array.from(new Set([...newlyCompleteOrders, ...added]));
+    renderNewlyComplete();
+    if (added.length && !isReceiveOverlayOpen()) showNewlyCompleteToast(after.id);
+  }
+
+  function showNewlyCompleteToast(batchId) {
+    let toast = document.getElementById('blanks-newly-complete-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'blanks-newly-complete-toast';
+      toast.className = 'blanks-newly-complete-toast';
+      toast.setAttribute('role', 'status');
+      document.body.appendChild(toast);
+    }
+    toast.replaceChildren();
+    const text = document.createElement('span');
+    text.textContent = `${newlyCompleteOrders.length} customer order${newlyCompleteOrders.length === 1 ? '' : 's'} newly complete after check-in.`;
+    const review = document.createElement('button');
+    review.type = 'button';
+    review.textContent = 'Review';
+    review.addEventListener('click', async () => {
+      await openReceiveOverlay();
+      await openBatchFromList(batchId);
+      toast.remove();
+    });
+    const move = document.createElement('button');
+    move.type = 'button';
+    move.textContent = 'Move all newly complete';
+    move.disabled = !newlyCompleteOrders.some(name => newlyCompleteEligibility(name).eligible);
+    move.addEventListener('click', async () => {
+      ensureReceiveOverlay();
+      await moveNewlyComplete();
+      if (newlyCompleteOrders.length) showNewlyCompleteToast(batchId);
+      else toast.remove();
+    });
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.textContent = 'Dismiss';
+    dismiss.addEventListener('click', () => toast.remove());
+    toast.append(text, review, move, dismiss);
+  }
+
+  function newlyCompleteEligibility(name, orders = currentOrders()) {
+    const order = orders.find(item => item?.name === name);
+    if (!order) return { eligible: false, reason: 'Order no longer on board' };
+    if (order.status === 'print' || order.status === 'completed') return { eligible: false, reason: 'Already moved' };
+    if (order.status !== 'blanks') return { eligible: false, reason: 'Review current stage' };
+    if (String(order.displayFinancialStatus || order.financialStatus || '').toUpperCase() !== 'PAID') {
+      return { eligible: false, reason: 'Payment required before production' };
+    }
+    return { eligible: true, reason: Number(order.printsStatus || 0) ? 'Prints ready' : 'Prints pending · do not press' };
+  }
+
+  function renderNewlyComplete() {
+    const panel = document.getElementById('blanks-receive-ready');
+    if (!panel) return;
+    panel.hidden = !activeBatch || activeBatch.id !== newlyCompleteBatchId || newlyCompleteOrders.length === 0;
+    if (panel.hidden) return;
+    const list = document.getElementById('blanks-receive-ready-list');
+    list.replaceChildren();
+    newlyCompleteOrders.forEach(name => {
+      const row = document.createElement('div');
+      row.className = 'blanks-receive-ready-row';
+      const strong = document.createElement('strong');
+      strong.textContent = name;
+      const reason = document.createElement('span');
+      reason.textContent = newlyCompleteEligibility(name).reason;
+      row.append(strong, reason);
+      list.appendChild(row);
+    });
+    const count = newlyCompleteOrders.filter(name => newlyCompleteEligibility(name).eligible).length;
+    const button = document.getElementById('blanks-receive-ready-move');
+    button.disabled = count === 0;
+    button.textContent = count ? `Move ${count} newly complete` : 'No eligible orders to move';
+  }
+
+  function reviewNewlyComplete() {
+    const list = document.getElementById('blanks-receive-ready-list');
+    list?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    list?.setAttribute('tabindex', '-1');
+    list?.focus();
+  }
+
+  async function moveNewlyComplete() {
+    const button = document.getElementById('blanks-receive-ready-move');
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Checking current orders…';
+    }
+    try {
+      const freshBatch = await window.api.getBlanksBatch(newlyCompleteBatchId);
+      if (!freshBatch?.batch) throw new Error('Receiving record is no longer available.');
+      const stillComplete = new Set((freshBatch?.batch?.orders || [])
+        .filter(order => order.fullyAccounted).map(order => order.name));
+      const fresh = [];
+      for (const name of newlyCompleteOrders) {
+        const boardOrder = currentOrders().find(order => order?.name === name);
+        if (!boardOrder?._gid) continue;
+        const detail = await window.api.getOrderDetail(boardOrder._gid);
+        const stage = detail?.production?.stage;
+        fresh.push({ ...boardOrder,
+          status: stage === 'blanks_cart' || stage === 'blanks_ordered' ? 'blanks' : stage,
+          displayFinancialStatus: detail?.commerce?.financialStatus || '' });
+      }
+      const eligible = newlyCompleteOrders.filter(name => stillComplete.has(name) && newlyCompleteEligibility(name, fresh).eligible);
+      const moved = [];
+      for (const name of eligible) {
+        const result = await applyBatchAwareOrderMove([name], 'print', { status: 'print' });
+        if (result) moved.push(name);
+      }
+      newlyCompleteOrders = newlyCompleteOrders.filter(name => !moved.includes(name));
+      renderNewlyComplete();
+      if (moved.length) showMoveNotice(`${moved.length} newly complete order${moved.length === 1 ? '' : 's'} moved to Ready to Print. Check prints before pressing.`, 'info');
+    } catch (error) {
+      showMoveNotice(`Could not finish moving orders. ${error?.message || error}`);
+      renderNewlyComplete();
+    }
+  }
+
   async function saveReceiving() {
-    if (!activeBatch || !dirty || !window.api || typeof window.api.updateBlanksBatchReceiving !== 'function') return;
+    window.clearTimeout(receiveAutoSaveTimer);
+    if (receivingSavePromise) return receivingSavePromise;
+    if (!activeBatch || !dirty || !window.api || typeof window.api.updateBlanksBatchReceiving !== 'function') return true;
+    receivingSavePromise = performReceivingSave();
+    try { return await receivingSavePromise; }
+    finally { receivingSavePromise = null; }
+  }
+
+  async function performReceivingSave() {
     const save = document.getElementById('blanks-receive-save');
+    document.querySelectorAll('#blanks-receive-list [data-receive-input], #blanks-receive-list [data-receive-action], #blanks-receive-mark-all')
+      .forEach(control => { control.disabled = true; });
     if (save) {
       save.disabled = true;
       save.textContent = 'Saving...';
@@ -1800,8 +2205,10 @@
     }));
 
     try {
+      const before = activeBatch;
       const result = await window.api.updateBlanksBatchReceiving(activeBatch.id, updates);
       activeBatch = result?.batch || activeBatch;
+      captureNewlyComplete(before, activeBatch);
       if (activeBatch?.id) batchDetailsById.set(activeBatch.id, activeBatch);
       draftReceived = new Map((activeBatch.manifest || []).map(line => [
         line.itemKey,
@@ -1818,16 +2225,20 @@
         const currentSave = document.getElementById('blanks-receive-save');
         if (currentSave) currentSave.textContent = 'Save Receiving';
       }, 900);
+      return true;
     } catch (error) {
       console.error('Unable to save batch receiving', error);
-      alert(`Could not save receiving: ${error?.message || error}`);
+      showMoveNotice(`Could not save receiving. ${error?.message || error}`);
       syncSaveState();
+      return false;
     } finally {
       const currentSave = document.getElementById('blanks-receive-save');
       if (currentSave) {
         currentSave.textContent = currentSave.textContent === 'Saving...' ? 'Save Receiving' : currentSave.textContent;
         currentSave.disabled = !dirty;
       }
+      document.querySelectorAll('#blanks-receive-list [data-receive-input], #blanks-receive-list [data-receive-action], #blanks-receive-mark-all')
+        .forEach(control => { control.disabled = false; });
     }
   }
 
@@ -1845,12 +2256,8 @@
     return String(value).replace(/["\\]/g, '\\$&');
   }
 
-  function confirmDiscardDraft() {
-    if (!dirty) return true;
-    if (!window.confirm('Discard unsaved receiving changes?')) return false;
-    dirty = false;
-    syncSaveState();
-    return true;
+  async function saveDraftBeforeNavigation() {
+    return !dirty && !receivingSavePromise ? true : saveReceiving();
   }
 
   function setupMarkInCartOrdered() {
@@ -1869,23 +2276,30 @@
         return;
       }
 
+      const supplierOrderNumber = window.prompt(
+        `Enter the S&S order number for these ${cartOrders.length} orders. If they belong to different S&S orders, use Receive Batches to link each shipment separately.`
+      );
+      if (supplierOrderNumber === null) return;
+      if (!supplierOrderNumber.trim()) {
+        showMoveNotice('An S&S order number is required to create a searchable receiving record.');
+        return;
+      }
+
       const orderNames = cartOrders.map(order => order.name).filter(Boolean);
       markOrderedInFlight = true;
       button.disabled = true;
       button.textContent = `Marking ${orderNames.length} ordered...`;
+      let manifestSaved = false;
       try {
-        await applyBatchAwareOrderMove(orderNames, 'blanks', { blanksOrdered: 1 });
+        const saved = await saveBatchForOrders(cartOrders, { supplierOrderNumber: supplierOrderNumber.trim() });
+        if (!saved?.batch) throw new Error('These orders have no supplier garments to receive.');
+        manifestSaved = true;
+        const moved = await applyBatchAwareOrderMove(orderNames, 'blanks', { blanksOrdered: 1 });
+        if (!moved) throw new Error('The receiving record was saved, but some cards were not marked ordered.');
         window.setActiveBlanksView?.('ordered');
-        try {
-          await saveBatchForOrders(cartOrders);
-        } catch (error) {
-          console.error('Unable to create blanks batch manifest', error);
-          alert(`Orders were marked ordered, but the S&S batch manifest was not saved: ${error?.message || error}`);
-        }
       } catch (error) {
-        // applyBatchAwareOrderMove already restores the optimistic card update
-        // and communicates the persistence failure.
         console.error('Unable to mark In S&S Cart orders as ordered', error);
+        showMoveNotice(`${manifestSaved ? 'Receiving record saved, but cards could not all be marked ordered.' : 'Could not save the receiving record.'} ${error?.message || error}`);
       } finally {
         markOrderedInFlight = false;
         button.disabled = false;

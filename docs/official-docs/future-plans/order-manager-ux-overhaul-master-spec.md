@@ -1,5 +1,32 @@
 # Print-MO Order Manager: Master UX Overhaul & Shop-Floor Architecture Specification
 
+- **Status**: `[In Progress]`
+- **Owner / Target Milestone**: `Print-MO / staged UX improvements`
+
+## Summary & Intent
+
+This is the broad design proposal for making Order Manager easier to use on the shop floor. Implement each workflow area independently; current behavior is documented in the workflow and reference pages.
+
+## Current Continuation State
+
+- **Current state**: Supplier receiving is live as the first candidate improvement. Other overhaul areas remain proposals.
+- **Next safe action**: Validate receiving with real shop staff, then choose the next independent area.
+- **Remaining blockers**: Carrier delivery and packing-slip feeds are not integrated.
+- **Owner / external actions**: Confirm any future supplier integration scope before enabling automated delivery events.
+- **Last verified evidence**: `scripts/verify-phase2.js` passed; Worker version `5429ec7c-6375-48b4-af2b-49f5ea308803` and Pages release `17902781023N` were served on 2026-09-24. Live shop acceptance remains separate.
+
+## Open Questions & Brainstorming
+
+See the detailed sections below for order detail, readiness, receiving, and print-run ideas. Keep physical receipt separate from carrier delivery.
+
+## Technical Specification & Task Checklist
+
+The numbered sections below contain the proposed UX and architecture. The shipped receiving subset is described in [../workflows/blanks-batching.md](../workflows/blanks-batching.md).
+
+## Progress Log
+
+- 2026-09-24: Supplier receiving shipped as the first independent improvement; operational acceptance remains open.
+
 > **Document Status:** Authoritative Master Specification  
 > **Target Audience:** Codex, Software Engineers, UI/UX Designers, and Autonomous Implementation Agents  
 > **Scope:** Front-end (`order-manager-web`), Cloudflare Worker Backend (`order-manager-worker`), Cloudflare D1/R2 Storage, and Shopify Theme Integration  

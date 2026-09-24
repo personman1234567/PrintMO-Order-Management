@@ -93,6 +93,9 @@ Shopify candidate cards with nonempty customer item instructions display a neutr
 | **Print Count** | `.counts .count-prints` | Printer icon + total print impressions needed. | Source: Calculated by inspecting `order.items[].prints` or print location tags. |
 | **Footer Bar** | `.card-footer` | Item count summary or production progress. | Displays item total; on `Ready To Print` cards (`.print-card`), displays percentage complete progress bar (`75%`). |
 | **Target date** | `.target-date-badge` within `.production-card-statuses` | Optional internal shop finish-by day, with text for today, tomorrow, or late. | `production.targetDate`; completed/history orders stay neutral. See [Manual target dates](../workflows/order-ingestion-kanban.md#manual-target-dates) for the save and release contract. |
+| **Prints pending blocker** | `.blanks-prints-pending` within the Ready to Print card status region | Shows `Prints pending · do not press` when a Ready to Print order lacks ready prints. | `printsStatus` from canonical production readiness; the Worker also rejects printed-count increases until prints are ready. |
+
+The **Receive Batches** dialog (`#blanks-receive-overlay`) has shipment search by S&S order number, Print-MO PO, and tracking number; an outside-purchase form with explicit customer-order selection; a shipment-reference form; a one-action full-box check-in; per-line receiving controls; shared-SKU allocation confirmation; and a newly-complete review/move panel. Outside-purchase creation links an existing supplier purchase and never submits another S&S order. The Move action checks current payment and stage before moving each newly complete card.
 
 ---
 

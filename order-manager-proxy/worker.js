@@ -701,7 +701,8 @@ function buildBlanksBatch(body) {
     const nowIso = now.toISOString();
     const rawOrders = Array.isArray(body?.orders) ? body.orders.slice(0, 300) : [];
     const id = normalizeBlanksBatchId(body?.id) || makeBlanksBatchId();
-    const label = safeText(body?.label, 120) || makeBlanksBatchLabel(now);
+    const supplierOrderNumber = safeText(body?.supplierOrderNumber, 80);
+    const label = safeText(body?.label, 120) || (supplierOrderNumber ? `S&S ${supplierOrderNumber}` : makeBlanksBatchLabel(now));
     const source = safeText(body?.source, 80) || "mark-in-cart-ordered";
 
     const orders = [];
@@ -788,6 +789,9 @@ function buildBlanksBatch(body) {
         version: 1,
         id,
         label,
+        supplierOrderNumber,
+        purchaseOrderNumber: safeText(body?.purchaseOrderNumber, 80),
+        trackingNumber: safeText(body?.trackingNumber, 120),
         status: "ordered",
         source,
         createdAt: nowIso,
@@ -812,6 +816,9 @@ function blanksBatchIndexEntry(batch) {
         id: batch.id,
         key: blanksBatchKey(batch.id),
         label: batch.label,
+        supplierOrderNumber: batch.supplierOrderNumber || "",
+        purchaseOrderNumber: batch.purchaseOrderNumber || "",
+        trackingNumber: batch.trackingNumber || "",
         status: batch.status,
         source: batch.source,
         createdAt: batch.createdAt,
@@ -825,6 +832,7 @@ function blanksBatchIndexEntry(batch) {
         expectedGarments: batch.totals?.expectedGarments || 0,
         receivedGarments: batch.totals?.receivedGarments || 0,
         missingGarments: batch.totals?.missingGarments || 0,
+        pendingAllocationLines: (batch.manifest || []).filter(line => line.allocationConfirmed === false).length,
     };
 }
 
@@ -904,10 +912,29 @@ function applyOldestFirstAllocation(batch) {
                 return String(left.orderName || "").localeCompare(String(right.orderName || ""));
             });
 
+        const orderNames = new Set(orderLines.map(orderLine => orderLine.orderName));
+        const shared = orderNames.size > 1;
+        const confirmedNames = Object.keys(line.confirmedAllocation || {});
+        const confirmedTotal = confirmedNames.reduce((sum, name) => sum + (Number(line.confirmedAllocation[name]) || 0), 0);
+        const confirmed = shared && line.allocationConfirmed === true
+            && confirmedNames.length === orderNames.size
+            && confirmedNames.every(name => orderNames.has(name))
+            && confirmedTotal === Math.min(receivedQty, expectedQty);
+        if (confirmed) {
+            const remainingForOrder = new Map(Object.entries(line.confirmedAllocation || {})
+                .map(([name, quantity]) => [name, Math.max(0, Number(quantity) || 0)]));
+            orderLines.forEach(orderLine => {
+                const requested = remainingForOrder.get(orderLine.orderName) || 0;
+                const assigned = Math.min(orderLine.expectedQty, requested, remaining);
+                orderLine.accountedQty = assigned;
+                remainingForOrder.set(orderLine.orderName, requested - assigned);
+                remaining -= assigned;
+                lineAccounted += assigned;
+            });
+        }
         orderLines.forEach(orderLine => {
-            if (remaining <= 0) return;
-            const accountedQty = Math.min(orderLine.expectedQty, remaining);
-            orderLine.accountedQty = accountedQty;
+            const accountedQty = Math.min(orderLine.expectedQty - orderLine.accountedQty, remaining);
+            orderLine.accountedQty += accountedQty;
             remaining -= accountedQty;
             lineAccounted += accountedQty;
 
@@ -920,7 +947,7 @@ function applyOldestFirstAllocation(batch) {
                 });
             }
             const totals = orderTotals.get(orderLine.orderName);
-            totals.accountedGarments += accountedQty;
+            totals.accountedGarments += orderLine.accountedQty;
         });
 
         const missingQty = Math.max(0, expectedQty - lineAccounted);
@@ -937,6 +964,7 @@ function applyOldestFirstAllocation(batch) {
             accountedQty: lineAccounted,
             missingQty,
             extraQty: Math.max(0, receivedQty - expectedQty),
+            allocationConfirmed: !shared || confirmed,
             orderLines,
         };
     });
@@ -955,7 +983,8 @@ function applyOldestFirstAllocation(batch) {
             ...order,
             accountedGarments: accounted,
             missingGarments: missing,
-            fullyAccounted: expected > 0 && missing === 0,
+            fullyAccounted: expected > 0 && missing === 0 && !batch.manifest.some(line =>
+                line.allocationConfirmed === false && line.orderLines?.some(orderLine => orderLine.orderName === order.name)),
         };
     });
 
@@ -1020,12 +1049,61 @@ function applyReceivingUpdates(batch, body) {
         return {
             ...line,
             receivedQty: byKey.get(line.itemKey),
+            allocationConfirmed: new Set((line.orderLines || []).map(orderLine => orderLine.orderName)).size > 1
+                ? (byKey.get(line.itemKey) === Number(line.receivedQty) && line.allocationConfirmed === true)
+                : true,
+            confirmedAllocation: byKey.get(line.itemKey) === Number(line.receivedQty) ? line.confirmedAllocation : undefined,
         };
     });
 
     if (!matched) return { ok: false, error: "No matching manifest lines found" };
 
     return { ok: true, batch: applyOldestFirstAllocation(batch) };
+}
+
+function applyAllocationConfirmation(batch, body) {
+    const itemKey = safeText(body?.itemKey, 1000);
+    const line = (batch.manifest || []).find(item => item.itemKey === itemKey);
+    if (!line) return { ok: false, error: "Manifest line not found" };
+    const orderLines = Array.isArray(line.orderLines) ? line.orderLines : [];
+    const allocations = body?.allocations;
+    if (!allocations || typeof allocations !== "object" || Array.isArray(allocations)) {
+        return { ok: false, error: "Order allocations are required" };
+    }
+    const expectedByOrder = new Map();
+    orderLines.forEach(orderLine => expectedByOrder.set(orderLine.orderName,
+        (expectedByOrder.get(orderLine.orderName) || 0) + Number(orderLine.expectedQty || 0)));
+    const names = new Set(expectedByOrder.keys());
+    if (Object.keys(allocations).some(name => !names.has(name))) {
+        return { ok: false, error: "Allocation contains an unknown order" };
+    }
+    const confirmedAllocation = {};
+    let total = 0;
+    for (const [name, expected] of expectedByOrder) {
+        const amount = allocations[name];
+        if (!Number.isInteger(amount) || amount < 0 || amount > expected) {
+            return { ok: false, error: "Each allocation must be a whole number within the order quantity" };
+        }
+        confirmedAllocation[name] = amount;
+        total += amount;
+    }
+    if (total !== Math.min(Number(line.receivedQty) || 0, Number(line.expectedQty) || 0)) {
+        return { ok: false, error: "Allocate every received usable garment before confirming" };
+    }
+    line.confirmedAllocation = confirmedAllocation;
+    line.allocationConfirmed = true;
+    return { ok: true, batch: applyOldestFirstAllocation(batch) };
+}
+
+function applyBatchReferenceUpdate(batch, body) {
+    const supplierOrderNumber = safeText(body?.supplierOrderNumber, 80);
+    if (!supplierOrderNumber) return { ok: false, error: "S&S order number is required" };
+    batch.supplierOrderNumber = supplierOrderNumber;
+    batch.purchaseOrderNumber = safeText(body?.purchaseOrderNumber, 80);
+    batch.trackingNumber = safeText(body?.trackingNumber, 120);
+    batch.label = `S&S ${supplierOrderNumber}`;
+    batch.updatedAt = new Date().toISOString();
+    return { ok: true, batch };
 }
 
 function orderNamesFromBody(body) {
@@ -1258,6 +1336,8 @@ function applyBatchOrderAction(batch, body) {
     const action = safeText(body?.action, 80);
     if (action === "remove-orders") return removeOrdersFromBatch(batch, body);
     if (action === "add-orders") return addOrdersToBatch(batch, body);
+    if (action === "confirm-allocation") return applyAllocationConfirmation(batch, body);
+    if (action === "update-reference") return applyBatchReferenceUpdate(batch, body);
     return applyReceivingUpdates(batch, body);
 }
 
@@ -1511,14 +1591,16 @@ function isFileLike(value) {
 //  - without id: returns batch index
 //  - with id: returns one batch manifest
 // POST:
-//  - { orders: [], source?: string, label?: string }
+//  - { orders: [], source?: string, supplierOrderNumber?: string, purchaseOrderNumber?: string, trackingNumber?: string }
 //  - creates an ordered blanks batch manifest from garment line items
 // PATCH:
 //  - { id, updates: [{ itemKey, receivedQty }] }
 //  - { id, action: "remove-orders", orderNames: [] }
 //  - { id, action: "add-orders", orders: [] }
 //  - { id, action: "assign-orders", orders: [] }
-//  - updates receiving or batch membership and recalculates oldest-first allocation
+//  - { id, action: "confirm-allocation", itemKey, allocations: { [orderName]: quantity } }
+//  - { id, action: "update-reference", supplierOrderNumber, purchaseOrderNumber?, trackingNumber? }
+//  - updates receiving or batch membership and recalculates suggested allocation
 // -----------------------------
 async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
     if (!env.PREVIEWS) {
@@ -1556,6 +1638,9 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
         }
 
         const batch = buildBlanksBatch(body);
+        if (batch.source === "outside-order" && !batch.supplierOrderNumber) {
+            return jsonResponse({ error: "S&S order number is required for an outside purchase" }, allowOrigin, reqAllowHeaders, 400);
+        }
         if (!batch.orders.length) {
             return jsonResponse({ error: "At least one order is required" }, allowOrigin, reqAllowHeaders, 400);
         }
@@ -1564,6 +1649,10 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
         }
 
         const currentIndex = await readBlanksBatchIndex(env);
+        if (batch.supplierOrderNumber && currentIndex.batches.some(entry =>
+            entry.supplierOrderNumber === batch.supplierOrderNumber)) {
+            return jsonResponse({ error: "This S&S order number already has a receiving record" }, allowOrigin, reqAllowHeaders, 409);
+        }
         const duplicateEntries = currentIndex.batches.filter(entry => {
             return batch.orders.some(order => indexEntryContainsIncomingOrder(entry, order));
         });
@@ -1618,6 +1707,14 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
         }
 
         const action = safeText(body?.action, 80);
+        if (action === "update-reference") {
+            const reference = safeText(body?.supplierOrderNumber, 80);
+            const currentIndex = await readBlanksBatchIndex(env);
+            if (reference && currentIndex.batches.some(entry =>
+                entry.id !== batchId && entry.supplierOrderNumber === reference)) {
+                return jsonResponse({ error: "This S&S order number already has a receiving record" }, allowOrigin, reqAllowHeaders, 409);
+            }
+        }
         const result = action === "assign-orders"
             ? await assignOrdersToBatch(env, batch, body)
             : applyBatchOrderAction(batch, body);
@@ -5805,6 +5902,11 @@ async function productionGarmentCount(env, productionRead, graphQL = coordinator
 }
 
 function validatePrintablePatch(items, current, patch, next) {
+    if ('printedCount' in patch && next.printedCount > current.printedCount && !next.readiness.printsReady) {
+        throw Object.assign(new Error('Prints must be marked ready before recording printed pieces.'), {
+            code: 'PRINTS_NOT_READY', status: 409
+        });
+    }
     if ('printEligibility' in patch) {
         const ids = new Set(items.map(item => item.id));
         if (Object.entries(patch.printEligibility).some(([id, value]) => value !== null && !ids.has(id))) {
@@ -7433,6 +7535,9 @@ async function handleProviderProductionPatch(request, env, orderKey, allowOrigin
     }
     const currentRead = await readProviderOrder(env, orderKey);
     const current = currentRead.record.production;
+    if ('printedCount' in patch && patch.printedCount > current.printedCount && !current.readiness.printsReady && !patch.printsStatus) {
+        return v1Error({ code: 'PRINTS_NOT_READY', message: 'Prints must be marked ready before recording printed pieces.' }, allowOrigin, reqAllowHeaders, 409);
+    }
     const garmentCount = providerGarmentCount(currentRead.record.contract, current);
     if (!('printEligibility' in patch) && 'printedCount' in patch && patch.printedCount > garmentCount) {
         await db.prepare(`

@@ -1206,6 +1206,20 @@ window.api.updateBlanksBatchReceiving = async (id, updates = []) => {
   });
 };
 
+window.api.confirmBlanksBatchAllocation = async (id, itemKey, allocations) => {
+  return apiFetch("/order-manager/blanks-batches", {
+    method: "PATCH",
+    body: JSON.stringify({ id, action: "confirm-allocation", itemKey, allocations }),
+  });
+};
+
+window.api.updateBlanksBatchReference = async (id, reference) => {
+  return apiFetch("/order-manager/blanks-batches", {
+    method: "PATCH",
+    body: JSON.stringify({ id, action: "update-reference", ...reference }),
+  });
+};
+
 window.api.removeOrdersFromBlanksBatch = async (id, orderNames = []) => {
   if (!id) throw new Error("Batch ID is required");
   const names = Array.isArray(orderNames) ? orderNames.filter(Boolean) : [];
