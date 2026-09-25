@@ -79,13 +79,15 @@ export async function setSupplierAvailable(env, token, { inventoryItemId, suppli
   return { writes: 1, inventoryItemId, supplierLocationId, targetAvailable };
 }
 
-// Deliberately limited to one variant and an explicitly selected supplier-source model.
+// Deliberately limited to one variant with no outstanding Shopify commitments.
+// S&S reports quantity available for sale; a placed Shopify order is protected by
+// compare-and-set and a later run is blocked until supplier/order timing is known.
 // The production config has neither pilot-write mode nor a cron trigger.
 export async function runGuardedWrite(env, deps) {
   requireValue(env.INVENTORY_SYNC_MODE === 'pilot-write', 'WRITE_MODE_REQUIRED');
   requireValue(shopDomain(env) === PRINTMO_SHOP && env.SUPPLIER_LOCATION_ID === SS_SUPPLIER_LOCATION,
     'INVALID_WRITE_DESTINATION');
-  requireValue(env.SUPPLIER_FEED_SEMANTICS === 'gross-before-shopify-commitments', 'SUPPLIER_FEED_SEMANTICS_UNVERIFIED');
+  requireValue(env.SUPPLIER_FEED_SEMANTICS === 'ss-available-for-sale-zero-commitments', 'SUPPLIER_FEED_SEMANTICS_UNVERIFIED');
   const maxDelta = Number(env.INVENTORY_MAX_WRITE_DELTA);
   requireValue(/^\d+$/.test(String(env.INVENTORY_MAX_WRITE_DELTA || ''))
     && Number.isSafeInteger(maxDelta) && maxDelta > 0, 'WRITE_LIMIT_UNCONFIGURED');
@@ -116,10 +118,14 @@ export async function runGuardedWrite(env, deps) {
   const available = quantity(level, 'available');
   const committed = quantity(level, 'committed');
   const onHand = quantity(level, 'on_hand');
-  // Other Shopify unavailable states must be absent before this two-state formula is used.
+  // The first live pilot mirrors S&S's available-for-sale number only while Shopify
+  // has no order commitment at any location for this exact inventory item.
+  requireValue(variant.inventoryItem.inventoryLevels.nodes.every(other => quantity(other, 'committed') === 0),
+    'SHOPIFY_COMMITMENTS_PRESENT');
+  // Other Shopify unavailable states must be absent before the pilot writes.
   requireValue(available !== null && available >= 0 && committed !== null && committed >= 0
     && onHand === available + committed, 'INVENTORY_STATES_UNVERIFIED');
-  const targetAvailable = Math.max(0, row.capacityBeforeCommitments - committed);
+  const targetAvailable = row.capacityBeforeCommitments;
   requireValue(Number.isSafeInteger(targetAvailable)
     && Math.abs(targetAvailable - available) <= maxDelta, 'WRITE_DELTA_EXCEEDS_LIMIT');
   if (targetAvailable === available) return { mode: 'pilot-write', writes: 0, unchanged: 1 };

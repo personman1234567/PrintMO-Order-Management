@@ -209,12 +209,16 @@ test('audit continues after a location scope failure', async () => {
   assert.equal(report.checks.shopify.inventoryWriteGranted,false);
 });
 
-function pilotWriteFixture({ supplierQty = 8, available = 5, committed = 2, localAvailable = 0,
+function pilotWriteFixture({ supplierQty = 8, available = 5, committed = 0, localAvailable = 0,
+  localCommitted = 0,
   tracked = true, online = true, scopes = ['read_inventory', 'write_inventory'],
   skuMatches = [{ id, sku: variant.sku }], mutationResult = null } = {}) {
   const item = structuredClone(variant);
   item.inventoryItem.tracked = tracked;
-  item.inventoryItem.inventoryLevels.nodes[0].quantities = [{ name: 'available', quantity: localAvailable }];
+  item.inventoryItem.inventoryLevels.nodes[0].quantities = [
+    { name: 'available', quantity: localAvailable }, { name: 'committed', quantity: localCommitted },
+    { name: 'on_hand', quantity: localAvailable + localCommitted }
+  ];
   item.inventoryItem.inventoryLevels.nodes[1].quantities = [
     { name: 'available', quantity: available }, { name: 'committed', quantity: committed },
     { name: 'on_hand', quantity: available + committed }
@@ -240,7 +244,7 @@ function pilotWriteFixture({ supplierQty = 8, available = 5, committed = 2, loca
         { warehouseAbbr: 'DS', qty: 900, dropship: true }] }] });
   } };
   const writeEnv = { ...env, INVENTORY_SYNC_MODE: 'pilot-write', SS_WAREHOUSES: '["*"]',
-    SS_SAFETY_BUFFER: '0', SUPPLIER_FEED_SEMANTICS: 'gross-before-shopify-commitments',
+    SS_SAFETY_BUFFER: '0', SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-zero-commitments',
     INVENTORY_MAX_WRITE_DELTA: '20' };
   return { calls, deps, writeEnv };
 }
@@ -257,11 +261,11 @@ test('production-disabled writer makes no network requests even when write setti
   }), /WRITE_MODE_REQUIRED/);
 });
 
-test('guarded pilot writes only S&S available stock, subtracts Shopify commitments, and uses CAS plus idempotency', async () => {
+test('guarded pilot mirrors S&S available stock with no Shopify commitments, using CAS and idempotency', async () => {
   const { calls, deps, writeEnv } = pilotWriteFixture();
   const result = await runGuardedWrite(writeEnv, deps);
   assert.equal(result.writes, 1);
-  assert.equal(result.targetAvailable, 6); // Physical S&S=8, Shopify committed=2; DS 900 is excluded.
+  assert.equal(result.targetAvailable, 8); // S&S available=8; DS 900 is excluded.
   const writes = calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation'));
   assert.equal(writes.length, 1);
   const { query, variables } = JSON.parse(writes[0].options.body);
@@ -269,19 +273,19 @@ test('guarded pilot writes only S&S available stock, subtracts Shopify commitmen
   assert.match(variables.idempotencyKey, /^[0-9a-f-]{36}$/);
   assert.equal(variables.input.name, 'available');
   assert.deepEqual(variables.input.quantities, [{ inventoryItemId: itemId, locationId: supplierId,
-    quantity: 6, changeFromQuantity: 5 }]);
+    quantity: 8, changeFromQuantity: 5 }]);
   assert.doesNotMatch(JSON.stringify(result), /shop-secret|gateway-secret/);
 });
 
 test('unchanged pilot stock performs no mutation', async () => {
-  const { calls, deps, writeEnv } = pilotWriteFixture({ available: 6 });
+  const { calls, deps, writeEnv } = pilotWriteFixture({ available: 8 });
   const result = await runGuardedWrite(writeEnv, deps);
   assert.equal(result.writes, 0);
   assert.equal(calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 0);
 });
 
 test('stockout can target zero while dropship stock remains positive', async () => {
-  const { calls, deps, writeEnv } = pilotWriteFixture({ supplierQty: 0, available: 5, committed: 2 });
+  const { calls, deps, writeEnv } = pilotWriteFixture({ supplierQty: 0, available: 5 });
   const result = await runGuardedWrite(writeEnv, deps);
   assert.equal(result.targetAvailable, 0);
   assert.equal(JSON.parse(calls.at(-1).options.body).variables.input.quantities[0].locationId, supplierId);
@@ -311,6 +315,14 @@ test('pilot writer blocks scope, location, shared SKU, tracking, other-location 
   ]) {
     const { calls, deps, writeEnv } = pilotWriteFixture(fixture);
     await assert.rejects(runGuardedWrite({ ...writeEnv, ...change }, deps));
+    assert.equal(calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 0);
+  }
+});
+
+test('pilot writer never restores a Shopify order commitment from an unchanged S&S feed', async () => {
+  for (const fixture of [{ committed: 1 }, { localCommitted: 1 }]) {
+    const { calls, deps, writeEnv } = pilotWriteFixture(fixture);
+    await assert.rejects(runGuardedWrite(writeEnv, deps), /SHOPIFY_COMMITMENTS_PRESENT/);
     assert.equal(calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 0);
   }
 });
