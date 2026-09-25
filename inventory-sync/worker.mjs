@@ -1,5 +1,6 @@
 import { SyncError, requireValue, uniqueStrings, warehouseList, makePlan } from './core.mjs';
 import { shopifyToken, readPilot, readSupplierGateway } from './clients.mjs';
+import { runGuardedWrite } from './writer.mjs';
 function jsonSetting(env, key) {
   try { return JSON.parse(env[key] || '[]'); } catch { throw new SyncError(`INVALID_${key}`); }
 }
@@ -23,19 +24,24 @@ export async function runDryRun(env, deps) {
   return makePlan({ variants, inventory: supplier.items, observedAt: supplier.observedAt,
     warehouses, safetyBuffer, supplierLocationId, protectedLocationIds });
 }
+export async function runInventorySync(env, deps) {
+  if (env.INVENTORY_SYNC_MODE === 'pilot-write') return runGuardedWrite(env, deps);
+  return runDryRun(env, deps);
+}
 export default {
   async fetch() { return new Response('Not found', { status: 404 }); },
   async scheduled(_event, env) {
     try {
-      const result = await runDryRun(env);
+      const result = await runInventorySync(env);
       const statuses = { inStock: 0, outOfStock: 0, unknown: 0 };
       for (const row of result.rows || []) {
         if (row.supplierStockStatus === 'IN_STOCK') statuses.inStock++;
         else if (row.supplierStockStatus === 'OUT_OF_STOCK') statuses.outOfStock++;
         else statuses.unknown++;
       }
-      console.log(JSON.stringify({ event: 'inventory-observation', mode: result.mode, writes: 0,
-        variants: result.rows?.length || 0, blocked: result.rows?.filter(r => r.blockers.length).length || 0,
+      console.log(JSON.stringify({ event: 'inventory-observation', mode: result.mode, writes: result.writes || 0,
+        variants: result.mode === 'pilot-write' ? 1 : result.rows?.length || 0,
+        blocked: result.rows?.filter(r => r.blockers.length).length || 0,
         ...statuses }));
     } catch (error) {
       // Never emit upstream bodies, tokens, URLs, product data, or user-controlled error strings.

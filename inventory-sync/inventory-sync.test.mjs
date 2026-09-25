@@ -2,14 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makePlan, normalizeInventory } from './core.mjs';
 import { requestJson, shopifyRead } from './clients.mjs';
-import worker, { runDryRun } from './worker.mjs';
+import worker, { runDryRun, runInventorySync } from './worker.mjs';
+import { runGuardedWrite, setSupplierAvailable } from './writer.mjs';
 import { gatewayInventoryHandler } from './gateway-handler.mjs';
 import { audit } from './cli.mjs';
 const now = Date.now();
 const id = 'gid://shopify/ProductVariant/1';
 const itemId = 'gid://shopify/InventoryItem/1';
 const localId = 'gid://shopify/Location/1';
-const supplierId = 'gid://shopify/Location/2';
+const supplierId = 'gid://shopify/Location/95240290552';
 const variant = { id, sku: 'B00760004', product: { status: 'ACTIVE' }, inventoryPolicy: 'DENY',
   availableForSale: true, sellableOnlineQuantity: 8,
   inventoryItem: { id: itemId, tracked: true, inventoryLevels: { pageInfo: { hasNextPage: false }, nodes: [
@@ -22,7 +23,7 @@ const base = { variants: [variant], inventory, observedAt: new Date(now).toISOSt
   supplierLocationId: supplierId, supplierLocation: { id: supplierId, isActive: true, fulfillsOnlineOrders: true }, protectedLocationIds: [localId], now };
 const env = { INVENTORY_SYNC_MODE: 'dry-run', PILOT_VARIANT_IDS: JSON.stringify([id]), SS_WAREHOUSES: '["IL","KS"]',
   PROTECTED_LOCATION_IDS: JSON.stringify([localId]), SS_SAFETY_BUFFER: '2', SUPPLIER_LOCATION_ID: supplierId,
-  SHOPIFY_SHOP_DOMAIN: 'example.myshopify.com', SHOPIFY_ACCESS_TOKEN: 'shop-secret',
+  SHOPIFY_SHOP_DOMAIN: '429cc0-3.myshopify.com', SHOPIFY_ACCESS_TOKEN: 'shop-secret',
   SUPPLIER_INVENTORY_URL: 'https://gateway.example/order-manager/v1/supplier/ss/inventory', INVENTORY_READ_KEY: 'gateway-secret' };
 const response = (body, status = 200, headers) => Response.json(body, { status, headers });
 
@@ -206,4 +207,121 @@ test('audit continues after a location scope failure', async () => {
   assert.equal(report.checks.catalog.ok,true);
   assert.equal(report.checks.locations.code,'SHOPIFY_ACCESS_DENIED');
   assert.equal(report.checks.shopify.inventoryWriteGranted,false);
+});
+
+function pilotWriteFixture({ supplierQty = 8, available = 5, committed = 2, localAvailable = 0,
+  tracked = true, online = true, scopes = ['read_inventory', 'write_inventory'],
+  skuMatches = [{ id, sku: variant.sku }], mutationResult = null } = {}) {
+  const item = structuredClone(variant);
+  item.inventoryItem.tracked = tracked;
+  item.inventoryItem.inventoryLevels.nodes[0].quantities = [{ name: 'available', quantity: localAvailable }];
+  item.inventoryItem.inventoryLevels.nodes[1].quantities = [
+    { name: 'available', quantity: available }, { name: 'committed', quantity: committed },
+    { name: 'on_hand', quantity: available + committed }
+  ];
+  const calls = [];
+  const deps = { fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    if (url.includes('myshopify')) {
+      const { query } = JSON.parse(options.body);
+      if (query.startsWith('query InventoryPilot')) return response({ data: { nodes: [item] } });
+      if (query.startsWith('query InventoryWritePrerequisites')) return response({ data: {
+        currentAppInstallation: { accessScopes: scopes.map(handle => ({ handle })) },
+        location: { id: supplierId, isActive: true, fulfillsOnlineOrders: online },
+        productVariants: { nodes: skuMatches, pageInfo: { hasNextPage: false } }
+      } });
+      if (query.startsWith('mutation SetSupplierAvailable')) return response(mutationResult || { data: {
+        inventorySetQuantities: { inventoryAdjustmentGroup: { id: 'gid://shopify/InventoryAdjustmentGroup/1' }, userErrors: [] }
+      } });
+      throw Error('unexpected Shopify query');
+    }
+    return response({ observedAt: new Date().toISOString(), items: [{ sku: item.sku,
+      warehouses: [{ warehouseAbbr: 'IL', qty: supplierQty, dropship: false },
+        { warehouseAbbr: 'DS', qty: 900, dropship: true }] }] });
+  } };
+  const writeEnv = { ...env, INVENTORY_SYNC_MODE: 'pilot-write', SS_WAREHOUSES: '["*"]',
+    SS_SAFETY_BUFFER: '0', SUPPLIER_FEED_SEMANTICS: 'gross-before-shopify-commitments',
+    INVENTORY_MAX_WRITE_DELTA: '20' };
+  return { calls, deps, writeEnv };
+}
+
+test('production-disabled writer makes no network requests even when write settings are present', async () => {
+  const { deps, writeEnv } = pilotWriteFixture();
+  let calls = 0;
+  const disabled = { ...writeEnv, INVENTORY_SYNC_MODE: 'disabled' };
+  assert.equal((await runInventorySync(disabled, { fetchImpl: async () => { calls++; return deps.fetchImpl(); } })).writes, 0);
+  assert.equal(calls, 0);
+  await assert.rejects(setSupplierAvailable(disabled, 'token', {
+    inventoryItemId: itemId, supplierLocationId: supplierId, currentAvailable: 5,
+    targetAvailable: 4, observedAt: new Date().toISOString()
+  }), /WRITE_MODE_REQUIRED/);
+});
+
+test('guarded pilot writes only S&S available stock, subtracts Shopify commitments, and uses CAS plus idempotency', async () => {
+  const { calls, deps, writeEnv } = pilotWriteFixture();
+  const result = await runGuardedWrite(writeEnv, deps);
+  assert.equal(result.writes, 1);
+  assert.equal(result.targetAvailable, 6); // Physical S&S=8, Shopify committed=2; DS 900 is excluded.
+  const writes = calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation'));
+  assert.equal(writes.length, 1);
+  const { query, variables } = JSON.parse(writes[0].options.body);
+  assert.match(query, /@idempotent\(key: \$idempotencyKey\)/);
+  assert.match(variables.idempotencyKey, /^[0-9a-f-]{36}$/);
+  assert.equal(variables.input.name, 'available');
+  assert.deepEqual(variables.input.quantities, [{ inventoryItemId: itemId, locationId: supplierId,
+    quantity: 6, changeFromQuantity: 5 }]);
+  assert.doesNotMatch(JSON.stringify(result), /shop-secret|gateway-secret/);
+});
+
+test('unchanged pilot stock performs no mutation', async () => {
+  const { calls, deps, writeEnv } = pilotWriteFixture({ available: 6 });
+  const result = await runGuardedWrite(writeEnv, deps);
+  assert.equal(result.writes, 0);
+  assert.equal(calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 0);
+});
+
+test('stockout can target zero while dropship stock remains positive', async () => {
+  const { calls, deps, writeEnv } = pilotWriteFixture({ supplierQty: 0, available: 5, committed: 2 });
+  const result = await runGuardedWrite(writeEnv, deps);
+  assert.equal(result.targetAvailable, 0);
+  assert.equal(JSON.parse(calls.at(-1).options.body).variables.input.quantities[0].locationId, supplierId);
+});
+
+test('pilot writer rejects unverified source policy, missing limit, and multiple variants before network access', async () => {
+  for (const change of [
+    { SUPPLIER_FEED_SEMANTICS: '' }, { INVENTORY_MAX_WRITE_DELTA: '' },
+    { PILOT_VARIANT_IDS: JSON.stringify([id, 'gid://shopify/ProductVariant/2']) },
+    { PROTECTED_LOCATION_IDS: '[]' }, { SUPPLIER_LOCATION_ID: localId }
+  ]) {
+    const { calls, deps, writeEnv } = pilotWriteFixture();
+    await assert.rejects(runGuardedWrite({ ...writeEnv, ...change }, deps));
+    assert.equal(calls.length, 0);
+  }
+});
+
+test('pilot writer blocks scope, location, shared SKU, tracking, other-location stock, and large changes before mutation', async () => {
+  for (const [fixture, change] of [
+    [{ scopes: ['read_inventory'] }, {}],
+    [{ online: false }, {}],
+    [{ skuMatches: [{ id, sku: variant.sku }, { id: 'gid://shopify/ProductVariant/2', sku: variant.sku }] }, {}],
+    [{ tracked: false }, {}],
+    [{ supplierQty: 0, localAvailable: 2 }, {}],
+    [{}, { INVENTORY_MAX_WRITE_DELTA: '0' }],
+    [{}, { INVENTORY_MAX_WRITE_DELTA: '1', SS_SAFETY_BUFFER: '8' }]
+  ]) {
+    const { calls, deps, writeEnv } = pilotWriteFixture(fixture);
+    await assert.rejects(runGuardedWrite({ ...writeEnv, ...change }, deps));
+    assert.equal(calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 0);
+  }
+});
+
+test('Shopify CAS conflict and GraphQL errors fail without reporting a successful write', async () => {
+  for (const mutationResult of [
+    { data: { inventorySetQuantities: { inventoryAdjustmentGroup: null,
+      userErrors: [{ code: 'CHANGE_FROM_QUANTITY_STALE' }] } } },
+    { errors: [{ message: 'private upstream detail' }] }
+  ]) {
+    const { deps, writeEnv } = pilotWriteFixture({ mutationResult });
+    await assert.rejects(runGuardedWrite(writeEnv, deps), /SHOPIFY_QUANTITY_CHANGED|SHOPIFY_WRITE_FAILED/);
+  }
 });

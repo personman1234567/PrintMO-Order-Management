@@ -1,4 +1,4 @@
-// Pure observation/planning only. No inventory mutation is implemented.
+// Pure observation/planning helpers. The separate guarded pilot writer is in writer.mjs.
 export class SyncError extends Error {
   constructor(code, status = 500) { super(code); this.code = code; this.status = status; }
 }
