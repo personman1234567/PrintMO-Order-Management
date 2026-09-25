@@ -598,6 +598,7 @@
         "inventory-sync/"
       ],
       "symbols": [
+        "runGuardedWrite",
         "runDryRun",
         "makePlan",
         "gatewayInventoryHandler"
@@ -610,11 +611,21 @@
       ],
       "read": [
         {
+          "path": "docs/official-docs/runbooks/supplier-inventory-pilot.md",
+          "anchor": "pilot-operating-state"
+        },
+        {
           "path": "docs/official-docs/future-plans/supplier-inventory-sync-plan.md",
           "anchor": "current-continuation-state"
         }
       ],
       "inspect": [
+        {
+          "path": "inventory-sync/writer.mjs",
+          "symbols": [
+            "runGuardedWrite"
+          ]
+        },
         {
           "path": "inventory-sync/worker.mjs",
           "symbols": [
@@ -643,7 +654,7 @@
         "npm run docs:check"
       ],
       "stop": [
-        "Stop before live inventory writes until exact pilot/location scope, commitments, shared blanks, shipping/pickup and approved runtime access are verified."
+        "Stop before enrolling more variants or enabling automatic increases until shared blanks, commitments and supplier-purchase timing are verified."
       ]
     }
   ]

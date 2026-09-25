@@ -25,7 +25,7 @@ export async function runDryRun(env, deps) {
     warehouses, safetyBuffer, supplierLocationId, protectedLocationIds });
 }
 export async function runInventorySync(env, deps) {
-  if (env.INVENTORY_SYNC_MODE === 'pilot-write') return runGuardedWrite(env, deps);
+  if (['pilot-write', 'pilot-refresh'].includes(env.INVENTORY_SYNC_MODE)) return runGuardedWrite(env, deps);
   return runDryRun(env, deps);
 }
 export default {
@@ -40,7 +40,7 @@ export default {
         else statuses.unknown++;
       }
       console.log(JSON.stringify({ event: 'inventory-observation', mode: result.mode, writes: result.writes || 0,
-        variants: result.mode === 'pilot-write' ? 1 : result.rows?.length || 0,
+        variants: ['pilot-write', 'pilot-refresh'].includes(result.mode) ? 1 : result.rows?.length || 0,
         blocked: result.rows?.filter(r => r.blockers.length).length || 0,
         ...statuses }));
     } catch (error) {

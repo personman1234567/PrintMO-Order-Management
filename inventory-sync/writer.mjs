@@ -44,7 +44,7 @@ async function readWritePrerequisites(env, token, variant, supplierLocationId, d
 
 export async function setSupplierAvailable(env, token, { inventoryItemId, supplierLocationId, currentAvailable,
   targetAvailable, observedAt }, deps) {
-  requireValue(env.INVENTORY_SYNC_MODE === 'pilot-write', 'WRITE_MODE_REQUIRED');
+  requireValue(['pilot-write', 'pilot-refresh'].includes(env.INVENTORY_SYNC_MODE), 'WRITE_MODE_REQUIRED');
   requireValue(shopDomain(env) === PRINTMO_SHOP && supplierLocationId === SS_SUPPLIER_LOCATION,
     'INVALID_WRITE_DESTINATION');
   const protectedLocationIds = jsonSetting(env, 'PROTECTED_LOCATION_IDS');
@@ -57,6 +57,8 @@ export async function setSupplierAvailable(env, token, { inventoryItemId, suppli
   requireValue(Number.isSafeInteger(currentAvailable) && currentAvailable >= 0
     && Number.isSafeInteger(targetAvailable) && targetAvailable >= 0 && targetAvailable !== currentAvailable,
   'INVALID_WRITE_QUANTITY');
+  if (env.INVENTORY_SYNC_MODE === 'pilot-refresh')
+    requireValue(targetAvailable < currentAvailable, 'REFRESH_CANNOT_INCREASE_STOCK');
   const age = Date.now() - Date.parse(observedAt);
   requireValue(Number.isFinite(age) && age >= -30000 && age <= 300000, 'INVALID_WRITE_OBSERVATION');
   const idempotencyKey = crypto.randomUUID();
@@ -79,15 +81,18 @@ export async function setSupplierAvailable(env, token, { inventoryItemId, suppli
   return { writes: 1, inventoryItemId, supplierLocationId, targetAvailable };
 }
 
-// Deliberately limited to one variant with no outstanding Shopify commitments.
-// S&S reports quantity available for sale; a placed Shopify order is protected by
-// compare-and-set and a later run is blocked until supplier/order timing is known.
-// The production config has neither pilot-write mode nor a cron trigger.
+// The one-off seed requires zero Shopify commitments. Repeat refreshes may only
+// lower Shopify's available quantity: a customer order must never be restored
+// from an S&S snapshot that has not yet reflected our supplier purchase.
+// Production enables only the one-variant, downward-only refresh mode.
 export async function runGuardedWrite(env, deps) {
-  requireValue(env.INVENTORY_SYNC_MODE === 'pilot-write', 'WRITE_MODE_REQUIRED');
+  const mode = env.INVENTORY_SYNC_MODE;
+  requireValue(['pilot-write', 'pilot-refresh'].includes(mode), 'WRITE_MODE_REQUIRED');
   requireValue(shopDomain(env) === PRINTMO_SHOP && env.SUPPLIER_LOCATION_ID === SS_SUPPLIER_LOCATION,
     'INVALID_WRITE_DESTINATION');
-  requireValue(env.SUPPLIER_FEED_SEMANTICS === 'ss-available-for-sale-zero-commitments', 'SUPPLIER_FEED_SEMANTICS_UNVERIFIED');
+  requireValue(env.SUPPLIER_FEED_SEMANTICS === (mode === 'pilot-refresh'
+    ? 'ss-available-for-sale-downward-only' : 'ss-available-for-sale-zero-commitments'),
+  'SUPPLIER_FEED_SEMANTICS_UNVERIFIED');
   const maxDelta = Number(env.INVENTORY_MAX_WRITE_DELTA);
   requireValue(/^\d+$/.test(String(env.INVENTORY_MAX_WRITE_DELTA || ''))
     && Number.isSafeInteger(maxDelta) && maxDelta > 0, 'WRITE_LIMIT_UNCONFIGURED');
@@ -118,18 +123,27 @@ export async function runGuardedWrite(env, deps) {
   const available = quantity(level, 'available');
   const committed = quantity(level, 'committed');
   const onHand = quantity(level, 'on_hand');
-  // The first live pilot mirrors S&S's available-for-sale number only while Shopify
-  // has no order commitment at any location for this exact inventory item.
-  requireValue(variant.inventoryItem.inventoryLevels.nodes.every(other => quantity(other, 'committed') === 0),
-    'SHOPIFY_COMMITMENTS_PRESENT');
-  // Other Shopify unavailable states must be absent before the pilot writes.
+  // Reject missing or unexplained Shopify inventory states at the supplier level.
   requireValue(available !== null && available >= 0 && committed !== null && committed >= 0
     && onHand === available + committed, 'INVENTORY_STATES_UNVERIFIED');
-  const targetAvailable = row.capacityBeforeCommitments;
+  if (mode === 'pilot-write') {
+    requireValue(variant.inventoryItem.inventoryLevels.nodes.every(other => quantity(other, 'committed') === 0),
+      'SHOPIFY_COMMITMENTS_PRESENT');
+  }
+  // Do not subtract commitments from the S&S number. S&S may already have
+  // deducted our purchase; subtracting again would count it twice.
+  const targetAvailable = mode === 'pilot-refresh'
+    ? Math.min(available, row.capacityBeforeCommitments) : row.capacityBeforeCommitments;
+  // A confirmed physical-warehouse stockout must be able to close checkout even
+  // when the prior supplier quantity is larger than the ordinary change limit.
+  // A buffer-only zero or a partial supplier decrease still obeys that limit.
+  const confirmedStockout = mode === 'pilot-refresh' && row.supplierAvailable === 0
+    && targetAvailable === 0;
   requireValue(Number.isSafeInteger(targetAvailable)
-    && Math.abs(targetAvailable - available) <= maxDelta, 'WRITE_DELTA_EXCEEDS_LIMIT');
-  if (targetAvailable === available) return { mode: 'pilot-write', writes: 0, unchanged: 1 };
+    && (Math.abs(targetAvailable - available) <= maxDelta || confirmedStockout),
+  'WRITE_DELTA_EXCEEDS_LIMIT');
+  if (targetAvailable === available) return { mode, writes: 0, unchanged: 1 };
   const written = await setSupplierAvailable(env, token, { inventoryItemId: row.inventoryItemId,
     supplierLocationId, currentAvailable: available, targetAvailable, observedAt: plan.observedAt }, deps);
-  return { mode: 'pilot-write', ...written };
+  return { mode, ...written };
 }

@@ -327,6 +327,76 @@ test('pilot writer never restores a Shopify order commitment from an unchanged S
   }
 });
 
+test('repeat refresh holds Shopify order deductions, supplier purchase changes, and restocks', async () => {
+  for (const supplierQty of [8, 7, 12]) {
+    const { calls, deps, writeEnv } = pilotWriteFixture({ supplierQty, available: 7, committed: 1 });
+    const result = await runInventorySync({ ...writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',
+      SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only' }, deps);
+    assert.deepEqual({ mode: result.mode, writes: result.writes, unchanged: result.unchanged },
+      { mode: 'pilot-refresh', writes: 0, unchanged: 1 });
+    assert.equal(calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 0);
+  }
+});
+
+test('repeat refresh lowers supplier stock with a Shopify commitment and never touches HQ', async () => {
+  for (const [supplierQty, expected] of [[6, 6], [0, 0]]) {
+    const { calls, deps, writeEnv } = pilotWriteFixture({ supplierQty, available: 7, committed: 1 });
+    const result = await runInventorySync({ ...writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',
+      SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only' }, deps);
+    assert.equal(result.writes, 1);
+    assert.equal(result.targetAvailable, expected);
+    const mutation = calls.find(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation'));
+    assert.deepEqual(JSON.parse(mutation.options.body).variables.input.quantities,
+      [{ inventoryItemId: itemId, locationId: supplierId, quantity: expected, changeFromQuantity: 7 }]);
+  }
+});
+
+test('repeat refresh can close a verified large stockout but still limits partial and buffer-only drops', async () => {
+  const { calls, deps, writeEnv } = pilotWriteFixture({ supplierQty: 0, available: 446 });
+  const refreshEnv = { ...writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',
+    SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only' };
+  const result = await runInventorySync(refreshEnv, deps);
+  assert.equal(result.targetAvailable, 0);
+  assert.equal(calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 1);
+
+  for (const [supplierQty, buffer] of [[1, '0'], [1, '1']]) {
+    const fixture = pilotWriteFixture({ supplierQty, available: 446 });
+    await assert.rejects(runInventorySync({ ...fixture.writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',
+      SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only', SS_SAFETY_BUFFER: buffer },
+    fixture.deps), /WRITE_DELTA_EXCEEDS_LIMIT/);
+    assert.equal(fixture.calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 0);
+  }
+});
+
+test('repeat refresh cannot reopen after cancellation or call the setter to raise stock', async () => {
+  const { calls, deps, writeEnv } = pilotWriteFixture({ supplierQty: 8, available: 0, committed: 0 });
+  const refreshEnv = { ...writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',
+    SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only' };
+  assert.equal((await runGuardedWrite(refreshEnv, deps)).writes, 0);
+  assert.equal(calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 0);
+  await assert.rejects(setSupplierAvailable(refreshEnv, 'token', {
+    inventoryItemId: itemId, supplierLocationId: supplierId, currentAvailable: 0,
+    targetAvailable: 1, observedAt: new Date().toISOString()
+  }, deps), /REFRESH_CANNOT_INCREASE_STOCK/);
+});
+
+test('repeat refresh still requires an explicit source policy and all write guards', async () => {
+  for (const [fixture, change] of [
+    [{}, { SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-zero-commitments' }],
+    [{ tracked: false }, {}],
+    [{ online: false }, {}],
+    [{ skuMatches: [{ id, sku: variant.sku }, { id: 'gid://shopify/ProductVariant/2', sku: variant.sku }] }, {}],
+    [{ supplierQty: 0, localAvailable: 2 }, {}],
+    [{ supplierQty: 2, available: 7 }, { INVENTORY_MAX_WRITE_DELTA: '1' }]
+  ]) {
+    const { calls, deps, writeEnv } = pilotWriteFixture(fixture);
+    const refreshEnv = { ...writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',
+      SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only', ...change };
+    await assert.rejects(runGuardedWrite(refreshEnv, deps));
+    assert.equal(calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 0);
+  }
+});
+
 test('Shopify CAS conflict and GraphQL errors fail without reporting a successful write', async () => {
   for (const mutationResult of [
     { data: { inventorySetQuantities: { inventoryAdjustmentGroup: null,
