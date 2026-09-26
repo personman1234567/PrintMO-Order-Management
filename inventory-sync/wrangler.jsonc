@@ -9,7 +9,7 @@
   },
   "vars": {
     "INVENTORY_SYNC_MODE": "pilot-refresh",
-    "PILOT_VARIANT_IDS": "[\"gid://shopify/ProductVariant/46257400447224\",\"gid://shopify/ProductVariant/46257400479992\",\"gid://shopify/ProductVariant/46257400512760\",\"gid://shopify/ProductVariant/46257400545528\",\"gid://shopify/ProductVariant/46257400578296\",\"gid://shopify/ProductVariant/46257400611064\"]",
+    "PILOT_VARIANT_IDS": "[\"gid://shopify/ProductVariant/46257399660792\",\"gid://shopify/ProductVariant/46257399693560\",\"gid://shopify/ProductVariant/46257399726328\",\"gid://shopify/ProductVariant/46257399759096\",\"gid://shopify/ProductVariant/46257399791864\",\"gid://shopify/ProductVariant/46257399824632\",\"gid://shopify/ProductVariant/46257399857400\",\"gid://shopify/ProductVariant/46257399890168\",\"gid://shopify/ProductVariant/46257399922936\",\"gid://shopify/ProductVariant/46257399955704\",\"gid://shopify/ProductVariant/46257399988472\",\"gid://shopify/ProductVariant/46257400021240\",\"gid://shopify/ProductVariant/46257400054008\",\"gid://shopify/ProductVariant/46257400086776\",\"gid://shopify/ProductVariant/46257400119544\",\"gid://shopify/ProductVariant/46257400152312\",\"gid://shopify/ProductVariant/46257400185080\",\"gid://shopify/ProductVariant/46257400217848\",\"gid://shopify/ProductVariant/46257400250616\",\"gid://shopify/ProductVariant/46257400283384\",\"gid://shopify/ProductVariant/46257400316152\",\"gid://shopify/ProductVariant/46257400348920\",\"gid://shopify/ProductVariant/46257400381688\",\"gid://shopify/ProductVariant/46257400414456\",\"gid://shopify/ProductVariant/46257400447224\",\"gid://shopify/ProductVariant/46257400479992\",\"gid://shopify/ProductVariant/46257400512760\",\"gid://shopify/ProductVariant/46257400545528\",\"gid://shopify/ProductVariant/46257400578296\",\"gid://shopify/ProductVariant/46257400611064\",\"gid://shopify/ProductVariant/46257400643832\",\"gid://shopify/ProductVariant/46257400676600\",\"gid://shopify/ProductVariant/46257400709368\",\"gid://shopify/ProductVariant/46257400742136\",\"gid://shopify/ProductVariant/46257400774904\",\"gid://shopify/ProductVariant/46257400807672\",\"gid://shopify/ProductVariant/46257400840440\",\"gid://shopify/ProductVariant/46257400873208\",\"gid://shopify/ProductVariant/46257400905976\",\"gid://shopify/ProductVariant/46257400938744\",\"gid://shopify/ProductVariant/46257400971512\",\"gid://shopify/ProductVariant/46257401004280\",\"gid://shopify/ProductVariant/46257401037048\",\"gid://shopify/ProductVariant/46257401069816\",\"gid://shopify/ProductVariant/46257401102584\",\"gid://shopify/ProductVariant/46257401135352\",\"gid://shopify/ProductVariant/46257401168120\",\"gid://shopify/ProductVariant/46257401200888\",\"gid://shopify/ProductVariant/46257401233656\",\"gid://shopify/ProductVariant/46257401266424\",\"gid://shopify/ProductVariant/46257401299192\",\"gid://shopify/ProductVariant/46257401331960\",\"gid://shopify/ProductVariant/46257401364728\",\"gid://shopify/ProductVariant/46257401397496\",\"gid://shopify/ProductVariant/46257401430264\",\"gid://shopify/ProductVariant/46257401463032\",\"gid://shopify/ProductVariant/46257401495800\",\"gid://shopify/ProductVariant/46257401528568\",\"gid://shopify/ProductVariant/46257401561336\",\"gid://shopify/ProductVariant/46257401594104\",\"gid://shopify/ProductVariant/46257401626872\",\"gid://shopify/ProductVariant/46257401659640\",\"gid://shopify/ProductVariant/46257401692408\",\"gid://shopify/ProductVariant/46257401725176\",\"gid://shopify/ProductVariant/46257401757944\",\"gid://shopify/ProductVariant/46257401790712\",\"gid://shopify/ProductVariant/46257401823480\",\"gid://shopify/ProductVariant/46257401856248\",\"gid://shopify/ProductVariant/46257401889016\",\"gid://shopify/ProductVariant/46257401921784\",\"gid://shopify/ProductVariant/46257401954552\",\"gid://shopify/ProductVariant/46257401987320\"]",
     "SS_WAREHOUSES": "[\"*\"]",
     "PROTECTED_LOCATION_IDS": "[\"gid://shopify/Location/72791752952\"]",
     "SS_SAFETY_BUFFER": "0",
@@ -17,9 +17,12 @@
     "SUPPLIER_INVENTORY_URL": "https://printmo-wholesale-api-integration.onrender.com/order-manager/v1/supplier/ss/inventory",
     "SUPPLIER_LOCATION_ID": "gid://shopify/Location/95240290552",
     "SUPPLIER_FEED_SEMANTICS": "ss-available-for-sale-downward-only",
-    "INVENTORY_MAX_WRITE_DELTA": "20"
+    "INVENTORY_MAX_WRITE_DELTA": "20",
+    "PILOT_SHARD_COUNT": "5"
   },
   "triggers": {
-    "crons": ["*/5 * * * *"]
+    "crons": [
+      "* * * * *"
+    ]
   }
 }

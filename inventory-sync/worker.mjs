@@ -24,15 +24,27 @@ export async function runDryRun(env, deps) {
   return makePlan({ variants, inventory: supplier.items, observedAt: supplier.observedAt,
     warehouses, safetyBuffer, supplierLocationId, protectedLocationIds });
 }
-export async function runInventorySync(env, deps) {
-  if (['pilot-write', 'pilot-refresh'].includes(env.INVENTORY_SYNC_MODE)) return runGuardedWrite(env, deps);
+export function scheduledShard(env, scheduledTime) {
+  const count = Number(env.PILOT_SHARD_COUNT || '1');
+  requireValue(Number.isSafeInteger(count) && count >= 1 && count <= 5, 'INVALID_SHARD_COUNT');
+  if (count === 1) return env;
+  requireValue(env.INVENTORY_SYNC_MODE === 'pilot-refresh' && Number.isSafeInteger(scheduledTime), 'INVALID_SHARD_SCHEDULE');
+  const ids = uniqueStrings(jsonSetting(env, 'PILOT_VARIANT_IDS'), /^gid:\/\/shopify\/ProductVariant\/\d+$/, 75, 'PILOT_VARIANT_SCOPE_INVALID');
+  requireValue(ids.length > 6 && Math.ceil(ids.length / count) <= 15, 'PILOT_SHARD_SCOPE_INVALID');
+  const minute = Math.floor(scheduledTime / 60000);
+  const selected = ids.filter((_, index) => index % count === minute % count);
+  return { ...env, PILOT_VARIANT_IDS: JSON.stringify(selected) };
+}
+export async function runInventorySync(env, deps, scheduledTime) {
+  if (['pilot-write', 'pilot-refresh'].includes(env.INVENTORY_SYNC_MODE))
+    return runGuardedWrite(scheduledTime === undefined ? env : scheduledShard(env, scheduledTime), deps);
   return runDryRun(env, deps);
 }
 export default {
   async fetch() { return new Response('Not found', { status: 404 }); },
-  async scheduled(_event, env) {
+  async scheduled(event, env) {
     try {
-      const result = await runInventorySync(env);
+      const result = await runInventorySync(env, undefined, event.scheduledTime);
       const statuses = { inStock: 0, outOfStock: 0, unknown: 0 };
       for (const row of result.rows || []) {
         if (row.supplierStockStatus === 'IN_STOCK') statuses.inStock++;

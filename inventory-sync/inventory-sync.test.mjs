@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makePlan, normalizeInventory } from './core.mjs';
 import { requestJson, shopifyRead } from './clients.mjs';
-import worker, { runDryRun, runInventorySync } from './worker.mjs';
+import worker, { runDryRun, runInventorySync, scheduledShard } from './worker.mjs';
 import { runGuardedWrite, setSupplierAvailable } from './writer.mjs';
 import { gatewayInventoryHandler } from './gateway-handler.mjs';
 import { audit } from './cli.mjs';
@@ -415,8 +415,57 @@ test('bounded batch refresh handles two exact variants independently and rejects
   assert.deepEqual({ writes: result.writes, variants: result.variants }, { writes: 2, variants: 2 });
   assert.equal(calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 2);
   await assert.rejects(runGuardedWrite({ ...env, PILOT_VARIANT_IDS: JSON.stringify(
-    Array.from({ length: 7 }, (_, i) => `gid://shopify/ProductVariant/${i + 1}`)) }, deps),
+    Array.from({ length: 16 }, (_, i) => `gid://shopify/ProductVariant/${i + 1}`)) }, deps),
   /PILOT_VARIANT_SCOPE_INVALID/);
+});
+
+test('minute shards cover 72 variants once per five minutes without exceeding 15 per run', () => {
+  const ids = Array.from({ length: 72 }, (_, i) => `gid://shopify/ProductVariant/${i + 1}`);
+  const env72 = { ...env, INVENTORY_SYNC_MODE: 'pilot-refresh', PILOT_SHARD_COUNT: '5',
+    PILOT_VARIANT_IDS: JSON.stringify(ids) };
+  const selected = Array.from({ length: 5 }, (_, minute) => JSON.parse(
+    scheduledShard(env72, minute * 60000).PILOT_VARIANT_IDS));
+  assert.deepEqual(selected.map(x => x.length), [15, 15, 14, 14, 14]);
+  assert.deepEqual(selected.flat().sort(), [...ids].sort());
+  assert.deepEqual(JSON.parse(scheduledShard(env72, 5 * 60000).PILOT_VARIANT_IDS), selected[0]);
+});
+
+test('larger refresh shard batches reads while guarding and writing each variant', async () => {
+  const variants = Array.from({ length: 7 }, (_, i) => {
+    const item = structuredClone(variant);
+    item.id = `gid://shopify/ProductVariant/${i + 1}`;
+    item.sku = `B0076000${i + 1}`;
+    item.inventoryItem.id = `gid://shopify/InventoryItem/${i + 1}`;
+    item.inventoryItem.inventoryLevels.nodes[0].quantities = [
+      { name: 'available', quantity: 0 }, { name: 'committed', quantity: 0 }, { name: 'on_hand', quantity: 0 }];
+    item.inventoryItem.inventoryLevels.nodes[1].quantities = [
+      { name: 'available', quantity: 5 }, { name: 'committed', quantity: 0 }, { name: 'on_hand', quantity: 5 }];
+    return item;
+  });
+  const queries = [];
+  const deps = { fetchImpl: async (url, options) => {
+    if (!url.includes('myshopify')) return response({ observedAt: new Date().toISOString(),
+      items: variants.map(v => ({ sku: v.sku, warehouses: [{ warehouseAbbr: 'IL', qty: 3, dropship: false }] })) });
+    const { query, variables } = JSON.parse(options.body);
+    queries.push(query.split(' ')[1]);
+    if (query.startsWith('query InventoryPilot')) return response({ data: { nodes: variants } });
+    if (query.startsWith('query InventoryWritePrerequisites')) {
+      const item = variants.find(v => `sku:${v.sku}` === variables.skuQuery);
+      return response({ data: { currentAppInstallation: { accessScopes: [{ handle: 'write_inventory' }] },
+        location: { id: supplierId, isActive: true, fulfillsOnlineOrders: true },
+        productVariants: { nodes: [{ id: item.id, sku: item.sku }], pageInfo: { hasNextPage: false } } } });
+    }
+    return response({ data: { inventorySetQuantities: { inventoryAdjustmentGroup: { id: 'gid://shopify/InventoryAdjustmentGroup/1' }, userErrors: [] } } });
+  } };
+  const writeEnv = { ...env, INVENTORY_SYNC_MODE: 'pilot-refresh',
+    PILOT_VARIANT_IDS: JSON.stringify(variants.map(v => v.id)), SS_WAREHOUSES: '["*"]',
+    SS_SAFETY_BUFFER: '0', SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only',
+    INVENTORY_MAX_WRITE_DELTA: '20' };
+  const result = await runGuardedWrite(writeEnv, deps);
+  assert.deepEqual({ writes: result.writes, variants: result.variants }, { writes: 7, variants: 7 });
+  assert.equal(queries.filter(q => q === 'InventoryPilot($ids:').length, 1);
+  assert.equal(queries.filter(q => q === 'InventoryWritePrerequisites($locationId:').length, 7);
+  assert.equal(queries.filter(q => q === 'SetSupplierAvailable($input:').length, 7);
 });
 
 test('batch refresh continues past one blocked variant but reports partial failure', async () => {

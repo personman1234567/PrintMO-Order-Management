@@ -96,8 +96,37 @@ export async function runGuardedWrite(env, deps) {
   const maxDelta = Number(env.INVENTORY_MAX_WRITE_DELTA);
   requireValue(/^\d+$/.test(String(env.INVENTORY_MAX_WRITE_DELTA || ''))
     && Number.isSafeInteger(maxDelta) && maxDelta > 0, 'WRITE_LIMIT_UNCONFIGURED');
+  const protectedLocationIds = jsonSetting(env, 'PROTECTED_LOCATION_IDS');
+  requireValue(Array.isArray(protectedLocationIds) && protectedLocationIds.length > 0
+    && protectedLocationIds.every(id => /^gid:\/\/shopify\/Location\/\d+$/.test(id))
+    && !protectedLocationIds.includes(env.SUPPLIER_LOCATION_ID), 'PROTECTED_LOCATIONS_REQUIRED');
   const ids = uniqueStrings(jsonSetting(env, 'PILOT_VARIANT_IDS'), /^gid:\/\/shopify\/ProductVariant\/\d+$/,
-    mode === 'pilot-refresh' ? 6 : 1, 'PILOT_VARIANT_SCOPE_INVALID');
+    mode === 'pilot-refresh' ? 15 : 1, 'PILOT_VARIANT_SCOPE_INVALID');
+  if (mode === 'pilot-refresh' && ids.length > 6) {
+    // One Shopify catalog read and one supplier gateway read per minute-sized shard.
+    // Individual guards and compare-and-set writes remain independent.
+    const token = await shopifyToken(env, deps);
+    const variants = await readPilot(env, token, ids, deps);
+    requireValue(variants.every(v => /^[A-Za-z0-9_-]{1,64}$/.test(v.sku))
+      && new Set(variants.map(v => v.sku)).size === variants.length, 'INVALID_OR_SHARED_SKU');
+    const supplier = await readSupplierGateway(env, variants.map(v => v.sku), deps);
+    let writes = 0;
+    let unchanged = 0;
+    let failures = 0;
+    for (const variant of variants) {
+      try {
+        const result = await runOneGuardedWrite(env, deps, token, variant, supplier);
+        writes += result.writes;
+        unchanged += result.unchanged || 0;
+      } catch (error) {
+        failures++;
+        console.error(JSON.stringify({ event: 'inventory-variant-failed', variantId: variant.id,
+          code: error instanceof SyncError ? error.code : 'INVENTORY_VARIANT_FAILED' }));
+      }
+    }
+    if (failures) throw new SyncError('PILOT_BATCH_PARTIAL_FAILURE');
+    return { mode, writes, unchanged, variants: ids.length };
+  }
   if (mode === 'pilot-refresh' && ids.length > 1) {
     let writes = 0;
     let unchanged = 0;
@@ -116,6 +145,16 @@ export async function runGuardedWrite(env, deps) {
     if (failures) throw new SyncError('PILOT_BATCH_PARTIAL_FAILURE');
     return { mode, writes, unchanged, variants: ids.length };
   }
+  const token = await shopifyToken(env, deps);
+  const [variant] = await readPilot(env, token, ids, deps);
+  requireValue(/^[A-Za-z0-9_-]{1,64}$/.test(variant.sku), 'INVALID_SKU');
+  const supplier = await readSupplierGateway(env, [variant.sku], deps);
+  return runOneGuardedWrite(env, deps, token, variant, supplier);
+}
+
+async function runOneGuardedWrite(env, deps, token, variant, supplier) {
+  const mode = env.INVENTORY_SYNC_MODE;
+  const maxDelta = Number(env.INVENTORY_MAX_WRITE_DELTA);
   const warehouses = warehouseList(jsonSetting(env, 'SS_WAREHOUSES'));
   const protectedLocationIds = jsonSetting(env, 'PROTECTED_LOCATION_IDS');
   requireValue(Array.isArray(protectedLocationIds) && protectedLocationIds.length > 0
@@ -125,12 +164,8 @@ export async function runGuardedWrite(env, deps) {
     && !protectedLocationIds.includes(supplierLocationId), 'INVALID_OR_PROTECTED_LOCATION');
   requireValue(/^\d+$/.test(String(env.SS_SAFETY_BUFFER || ''))
     && Number.isSafeInteger(Number(env.SS_SAFETY_BUFFER)), 'INVALID_BUFFER');
-  const token = await shopifyToken(env, deps);
-  const [variant] = await readPilot(env, token, ids, deps);
-  requireValue(/^[A-Za-z0-9_-]{1,64}$/.test(variant.sku), 'INVALID_SKU');
   const location = await readWritePrerequisites(env, token, variant, supplierLocationId, deps);
-  const supplier = await readSupplierGateway(env, [variant.sku], deps);
-  const plan = makePlan({ variants: [variant], inventory: supplier.items, observedAt: supplier.observedAt,
+  const plan = makePlan({ variants: [variant], inventory: supplier.items.filter(item => item.sku === variant.sku), observedAt: supplier.observedAt,
     warehouses, safetyBuffer: Number(env.SS_SAFETY_BUFFER), supplierLocationId,
     supplierLocation: location, protectedLocationIds });
   const [row] = plan.rows;
