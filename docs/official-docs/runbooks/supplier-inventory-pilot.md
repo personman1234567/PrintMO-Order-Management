@@ -1,4 +1,4 @@
-# One-Variant Supplier Inventory Pilot
+# Tultex 246 Supplier Inventory Pilot
 
 ## Use This When
 
@@ -18,13 +18,13 @@
 
 ## Pilot Operating State
 
-As of 2026-09-25, `inventory-sync/wrangler.jsonc` deploys the separate `printmo-inventory-sync` Cloudflare Worker in `pilot-refresh` mode every five minutes. Its sole variant is Tultex 246 Heather Grey/Heather Charcoal / Small, SKU `B30459583`, Shopify variant `gid://shopify/ProductVariant/46257400447224`. Shopify tracks this variant. The S&S Supplier location is `gid://shopify/Location/95240290552`; Print-MO HQ is protected at `gid://shopify/Location/72791752952`. The launch seed was 446 physical S&S warehouse units at the supplier location, with HQ zero. The first scheduled event succeeded at 18:10 UTC with no write because S&S remained at 446. The Worker has no public route or version URL.
+As of 2026-09-26, `inventory-sync/wrangler.jsonc` deploys the separate `printmo-inventory-sync` Cloudflare Worker in `pilot-refresh` mode every five minutes. Its allowlist contains exactly the six Heather Grey/Heather Charcoal sizes of Tultex 246, SKUs `B30459583`–`B30459588`; the product has 72 variants total. The S&S Supplier location is `gid://shopify/Location/95240290552`; Print-MO HQ is protected at `gid://shopify/Location/72791752952`. All six are tracked. Fresh readback after seeding found supplier available quantities Small 445, Medium 527, Large 362, XL 503, 2XL 586, 3XL 1,000, matching physical S&S warehouse reads, with zero committed and zero HQ for each. Production version `58956cf3-223f-4659-ae54-a92ab71e5906` has no public route or version URL. The first six-variant scheduled run succeeded with zero writes; post-run Shopify readback preserved those balances and HQ zero.
 
-Each run reads fresh S&S physical warehouse stock through the authenticated inventory gateway. Dropship rows are excluded. It can lower only the supplier location's Shopify `available` quantity and uses compare-and-set so an intervening order does not get undone. An exact S&S physical stockout may set that quantity to zero even when the difference exceeds the ordinary 20-unit limit. Missing, stale, malformed, or ambiguous reads fail without a quantity write. It does not automatically increase stock after restock or order cancellation, and it does not read or change HQ quantities.
+Each run reads fresh S&S physical warehouse stock through the authenticated inventory gateway for each allowlisted variant. Dropship rows are excluded. It can lower only the supplier location's Shopify `available` quantity and uses compare-and-set so an intervening order does not get undone. An exact S&S physical stockout may set that quantity to zero even when the difference exceeds the ordinary 20-unit limit. Missing, stale, malformed, or ambiguous reads fail without a quantity write. A failure for one variant does not prevent the other five from being checked; the run reports partial failure. It does not automatically increase stock after restock or order cancellation, and it does not read or change HQ quantities.
 
 ## Check and Pause
 
-1. From `inventory-sync/`, use `npx wrangler deployments list --name printmo-inventory-sync` and inspect `wrangler.jsonc` to confirm the deployed version and one-variant schedule.
+1. From `inventory-sync/`, use `npx wrangler deployments list --name printmo-inventory-sync` and inspect `wrangler.jsonc` to confirm the deployed version, six-variant allowlist, and five-minute schedule.
 2. Use `npx wrangler tail printmo-inventory-sync --format json` to see scheduled success or error codes. Read Shopify's exact variant and both inventory levels before drawing a stock conclusion; logs do not store a durable checkpoint.
 3. To pause, set `INVENTORY_SYNC_MODE` to `disabled` and `triggers.crons` to `[]` in `wrangler.jsonc`, then deploy it with `npx wrangler deploy -c wrangler.jsonc`. Confirm the deploy output has no schedule. Pausing does not roll back Shopify stock or tracking.
 

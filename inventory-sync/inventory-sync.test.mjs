@@ -368,6 +368,63 @@ test('repeat refresh can close a verified large stockout but still limits partia
   }
 });
 
+function twoVariantRefreshFixture({ secondTracked = true } = {}) {
+  const first = pilotWriteFixture({ supplierQty: 3, available: 5 });
+  const secondId = 'gid://shopify/ProductVariant/2';
+  const secondSku = 'B00760005';
+  const second = structuredClone(variant);
+  second.id = secondId;
+  second.sku = secondSku;
+  second.inventoryItem.id = 'gid://shopify/InventoryItem/2';
+  second.inventoryItem.tracked = secondTracked;
+  second.inventoryItem.inventoryLevels.nodes[0].quantities = [
+    { name: 'available', quantity: 0 }, { name: 'committed', quantity: 0 }, { name: 'on_hand', quantity: 0 }
+  ];
+  second.inventoryItem.inventoryLevels.nodes[1].quantities = [
+    { name: 'available', quantity: 5 }, { name: 'committed', quantity: 0 }, { name: 'on_hand', quantity: 5 }
+  ];
+  const deps = { fetchImpl: async (url, options) => {
+    const body = options.body ? JSON.parse(options.body) : {};
+    if (body.query?.startsWith('query InventoryPilot') && body.variables.ids[0] === secondId) {
+      first.calls.push({ url, options });
+      return response({ data: { nodes: [second] } });
+    }
+    if (body.query?.startsWith('query InventoryWritePrerequisites')
+      && body.variables.skuQuery === `sku:${secondSku}`) {
+      first.calls.push({ url, options });
+      return response({ data: { currentAppInstallation: { accessScopes: [{ handle: 'write_inventory' }] },
+        location: { id: supplierId, isActive: true, fulfillsOnlineOrders: true },
+        productVariants: { nodes: [{ id: secondId, sku: secondSku }], pageInfo: { hasNextPage: false } } } });
+    }
+    if (new URL(url).searchParams.get('skus') === secondSku) {
+      first.calls.push({ url, options });
+      return response({ observedAt: new Date().toISOString(), items: [{ sku: secondSku,
+        warehouses: [{ warehouseAbbr: 'IL', qty: 3, dropship: false }] }] });
+    }
+    return first.deps.fetchImpl(url, options);
+  } };
+  const env = { ...first.writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',
+    SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only',
+    PILOT_VARIANT_IDS: JSON.stringify([id, secondId]) };
+  return { ...first, deps, env };
+}
+
+test('bounded batch refresh handles two exact variants independently and rejects excessive scope', async () => {
+  const { calls, deps, env } = twoVariantRefreshFixture();
+  const result = await runGuardedWrite(env, deps);
+  assert.deepEqual({ writes: result.writes, variants: result.variants }, { writes: 2, variants: 2 });
+  assert.equal(calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 2);
+  await assert.rejects(runGuardedWrite({ ...env, PILOT_VARIANT_IDS: JSON.stringify(
+    Array.from({ length: 7 }, (_, i) => `gid://shopify/ProductVariant/${i + 1}`)) }, deps),
+  /PILOT_VARIANT_SCOPE_INVALID/);
+});
+
+test('batch refresh continues past one blocked variant but reports partial failure', async () => {
+  const { calls, deps, env } = twoVariantRefreshFixture({ secondTracked: false });
+  await assert.rejects(runGuardedWrite(env, deps), /PILOT_BATCH_PARTIAL_FAILURE/);
+  assert.equal(calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 1);
+});
+
 test('repeat refresh cannot reopen after cancellation or call the setter to raise stock', async () => {
   const { calls, deps, writeEnv } = pilotWriteFixture({ supplierQty: 8, available: 0, committed: 0 });
   const refreshEnv = { ...writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',

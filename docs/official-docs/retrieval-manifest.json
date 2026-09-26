@@ -581,7 +581,7 @@
     },
     {
       "id": "supplier-inventory-sync",
-      "description": "S&S inventory availability observation and separate supplier-location sync pilot",
+      "description": "S&S inventory availability observation and bounded six-variant supplier-location sync pilot",
       "taskTypes": [
         "implementation",
         "diagnosis",
@@ -654,7 +654,7 @@
         "npm run docs:check"
       ],
       "stop": [
-        "Stop before enrolling more variants or enabling automatic increases until shared blanks, commitments and supplier-purchase timing are verified."
+        "Stop before enrolling another color or enabling automatic increases until shared blanks, commitments and supplier-purchase timing are verified."
       ]
     }
   ]

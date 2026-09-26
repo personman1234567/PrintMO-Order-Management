@@ -9,7 +9,7 @@
   },
   "vars": {
     "INVENTORY_SYNC_MODE": "pilot-refresh",
-    "PILOT_VARIANT_IDS": "[\"gid://shopify/ProductVariant/46257400447224\"]",
+    "PILOT_VARIANT_IDS": "[\"gid://shopify/ProductVariant/46257400447224\",\"gid://shopify/ProductVariant/46257400479992\",\"gid://shopify/ProductVariant/46257400512760\",\"gid://shopify/ProductVariant/46257400545528\",\"gid://shopify/ProductVariant/46257400578296\",\"gid://shopify/ProductVariant/46257400611064\"]",
     "SS_WAREHOUSES": "[\"*\"]",
     "PROTECTED_LOCATION_IDS": "[\"gid://shopify/Location/72791752952\"]",
     "SS_SAFETY_BUFFER": "0",

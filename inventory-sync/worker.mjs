@@ -40,7 +40,7 @@ export default {
         else statuses.unknown++;
       }
       console.log(JSON.stringify({ event: 'inventory-observation', mode: result.mode, writes: result.writes || 0,
-        variants: ['pilot-write', 'pilot-refresh'].includes(result.mode) ? 1 : result.rows?.length || 0,
+        variants: result.variants || (['pilot-write', 'pilot-refresh'].includes(result.mode) ? 1 : result.rows?.length || 0),
         blocked: result.rows?.filter(r => r.blockers.length).length || 0,
         ...statuses }));
     } catch (error) {

@@ -84,7 +84,7 @@ export async function setSupplierAvailable(env, token, { inventoryItemId, suppli
 // The one-off seed requires zero Shopify commitments. Repeat refreshes may only
 // lower Shopify's available quantity: a customer order must never be restored
 // from an S&S snapshot that has not yet reflected our supplier purchase.
-// Production enables only the one-variant, downward-only refresh mode.
+// Production keeps the downward-only refresh scope explicitly allowlisted.
 export async function runGuardedWrite(env, deps) {
   const mode = env.INVENTORY_SYNC_MODE;
   requireValue(['pilot-write', 'pilot-refresh'].includes(mode), 'WRITE_MODE_REQUIRED');
@@ -96,7 +96,26 @@ export async function runGuardedWrite(env, deps) {
   const maxDelta = Number(env.INVENTORY_MAX_WRITE_DELTA);
   requireValue(/^\d+$/.test(String(env.INVENTORY_MAX_WRITE_DELTA || ''))
     && Number.isSafeInteger(maxDelta) && maxDelta > 0, 'WRITE_LIMIT_UNCONFIGURED');
-  const ids = uniqueStrings(jsonSetting(env, 'PILOT_VARIANT_IDS'), /^gid:\/\/shopify\/ProductVariant\/\d+$/, 1, 'SINGLE_VARIANT_PILOT_REQUIRED');
+  const ids = uniqueStrings(jsonSetting(env, 'PILOT_VARIANT_IDS'), /^gid:\/\/shopify\/ProductVariant\/\d+$/,
+    mode === 'pilot-refresh' ? 6 : 1, 'PILOT_VARIANT_SCOPE_INVALID');
+  if (mode === 'pilot-refresh' && ids.length > 1) {
+    let writes = 0;
+    let unchanged = 0;
+    let failures = 0;
+    for (const id of ids) {
+      try {
+        const result = await runGuardedWrite({ ...env, PILOT_VARIANT_IDS: JSON.stringify([id]) }, deps);
+        writes += result.writes;
+        unchanged += result.unchanged || 0;
+      } catch (error) {
+        failures++;
+        console.error(JSON.stringify({ event: 'inventory-variant-failed', variantId: id,
+          code: error instanceof SyncError ? error.code : 'INVENTORY_VARIANT_FAILED' }));
+      }
+    }
+    if (failures) throw new SyncError('PILOT_BATCH_PARTIAL_FAILURE');
+    return { mode, writes, unchanged, variants: ids.length };
+  }
   const warehouses = warehouseList(jsonSetting(env, 'SS_WAREHOUSES'));
   const protectedLocationIds = jsonSetting(env, 'PROTECTED_LOCATION_IDS');
   requireValue(Array.isArray(protectedLocationIds) && protectedLocationIds.length > 0
