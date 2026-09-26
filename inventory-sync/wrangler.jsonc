@@ -17,6 +17,7 @@
     "SUPPLIER_INVENTORY_URL": "https://printmo-wholesale-api-integration.onrender.com/order-manager/v1/supplier/ss/inventory",
     "SUPPLIER_LOCATION_ID": "gid://shopify/Location/95240290552",
     "SUPPLIER_FEED_SEMANTICS": "ss-available-for-sale-downward-only",
+    "SUPPLIER_REOPEN_POLICY": "subtract-shopify-commitments",
     "PILOT_SHARD_COUNT": "5",
     "BELLA_3001_SYNC_ENABLED": "true"
   },

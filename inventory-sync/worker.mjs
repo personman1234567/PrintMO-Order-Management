@@ -53,6 +53,7 @@ async function runExpandedSchedule(env, deps, scheduledTime) {
   requireValue(groups.length <= 12 && groups.every(group => group.length >= 1 && group.length <= 15),
     'SCHEDULE_SCOPE_INVALID');
   let writes = 0;
+  let increases = 0;
   let failures = 0;
   for (const [index, ids] of groups.entries()) {
     try {
@@ -60,6 +61,7 @@ async function runExpandedSchedule(env, deps, scheduledTime) {
         PILOT_VARIANT_IDS: JSON.stringify(ids),
         SUPPLIER_MISSING_SKU_POLICY: index === 0 ? 'hold' : 'block' }, deps);
       writes += result.writes;
+      increases += result.increases;
     } catch (error) {
       failures++;
       console.error(JSON.stringify({ event: 'inventory-shard-failed', group: index,
@@ -67,7 +69,7 @@ async function runExpandedSchedule(env, deps, scheduledTime) {
     }
   }
   if (failures) throw new SyncError('PILOT_BATCH_PARTIAL_FAILURE');
-  return { mode: 'pilot-refresh', writes, variants: tultexIds.length + bellaIds.length };
+  return { mode: 'pilot-refresh', writes, increases, variants: tultexIds.length + bellaIds.length };
 }
 export async function runInventorySync(env, deps, scheduledTime) {
   if (scheduledTime !== undefined && env.INVENTORY_SYNC_MODE === 'pilot-refresh'
@@ -89,6 +91,7 @@ export default {
         else statuses.unknown++;
       }
       console.log(JSON.stringify({ event: 'inventory-observation', mode: result.mode, writes: result.writes || 0,
+        increases: result.increases || 0,
         variants: result.variants || (['pilot-write', 'pilot-refresh'].includes(result.mode) ? 1 : result.rows?.length || 0),
         blocked: result.rows?.filter(r => r.blockers.length).length || 0,
         ...statuses }));

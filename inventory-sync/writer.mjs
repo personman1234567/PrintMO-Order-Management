@@ -120,7 +120,12 @@ async function setSupplierAvailableBatch(env, token, updates, observedAt, deps) 
   requireValue(updates.every(update => /^gid:\/\/shopify\/InventoryItem\/\d+$/.test(update.inventoryItemId)
     && Number.isSafeInteger(update.currentAvailable) && update.currentAvailable >= 0
     && Number.isSafeInteger(update.targetAvailable) && update.targetAvailable >= 0
-    && update.targetAvailable < update.currentAvailable)
+    && Number.isSafeInteger(update.sourceCapacity) && update.sourceCapacity >= 0
+    && Number.isSafeInteger(update.shopifyCommitted) && update.shopifyCommitted >= 0
+    && (update.targetAvailable < update.currentAvailable ||
+      (env.SUPPLIER_REOPEN_POLICY === 'subtract-shopify-commitments'
+        && update.targetAvailable > update.currentAvailable
+        && update.targetAvailable <= Math.max(0, update.sourceCapacity - update.shopifyCommitted))))
     && new Set(updates.map(update => update.inventoryItemId)).size === updates.length, 'INVALID_BATCH_WRITE');
   const input = {
     name: 'available', reason: 'correction',
@@ -151,6 +156,8 @@ export async function runGuardedBatch(env, deps) {
     'INVALID_WRITE_DESTINATION');
   requireValue(env.SUPPLIER_FEED_SEMANTICS === 'ss-available-for-sale-downward-only',
     'SUPPLIER_FEED_SEMANTICS_UNVERIFIED');
+  requireValue(['disabled', 'subtract-shopify-commitments'].includes(env.SUPPLIER_REOPEN_POLICY || 'disabled'),
+    'INVALID_REOPEN_POLICY');
   const protectedLocationIds = jsonSetting(env, 'PROTECTED_LOCATION_IDS');
   requireValue(Array.isArray(protectedLocationIds) && protectedLocationIds.length > 0
     && protectedLocationIds.every(id => /^gid:\/\/shopify\/Location\/\d+$/.test(id))
@@ -187,11 +194,22 @@ export async function runGuardedBatch(env, deps) {
       const onHand = quantity(level, 'on_hand');
       requireValue(available !== null && available >= 0 && committed !== null && committed >= 0
         && onHand === available + committed, 'INVENTORY_STATES_UNVERIFIED');
+      const commitments = variant.inventoryItem.inventoryLevels.nodes.map(node => quantity(node, 'committed'));
+      const shopifyCommitted = commitments.reduce((total, amount) => total + amount, 0);
+      requireValue(commitments.every(amount => amount !== null && amount >= 0)
+        && Number.isSafeInteger(shopifyCommitted), 'SHOPIFY_COMMITMENTS_UNVERIFIED');
       // A successful gateway response that omits a SKU can block that SKU in the
       // closeout catalog. A failed gateway response never reaches this branch.
-      const targetAvailable = missingSupplierSku ? 0 : Math.min(available, row.capacityBeforeCommitments);
-      if (targetAvailable < available) updates.push({ inventoryItemId: row.inventoryItemId,
-        currentAvailable: available, targetAvailable });
+      const sourceCapacity = missingSupplierSku ? 0 : row.capacityBeforeCommitments;
+      // Shopify has already removed committed units from its available count.
+      // S&S may or may not have removed Print-MO's purchase yet, so subtracting
+      // every Shopify commitment only for an increase is a conservative ceiling.
+      const reopenCapacity = Math.max(0, sourceCapacity - shopifyCommitted);
+      const targetAvailable = sourceCapacity < available ? sourceCapacity
+        : env.SUPPLIER_REOPEN_POLICY === 'subtract-shopify-commitments'
+          ? Math.max(available, reopenCapacity) : available;
+      if (targetAvailable !== available) updates.push({ inventoryItemId: row.inventoryItemId,
+        currentAvailable: available, targetAvailable, sourceCapacity, shopifyCommitted });
     } catch (error) {
       failures++;
       console.error(JSON.stringify({ event: 'inventory-variant-failed', variantId: variant.id,
@@ -200,13 +218,14 @@ export async function runGuardedBatch(env, deps) {
   }
   const writes = updates.length ? await setSupplierAvailableBatch(env, token, updates, supplier.observedAt, deps) : 0;
   if (failures) throw new SyncError('PILOT_BATCH_PARTIAL_FAILURE');
-  return { mode: 'pilot-refresh', writes, unchanged: ids.length - writes, variants: ids.length };
+  return { mode: 'pilot-refresh', writes,
+    increases: updates.filter(update => update.targetAvailable > update.currentAvailable).length,
+    unchanged: ids.length - writes, variants: ids.length };
 }
 
-// The one-off seed requires zero Shopify commitments. Repeat refreshes may only
-// lower Shopify's available quantity: a customer order must never be restored
-// from an S&S snapshot that has not yet reflected our supplier purchase.
-// Production keeps the downward-only refresh scope explicitly allowlisted.
+// The one-off seed requires zero Shopify commitments. Legacy pilot-refresh stays
+// downward-only; the scheduled batch can permit a bounded conservative reopen
+// when SUPPLIER_REOPEN_POLICY is explicitly enabled for enrolled variants.
 export async function runGuardedWrite(env, deps) {
   const mode = env.INVENTORY_SYNC_MODE;
   requireValue(['pilot-write', 'pilot-refresh'].includes(mode), 'WRITE_MODE_REQUIRED');

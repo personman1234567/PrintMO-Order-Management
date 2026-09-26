@@ -235,6 +235,11 @@ function pilotWriteFixture({ supplierQty = 8, available = 5, committed = 0, loca
         location: { id: supplierId, isActive: true, fulfillsOnlineOrders: online },
         productVariants: { nodes: skuMatches, pageInfo: { hasNextPage: false } }
       } });
+      if (query.startsWith('query InventoryBatchPrerequisites')) return response({ data: {
+        currentAppInstallation: { accessScopes: scopes.map(handle => ({ handle })) },
+        location: { id: supplierId, isActive: true, fulfillsOnlineOrders: online },
+        sku0: { nodes: skuMatches, pageInfo: { hasNextPage: false } }
+      } });
       if (query.startsWith('mutation SetSupplierAvailable')) return response(mutationResult || { data: {
         inventorySetQuantities: { inventoryAdjustmentGroup: { id: 'gid://shopify/InventoryAdjustmentGroup/1' }, userErrors: [] }
       } });
@@ -559,4 +564,58 @@ test('closeout batch blocks an omitted supplier SKU while writing only supplier-
   await assert.rejects(runGuardedBatch({ ...closeoutEnv, SUPPLIER_MISSING_SKU_POLICY: 'hold' }, deps),
     /PILOT_BATCH_PARTIAL_FAILURE/);
   assert.deepEqual(mutations[0].quantities.map(q => q.quantity), [3]);
+});
+
+test('scheduled restock reopens only units beyond all Shopify commitments', async () => {
+  for (const { supplierQty, available, committed, localCommitted = 0, expected } of [
+    { supplierQty: 8, available: 0, committed: 0, expected: 8 },
+    { supplierQty: 10, available: 8, committed: 2, expected: 8 },
+    { supplierQty: 15, available: 8, committed: 2, expected: 13 },
+    { supplierQty: 8, available: 8, committed: 2, expected: 8 },
+    { supplierQty: 13, available: 8, committed: 2, expected: 11 },
+    { supplierQty: 15, available: 8, committed: 0, localCommitted: 2, expected: 13 }
+  ]) {
+    const { calls, deps, writeEnv } = pilotWriteFixture({ supplierQty, available, committed, localCommitted });
+    const batchEnv = { ...writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',
+      SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only',
+      SUPPLIER_REOPEN_POLICY: 'subtract-shopify-commitments' };
+    const result = await runGuardedBatch(batchEnv, deps);
+    assert.equal(result.writes, Number(expected !== available));
+    const mutations = calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation'));
+    assert.equal(mutations.length, Number(expected !== available));
+    if (mutations.length) assert.deepEqual(JSON.parse(mutations[0].options.body).variables.input.quantities,
+      [{ inventoryItemId: itemId, locationId: supplierId, quantity: expected, changeFromQuantity: available }]);
+  }
+});
+
+test('reopen stays disabled by default and a concurrent Shopify change rejects the increase', async () => {
+  const unchanged = pilotWriteFixture({ supplierQty: 15, available: 8, committed: 2 });
+  const baseEnv = { ...unchanged.writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',
+    SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only' };
+  assert.equal((await runGuardedBatch(baseEnv, unchanged.deps)).writes, 0);
+  assert.equal(unchanged.calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 0);
+  const stale = pilotWriteFixture({ supplierQty: 15, available: 8, committed: 2,
+    mutationResult: { data: { inventorySetQuantities: { inventoryAdjustmentGroup: null,
+      userErrors: [{ code: 'CHANGE_FROM_QUANTITY_STALE' }] } } } });
+  await assert.rejects(runGuardedBatch({ ...baseEnv, SUPPLIER_REOPEN_POLICY: 'subtract-shopify-commitments' },
+    stale.deps), /SHOPIFY_QUANTITY_CHANGED/);
+});
+
+test('reopen refuses incomplete Shopify commitment evidence', async () => {
+  const fixture = pilotWriteFixture({ supplierQty: 15, available: 8, committed: 2 });
+  const guardedDeps = { fetchImpl: async (url, options) => {
+    const body = options.body ? JSON.parse(options.body) : {};
+    if (body.query?.startsWith('query InventoryPilot')) {
+      const item = structuredClone(variant);
+      item.inventoryItem.inventoryLevels.nodes[0].quantities = [{ name: 'available', quantity: 0 }];
+      item.inventoryItem.inventoryLevels.nodes[1].quantities = [
+        { name: 'available', quantity: 8 }, { name: 'committed', quantity: 2 }, { name: 'on_hand', quantity: 10 }];
+      return response({ data: { nodes: [item] } });
+    }
+    return fixture.deps.fetchImpl(url, options);
+  } };
+  await assert.rejects(runGuardedBatch({ ...fixture.writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',
+    SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only',
+    SUPPLIER_REOPEN_POLICY: 'subtract-shopify-commitments' }, guardedDeps), /PILOT_BATCH_PARTIAL_FAILURE/);
+  assert.equal(fixture.calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 0);
 });
