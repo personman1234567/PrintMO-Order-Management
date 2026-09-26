@@ -17,7 +17,6 @@
     "SUPPLIER_INVENTORY_URL": "https://printmo-wholesale-api-integration.onrender.com/order-manager/v1/supplier/ss/inventory",
     "SUPPLIER_LOCATION_ID": "gid://shopify/Location/95240290552",
     "SUPPLIER_FEED_SEMANTICS": "ss-available-for-sale-downward-only",
-    "INVENTORY_MAX_WRITE_DELTA": "20",
     "PILOT_SHARD_COUNT": "5"
   },
   "triggers": {

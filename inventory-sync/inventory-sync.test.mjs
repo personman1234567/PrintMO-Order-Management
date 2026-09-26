@@ -245,7 +245,7 @@ function pilotWriteFixture({ supplierQty = 8, available = 5, committed = 0, loca
   } };
   const writeEnv = { ...env, INVENTORY_SYNC_MODE: 'pilot-write', SS_WAREHOUSES: '["*"]',
     SS_SAFETY_BUFFER: '0', SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-zero-commitments',
-    INVENTORY_MAX_WRITE_DELTA: '20' };
+  };
   return { calls, deps, writeEnv };
 }
 
@@ -291,9 +291,9 @@ test('stockout can target zero while dropship stock remains positive', async () 
   assert.equal(JSON.parse(calls.at(-1).options.body).variables.input.quantities[0].locationId, supplierId);
 });
 
-test('pilot writer rejects unverified source policy, missing limit, and multiple variants before network access', async () => {
+test('pilot writer rejects unverified source policy and multiple variants before network access', async () => {
   for (const change of [
-    { SUPPLIER_FEED_SEMANTICS: '' }, { INVENTORY_MAX_WRITE_DELTA: '' },
+    { SUPPLIER_FEED_SEMANTICS: '' },
     { PILOT_VARIANT_IDS: JSON.stringify([id, 'gid://shopify/ProductVariant/2']) },
     { PROTECTED_LOCATION_IDS: '[]' }, { SUPPLIER_LOCATION_ID: localId }
   ]) {
@@ -303,15 +303,13 @@ test('pilot writer rejects unverified source policy, missing limit, and multiple
   }
 });
 
-test('pilot writer blocks scope, location, shared SKU, tracking, other-location stock, and large changes before mutation', async () => {
+test('pilot writer blocks scope, location, shared SKU, tracking, and other-location stock before mutation', async () => {
   for (const [fixture, change] of [
     [{ scopes: ['read_inventory'] }, {}],
     [{ online: false }, {}],
     [{ skuMatches: [{ id, sku: variant.sku }, { id: 'gid://shopify/ProductVariant/2', sku: variant.sku }] }, {}],
     [{ tracked: false }, {}],
-    [{ supplierQty: 0, localAvailable: 2 }, {}],
-    [{}, { INVENTORY_MAX_WRITE_DELTA: '0' }],
-    [{}, { INVENTORY_MAX_WRITE_DELTA: '1', SS_SAFETY_BUFFER: '8' }]
+    [{ supplierQty: 0, localAvailable: 2 }, {}]
   ]) {
     const { calls, deps, writeEnv } = pilotWriteFixture(fixture);
     await assert.rejects(runGuardedWrite({ ...writeEnv, ...change }, deps));
@@ -351,20 +349,18 @@ test('repeat refresh lowers supplier stock with a Shopify commitment and never t
   }
 });
 
-test('repeat refresh can close a verified large stockout but still limits partial and buffer-only drops', async () => {
-  const { calls, deps, writeEnv } = pilotWriteFixture({ supplierQty: 0, available: 446 });
-  const refreshEnv = { ...writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',
-    SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only' };
-  const result = await runInventorySync(refreshEnv, deps);
-  assert.equal(result.targetAvailable, 0);
-  assert.equal(calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 1);
-
-  for (const [supplierQty, buffer] of [[1, '0'], [1, '1']]) {
-    const fixture = pilotWriteFixture({ supplierQty, available: 446 });
-    await assert.rejects(runInventorySync({ ...fixture.writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',
-      SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only', SS_SAFETY_BUFFER: buffer },
-    fixture.deps), /WRITE_DELTA_EXCEEDS_LIMIT/);
-    assert.equal(fixture.calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 0);
+test('repeat refresh applies large validated decreases, including low stock and stockout', async () => {
+  for (const [available, supplierQty, buffer, target] of [
+    [60, 5, '0', 5], [446, 1, '0', 1], [446, 1, '1', 0], [446, 0, '0', 0]
+  ]) {
+    const { calls, deps, writeEnv } = pilotWriteFixture({ supplierQty, available });
+    const result = await runInventorySync({ ...writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',
+      SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only', SS_SAFETY_BUFFER: buffer }, deps);
+    assert.equal(result.targetAvailable, target);
+    const mutations = calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation'));
+    assert.equal(mutations.length, 1);
+    assert.deepEqual(JSON.parse(mutations[0].options.body).variables.input.quantities,
+      [{ inventoryItemId: itemId, locationId: supplierId, quantity: target, changeFromQuantity: available }]);
   }
 });
 
@@ -460,7 +456,7 @@ test('larger refresh shard batches reads while guarding and writing each variant
   const writeEnv = { ...env, INVENTORY_SYNC_MODE: 'pilot-refresh',
     PILOT_VARIANT_IDS: JSON.stringify(variants.map(v => v.id)), SS_WAREHOUSES: '["*"]',
     SS_SAFETY_BUFFER: '0', SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only',
-    INVENTORY_MAX_WRITE_DELTA: '20' };
+  };
   const result = await runGuardedWrite(writeEnv, deps);
   assert.deepEqual({ writes: result.writes, variants: result.variants }, { writes: 7, variants: 7 });
   assert.equal(queries.filter(q => q === 'InventoryPilot($ids:').length, 1);
@@ -492,8 +488,7 @@ test('repeat refresh still requires an explicit source policy and all write guar
     [{ tracked: false }, {}],
     [{ online: false }, {}],
     [{ skuMatches: [{ id, sku: variant.sku }, { id: 'gid://shopify/ProductVariant/2', sku: variant.sku }] }, {}],
-    [{ supplierQty: 0, localAvailable: 2 }, {}],
-    [{ supplierQty: 2, available: 7 }, { INVENTORY_MAX_WRITE_DELTA: '1' }]
+    [{ supplierQty: 0, localAvailable: 2 }, {}]
   ]) {
     const { calls, deps, writeEnv } = pilotWriteFixture(fixture);
     const refreshEnv = { ...writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',

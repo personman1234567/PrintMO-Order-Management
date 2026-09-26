@@ -93,9 +93,6 @@ export async function runGuardedWrite(env, deps) {
   requireValue(env.SUPPLIER_FEED_SEMANTICS === (mode === 'pilot-refresh'
     ? 'ss-available-for-sale-downward-only' : 'ss-available-for-sale-zero-commitments'),
   'SUPPLIER_FEED_SEMANTICS_UNVERIFIED');
-  const maxDelta = Number(env.INVENTORY_MAX_WRITE_DELTA);
-  requireValue(/^\d+$/.test(String(env.INVENTORY_MAX_WRITE_DELTA || ''))
-    && Number.isSafeInteger(maxDelta) && maxDelta > 0, 'WRITE_LIMIT_UNCONFIGURED');
   const protectedLocationIds = jsonSetting(env, 'PROTECTED_LOCATION_IDS');
   requireValue(Array.isArray(protectedLocationIds) && protectedLocationIds.length > 0
     && protectedLocationIds.every(id => /^gid:\/\/shopify\/Location\/\d+$/.test(id))
@@ -154,7 +151,6 @@ export async function runGuardedWrite(env, deps) {
 
 async function runOneGuardedWrite(env, deps, token, variant, supplier) {
   const mode = env.INVENTORY_SYNC_MODE;
-  const maxDelta = Number(env.INVENTORY_MAX_WRITE_DELTA);
   const warehouses = warehouseList(jsonSetting(env, 'SS_WAREHOUSES'));
   const protectedLocationIds = jsonSetting(env, 'PROTECTED_LOCATION_IDS');
   requireValue(Array.isArray(protectedLocationIds) && protectedLocationIds.length > 0
@@ -188,14 +184,8 @@ async function runOneGuardedWrite(env, deps, token, variant, supplier) {
   // deducted our purchase; subtracting again would count it twice.
   const targetAvailable = mode === 'pilot-refresh'
     ? Math.min(available, row.capacityBeforeCommitments) : row.capacityBeforeCommitments;
-  // A confirmed physical-warehouse stockout must be able to close checkout even
-  // when the prior supplier quantity is larger than the ordinary change limit.
-  // A buffer-only zero or a partial supplier decrease still obeys that limit.
-  const confirmedStockout = mode === 'pilot-refresh' && row.supplierAvailable === 0
-    && targetAvailable === 0;
-  requireValue(Number.isSafeInteger(targetAvailable)
-    && (Math.abs(targetAvailable - available) <= maxDelta || confirmedStockout),
-  'WRITE_DELTA_EXCEEDS_LIMIT');
+  requireValue(Number.isSafeInteger(targetAvailable) && targetAvailable >= 0,
+    'INVALID_WRITE_QUANTITY');
   if (targetAvailable === available) return { mode, writes: 0, unchanged: 1 };
   const written = await setSupplierAvailable(env, token, { inventoryItemId: row.inventoryItemId,
     supplierLocationId, currentAvailable: available, targetAvailable, observedAt: plan.observedAt }, deps);
