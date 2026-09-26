@@ -1,6 +1,7 @@
 import { SyncError, requireValue, uniqueStrings, warehouseList, makePlan } from './core.mjs';
 import { shopifyToken, readPilot, readSupplierGateway } from './clients.mjs';
-import { runGuardedWrite } from './writer.mjs';
+import { runGuardedWrite, runGuardedBatch } from './writer.mjs';
+import { BELLA_3001_VARIANT_IDS } from './bella-3001-allowlist.mjs';
 function jsonSetting(env, key) {
   try { return JSON.parse(env[key] || '[]'); } catch { throw new SyncError(`INVALID_${key}`); }
 }
@@ -35,7 +36,43 @@ export function scheduledShard(env, scheduledTime) {
   const selected = ids.filter((_, index) => index % count === minute % count);
   return { ...env, PILOT_VARIANT_IDS: JSON.stringify(selected) };
 }
+export function scheduledBella3001Ids(scheduledTime) {
+  requireValue(Number.isSafeInteger(scheduledTime), 'INVALID_SHARD_SCHEDULE');
+  const minute = Math.floor(scheduledTime / 60000);
+  return BELLA_3001_VARIANT_IDS.filter((_, index) => index % 5 === minute % 5);
+}
+async function runExpandedSchedule(env, deps, scheduledTime) {
+  const token = await shopifyToken(env, deps);
+  const tultexIds = JSON.parse(scheduledShard(env, scheduledTime).PILOT_VARIANT_IDS);
+  const bellaIds = scheduledBella3001Ids(scheduledTime);
+  // Each call makes a bounded catalog, supplier, and Shopify preflight read,
+  // followed by at most one CAS mutation. Keep the full minute below 50
+  // external subrequests even if every batch has stock decreases.
+  const groups = [tultexIds, ...Array.from({ length: Math.ceil(bellaIds.length / 15) },
+    (_, index) => bellaIds.slice(index * 15, index * 15 + 15))];
+  requireValue(groups.length <= 12 && groups.every(group => group.length >= 1 && group.length <= 15),
+    'SCHEDULE_SCOPE_INVALID');
+  let writes = 0;
+  let failures = 0;
+  for (const [index, ids] of groups.entries()) {
+    try {
+      const result = await runGuardedBatch({ ...env, SHOPIFY_ACCESS_TOKEN: token,
+        PILOT_VARIANT_IDS: JSON.stringify(ids),
+        SUPPLIER_MISSING_SKU_POLICY: index === 0 ? 'hold' : 'block' }, deps);
+      writes += result.writes;
+    } catch (error) {
+      failures++;
+      console.error(JSON.stringify({ event: 'inventory-shard-failed', group: index,
+        code: error instanceof SyncError ? error.code : 'INVENTORY_SHARD_FAILED' }));
+    }
+  }
+  if (failures) throw new SyncError('PILOT_BATCH_PARTIAL_FAILURE');
+  return { mode: 'pilot-refresh', writes, variants: tultexIds.length + bellaIds.length };
+}
 export async function runInventorySync(env, deps, scheduledTime) {
+  if (scheduledTime !== undefined && env.INVENTORY_SYNC_MODE === 'pilot-refresh'
+    && env.BELLA_3001_SYNC_ENABLED === 'true')
+    return runExpandedSchedule(env, deps, scheduledTime);
   if (['pilot-write', 'pilot-refresh'].includes(env.INVENTORY_SYNC_MODE))
     return runGuardedWrite(scheduledTime === undefined ? env : scheduledShard(env, scheduledTime), deps);
   return runDryRun(env, deps);

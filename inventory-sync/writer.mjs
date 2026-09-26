@@ -42,6 +42,34 @@ async function readWritePrerequisites(env, token, variant, supplierLocationId, d
   return data.location;
 }
 
+async function readBatchPrerequisites(env, token, variants, supplierLocationId, deps) {
+  const variables = { locationId: supplierLocationId };
+  const searches = variants.map((variant, index) => {
+    variables[`sku${index}`] = `sku:${variant.sku}`;
+    return `sku${index}: productVariants(first: 2, query: $sku${index}) {
+      nodes { id sku } pageInfo { hasNextPage }
+    }`;
+  });
+  const declarations = variants.map((_, index) => `$sku${index}: String!`).join(', ');
+  const query = `query InventoryBatchPrerequisites($locationId: ID!, ${declarations}) {
+    currentAppInstallation { accessScopes { handle } }
+    location(id: $locationId) { id isActive fulfillsOnlineOrders }
+    ${searches.join('\n')}
+  }`;
+  const data = await shopifyRead(env, token, query, variables, deps);
+  requireValue(data.currentAppInstallation?.accessScopes?.some(scope => scope.handle === 'write_inventory'),
+    'INVENTORY_WRITE_SCOPE_MISSING');
+  requireValue(data.location?.id === supplierLocationId && data.location.isActive && data.location.fulfillsOnlineOrders,
+    'SUPPLIER_LOCATION_NOT_ONLINE');
+  const matches = variants.map((variant, index) => {
+    const result = data[`sku${index}`];
+    return result?.pageInfo?.hasNextPage === false && Array.isArray(result.nodes)
+      && result.nodes.filter(node => node.sku === variant.sku).length === 1
+      && result.nodes.find(node => node.sku === variant.sku)?.id === variant.id;
+  });
+  return { location: data.location, matches };
+}
+
 export async function setSupplierAvailable(env, token, { inventoryItemId, supplierLocationId, currentAvailable,
   targetAvailable, observedAt }, deps) {
   requireValue(['pilot-write', 'pilot-refresh'].includes(env.INVENTORY_SYNC_MODE), 'WRITE_MODE_REQUIRED');
@@ -79,6 +107,100 @@ export async function setSupplierAvailable(env, token, { inventoryItemId, suppli
       ? 'SHOPIFY_QUANTITY_CHANGED' : 'SHOPIFY_WRITE_REJECTED');
   requireValue(payload?.inventoryAdjustmentGroup?.id, 'SHOPIFY_WRITE_UNCONFIRMED');
   return { writes: 1, inventoryItemId, supplierLocationId, targetAvailable };
+}
+
+async function setSupplierAvailableBatch(env, token, updates, observedAt, deps) {
+  requireValue(env.INVENTORY_SYNC_MODE === 'pilot-refresh' && updates.length > 0 && updates.length <= 15,
+    'INVALID_BATCH_WRITE');
+  const supplierLocationId = env.SUPPLIER_LOCATION_ID;
+  requireValue(shopDomain(env) === PRINTMO_SHOP && supplierLocationId === SS_SUPPLIER_LOCATION,
+    'INVALID_WRITE_DESTINATION');
+  const age = Date.now() - Date.parse(observedAt);
+  requireValue(Number.isFinite(age) && age >= -30000 && age <= 300000, 'INVALID_WRITE_OBSERVATION');
+  requireValue(updates.every(update => /^gid:\/\/shopify\/InventoryItem\/\d+$/.test(update.inventoryItemId)
+    && Number.isSafeInteger(update.currentAvailable) && update.currentAvailable >= 0
+    && Number.isSafeInteger(update.targetAvailable) && update.targetAvailable >= 0
+    && update.targetAvailable < update.currentAvailable)
+    && new Set(updates.map(update => update.inventoryItemId)).size === updates.length, 'INVALID_BATCH_WRITE');
+  const input = {
+    name: 'available', reason: 'correction',
+    referenceDocumentUri: `printmo://supplier-inventory/ss/${encodeURIComponent(observedAt)}`,
+    quantities: updates.map(update => ({ inventoryItemId: update.inventoryItemId,
+      locationId: supplierLocationId, quantity: update.targetAvailable,
+      changeFromQuantity: update.currentAvailable }))
+  };
+  const result = await requestJson(`https://${shopDomain(env)}/admin/api/2026-07/graphql.json`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+    body: JSON.stringify({ query: SET_SUPPLIER_AVAILABLE, variables: { input, idempotencyKey: crypto.randomUUID() } })
+  }, deps);
+  if (result?.errors?.length) throw new SyncError('SHOPIFY_WRITE_FAILED');
+  const payload = result?.data?.inventorySetQuantities;
+  if (payload?.userErrors?.length) throw new SyncError(
+    payload.userErrors.some(error => error.code === 'CHANGE_FROM_QUANTITY_STALE')
+      ? 'SHOPIFY_QUANTITY_CHANGED' : 'SHOPIFY_WRITE_REJECTED');
+  requireValue(payload?.inventoryAdjustmentGroup?.id, 'SHOPIFY_WRITE_UNCONFIRMED');
+  return updates.length;
+}
+
+// Large scheduled catalogs use one guarded Shopify preflight and one CAS mutation
+// per at-most-15-variant batch, staying inside a free Worker's subrequest budget.
+// A stale CAS fails the batch; the next shard run rereads every quantity.
+export async function runGuardedBatch(env, deps) {
+  requireValue(env.INVENTORY_SYNC_MODE === 'pilot-refresh', 'WRITE_MODE_REQUIRED');
+  requireValue(shopDomain(env) === PRINTMO_SHOP && env.SUPPLIER_LOCATION_ID === SS_SUPPLIER_LOCATION,
+    'INVALID_WRITE_DESTINATION');
+  requireValue(env.SUPPLIER_FEED_SEMANTICS === 'ss-available-for-sale-downward-only',
+    'SUPPLIER_FEED_SEMANTICS_UNVERIFIED');
+  const protectedLocationIds = jsonSetting(env, 'PROTECTED_LOCATION_IDS');
+  requireValue(Array.isArray(protectedLocationIds) && protectedLocationIds.length > 0
+    && protectedLocationIds.every(id => /^gid:\/\/shopify\/Location\/\d+$/.test(id))
+    && !protectedLocationIds.includes(env.SUPPLIER_LOCATION_ID), 'PROTECTED_LOCATIONS_REQUIRED');
+  const ids = uniqueStrings(jsonSetting(env, 'PILOT_VARIANT_IDS'), /^gid:\/\/shopify\/ProductVariant\/\d+$/,
+    15, 'PILOT_VARIANT_SCOPE_INVALID');
+  const token = await shopifyToken(env, deps);
+  const variants = await readPilot(env, token, ids, deps);
+  requireValue(variants.every(v => /^[A-Za-z0-9_-]{1,64}$/.test(v.sku))
+    && new Set(variants.map(v => v.sku)).size === variants.length, 'INVALID_OR_SHARED_SKU');
+  const supplier = await readSupplierGateway(env, variants.map(v => v.sku), deps);
+  const preflight = await readBatchPrerequisites(env, token, variants, env.SUPPLIER_LOCATION_ID, deps);
+  const updates = [];
+  let failures = 0;
+  for (const [index, variant] of variants.entries()) {
+    try {
+      requireValue(preflight.matches[index], 'SHARED_SUPPLIER_SKU');
+      const missingSupplierSku = !supplier.items.some(item => item.sku === variant.sku);
+      const plan = makePlan({ variants: [variant], inventory: supplier.items.filter(item => item.sku === variant.sku),
+        observedAt: supplier.observedAt, warehouses: warehouseList(jsonSetting(env, 'SS_WAREHOUSES')),
+        safetyBuffer: Number(env.SS_SAFETY_BUFFER), supplierLocationId: env.SUPPLIER_LOCATION_ID,
+        supplierLocation: preflight.location, protectedLocationIds });
+      const [row] = plan.rows;
+      const resolvedByPilot = new Set(['PENDING_COMMITMENTS_UNVERIFIED', 'CATALOG_SHARED_SKUS_UNVERIFIED',
+        'COMMITMENT_MODEL_REQUIRED_FOR_REOPEN']);
+      if (missingSupplierSku && env.SUPPLIER_MISSING_SKU_POLICY === 'block')
+        resolvedByPilot.add('SUPPLIER_SKU_MISSING');
+      requireValue(row.blockers.every(blocker => resolvedByPilot.has(blocker))
+        && (row.capacityBeforeCommitments !== null || missingSupplierSku && env.SUPPLIER_MISSING_SKU_POLICY === 'block')
+        && row.gate.otherLocationAvailable === 0, 'WRITE_GUARD_BLOCKED');
+      const level = variant.inventoryItem.inventoryLevels.nodes.find(node => node.location.id === env.SUPPLIER_LOCATION_ID);
+      const available = quantity(level, 'available');
+      const committed = quantity(level, 'committed');
+      const onHand = quantity(level, 'on_hand');
+      requireValue(available !== null && available >= 0 && committed !== null && committed >= 0
+        && onHand === available + committed, 'INVENTORY_STATES_UNVERIFIED');
+      // A successful gateway response that omits a SKU can block that SKU in the
+      // closeout catalog. A failed gateway response never reaches this branch.
+      const targetAvailable = missingSupplierSku ? 0 : Math.min(available, row.capacityBeforeCommitments);
+      if (targetAvailable < available) updates.push({ inventoryItemId: row.inventoryItemId,
+        currentAvailable: available, targetAvailable });
+    } catch (error) {
+      failures++;
+      console.error(JSON.stringify({ event: 'inventory-variant-failed', variantId: variant.id,
+        code: error instanceof SyncError ? error.code : 'INVENTORY_VARIANT_FAILED' }));
+    }
+  }
+  const writes = updates.length ? await setSupplierAvailableBatch(env, token, updates, supplier.observedAt, deps) : 0;
+  if (failures) throw new SyncError('PILOT_BATCH_PARTIAL_FAILURE');
+  return { mode: 'pilot-refresh', writes, unchanged: ids.length - writes, variants: ids.length };
 }
 
 // The one-off seed requires zero Shopify commitments. Repeat refreshes may only

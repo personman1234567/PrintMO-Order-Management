@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makePlan, normalizeInventory } from './core.mjs';
 import { requestJson, shopifyRead } from './clients.mjs';
-import worker, { runDryRun, runInventorySync, scheduledShard } from './worker.mjs';
-import { runGuardedWrite, setSupplierAvailable } from './writer.mjs';
+import worker, { runDryRun, runInventorySync, scheduledShard, scheduledBella3001Ids } from './worker.mjs';
+import { runGuardedWrite, runGuardedBatch, setSupplierAvailable } from './writer.mjs';
+import { BELLA_3001_VARIANT_IDS } from './bella-3001-allowlist.mjs';
 import { gatewayInventoryHandler } from './gateway-handler.mjs';
 import { audit } from './cli.mjs';
 const now = Date.now();
@@ -507,4 +508,55 @@ test('Shopify CAS conflict and GraphQL errors fail without reporting a successfu
     const { deps, writeEnv } = pilotWriteFixture({ mutationResult });
     await assert.rejects(runGuardedWrite(writeEnv, deps), /SHOPIFY_QUANTITY_CHANGED|SHOPIFY_WRITE_FAILED/);
   }
+});
+
+test('the 3001 closeout allowlist covers every enrolled variant once per five-minute cycle', () => {
+  assert.equal(BELLA_3001_VARIANT_IDS.length, 626);
+  assert.equal(new Set(BELLA_3001_VARIANT_IDS).size, 626);
+  const minutes = Array.from({ length: 5 }, (_, minute) => scheduledBella3001Ids(minute * 60000));
+  assert.deepEqual(minutes.map(ids => ids.length), [126, 125, 125, 125, 125]);
+  assert.deepEqual(minutes.flat().sort(), [...BELLA_3001_VARIANT_IDS].sort());
+  assert.ok(minutes.every(ids => Math.ceil(ids.length / 15) <= 9));
+});
+
+test('closeout batch blocks an omitted supplier SKU while writing only supplier-location CAS quantities', async () => {
+  const variants = Array.from({ length: 2 }, (_, index) => {
+    const copy = structuredClone(variant);
+    copy.id = `gid://shopify/ProductVariant/${index + 1}`;
+    copy.sku = `B0076000${index + 1}`;
+    copy.inventoryItem.id = `gid://shopify/InventoryItem/${index + 1}`;
+    copy.inventoryItem.inventoryLevels.nodes[0].quantities = [
+      { name: 'available', quantity: 0 }, { name: 'committed', quantity: 0 }, { name: 'on_hand', quantity: 0 }];
+    copy.inventoryItem.inventoryLevels.nodes[1].quantities = [
+      { name: 'available', quantity: 5 }, { name: 'committed', quantity: 0 }, { name: 'on_hand', quantity: 5 }];
+    return copy;
+  });
+  const mutations = [];
+  const deps = { fetchImpl: async (url, options) => {
+    if (!url.includes('myshopify')) return response({ observedAt: new Date().toISOString(),
+      items: [{ sku: variants[0].sku, warehouses: [{ warehouseAbbr: 'IL', qty: 3, dropship: false }] }] });
+    const { query, variables } = JSON.parse(options.body);
+    if (query.startsWith('query InventoryPilot')) return response({ data: { nodes: variants } });
+    if (query.startsWith('query InventoryBatchPrerequisites')) return response({ data: {
+      currentAppInstallation: { accessScopes: [{ handle: 'write_inventory' }] },
+      location: { id: supplierId, isActive: true, fulfillsOnlineOrders: true },
+      ...Object.fromEntries(variants.map((v, index) => [`sku${index}`,
+        { nodes: [{ id: v.id, sku: v.sku }], pageInfo: { hasNextPage: false } }]))
+    } });
+    mutations.push(variables.input);
+    return response({ data: { inventorySetQuantities: {
+      inventoryAdjustmentGroup: { id: 'gid://shopify/InventoryAdjustmentGroup/1' }, userErrors: [] } } });
+  } };
+  const closeoutEnv = { ...env, INVENTORY_SYNC_MODE: 'pilot-refresh',
+    PILOT_VARIANT_IDS: JSON.stringify(variants.map(v => v.id)), SS_WAREHOUSES: '["*"]',
+    SS_SAFETY_BUFFER: '0', SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only',
+    SUPPLIER_MISSING_SKU_POLICY: 'block' };
+  assert.equal((await runGuardedBatch(closeoutEnv, deps)).writes, 2);
+  assert.equal(mutations.length, 1);
+  assert.deepEqual(mutations[0].quantities.map(q => [q.locationId, q.changeFromQuantity, q.quantity]),
+    [[supplierId, 5, 3], [supplierId, 5, 0]]);
+  mutations.length = 0;
+  await assert.rejects(runGuardedBatch({ ...closeoutEnv, SUPPLIER_MISSING_SKU_POLICY: 'hold' }, deps),
+    /PILOT_BATCH_PARTIAL_FAILURE/);
+  assert.deepEqual(mutations[0].quantities.map(q => q.quantity), [3]);
 });
