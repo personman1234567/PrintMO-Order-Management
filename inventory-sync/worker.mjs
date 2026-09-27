@@ -2,6 +2,8 @@ import { SyncError, requireValue, uniqueStrings, warehouseList, makePlan } from 
 import { shopifyToken, readPilot, readSupplierGateway } from './clients.mjs';
 import { runGuardedWrite, runGuardedBatch } from './writer.mjs';
 import { BELLA_3001_VARIANT_IDS } from './bella-3001-allowlist.mjs';
+import { SCHEDULED_VARIANTS } from './scheduled-variants.mjs';
+import { PRIORITY_SHARED_6400_SKUS } from './priority-shared-6400.mjs';
 function jsonSetting(env, key) {
   try { return JSON.parse(env[key] || '[]'); } catch { throw new SyncError(`INVALID_${key}`); }
 }
@@ -41,8 +43,46 @@ export function scheduledBella3001Ids(scheduledTime) {
   const minute = Math.floor(scheduledTime / 60000);
   return BELLA_3001_VARIANT_IDS.filter((_, index) => index % 5 === minute % 5);
 }
+export function scheduledAllVariants(scheduledTime) {
+  requireValue(Number.isSafeInteger(scheduledTime), 'INVALID_SHARD_SCHEDULE');
+  const minute = Math.floor(scheduledTime / 60000);
+  return SCHEDULED_VARIANTS.filter(entry => !PRIORITY_SHARED_6400_SKUS.has(entry.sku))
+    .filter((_, index) => index % 5 === minute % 5);
+}
 async function runExpandedSchedule(env, deps, scheduledTime) {
   const token = await shopifyToken(env, deps);
+  if (env.PRIORITY_SYNC_ENABLED === 'true') {
+    const pinnedTultex = jsonSetting(env, 'PILOT_VARIANT_IDS');
+    requireValue(env.BELLA_3001_SYNC_ENABLED === 'true' && env.PILOT_SHARD_COUNT === '5'
+      && Array.isArray(pinnedTultex) && pinnedTultex.length === 72
+      && pinnedTultex.every((id, index) => id === SCHEDULED_VARIANTS[index].id), 'SCHEDULE_CONFIG_MISMATCH');
+    const entries = scheduledAllVariants(scheduledTime);
+    const groups = Array.from({ length: Math.ceil(entries.length / 15) },
+      (_, index) => entries.slice(index * 15, index * 15 + 15));
+    // Each group uses one combined Shopify identity/level read, one S&S read,
+    // and at most one CAS mutation. Today: one token request plus 14 x 3 = 43.
+    requireValue(groups.length <= 15 && groups.every(group => group.length >= 1 && group.length <= 15),
+      'SCHEDULE_SCOPE_INVALID');
+    let writes = 0;
+    let increases = 0;
+    let failures = 0;
+    for (const [index, group] of groups.entries()) {
+      try {
+        const result = await runGuardedBatch({ ...env, SHOPIFY_ACCESS_TOKEN: token,
+          PILOT_VARIANT_IDS: JSON.stringify(group.map(entry => entry.id)),
+          PILOT_VARIANT_SKUS: JSON.stringify(group.map(entry => entry.sku)),
+          PILOT_MISSING_SKU_POLICIES: JSON.stringify(group.map(entry => entry.missingPolicy)) }, deps);
+        writes += result.writes;
+        increases += result.increases;
+      } catch (error) {
+        failures++;
+        console.error(JSON.stringify({ event: 'inventory-shard-failed', group: index,
+          code: error instanceof SyncError ? error.code : 'INVENTORY_SHARD_FAILED' }));
+      }
+    }
+    if (failures) throw new SyncError('PILOT_BATCH_PARTIAL_FAILURE');
+    return { mode: 'pilot-refresh', writes, increases, variants: entries.length };
+  }
   const tultexIds = JSON.parse(scheduledShard(env, scheduledTime).PILOT_VARIANT_IDS);
   const bellaIds = scheduledBella3001Ids(scheduledTime);
   // Each call makes a bounded catalog, supplier, and Shopify preflight read,

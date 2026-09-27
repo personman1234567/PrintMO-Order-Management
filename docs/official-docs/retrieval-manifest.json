@@ -599,6 +599,8 @@
       ],
       "symbols": [
         "runGuardedWrite",
+        "runGuardedBatch",
+        "scheduledAllVariants",
         "runDryRun",
         "makePlan",
         "gatewayInventoryHandler"
@@ -623,13 +625,13 @@
         {
           "path": "inventory-sync/writer.mjs",
           "symbols": [
-            "runGuardedWrite"
+            "runGuardedBatch"
           ]
         },
         {
           "path": "inventory-sync/worker.mjs",
           "symbols": [
-            "runDryRun"
+            "scheduledAllVariants"
           ]
         },
         {
@@ -654,7 +656,7 @@
         "npm run docs:check"
       ],
       "stop": [
-        "Stop before enrolling another color or enabling automatic increases until shared blanks, commitments and supplier-purchase timing are verified."
+        "Check exact SKUs, physical S&S source, Shopify commitments, and shared listings before enrollment. The 75 shared 6400 SKUs remain held until one sellable listing is chosen."
       ]
     }
   ]

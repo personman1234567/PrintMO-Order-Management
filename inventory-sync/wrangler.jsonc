@@ -19,7 +19,8 @@
     "SUPPLIER_FEED_SEMANTICS": "ss-available-for-sale-downward-only",
     "SUPPLIER_REOPEN_POLICY": "subtract-shopify-commitments",
     "PILOT_SHARD_COUNT": "5",
-    "BELLA_3001_SYNC_ENABLED": "true"
+    "BELLA_3001_SYNC_ENABLED": "true",
+    "PRIORITY_SYNC_ENABLED": "true"
   },
   "triggers": {
     "crons": [
