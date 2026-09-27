@@ -325,6 +325,29 @@ async function run() {
     error: Object.assign(new Error('Gateway timeout'), { status: 502 }),
   });
   assert.equal(unknownSupplierReport.outcome, 'unknown', 'supplier transport failures must remain non-retryable unknown results');
+  const preflightSupplierReport = module.normalizeSupplierCommitReport({
+    ...supplierReportFixture,
+    payload: { orderSubmissionAttempted: false, outcome: 'unknown', error: { message: 'Product lookup returned HTTP 503.' } },
+    error: Object.assign(new Error('Product lookup returned HTTP 503.'), { status: 502 }),
+  });
+  assert.equal(preflightSupplierReport.outcome, 'rejected', 'an explicit preflight failure must be retryable');
+  assert.equal(preflightSupplierReport.preflightFailed, true);
+  assert.match(preflightSupplierReport.summary, /No S&S order request was sent/);
+  const uncertainPostReport = module.normalizeSupplierCommitReport({
+    ...supplierReportFixture,
+    payload: { orderSubmissionAttempted: true, outcome: 'rejected', error: { message: 'Order POST returned HTTP 503.' } },
+    error: Object.assign(new Error('Order POST returned HTTP 503.'), { status: 502 }),
+  });
+  assert.equal(uncertainPostReport.outcome, 'unknown', 'a 5xx after the order POST must remain locked for reconciliation');
+  const pricingWarningReport = module.normalizeSupplierCommitReport({
+    ...supplierReportFixture,
+    payload: { ok: true, orderNumber: 'SS-REPORT-2', subtotal: null,
+      priceWarnings: [{ sku: 'B001', code: 'PRICE_LOOKUP_UNAVAILABLE', message: 'S&S price lookup returned HTTP 503.' }] },
+  });
+  assert.equal(pricingWarningReport.outcome, 'confirmed');
+  assert.equal(pricingWarningReport.subtotal, null, 'partial price estimates must not appear complete');
+  assert.equal(pricingWarningReport.priceWarnings[0].sku, 'B001');
+  assert.match(pricingWarningReport.summary, /verify the total in S&S/);
 
   const etsyContract = module.normalizeEtsyOrderContract({
     providerAccountId: 98765,

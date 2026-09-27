@@ -8652,9 +8652,9 @@ async function handleV1BatchCommit(request, env, allowOrigin, reqAllowHeaders, i
         if (batch.state === 'failed') {
             const failed = JSON.parse(batch.response_json || '{}');
             return v1Error({
-                code: 'SUPPLIER_REJECTED',
+                code: failed.preflightFailed ? 'SUPPLIER_PREFLIGHT_FAILED' : 'SUPPLIER_REJECTED',
                 message: failed.summary || 'S&S rejected this submission.'
-            }, allowOrigin, reqAllowHeaders, 422, { report: failed });
+            }, allowOrigin, reqAllowHeaders, failed.preflightFailed ? 424 : 422, { report: failed });
         }
         if (['submitting', 'unknown'].includes(batch.state)) {
             return v1Error({
@@ -8718,10 +8718,10 @@ async function handleV1BatchCommit(request, env, allowOrigin, reqAllowHeaders, i
             ]);
             if (report.outcome === 'rejected') {
                 return v1Error({
-                    code: 'SUPPLIER_REJECTED',
+                    code: report.preflightFailed ? 'SUPPLIER_PREFLIGHT_FAILED' : 'SUPPLIER_REJECTED',
                     message: report.summary,
                     batchId
-                }, allowOrigin, reqAllowHeaders, 422, { report });
+                }, allowOrigin, reqAllowHeaders, report.preflightFailed ? 424 : 422, { report });
             }
             return v1Error({
                 code: 'SUPPLIER_RESULT_UNKNOWN',
@@ -8913,9 +8913,20 @@ function normalizeSupplierCommitReport({ payload, error, requestedLines, lineSou
     const explicitOutcome = supplierText(supplierValue(source, ['outcome', 'status'])).toLowerCase();
     const httpStatus = Number(error?.status || 0) || null;
     const deterministicFailure = Boolean(error && httpStatus >= 400 && httpStatus < 500 && ![408, 425, 429].includes(httpStatus));
+    const preflightFailed = Boolean(error && source.orderSubmissionAttempted === false);
+    const postResultUncertain = Boolean(error && source.orderSubmissionAttempted === true && !deterministicFailure);
+    const priceWarnings = supplierArray(source, ['priceWarnings']).map(warning => ({
+        sku: supplierText(supplierValue(warning, ['sku'])),
+        code: supplierText(supplierValue(warning, ['code'])),
+        message: supplierText(supplierValue(warning, ['message']), 'S&S price estimate unavailable.'),
+    })).filter(warning => warning.sku);
     let outcome;
 
-    if (['confirmed', 'partial', 'rejected', 'unknown'].includes(explicitOutcome)) {
+    if (preflightFailed) {
+        outcome = 'rejected';
+    } else if (postResultUncertain) {
+        outcome = 'unknown';
+    } else if (['confirmed', 'partial', 'rejected', 'unknown'].includes(explicitOutcome)) {
         outcome = explicitOutcome;
     } else if (error) {
         outcome = deterministicFailure ? 'rejected' : 'unknown';
@@ -8981,7 +8992,10 @@ function normalizeSupplierCommitReport({ payload, error, requestedLines, lineSou
         };
     });
     const acceptedOrderCount = orderResults.filter(order => order.outcome === 'confirmed').length;
-    const summary = outcome === 'confirmed'
+    const preflightMessage = supplierText(supplierValue(source?.error, ['message']), 'Supplier preflight failed.');
+    const summary = preflightFailed
+        ? `No S&S order request was sent. ${preflightMessage}`
+        : outcome === 'confirmed'
         ? `${requestedLines.length} S&S ${requestedLines.length === 1 ? 'line was' : 'lines were'} accepted.`
         : outcome === 'partial'
             ? `${acceptedOrderCount} of ${orderIds.length} ${orderIds.length === 1 ? 'order was' : 'orders were'} fully accepted. Review the rejected garments before retrying.`
@@ -8992,6 +9006,7 @@ function normalizeSupplierCommitReport({ payload, error, requestedLines, lineSou
     return {
         ok: outcome === 'confirmed' || outcome === 'partial',
         outcome,
+        preflightFailed,
         batchId,
         poNumber,
         supplierOrderNumbers: orderNumbers,
@@ -9001,11 +9016,14 @@ function normalizeSupplierCommitReport({ payload, error, requestedLines, lineSou
         acceptedOrderCount,
         acceptedLines,
         rejectedLines,
+        priceWarnings,
         orderResults,
-        subtotal: Number(supplierValue(source, ['subtotal']) || 0) || null,
+        subtotal: priceWarnings.length ? null : Number(supplierValue(source, ['subtotal']) || 0) || null,
         testOrder: Boolean(supplierValue(source, ['testOrder'])),
         httpStatus,
-        summary,
+        summary: priceWarnings.length && ['confirmed', 'partial'].includes(outcome)
+            ? `${summary} Estimated S&S pricing was unavailable for ${priceWarnings.length} ${priceWarnings.length === 1 ? 'SKU' : 'SKUs'}; verify the total in S&S.`
+            : summary,
         recordedAt: isoNow()
     };
 }
@@ -9150,7 +9168,9 @@ async function handleProviderBatchCommit(request, env, allowOrigin, reqAllowHead
         }
         if (batch.state === 'failed') {
             const failed = JSON.parse(batch.response_json || '{}');
-            return v1Error({ code: 'SUPPLIER_REJECTED', message: failed.summary || 'S&S rejected this submission.' }, allowOrigin, reqAllowHeaders, 422, { report: failed });
+            return v1Error({ code: failed.preflightFailed ? 'SUPPLIER_PREFLIGHT_FAILED' : 'SUPPLIER_REJECTED',
+                message: failed.summary || 'S&S rejected this submission.' }, allowOrigin, reqAllowHeaders,
+                failed.preflightFailed ? 424 : 422, { report: failed });
         }
         if (['submitting', 'unknown'].includes(batch.state)) return v1Error({ code: 'BATCH_RECONCILIATION_REQUIRED', message: 'This batch may already have reached S&S and must be reconciled before retrying.', batchId }, allowOrigin, reqAllowHeaders, 409);
         await db.batch([
@@ -9171,7 +9191,8 @@ async function handleProviderBatchCommit(request, env, allowOrigin, reqAllowHead
                     .bind(crypto.randomUUID(), batchId, report.outcome, Number(error.status || 0) || null, JSON.stringify(report), isoNow())
             ]);
             if (report.outcome === 'rejected') {
-                return v1Error({ code: 'SUPPLIER_REJECTED', message: report.summary, batchId }, allowOrigin, reqAllowHeaders, 422, { report });
+                return v1Error({ code: report.preflightFailed ? 'SUPPLIER_PREFLIGHT_FAILED' : 'SUPPLIER_REJECTED',
+                    message: report.summary, batchId }, allowOrigin, reqAllowHeaders, report.preflightFailed ? 424 : 422, { report });
             }
             return v1Error({ code: 'SUPPLIER_RESULT_UNKNOWN', message: report.summary, batchId }, allowOrigin, reqAllowHeaders, 502, { report });
         }

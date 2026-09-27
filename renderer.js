@@ -3236,7 +3236,8 @@ function supplierSubmissionReportFromError(error) {
   });
 }
 
-function supplierOutcomePresentation(outcome) {
+function supplierOutcomePresentation(outcome, preflightFailed = false) {
+  if (preflightFailed) return { title: 'Order request not sent', lineLabel: 'accepted', status: 'No S&S order request was sent. Retry when the issue clears.' };
   if (outcome === 'confirmed') return { title: 'All items accepted', lineLabel: 'accepted', status: 'Submitted to S&S.' };
   if (outcome === 'partial') return { title: 'Some items need attention', lineLabel: 'accepted', status: 'Partially submitted. Review the S&S feedback.' };
   if (outcome === 'rejected') return { title: 'Submission rejected', lineLabel: 'accepted', status: 'S&S rejected the submission.' };
@@ -3247,8 +3248,8 @@ function appendSupplierResultRow(body, result) {
   const row = document.createElement('tr');
   const statusCell = document.createElement('td');
   const status = document.createElement('span');
-  status.className = `ss-line-status ${result.status}`;
-  status.textContent = result.status === 'accepted' ? 'Accepted' : result.status === 'rejected' ? 'Rejected' : 'Unknown';
+  status.className = `ss-line-status ${result.status === 'preflight' ? 'rejected' : result.status}`;
+  status.textContent = result.status === 'accepted' ? 'Accepted' : result.status === 'rejected' ? 'Rejected' : result.status === 'preflight' ? 'Not sent' : 'Unknown';
   statusCell.appendChild(status);
 
   const orderCell = document.createElement('td');
@@ -3265,7 +3266,7 @@ function appendSupplierResultRow(body, result) {
   const requestedCell = document.createElement('td');
   requestedCell.textContent = result.requestedQty ?? '—';
   const acceptedCell = document.createElement('td');
-  acceptedCell.textContent = result.acceptedQty ?? (result.status === 'rejected' ? '0' : '—');
+  acceptedCell.textContent = result.acceptedQty ?? (['rejected', 'preflight'].includes(result.status) ? '0' : '—');
   const feedbackCell = document.createElement('td');
   feedbackCell.className = 'ss-line-feedback';
   feedbackCell.textContent = result.reason || (result.status === 'accepted' ? 'Accepted by S&S.' : 'No line-level feedback was returned.');
@@ -3278,7 +3279,7 @@ function showSupplierSubmissionReport(value) {
   lastSupplierSubmissionReport = report;
   const overlay = document.getElementById('ss-submission-overlay');
   const dialog = document.getElementById('ss-submission-dialog');
-  const presentation = supplierOutcomePresentation(report.outcome);
+  const presentation = supplierOutcomePresentation(report.outcome, report.preflightFailed);
   if (!overlay || !dialog) return false;
 
   dialog.dataset.outcome = report.outcome;
@@ -3292,16 +3293,19 @@ function showSupplierSubmissionReport(value) {
   const body = document.getElementById('ss-submission-lines-body');
   body.replaceChildren();
   report.acceptedLines.forEach(line => appendSupplierResultRow(body, { ...line, status: 'accepted' }));
-  report.rejectedLines.forEach(line => appendSupplierResultRow(body, { ...line, acceptedQty: 0, status: 'rejected' }));
+  report.rejectedLines.forEach(line => appendSupplierResultRow(body, { ...line, acceptedQty: 0, status: report.preflightFailed ? 'preflight' : 'rejected' }));
   if (!body.childElementCount) {
     appendSupplierResultRow(body, {
-      status: report.outcome === 'unknown' ? 'unknown' : report.outcome === 'rejected' ? 'rejected' : 'accepted',
+      status: report.preflightFailed ? 'preflight' : report.outcome === 'unknown' ? 'unknown' : report.outcome === 'rejected' ? 'rejected' : 'accepted',
       reason: report.summary
     });
   }
 
   const warning = document.getElementById('ss-submission-warning');
-  if (report.outcome === 'unknown') {
+  if (report.preflightFailed) {
+    warning.textContent = 'No order request was sent to S&S. You can retry after the issue clears.';
+    warning.classList.remove('hidden');
+  } else if (report.outcome === 'unknown') {
     warning.textContent = 'Do not submit this batch again yet. Use the reference below to confirm whether S&S created an order before retrying.';
     warning.classList.remove('hidden');
   } else if (report.outcome === 'partial') {
@@ -3309,6 +3313,9 @@ function showSupplierSubmissionReport(value) {
     warning.classList.remove('hidden');
   } else if (Array.isArray(report.metadataRepairRequired) && report.metadataRepairRequired.length) {
     warning.textContent = 'S&S accepted the order, but one or more board cards still need an automatic status repair. Do not submit the batch again.';
+    warning.classList.remove('hidden');
+  } else if (Array.isArray(report.priceWarnings) && report.priceWarnings.length) {
+    warning.textContent = 'S&S accepted the submission, but the estimated price was incomplete. Verify the total in S&S.';
     warning.classList.remove('hidden');
   } else {
     warning.textContent = '';
@@ -3432,7 +3439,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         await renderBoardFromLocalState(touchedStatuses);
         showSupplierSubmissionReport(report);
-        const presentation = supplierOutcomePresentation(report.outcome);
+        const presentation = supplierOutcomePresentation(report.outcome, report.preflightFailed);
         submitBtn.textContent = report.outcome === 'partial' ? 'Review result' : 'Submitted';
         if (submitStatus) submitStatus.textContent = presentation.status;
 
@@ -3445,7 +3452,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const reportShown = showSupplierSubmissionReport(report);
         if (!reportShown) alert(report.summary);
         submitBtn.textContent = 'Review result';
-        if (submitStatus) submitStatus.textContent = supplierOutcomePresentation(report.outcome).status;
+        if (submitStatus) submitStatus.textContent = supplierOutcomePresentation(report.outcome, report.preflightFailed).status;
         setTimeout(() => {
           submitBtn.textContent = 'Add to S&S Cart';
         }, 3000);
