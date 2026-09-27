@@ -3210,7 +3210,9 @@ function normalizedSupplierSubmissionReport(value, fallbackMessage = '') {
     supplierOrderNumbers: Array.isArray(source.supplierOrderNumbers)
       ? source.supplierOrderNumbers.filter(Boolean)
       : [source.supplierOrderNumber].filter(Boolean),
-    summary: source.summary || fallbackMessage || (
+    summary: (source.summary === 'S&S did not return a definite result. Do not retry until the PO is reconciled.'
+      ? 'S&S did not confirm the submission. Check S&S before trying again.'
+      : source.summary) || fallbackMessage || (
       outcome === 'confirmed'
         ? 'S&S accepted the submission.'
         : outcome === 'partial'
@@ -3287,7 +3289,8 @@ function showSupplierSubmissionReport(value) {
   document.getElementById('ss-submission-summary').textContent = report.summary;
   document.getElementById('ss-submission-orders').textContent = `${report.acceptedOrderCount} / ${report.orderCount}`;
   document.getElementById('ss-submission-lines').textContent = `${report.acceptedLines.length} ${presentation.lineLabel}`;
-  document.getElementById('ss-submission-order-number').textContent = report.supplierOrderNumbers.join(', ') || 'Not created';
+  document.getElementById('ss-submission-order-number').textContent = report.supplierOrderNumbers.join(', ')
+    || (report.outcome === 'unknown' ? 'Not confirmed' : 'Not created');
   document.getElementById('ss-submission-reference').textContent = report.batchId || report.poNumber || 'Unavailable';
 
   const body = document.getElementById('ss-submission-lines-body');
@@ -3306,7 +3309,7 @@ function showSupplierSubmissionReport(value) {
     warning.textContent = 'No order request was sent to S&S. You can retry after the issue clears.';
     warning.classList.remove('hidden');
   } else if (report.outcome === 'unknown') {
-    warning.textContent = 'Do not submit this batch again yet. Use the reference below to confirm whether S&S created an order before retrying.';
+    warning.textContent = 'Do not submit this batch again yet. Check your S&S cart for these items and order history for an unexpected purchase. The reference below identifies this Order Manager attempt; it is not an S&S order number.';
     warning.classList.remove('hidden');
   } else if (report.outcome === 'partial') {
     warning.textContent = 'Only fully accepted PrintMO orders moved to In S&S Cart. Orders containing rejected garments remain in Build Order.';
