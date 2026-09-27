@@ -339,6 +339,7 @@ async function run() {
     error: Object.assign(new Error('Order POST returned HTTP 503.'), { status: 502 }),
   });
   assert.equal(uncertainPostReport.outcome, 'unknown', 'a 5xx after the order POST must remain locked for reconciliation');
+  assert(!uncertainPostReport.summary.includes('PO'), 'an uncertain cart submission must not imply an S&S PO exists');
   const pricingWarningReport = module.normalizeSupplierCommitReport({
     ...supplierReportFixture,
     payload: { ok: true, orderNumber: 'SS-REPORT-2', subtotal: null,

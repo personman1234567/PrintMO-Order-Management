@@ -9001,7 +9001,7 @@ function normalizeSupplierCommitReport({ payload, error, requestedLines, lineSou
             ? `${acceptedOrderCount} of ${orderIds.length} ${orderIds.length === 1 ? 'order was' : 'orders were'} fully accepted. Review the rejected garments before retrying.`
             : outcome === 'rejected'
                 ? 'S&S rejected this submission. No rejected order was advanced.'
-                : 'S&S did not return a definite result. Do not retry until the PO is reconciled.';
+                : 'S&S did not confirm the submission. Check S&S before trying again.';
 
     return {
         ok: outcome === 'confirmed' || outcome === 'partial',
