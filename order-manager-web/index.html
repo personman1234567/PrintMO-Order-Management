@@ -78,6 +78,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./desktop.css" media="(min-width: 901px)" />
   <link rel="stylesheet" href="./mobile.css" media="(max-width: 900px)" />
   <link rel="stylesheet" href="./accessibility-hardening.css" />
+  <link rel="stylesheet" href="./draft-orders.css" />
   <link rel="stylesheet" href="./shopify-preview.css" />
   <link rel="stylesheet" href="./order-detail-split.css" />
   <link rel="stylesheet" href="./shelf-allocation.css" />
@@ -207,6 +208,33 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         <span id="pipeline-count">0</span>
         <button id="mobile-selection-toggle" class="mobile-select-toggle" type="button" aria-pressed="false" title="Toggle selection mode">Select</button>
       </div>
+      <div id="pipeline-view-tabs" role="tablist" aria-label="Order pipeline views">
+        <button type="button" role="tab" data-pipeline-view="orders" aria-selected="true" aria-controls="col-received">Orders</button>
+        <button type="button" role="tab" data-pipeline-view="drafts" aria-selected="false" aria-controls="draft-orders-workspace" tabindex="-1">Draft Orders</button>
+      </div>
+      <section id="draft-orders-workspace" role="tabpanel" aria-label="Draft Orders" hidden>
+        <div class="draft-browse-controls">
+          <button id="draft-orders-refresh" type="button">Refresh drafts</button>
+        </div>
+        <p id="draft-orders-status" role="status" aria-live="polite">Select Draft Orders to load Shopify drafts.</p>
+        <div id="draft-orders-browse">
+          <div class="draft-browse-controls">
+            <form id="draft-orders-search" role="search">
+              <input id="draft-orders-search-input" type="search" aria-label="Search draft orders" placeholder="Draft number or customer email" />
+              <button type="submit">Search</button>
+            </form>
+            <select id="draft-orders-filter" aria-label="Draft order status">
+              <option value="active">All active drafts</option>
+              <option value="open">Saved drafts</option>
+              <option value="invoice">Invoice sent</option>
+              <option value="converted">Converted to orders</option>
+            </select>
+          </div>
+          <div id="draft-orders-list" aria-label="Draft order tiles"></div>
+          <button id="draft-orders-load-more" type="button" hidden>Load more drafts</button>
+        </div>
+        <div id="draft-orders-detail" hidden></div>
+      </section>
       <div id="pipeline-selection-shell" class="mobile-selection-shell" aria-hidden="true">
         <div class="selection-toolbar-placeholder" aria-hidden="true">Selection actions will appear here when selection mode is enabled.</div>
       </div>
@@ -1096,6 +1124,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./order-detail-state.js"></script>
   <script src="./renderer.js"></script>
   <script src="./previous-orders.js"></script>
+  <script src="./draft-orders.js"></script>
   <script src="./shopify-preview.js"></script>
   <script src="./dashboard-triage-enhancements.js"></script>
   <script src="./blanks-batches.js"></script>

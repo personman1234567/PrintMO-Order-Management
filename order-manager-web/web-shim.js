@@ -864,6 +864,25 @@ window.api.getQueue = async ({ onPage } = {}) => {
   return Array.isArray(data) ? data : (data?.orders || []);
 };
 
+// Draft preparation uses the authenticated Worker and never enters the shared queue adapter.
+window.api.getDraftOrders = ({ cursor, q, status } = {}) => apiFetch(`/order-manager/v1/drafts${buildQuery({ cursor, q, status })}`);
+window.api.getDraftOrder = id => apiFetch(`/order-manager/v1/drafts/${encodeURIComponent(id)}`);
+window.api.getDraftArtworkUrl = assetId => candidateAssetObjectUrl({ assetId });
+window.api.uploadDraftArtwork = (id, file, metadata) => {
+  const form = new FormData();
+  form.set('file', file, file.name);
+  for (const [key, value] of Object.entries(metadata)) form.set(key, Array.isArray(value) ? JSON.stringify(value) : value);
+  return apiFetch(`/order-manager/v1/drafts/${encodeURIComponent(id)}/assets`, { method: 'POST', body: form });
+};
+window.api.assignDraftArtwork = (id, assetId, metadata) => apiFetch(
+  `/order-manager/v1/drafts/${encodeURIComponent(id)}/assets/${encodeURIComponent(assetId)}`,
+  { method: 'PATCH', body: JSON.stringify(metadata) }
+);
+window.api.removeDraftArtwork = (id, assetId, revision) => apiFetch(
+  `/order-manager/v1/drafts/${encodeURIComponent(id)}/assets/${encodeURIComponent(assetId)}`,
+  { method: 'DELETE', body: JSON.stringify({ revision }) }
+);
+
 // Fulfilled history is intentionally enumerated separately from the active
 // board. List responses contain no asset summaries; getOrderDetail hydrates
 // complete artwork only after an operator opens one order.

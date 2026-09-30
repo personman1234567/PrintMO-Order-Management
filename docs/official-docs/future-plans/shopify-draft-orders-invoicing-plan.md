@@ -1,143 +1,81 @@
-# Shopify Draft Orders & Invoicing Engine Plan
+# Shopify Draft Artwork Preparation
 
-- **Status**: `[Draft / Idea]`
-- **Owner / Target Milestone**: `v1.5 Backlog`
-
----
+- **Status**: `[Implemented Candidate]`
+- **Owner / Target Milestone**: `TJ / Draft artwork release after permissions and migration`
 
 ## Summary & Intent
 
-Currently, creating quotes, custom estimates, or partial customer orders requires shop owners to leave PrintMO Order Manager and operate inside Shopify Admin. This introduces context switching, friction when adding print-shop specific charges (setup fees, digitizing, screen charges, rush fees), and difficulty tracking unpaid quotes alongside active shop production.
+Prepare mockups and PNG/SVG print files before a Shopify draft is purchased. The embedded Order Pipeline has an **Orders / Draft Orders** toggle and draft tiles for saved drafts, emailed invoices, and converted drafts. Operators select the exact garment line items (including every applicable size) and a placement for each upload. Shopify remains the quote, invoice, customer, and payment authority.
 
-This architectural proposal designs a **Shopify Draft Orders & Invoicing Engine** built natively into PrintMO Order Manager. It allows shop owners to:
-1. Search products, variants, colors, sizes, and images directly via Shopify Admin GraphQL API.
-2. Build custom quotes with 1-click shop fee buttons (Art Setup, Screen Charges, Digitizing, Rush Fees).
-3. Save partially completed Draft Orders to resume or edit at any time.
-4. Send official Shopify email invoices (`draftOrderInvoiceSend`) directly to customers from PrintMO.
-5. Track active draft states with live aging metrics (`Awaiting Payment: 3d 14h`).
-6. Automatically transition completed payments into the PrintMO Kanban Order Pipeline (`Payment Received`).
-
----
+The September 30 owner decisions supersede the broader July invoicing-engine proposal: this release does not create quotes, send invoices, write draft commerce, or introduce separate credentials or customer-management permissions.
 
 ## Current Continuation State
 
-- **Current state**: Workflow concepts and UI ideas are drafted; no draft-order workspace or invoicing endpoint has shipped.
-- **Next safe action**: Verify current Shopify DraftOrder mutations, installed-app scope behavior, customer-data requirements, invoice delivery constraints, and webhook transitions from primary Shopify documentation.
-- **Remaining blockers**: Permission model, fee/product representation, draft metadata ownership, customer access, audit/idempotency, and payment-to-production enrollment.
-- **Owner / external actions**: Confirm quote/invoice workflow, fee catalog, customer-contact policy, and required operators.
-- **Last verified evidence**: No executable implementation exists; the security/token model below remains a proposal requiring verification.
+- **Current state**: Live and enabled on 2026-09-30. Production D1 migration 0012 applied; Worker `f6390d4b-6da4-4d2e-a866-36bc4e068841`; Pages marker `1790805582875`; Shopify release `draft-artwork-2026-09-30` includes draft create/update/delete notifications.
+- **Next safe action**: Owner hands-on review in Draft Orders beside Orders. Stop further agent testing as requested.
+- **Remaining blockers**: Live artwork upload/payment/conversion and changed/duplicate-garment acceptance remain unverified. Release blockers are cleared.
+- **Owner / external actions**: Owner authorized deployment after updating draft permission and will test the workflow.
+- **Last verified evidence**: Production marker and actual `DRAFT_ORDERS_ENABLED=1` verified; existing flags including `SS_TEST_ORDER=1` preserved. Live invoice-sent drafts and garment/placement controls loaded in Shopify Admin. Shopify app build and configuration release succeeded. Previous local service, regression and synthetic browser checks passed; no live purchase acceptance claimed.
+- **Recovery evidence**: Pre-migration D1 bookmark `00004566-00000576-000050f6-6cace2ff8544d964dedc6c9a60ffd1b3`; first disabled Worker release `ab11ca21-e490-4ab1-ba44-ed8fdbdbdf2b`; deployments used `--keep-vars`. Shopify release: https://dev.shopify.com/dashboard/102036845/apps/305079713793/versions/1150423072769.
 
 ## Open Questions & Brainstorming
 
-1. Can least privilege be achieved through one installed app plus route-level authorization, or are separately installed credentials genuinely required?
-2. Which customer fields are operationally necessary for quote creation and invoice delivery?
-3. How are custom fees represented so accounting, discounts, taxes, and re-opened drafts remain correct?
-4. Which Shopify event enrolls a paid draft into production exactly once?
-
-## Security Architecture: Micro-Scoped Least-Privilege Tokens
-
-To prevent over-privileged credential exposure ("all permissions on one key"), API authentication is compartmentalized into **three isolated micro-scoped tokens** enforced by the Cloudflare Worker proxy firewall:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                   CLOUDFLARE WORKER PROXY GATEWAY FIREWALL                   │
-│                                                                             │
-│  [ ENDPOINT 1: /api/catalog/search ] ──► Token A (read_products ONLY)      │
-│  • Can ONLY search titles, SKUs & images. Cannot see customers or money!    │
-│                                                                             │
-│  [ ENDPOINT 2: /api/drafts/create ]   ──► Token B (write_draft_orders ONLY)  │
-│  • Can ONLY build draft orders & send invoices.                            │
-│                                                                             │
-│  [ ENDPOINT 3: /api/webhooks/ingest ] ──► Token C (read_orders ONLY)       │
-│  • Can ONLY invalidate/reconcile paid Shopify orders.                      │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-1. **Token A (Catalog Search)**: Scope `read_products` ONLY. If compromised, an attacker can only view public catalog items—zero access to customer records, financial data, or order creation.
-2. **Token B (Drafts & Invoicing)**: Scopes `write_draft_orders` + `write_customers` ONLY. Used strictly by authenticated proxy routes for draft creation and invoice delivery.
-3. **Token C (Webhook Listener)**: Scope `read_orders` ONLY. Used strictly for order ingestion.
-4. **Endpoint Firewalling**: Client scripts (Electron/Web) never hold API tokens. Cloudflare Worker proxy routes incoming requests, verifies Passkey/mTLS signatures, and invokes the specific micro-scoped token endpoint.
-
----
-
-## Data Persistence & Multi-Device Synchronization
-
-### Shopify Cloud as Master Data Store (Zero Redis Dependency for Drafts)
-- **Persisted Cloud Storage**: When a draft order is created or updated in PrintMO, Shopify persists the entire draft order record (`draftOrderCreate`, `draftOrderUpdate`) on Shopify’s cloud infrastructure.
-- **Multi-Device Parity**: Because draft orders are fetched directly from Shopify GraphQL API (`draftOrders(query: "status:open")`), **all devices** (Partner 1 Desktop, Partner 2 Laptop, Mobile, Shopify Admin) stay **100% in sync in real time without needing Redis storage for draft orders**.
-
-### Custom PrintMO Metadata via Shopify Tags & Metafields
-To persist print-shop specific metadata directly on Shopify without external databases:
-- **Shopify Tags**: Draft orders receive functional tags (e.g. `PrintMO_Draft`, `Art_Approved`, `Deposit_Paid`).
-- **Shopify Metafields**: Extended metadata (e.g. quote version, art proof URL, target print date) is stored in the `printmo` metafield namespace on the Shopify Draft Order object.
-
----
-
-## Resolved Architectural Decisions & QoL Polishing
-
-Following interactive design alignment, the following core design decisions and Quality-of-Life (QoL) features have been locked:
-
-### 1. UI Workspace & Placement
-- **Decision**: Dedicated **Draft Orders Workspace Panel/Tab** in the navigation bar.
-- **Layout**: Features a grid/list of active draft order cards displaying real-time aging metrics (e.g. `Awaiting Payment: 2d 5h`) alongside a collapsible `+ New Draft Order` builder drawer.
-
-### 2. Product Search & Custom Shop Fees
-- **Decision**: **Unified Catalog + Custom Fee Toolbar**.
-- **Capabilities**: Real-time Shopify product search returning variant titles, SKUs, pricing, color/size swatches, and thumbnail images. Includes 1-click preset buttons for print shop surcharges: `Art Setup Fee`, `Screen Preparation`, `Digitizing Fee`, and `Rush Order Surcharge`.
-
-### 3. Invoice Delivery & Aging Metrics
-- **Decision**: **1-Click Shopify Invoice Dispatch + Auto-Pipeline Transition**.
-- **Workflow**:
-  - Clicking `Send Invoice` calls Shopify GraphQL mutation `draftOrderInvoiceSend` to send official branded email invoices.
-  - Cards track payment aging metrics (`Draft Created` $\rightarrow$ `Invoice Sent: 4h ago` $\rightarrow$ `Awaiting Payment: 3d`).
-  - When payment is completed on Shopify, webhook ingestion initializes the app-owned PrintMO production metafield at `received` and refreshes the D1 board projection.
-
-### 4. Customer Lookup & Quick Creation
-- **Decision**: **Customer Search + Quick Create Modal**.
-- **Capabilities**: Real-time autocomplete searching existing Shopify customer records by name, email, phone, or company. Includes a `+ New Customer` inline modal to register new customer profiles in Shopify on the fly without leaving PrintMO.
-
-### 5. Print-Shop Specific QoL Enhancements
-- **Garment Size Matrix Quick-Grid**: Renders a single horizontal size entry grid `[ S: 5 ] [ M: 15 ] [ L: 20 ] [ XL: 10 ] [ 2XL: 0 ]` when a garment color is chosen, automatically generating all size variant line items in 1 click instead of adding sizes individually.
-- **1-Click Quote Duplicator**: A `Duplicate Draft` action allowing shop owners to clone a previous draft quote for re-orders or returning clients in 1 click.
-- **B2B Tax Exemption & Reseller Certificate Toggle**: A 1-click `Tax Exempt` toggle (`taxExempt: true`), saving reseller certificate IDs to Shopify custom attributes for non-profits, schools, and wholesale clients.
-- **Quote Expiration & Stock Lock Warnings**: Configurable quote validity windows (e.g., `Valid for 7 Days`). Displays warning alerts if an invoice is paid past expiration so shop owners can re-verify blank apparel prices/stock with S&S/SanMar.
-- **Automated Overdue Payment Reminders**: Cards turn red if unpaid after 5 days (`Overdue: 5d`). Provides a 1-click `Send Payment Reminder` CTA button.
-- **Art Proof Attachment in Invoice**: Option to attach proof data URLs/links directly into the `customMessage` field during `draftOrderInvoiceSend`.
-- **Deposit / Partial Billing Support**: Ability to set a custom deposit percentage (e.g., 50% deposit) using Shopify custom line-item discounts.
-
----
+- Verify real saved drafts and invoice-sent drafts return the expected display name, address-name/email fallback, garment attributes, and presentment currency under the installed app's current customer-data approval. The query omits the customer relation and full addresses.
+- Confirm draft-to-order line identity with real custom items and personalized attributes. Any ambiguous association stays unassigned for operator review; duplicate SKUs never justify guessing.
+- Retention policy for deleted drafts and removed private artwork remains a later owner decision. This feature preserves bytes and records, with no destructive cleanup job.
+- A separate quoting/invoicing product, if wanted later, needs a new scoped design and permission review.
 
 ## Technical Specification & Task Checklist
 
-### Phase 1: Micro-Scoped API Credentials & Proxy Security Firewall
-- [ ] Configure `Token A` (`read_products`), `Token B` (`write_draft_orders`, `write_customers`), and `Token C` (`read_orders`) in Shopify Admin & Cloudflare Secrets.
-- [ ] Build proxy middleware in `worker.js` mapping `/api/catalog/*` to Token A and `/api/drafts/*` to Token B with Passkey/mTLS authorization checks.
+### Experience
 
-### Phase 2: GraphQL Data Engine & Metafield Sync
-- [ ] Implement Shopify GraphQL queries:
-  - Catalog Search: `products(query: $query)` returning titles, SKUs, variants, prices, and `featuredMedia`.
-  - Customer Search & Quick Creation: `customers(query: $query)` and `customerCreate`.
-  - Draft Order CRUD: `draftOrderCreate`, `draftOrderUpdate`, `draftOrderDelete`, `draftOrders(query: $query)`.
-  - Tax Calculation: `draftOrderCalculate`.
-  - Invoice Delivery: `draftOrderInvoiceSend`.
-- [ ] Implement Shopify Metafield & Tag writer (`namespace: "printmo"`) to persist custom shop notes, art proof URLs, and quote versions directly on Shopify.
+- [x] Nested Draft Orders toggle, matching tile layout, status filters, search, cursor pagination, explicit permission/loading/error/empty states.
+- [x] Draft detail in the pipeline scroll area; keyboard tab navigation and focus restoration; responsive controls and an accessible in-app artwork preview.
+- [x] Explicit garment selections and named placements: front, back, left/right chest, left/right sleeve, other. Upload one or multiple files using one selected assignment; reassign each attachment afterward.
+- [x] Print exports: PNG/SVG. Mockups: PNG/JPG/WebP. Maximum 50 MB per file and 100 active files per draft.
+- [x] Converted drafts retain previews and allow assignment repair against the purchased order's current items. New uploads/removal happen through the normal purchased-order workflow.
+- [x] Purchased-order detail keeps exact mockup associations, displays placement labels on draft artwork, and exposes an explicit reassignment warning when needed.
 
-### Phase 3: Draft Orders Workspace UI & Builder Drawer
-- [ ] Create `Draft Orders` tab in navigation shell and standalone drawer UI.
-- [ ] Build product search autocomplete component displaying variant thumbnails, size/color dropdowns, and unit prices.
-- [ ] Implement Garment Size Matrix Quick-Grid (`[S][M][L][XL][2XL]`).
-- [ ] Add Custom Shop Fee toolbar (`Art Setup`, `Screen Charge`, `Digitizing`, `Rush Fee`).
-- [ ] Implement draft line-item table with total price, tax exemption toggle, and discount input fields.
-- [ ] Add 1-click `Duplicate Draft` CTA button.
+### Ownership and handoff
 
-### Phase 4: Invoice Dispatch, Aging Metrics & Webhook Transition
-- [ ] Implement `Send Invoice` action with custom shop message input modal and art proof attachment options.
-- [ ] Add aging badge renderer (`Awaiting Payment: Xd Yh`) and overdue warning alerts (`Overdue: 5d`) to draft order tiles.
-- [ ] Wire webhook/polling reconciliation: when a draft transitions to `orders/paid`, idempotently initialize the canonical production metafield at `received` and refresh the D1 board projection.
+- Shopify owns draft status, invoice state, commerce, and the resulting `DraftOrder.order` relationship. Only `read_draft_orders` is added to the existing app scopes; no `write_draft_orders` or `read_customers` scope is added. See Shopify's [DraftOrder reference](https://shopify.dev/docs/api/admin-graphql/latest/objects/DraftOrder) and [draftOrders search/pagination reference](https://shopify.dev/docs/api/admin-graphql/latest/queries/draftOrders).
+- D1 stores draft projections, file manifests, immutable item snapshots, assignment revisions, conversion progress, and operator audit events. R2 stores private file bytes. No draft or production writes use Redis.
+- Authenticated `/order-manager/v1/drafts` routes use the existing partner identity boundary. Private previews reuse short-lived asset tickets; SVG responses retain sandbox and `nosniff` protections. Object keys never appear in draft DTOs.
+- Upload IDs plus file checksums make retries reuse one asset identity and byte object. Assignment/removal require an expected revision. A removal that loses the conversion race cannot remove purchased artwork.
+- On conversion, the same asset ID and R2 object are linked into the existing order manifest/link tables. All selected items must match uniquely by SKU, title, variant title, and all custom attributes. Within the same item kind, matching IDs are preferred only when that identity still matches. If any selection is ambiguous, the file transfers with `needs_review` and no guessed garment links.
+- Draft create/update/delete webhooks use the existing raw-body HMAC/shop boundary. Draft IDs never become Order IDs or production projection records. Failed draft deliveries can be retried; repeated successful deliveries are deduplicated.
+- `orders/paid` can repair known draft relationships or a matching draft in a bounded recent-conversion page. The existing five-minute cron rotates through 20 prepared drafts per run to recover missed/late delivery or interrupted promotion. Large backlogs may require multiple cron runs; handoff is eventual, not a promise of instantaneous delivery.
+- Conversion only attaches files. Existing paid-order eligibility, canonical production state, and intake gates remain authoritative.
 
----
+### Source boundaries
+
+- `order-manager-proxy/draft-orders.mjs`: queries, uploads, assignment validation, promotion, reconciliation.
+- `order-manager-proxy/worker.js`: authenticated routing, shared asset tickets, draft webhook handling and paid/cron repair.
+- `order-manager-proxy/migrations/0012_draft_artwork.sql`: draft records and additional order-link placement/review fields.
+- `order-manager-web/draft-orders.js`, `draft-orders.css`, `index.html`: embedded draft workspace.
+- `order-manager-web/web-shim.js`: authenticated browser API adapter; root `renderer.js` and `detail-overlay-enhancements.js`: purchased-order artwork labels and exact associations.
+- `order-manager-proxy/draft-orders.test.mjs`: service and Worker boundary tests included in proxy `npm test`.
+- The root renderer remains readable authority. Pages preparation copies it into the output bundle; the optimized tracked web fallback is preserved. The Electron shell is not extended by this embedded-web feature.
+
+### Release and acceptance
+
+1. Run `npm run verify:phase2`, `cd order-manager-proxy && npm test`, `npm run docs:check`, and `npm run prepare:cloudflare`. Complete the existing Shopify app build and Wrangler dry-run release checks where those CLIs are available.
+2. Apply D1 migration `0012_draft_artwork.sql` before deploying the Worker: the shared order-detail asset query now selects its added columns even while the feature flag is off. Use the registered cutover/release procedures in [Shopify candidate cutover](../runbooks/shopify-candidate-cutover.md).
+3. Release `shopify.app.toml` with `read_draft_orders` and the `draft_orders/create`, `draft_orders/update`, and `draft_orders/delete` subscriptions. Approve the installed app's permission update and verify the grant; editing TOML alone does not grant access.
+4. Deploy the Worker with the flag off first, then explicitly enable `DRAFT_ORDERS_ENABLED=1` after scope and migration verification. `keep_vars` is enabled: verify the actual deployed flag rather than assuming a local config edit changes it.
+5. Publish the prepared Pages bundle through the registered production deployment command and verify its served release marker.
+6. Prepare a real test draft with mockups and PNG/SVG print files assigned to several sizes and placements. Send the invoice in Shopify. Buy/pay the draft and confirm exactly one retained asset per upload, the correct purchased garment links, normal paid intake, and unchanged production readiness.
+7. Repeat with a changed garment and duplicate custom items: files remain visible and flagged; manual reassignment repairs the links. Verify invalid auth, scope failure, deleted draft, retry, and mobile preview/upload behavior.
+8. Verify source switching, ordinary Shopify orders, and existing manual artwork behavior. Graduate stable verified facts into current docs only after live acceptance.
+
+- [x] Remote migration and permission approval.
+- [x] Worker Wrangler dry-run compilation and Pages bundle preparation.
+- [x] Shopify app build and live Worker/Pages/configuration releases.
+- [ ] Real draft invoice/payment handoff and desktop/mobile acceptance.
 
 ## Progress Log
 
-- **2026-07-21**: Proposal expanded into Stage 1 locked spec with Micro-Scoped Token Security Architecture, Shopify Cloud Data Persistence (Zero Redis dependency for drafts), multi-device parity rules, size matrix quick-grid, B2B tax exemption toggles, and quote expiration safeguards in `future-plans/`.
-- **2026-07-23**: Removed the paid-order handoff to `shopifyOrdersQueue`; future implementation must use the Redis-free Shopify/D1/R2 data plane.
+- **2026-07-21**: A broader quote/invoicing engine was proposed. Its separate-token, customer-creation, fee-builder, invoice-send, and production-init assumptions are superseded by this preparation-only scope.
+- **2026-09-30**: Owner approved implementation of a nested draft tile view, explicit garment/placement assignments, mockups and PNG/SVG print exports, with invoices managed in Shopify. Implemented the authenticated D1/R2 preparation and order handoff candidate, with focused tests and a local Pages preview; live activation remains pending.
+
+- **2026-09-30 release**: Owner authorized production deployment. Migration, Worker/Pages and Shopify notification configuration released successfully. Owner will test; further agent checks stopped at their request.

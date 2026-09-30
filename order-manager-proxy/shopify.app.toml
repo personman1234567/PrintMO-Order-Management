@@ -8,7 +8,7 @@ embedded = true
 redirect_urls = [ "https://print-mo-order-manager.pages.dev/auth/callback" ]
 
 [access_scopes]
-scopes = "read_orders,write_orders,read_all_orders,read_merchant_managed_fulfillment_orders,read_third_party_fulfillment_orders,read_products"
+scopes = "read_draft_orders,read_orders,write_orders,read_all_orders,read_merchant_managed_fulfillment_orders,read_third_party_fulfillment_orders,read_products"
 
 [order.metafields.printmo.production_state_v1]
 name = "PrintMO production state"
@@ -37,4 +37,8 @@ api_version = "2026-07"
 
   [[webhooks.subscriptions]]
   topics = [ "app/uninstalled" ]
+  uri = "https://order-manager-proxy.printmobusiness.workers.dev/order-manager/v1/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  topics = [ "draft_orders/create", "draft_orders/update", "draft_orders/delete" ]
   uri = "https://order-manager-proxy.printmobusiness.workers.dev/order-manager/v1/webhooks/shopify"

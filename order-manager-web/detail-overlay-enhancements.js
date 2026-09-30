@@ -2094,7 +2094,9 @@
     if (!linkedIds.size) {
       const label = document.createElement('span');
       label.className = 'detail-mockup-context-order-level';
-      label.textContent = 'Order-level artwork · not linked to a specific garment';
+      label.textContent = thumb?.dataset?.exactArtworkAssignments === 'true'
+        ? 'Draft artwork · garment assignment needs review'
+        : 'Order-level artwork · not linked to a specific garment';
       context.appendChild(label);
       context.classList.remove('hidden');
       return;
@@ -2109,7 +2111,7 @@
     (order.items || [])
       .filter(item => {
         if (linkedIds.has(String(item?.id || ''))) return true;
-        return artworkScopes.has(mockupItemArtworkScopeKey(item));
+        return thumb?.dataset?.exactArtworkAssignments !== 'true' && artworkScopes.has(mockupItemArtworkScopeKey(item));
       })
       .forEach(item => {
         const product = String(item.title || 'Linked item').trim();
@@ -2123,7 +2125,7 @@
 
     const heading = document.createElement('span');
     heading.className = 'detail-mockup-context-label';
-    heading.textContent = 'Applies to';
+    heading.textContent = thumb?.dataset?.artworkPlacement ? `${thumb.dataset.artworkPlacement} · Applies to` : 'Applies to';
     const list = document.createElement('div');
     list.className = 'detail-mockup-context-list';
     const productGroups = new Map();

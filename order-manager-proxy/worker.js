@@ -1,4 +1,15 @@
 // worker.js — Order Manager proxy + R2 Storage Browser endpoints
+import { createDraftOrderService } from './draft-orders.mjs';
+
+function draftOrderService(env) {
+    return createDraftOrderService(env, { shop: () => d1Shop(env), graphql: coordinatorGraphQL });
+}
+async function handleDraftOrderRequest(request, env, origin, headers, identity) {
+    try {
+        const result = await draftOrderService(env).handle(request, `${identity.kind}:${identity.subject}`);
+        return jsonResponse(result, origin, headers);
+    } catch (error) { return v1Error(error, origin, headers, error.status || 500); }
+}
 const oidcCache = new Map();
 
 function decodeBase64Url(value) {
@@ -161,6 +172,10 @@ export default {
                 "WWW-Authenticate": 'Bearer realm="printmo"',
                 "X-Shopify-Retry-Invalid-Session-Request": "1"
             });
+        }
+
+        if (url.pathname === '/order-manager/v1/drafts' || url.pathname.startsWith('/order-manager/v1/drafts/')) {
+            return handleDraftOrderRequest(request, env, allowOrigin || origin || '*', reqAllowHeaders, identity);
         }
 
         // -----------------------------
@@ -487,6 +502,9 @@ export default {
             }
         }
         if (event.cron === "*/5 * * * *") {
+            if (env.DRAFT_ORDERS_ENABLED === '1') ctx.waitUntil(draftOrderService(env).reconcile().catch(error => {
+                console.error('Draft artwork reconciliation failed:', error.code || 'DRAFT_SYNC_FAILED');
+            }));
             ctx.waitUntil(syncSupplierOrderStatuses(env).catch(err => {
                 console.error('S&S order status sync error:', String(err?.message || err));
             }));
@@ -5633,6 +5651,7 @@ async function d1AssetsForOrder(env, shopId, gid) {
              COALESCE(links.role, manifests.role, '') AS role,
              COALESCE(links.side, manifests.side, '') AS side,
              COALESCE(NULLIF(links.source_key, ''), manifests.source_key, '') AS association_source_key,
+             links.placement, links.assignment_status, links.assignment_label, links.origin_draft_gid,
              manifests.created_at
       FROM asset_manifests AS manifests
       LEFT JOIN asset_manifest_links AS links ON links.asset_id = manifests.id
@@ -5651,6 +5670,10 @@ async function d1AssetsForOrder(env, shopId, gid) {
             designRef: row.design_ref || null,
             role: row.role || null,
             side: row.side || null,
+            placement: row.placement || null,
+            assignmentStatus: row.assignment_status || null,
+            assignmentLabel: row.assignment_label || null,
+            originDraftId: row.origin_draft_gid || null,
             manualUpload,
             removable: manualUpload
         };
@@ -9255,11 +9278,12 @@ async function handleV1AssetReadTicket(request, env, allowOrigin, reqAllowHeader
     try {
         const assetId = assetIdFromPath(new URL(request.url).pathname);
         const shop = await d1Shop(env);
-        const asset = await requireOrderDb(env).prepare(`
+        let asset = await requireOrderDb(env).prepare(`
           SELECT id
           FROM asset_manifests
           WHERE id = ? AND shop_id = ? AND state = 'active'
         `).bind(assetId, shop.id).first();
+        if (!asset && env.DRAFT_ORDERS_ENABLED === '1') asset = await draftOrderService(env).findAsset(assetId);
         if (!asset) {
             return v1Error({ code: 'ASSET_NOT_FOUND', message: 'Asset manifest was not found.' }, allowOrigin, reqAllowHeaders, 404);
         }
@@ -9278,11 +9302,12 @@ async function handleV1AssetRead(request, env, allowOrigin, reqAllowHeaders) {
         if (!ticket || ticket.assetId !== assetId) return v1Error({ code: 'INVALID_ASSET_TICKET', message: 'Asset ticket is invalid or expired' }, allowOrigin, reqAllowHeaders, 401);
         if (!env.R2_BUCKET) return v1Error({ code: 'R2_NOT_CONFIGURED', message: 'Private artwork storage is not configured' }, allowOrigin, reqAllowHeaders, 503);
         const shop = await d1Shop(env);
-        const asset = await requireOrderDb(env).prepare(`
+        let asset = await requireOrderDb(env).prepare(`
           SELECT object_key
           FROM asset_manifests
           WHERE id = ? AND shop_id = ? AND state = 'active'
         `).bind(assetId, shop.id).first();
+        if (!asset && env.DRAFT_ORDERS_ENABLED === '1') asset = await draftOrderService(env).findAsset(assetId);
         if (!asset) return v1Error({ code: 'ASSET_NOT_FOUND', message: 'Asset manifest was not found' }, allowOrigin, reqAllowHeaders, 404);
         const object = await env.R2_BUCKET.get(asset.object_key);
         if (!object) return v1Error({ code: 'ASSET_NOT_FOUND', message: 'Asset object was not found' }, allowOrigin, reqAllowHeaders, 404);
@@ -9448,13 +9473,19 @@ async function handleShopifyWebhook(request, env, allowOrigin, reqAllowHeaders, 
         }
         const shop = await d1Shop(env, { allowUninstalled: topic === 'app/uninstalled' });
         const now = isoNow();
-        const gid = canonicalOrderGid(payload.admin_graphql_api_id || payload.order_id || payload.id);
+        const isDraftTopic = topic.startsWith('draft_orders/');
+        const gid = isDraftTopic ? null : canonicalOrderGid(payload.admin_graphql_api_id || payload.order_id || payload.id);
         const receipt = await requireOrderDb(env).prepare(`
           INSERT OR IGNORE INTO webhook_receipts (
             webhook_id, shop_id, topic, order_gid, state, triggered_at, received_at, updated_at
           ) VALUES (?, ?, ?, ?, 'received', ?, ?, ?)
         `).bind(webhookId, shop.id, topic, gid, payload.updated_at || payload.created_at || null, now, now).run();
-        if (!receipt.meta?.changes) return jsonResponse({ ok: true, duplicate: true }, allowOrigin, reqAllowHeaders);
+        if (!receipt.meta?.changes) {
+            if (!isDraftTopic) return jsonResponse({ ok: true, duplicate: true }, allowOrigin, reqAllowHeaders);
+            const reclaimed = await requireOrderDb(env).prepare("UPDATE webhook_receipts SET state = 'received', error_code = NULL, updated_at = ? WHERE webhook_id = ? AND state = 'failed'")
+                .bind(now, webhookId).run();
+            if (!reclaimed.meta?.changes) return jsonResponse({ ok: true, duplicate: true }, allowOrigin, reqAllowHeaders);
+        }
         if (topic === 'app/uninstalled') {
             await requireOrderDb(env).batch([
                 requireOrderDb(env).prepare(`
@@ -9466,9 +9497,34 @@ async function handleShopifyWebhook(request, env, allowOrigin, reqAllowHeaders, 
             ]);
             return jsonResponse({ ok: true }, allowOrigin, reqAllowHeaders);
         }
+        if (isDraftTopic) {
+            if (env.DRAFT_ORDERS_ENABLED !== '1') {
+                await requireOrderDb(env).prepare("UPDATE webhook_receipts SET state = 'failed', error_code = 'DRAFT_ACCESS_REQUIRED', updated_at = ? WHERE webhook_id = ?")
+                    .bind(now, webhookId).run();
+                return jsonResponse({ ok: true, deferred: true }, allowOrigin, reqAllowHeaders);
+            }
+            const draftId = /^gid:\/\/shopify\/DraftOrder\/\d+$/.test(payload.admin_graphql_api_id || '')
+                ? payload.admin_graphql_api_id : `gid://shopify/DraftOrder/${payload.id}`;
+            try {
+                if (topic === 'draft_orders/delete') await draftOrderService(env).deleted(draftId);
+                else await draftOrderService(env).detail(draftId);
+                await requireOrderDb(env).prepare("UPDATE webhook_receipts SET state = 'processed', updated_at = ? WHERE webhook_id = ?")
+                    .bind(isoNow(), webhookId).run();
+            } catch (error) {
+                await requireOrderDb(env).prepare("UPDATE webhook_receipts SET state = 'failed', error_code = ?, updated_at = ? WHERE webhook_id = ?")
+                    .bind(error.code || 'DRAFT_SYNC_FAILED', isoNow(), webhookId).run();
+                return v1Error(error, allowOrigin, reqAllowHeaders, error.status || 500);
+            }
+            return jsonResponse({ ok: true }, allowOrigin, reqAllowHeaders);
+        }
         if (gid) {
             if (webhookConfirmsPayment(topic, payload)) {
                 await ensureCandidateOrder(env, gid, 'shopify-webhook');
+                if (env.DRAFT_ORDERS_ENABLED === '1') {
+                    // Artwork failure must never suppress paid-order ingestion. Cron repairs retained preparations.
+                    try { await draftOrderService(env).reconcile({ orderId: gid }); }
+                    catch (error) { console.error('Draft artwork reconciliation failed:', error.code || 'DRAFT_SYNC_FAILED'); }
+                }
             }
             await requireOrderDb(env).prepare(`
               UPDATE order_projection

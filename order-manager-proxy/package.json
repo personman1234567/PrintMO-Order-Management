@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "shopify app build",
-    "test": "node scripts/verify-task2.mjs"
+    "test": "node scripts/verify-task2.mjs && node --test draft-orders.test.mjs"
   },
   "dependencies": {
     "@preact/signals": "^2.10.0",

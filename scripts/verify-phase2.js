@@ -209,8 +209,9 @@ async function run() {
   await require('./verify-phase1.js').run();
 
   const root = path.join(__dirname, '..');
-  const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8');
-  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql', '0007_etsy_webhook_delivery.sql', '0008_etsy_catalog_previews.sql', '0009_etsy_preview_refresh_and_supplier_skus.sql', '0010_tultex_shelf_allocation.sql', '0011_shelf_physical_reservations.sql']
+  const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8')
+    .replace("'./draft-orders.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'draft-orders.mjs')).href));
+  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql', '0007_etsy_webhook_delivery.sql', '0008_etsy_catalog_previews.sql', '0009_etsy_preview_refresh_and_supplier_skus.sql', '0010_tultex_shelf_allocation.sql', '0011_shelf_physical_reservations.sql', '0012_draft_artwork.sql']
     .map(file => fs.readFileSync(path.join(root, 'order-manager-proxy', 'migrations', file), 'utf8'))
     .join('\n');
   const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);

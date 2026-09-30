@@ -56,7 +56,7 @@ if command -v git.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; the
 else
   git -C "$ROOT_DIR" diff --check
 fi
-RELEASE_ID="$(date +%s%3N)"
+RELEASE_ID="$(node -e 'process.stdout.write(String(Date.now()))')"
 export PRINTMO_RELEASE_ID="$RELEASE_ID"
 
 (cd "$ROOT_DIR" && npm run prepare:cloudflare)

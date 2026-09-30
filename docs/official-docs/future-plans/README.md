@@ -30,7 +30,7 @@
 | Date Range and Customer Filters | `[Draft / Idea]` | v1.4 Backlog | `features/dashboard-filtering.md` | [date-range-customer-filters-plan.md](date-range-customer-filters-plan.md) |
 | Multi-Supplier Routing and Threshold Batching | `[Draft / Idea]` | v1.4 Backlog | `workflows/multi-supplier-batching.md` | [multi-supplier-routing-and-batching-plan.md](multi-supplier-routing-and-batching-plan.md) |
 | Quality of Life and Shop Efficiency | `[Draft / Idea]` | v1.5 Backlog | `workflows/qol-shop-efficiency.md` | [qol-workflow-and-shop-efficiency-plan.md](qol-workflow-and-shop-efficiency-plan.md) |
-| Shopify Draft Orders and Invoicing | `[Draft / Idea]` | v1.5 Backlog | `workflows/draft-orders-invoicing.md` | [shopify-draft-orders-invoicing-plan.md](shopify-draft-orders-invoicing-plan.md) |
+| Shopify Draft Artwork Preparation | `[Implemented Candidate]` | Live owner acceptance | Verified draft-to-order artwork handoff and UI reference | [shopify-draft-orders-invoicing-plan.md](shopify-draft-orders-invoicing-plan.md) |
 | Shopify Live API, Admin Block, and Redis-Free Cutover | `[Implemented Candidate]` | v1.4 | `architecture/shopify-primary-data-plane.md` | [shopify-live-api-sync-admin-blocks-plan.md](shopify-live-api-sync-admin-blocks-plan.md) |
 | Shopify Board UI Audit and Blueprint | `[Spec Ready]` | v1.4 polish | `reference/ui-containers-and-views.md` | [shopify-board-ui-audit-and-blueprint.md](shopify-board-ui-audit-and-blueprint.md) |
 | Order Detail Digital Traveler Redesign | `[Draft / Idea]` | Reliability patch, then workflow validation | Owner-approved production workflow and `reference/ui-containers-and-views.md` | [order-detail-digital-traveler-redesign-plan.md](order-detail-digital-traveler-redesign-plan.md) |

@@ -458,6 +458,10 @@ function candidateAssetRenderFingerprint(asset) {
     lineItemId: asset.lineItemId || '',
     role: asset.role || '',
     side: asset.side || '',
+    placement: asset.placement || '',
+    assignmentStatus: asset.assignmentStatus || '',
+    assignmentLabel: asset.assignmentLabel || '',
+    originDraftId: asset.originDraftId || '',
     state: asset.state || ''
   };
 }
@@ -1174,6 +1178,10 @@ function getAssetDimensionsIn(asset) {
 }
 
 function designLabelFromAsset(assetEntry, idx) {
+  if (assetEntry?.originDraftId) {
+    const placement = String(assetEntry.placement || 'other').replace(/-/g, ' ');
+    return `${placement.charAt(0).toUpperCase()}${placement.slice(1)} · ${assetEntry.name || 'Print file'}`;
+  }
   const dims = getAssetDimensionsIn(assetEntry);
   if (dims) return dims;
   const url = getAssetUrlValue(assetEntry);
@@ -1282,6 +1290,7 @@ async function hydrateManualMockupsForOrders(orders, { refresh = false } = {}) {
 
 function splitOrderAssets(order) {
   const seen = new Set();
+  const draftEntries = new Map();
   const buckets = { mockups: [], front: [], back: [], extras: [] };
   (order.items || []).forEach(item => {
     const assets = Array.isArray(item?.assets) ? item.assets : [];
@@ -1291,19 +1300,25 @@ function splitOrderAssets(order) {
       const isPrivateManifest = Boolean(asset && typeof asset === 'object' && asset.assetId);
       if (!url.toLowerCase().includes('/orders/') && !isPrivateManifest) return;
       const norm = [
-        url.toLowerCase(),
+        asset?.originDraftId ? String(asset.assetId) : url.toLowerCase(),
         String(asset?.role || '').toLowerCase(),
         String(asset?.side || '').toLowerCase()
       ].join('|');
-      if (seen.has(norm)) return;
+      if (seen.has(norm)) {
+        const retained = draftEntries.get(norm);
+        if (retained && asset?.originDraftId) {
+          retained.lineItemIds = [...new Set([...retained.lineItemIds, ...(asset.lineItemIds || []), asset.lineItemId].filter(Boolean))];
+        }
+        return;
+      }
       seen.add(norm);
 
       const assetName = asset && typeof asset === 'object' ? String(asset.name || '') : '';
       const classify = `${assetName} ${url}`.toLowerCase();
       const isSvg = String(asset?.contentType || '').toLowerCase() === 'image/svg+xml' || /\.svg(\?|$)/i.test(classify);
       const isMockup = asset?.role === 'mockup' || /side\.png(\?|$)/i.test(classify);
-      const isFront = asset?.side === 'front' || /(front\.(svg|png|jpe?g)|_front(?:\.[a-z0-9]+)?)(\?|$)/i.test(classify);
-      const isBack = asset?.side === 'back' || /(back\.(svg|png|jpe?g)|_back(?:\.[a-z0-9]+)?)(\?|$)/i.test(classify);
+      const isFront = asset?.originDraftId ? asset.placement === 'front' : asset?.side === 'front' || /(front\.(svg|png|jpe?g)|_front(?:\.[a-z0-9]+)?)(\?|$)/i.test(classify);
+      const isBack = asset?.originDraftId ? asset.placement === 'back' : asset?.side === 'back' || /(back\.(svg|png|jpe?g)|_back(?:\.[a-z0-9]+)?)(\?|$)/i.test(classify);
 
       const metadata = asset && typeof asset === 'object'
         ? (typeof asset.metadata === 'object' && asset.metadata) || (typeof asset.meta === 'object' && asset.meta) || undefined
@@ -1312,6 +1327,10 @@ function splitOrderAssets(order) {
       const entry = asset && typeof asset === 'object'
         ? { ...asset, url, isSvg }
         : { url, isSvg };
+      if (entry.originDraftId) {
+        entry.lineItemIds = [...new Set([...(entry.lineItemIds || []), entry.lineItemId].filter(Boolean))];
+        draftEntries.set(norm, entry);
+      }
       if (metadata) entry.metadata = metadata;
       if (dimensionsIn) entry.dimensionsIn = dimensionsIn;
       if (isMockup) {
@@ -1596,7 +1615,27 @@ async function handleAssetDownload(asset, filename, btn) {
   }
 }
 
+function renderDraftArtworkWarnings(order) {
+  document.getElementById('draft-order-artwork-warning')?.remove();
+  const reviewDrafts = [...new Set((order.assets || []).filter(asset => asset.assignmentStatus === 'needs_review').map(asset => asset.originDraftId).filter(Boolean))];
+  if (reviewDrafts.length && window.openDraftArtworkReview) {
+    const warning = document.createElement('section');
+    warning.id = 'draft-order-artwork-warning';
+    warning.className = 'draft-order-artwork-warning';
+    const message = document.createElement('p');
+    message.textContent = 'Draft artwork is retained, but some garment assignments need review before printing.';
+    warning.appendChild(message);
+    reviewDrafts.forEach(id => {
+      const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Review artwork assignments';
+      review.onclick = () => { closeDetail(); window.openDraftArtworkReview(id); };
+      warning.appendChild(review);
+    });
+    document.getElementById('detail-design-panel')?.before(warning);
+  }
+}
+
 function renderOrderAssets(order) {
+  renderDraftArtworkWarnings(order);
   const mockupTrack = document.getElementById('detail-mockups-track');
   const mockupPlaceholder = document.getElementById('detail-mockups-placeholder');
   const designPlaceholder = document.getElementById('detail-designs-placeholder');
@@ -1744,6 +1783,8 @@ function renderOrderAssets(order) {
         : `Show mockup ${idx + 1} of ${mockups.length}`);
       thumb.setAttribute('aria-pressed', idx === 0 ? 'true' : 'false');
       thumb.dataset.lineItemIds = (asset.lineItemIds || []).join('|');
+      thumb.dataset.exactArtworkAssignments = asset.originDraftId ? 'true' : 'false';
+      thumb.dataset.artworkPlacement = asset.originDraftId ? String(asset.placement || '').replace(/-/g, ' ') : '';
       thumb.dataset.mockupScope = asset.isCatalogPreview ? 'catalog-preview' : asset.isManual ? 'order-level' : 'linked-artwork';
 
       const img = document.createElement('img');
@@ -1851,6 +1892,12 @@ function renderOrderAssets(order) {
       label.className = 'design-label';
       label.textContent = labelText;
       tile.appendChild(label);
+      if (item.originDraftId && item.assignmentLabel) {
+        const appliesTo = document.createElement('div');
+        appliesTo.className = 'design-label';
+        appliesTo.textContent = `${item.assignmentStatus === 'needs_review' ? 'Needs reassignment · ' : 'Applies to: '}${item.assignmentLabel}`;
+        tile.appendChild(appliesTo);
+      }
 
       const actions = document.createElement('div');
       actions.className = 'design-actions';

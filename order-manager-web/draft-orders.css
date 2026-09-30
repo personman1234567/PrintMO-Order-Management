@@ -1,0 +1,64 @@
+/* The pipeline owns the scroll area on desktop and Shopify Admin mobile. */
+#pipeline-view-tabs { display: none; }
+body[data-order-source="shopify"] #pipeline-view-tabs { display: flex; gap: 4px; padding: 0 12px 10px; }
+#pipeline-view-tabs button { flex: 1; min-height: 44px; padding: 8px 12px; border: 1px solid #CBD5E1; border-radius: 10px; background: #FFF; color: #334155; font: inherit; font-weight: 600; cursor: pointer; }
+#pipeline-view-tabs button[aria-selected="true"] { background: #1A73E8; border-color: #1A73E8; color: #FFF; }
+body[data-order-source="shopify"][data-pipeline-view="drafts"] .pipeline #col-received,
+body[data-order-source="shopify"][data-pipeline-view="drafts"] #dashboard-triage-toolbar,
+body[data-order-source="shopify"][data-pipeline-view="drafts"] #pipeline-count,
+body[data-order-source="shopify"][data-pipeline-view="drafts"] #mobile-selection-toggle,
+body[data-order-source="shopify"][data-pipeline-view="drafts"] #pipeline-selection-shell { display: none !important; }
+#draft-orders-workspace { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding: 0 12px 16px; color: #334155; font-size: .95rem; }
+#draft-orders-workspace[hidden], #draft-orders-workspace [hidden] { display: none !important; }
+#draft-orders-workspace button, #draft-orders-workspace select, #draft-orders-workspace input:not([type="checkbox"]), .draft-shopify-link {
+  min-height: 44px; max-width: 100%; border: 1px solid #CBD5E1; border-radius: 10px; padding: 8px 12px; background: #FFF; color: #334155; font: inherit; }
+#draft-orders-workspace button, .draft-shopify-link { cursor: pointer; }
+#draft-orders-workspace button:hover, .draft-shopify-link:hover { background: #F8FAFC; }
+#draft-orders-workspace button:disabled { opacity: .6; cursor: wait; }
+#draft-orders-workspace :focus-visible, #pipeline-view-tabs :focus-visible { outline: 2px solid #1A73E8; outline-offset: 2px; }
+.draft-browse-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+#draft-orders-search { display: flex; gap: 6px; flex: 1 1 100%; min-width: 0; }
+#draft-orders-search-input { width: 100%; min-width: 0; }
+#draft-orders-status { margin: 4px 0 12px; font-size: .95rem; line-height: 1.5; }
+.draft-error { color: #B42318; }
+#draft-orders-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 12px; }
+#draft-orders-workspace .draft-order-card { text-align: left; padding: 12px; border-radius: 8px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.draft-card-heading, .draft-card-footer { display: flex; gap: 8px; justify-content: space-between; flex-wrap: wrap; }
+.draft-card-heading strong { color: #0F172A; font-variant-numeric: tabular-nums; }
+.draft-state { font-size: .78rem; font-weight: 600; }
+.draft-card-body { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.draft-card-customer { overflow-wrap: anywhere; }
+.draft-card-media { flex: 0 0 88px; width: 88px; height: 88px; display: grid; place-items: center; background: #F8FAFC; border-radius: 8px; font-size: .78rem; color: #64748B; overflow: hidden; }
+.draft-card-media img { width: 100%; height: 100%; object-fit: contain; }
+.draft-card-footer { font-size: .78rem; }
+.draft-card-updated { color: #64748B; font-size: .78rem; }
+#draft-orders-load-more { width: 100%; margin-top: 12px; }
+.draft-detail-header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.draft-detail-title { flex: 1 1 100%; margin: 8px 0; font-size: 1.2rem; color: #0F172A; overflow-wrap: anywhere; }
+.draft-shopify-link { display: inline-flex; align-items: center; text-decoration: none; font-size: .95rem; }
+.draft-detail-summary { margin: 8px 0; font-size: .95rem; line-height: 1.5; }
+.draft-notice { background: #F8FAFC; padding: 12px; border-radius: 8px; line-height: 1.5; }
+.draft-artwork-list h4, .draft-assignment-form h4 { font-size: .95rem; margin: 20px 0 10px; color: #0F172A; }
+.draft-artwork-row { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid #CBD5E1; }
+.draft-artwork-row > img { flex: 0 0 56px; width: 56px; height: 56px; object-fit: contain; background: #F8FAFC; border-radius: 8px; }
+.draft-artwork-info { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 6px; overflow-wrap: anywhere; font-size: .95rem; }
+.draft-artwork-actions, .draft-form-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.draft-assignment-form { display: flex; flex-direction: column; gap: 12px; }
+.draft-item-picker { margin: 0; padding: 12px; border: 1px solid #CBD5E1; border-radius: 8px; min-width: 0; }
+.draft-item-picker legend { padding: 0 4px; font-weight: 600; }
+.draft-item-option { display: flex; gap: 10px; align-items: center; min-height: 44px; padding: 6px 0; font-size: .95rem; cursor: pointer; }
+.draft-item-option input { width: 20px; height: 20px; flex: 0 0 20px; accent-color: #1A73E8; }
+.draft-item-option span { overflow-wrap: anywhere; }
+.draft-upload-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.draft-assignment-form label:not(.draft-item-option) { display: flex; flex-direction: column; gap: 6px; font-size: .95rem; min-width: 0; }
+#draft-orders-workspace .draft-primary { background: #1A73E8; border-color: #1A73E8; color: #FFF; }
+#draft-orders-workspace .draft-primary:hover { background: #1765C1; }
+.draft-order-artwork-warning { margin: 12px 0; padding: 12px; background: #F8FAFC; border-radius: 8px; line-height: 1.5; }
+@media (max-width: 900px) { #draft-orders-workspace { padding-bottom: 24px; } .draft-card-media { flex-basis: 80px; width: 80px; height: 80px; } }
+
+.draft-artwork-preview { border: 1px solid #CBD5E1; border-radius: 12px; color: #334155; padding: 16px; width: min(900px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; }
+.draft-artwork-preview::backdrop { background: rgba(15, 23, 42, .55); }
+.draft-artwork-preview h3 { overflow-wrap: anywhere; margin: 0 0 12px; font-size: .95rem; }
+.draft-artwork-preview button { min-height: 44px; border: 1px solid #CBD5E1; border-radius: 10px; padding: 8px 12px; background: #FFF; color: #334155; font: inherit; cursor: pointer; }
+.draft-artwork-preview img { display: block; width: 100%; max-height: 70dvh; object-fit: contain; margin-top: 12px; }
+.draft-artwork-preview :focus-visible { outline: 2px solid #1A73E8; outline-offset: 2px; }

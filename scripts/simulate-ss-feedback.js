@@ -110,7 +110,8 @@ function fixture(options) {
 }
 
 async function loadNormalizer() {
-  const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8');
+  const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8')
+    .replace("'./draft-orders.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'draft-orders.mjs')).href));
   const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
   return (await import(moduleUrl)).normalizeSupplierCommitReport;
 }

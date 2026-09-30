@@ -103,6 +103,94 @@
   ],
   "routes": [
     {
+      "id": "draft-artwork",
+      "description": "Shopify draft artwork preparation, garment and placement assignments, private files, conversion handoff and release prerequisites",
+      "taskTypes": [
+        "implementation",
+        "planning",
+        "diagnosis",
+        "design"
+      ],
+      "keywords": [
+        "draft orders",
+        "draft artwork",
+        "draft invoice",
+        "prepare print files",
+        "draft conversion",
+        "garment assignment",
+        "read_draft_orders",
+        "DRAFT_ACCESS_REQUIRED",
+        "DRAFT_CONVERTED"
+      ],
+      "paths": [
+        "order-manager-proxy/draft-orders.mjs",
+        "order-manager-proxy/draft-orders.test.mjs",
+        "order-manager-proxy/migrations/0012_draft_artwork.sql",
+        "order-manager-web/draft-orders.js",
+        "order-manager-web/draft-orders.css"
+      ],
+      "symbols": [
+        "createDraftOrderService",
+        "matchDraftAssignments",
+        "draftUploadMetadata",
+        "openDraftArtworkReview"
+      ],
+      "errors": [
+        "DRAFT_ACCESS_REQUIRED",
+        "DRAFT_CONVERTED",
+        "DRAFT_CHANGED",
+        "Artwork needs reassignment"
+      ],
+      "read": [
+        {
+          "path": "docs/official-docs/future-plans/shopify-draft-orders-invoicing-plan.md",
+          "anchor": "current-continuation-state"
+        },
+        {
+          "path": "docs/official-docs/future-plans/shopify-draft-orders-invoicing-plan.md",
+          "anchor": "ownership-and-handoff"
+        }
+      ],
+      "inspect": [
+        {
+          "path": "order-manager-proxy/draft-orders.mjs",
+          "symbols": [
+            "createDraftOrderService",
+            "matchDraftAssignments"
+          ]
+        },
+        {
+          "path": "order-manager-web/draft-orders.js",
+          "symbols": [
+            "openDraftArtworkReview"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/worker.js",
+          "symbols": [
+            "handleDraftOrderRequest",
+            "handleShopifyWebhook",
+            "d1AssetsForOrder"
+          ]
+        }
+      ],
+      "tools": [
+        "verify-phase2",
+        "docs-check",
+        "cloudflare-bundle"
+      ],
+      "verify": [
+        "node --check order-manager-proxy/worker.js",
+        "node --check order-manager-web/draft-orders.js",
+        "node --test order-manager-proxy/draft-orders.test.mjs",
+        "npm run verify:phase2",
+        "npm run docs:check"
+      ],
+      "stop": [
+        "Live release requires the draft migration, Shopify read_draft_orders permission approval, and explicit feature enablement; no draft commerce or production enrollment changes."
+      ]
+    },
+    {
       "id": "electron-ipc",
       "description": "Electron initialization, IPC bridge, OIDC token custody, and Worker transport",
       "taskTypes": ["change", "diagnosis", "security"],
