@@ -95,7 +95,7 @@ async function readScheduledBatch(env, token, entries, supplierLocationId, deps)
   const data = await shopifyRead(env, token, query, variables, deps);
   requireValue(Array.isArray(data.nodes) && data.nodes.length === entries.length
     && data.nodes.every((variant, index) => variant?.id === entries[index].id
-      && variant.sku === entries[index].sku && variant.product?.status === 'ACTIVE'
+      && variant.sku === entries[index].sku && ['ACTIVE', 'UNLISTED'].includes(variant.product?.status)
       && variant.inventoryItem?.id), 'PILOT_VARIANT_MISSING_OR_INACTIVE');
   requireValue(data.currentAppInstallation?.accessScopes?.some(scope => scope.handle === 'write_inventory'),
     'INVENTORY_WRITE_SCOPE_MISSING');
@@ -150,7 +150,7 @@ export async function setSupplierAvailable(env, token, { inventoryItemId, suppli
 }
 
 async function setSupplierAvailableBatch(env, token, updates, observedAt, deps) {
-  requireValue(env.INVENTORY_SYNC_MODE === 'pilot-refresh' && updates.length > 0 && updates.length <= 15,
+  requireValue(env.INVENTORY_SYNC_MODE === 'pilot-refresh' && updates.length > 0 && updates.length <= 16,
     'INVALID_BATCH_WRITE');
   const supplierLocationId = env.SUPPLIER_LOCATION_ID;
   requireValue(shopDomain(env) === PRINTMO_SHOP && supplierLocationId === SS_SUPPLIER_LOCATION,
@@ -203,7 +203,7 @@ export async function runGuardedBatch(env, deps) {
     && protectedLocationIds.every(id => /^gid:\/\/shopify\/Location\/\d+$/.test(id))
     && !protectedLocationIds.includes(env.SUPPLIER_LOCATION_ID), 'PROTECTED_LOCATIONS_REQUIRED');
   const ids = uniqueStrings(jsonSetting(env, 'PILOT_VARIANT_IDS'), /^gid:\/\/shopify\/ProductVariant\/\d+$/,
-    15, 'PILOT_VARIANT_SCOPE_INVALID');
+    16, 'PILOT_VARIANT_SCOPE_INVALID');
   const token = await shopifyToken(env, deps);
   const scheduledSkus = env.PILOT_VARIANT_SKUS ? jsonSetting(env, 'PILOT_VARIANT_SKUS') : null;
   requireValue(scheduledSkus === null || Array.isArray(scheduledSkus)

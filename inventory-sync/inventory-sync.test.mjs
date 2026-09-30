@@ -528,21 +528,21 @@ test('the 3001 closeout allowlist covers every enrolled variant once per five-mi
 });
 
 test('expanded schedule covers every enrolled SKU while holding shared 6400 SKUs', () => {
-  assert.equal(SCHEDULED_VARIANTS.length, 1070);
-  assert.equal(new Set(SCHEDULED_VARIANTS.map(row => row.id)).size, 1070);
-  assert.equal(new Set(SCHEDULED_VARIANTS.map(row => row.sku)).size, 1070);
-  assert.deepEqual(Object.fromEntries(['246', '3001', '3719', '6400', '8871-classic', '8871-crazy']
+  assert.equal(SCHEDULED_VARIANTS.length, 1288);
+  assert.equal(new Set(SCHEDULED_VARIANTS.map(row => row.id)).size, 1288);
+  assert.equal(new Set(SCHEDULED_VARIANTS.map(row => row.sku)).size, 1288);
+  assert.deepEqual(Object.fromEntries(['1300', '1566', '2000T', '246', '3001', '3719', '6400', '8871-classic', '8871-crazy', 'FTEX00']
     .map(cohort => [cohort, SCHEDULED_VARIANTS.filter(row => row.cohort === cohort).length])),
-  { '246': 72, '3001': 626, '3719': 96, '6400': 84, '8871-classic': 96, '8871-crazy': 96 });
-  assert.ok(SCHEDULED_VARIANTS.every(row => row.missingPolicy === (row.cohort === '246' ? 'hold' : 'block')));
+  { '1300': 36, '1566': 120, '2000T': 32, '246': 72, '3001': 626, '3719': 96, '6400': 84, '8871-classic': 96, '8871-crazy': 96, 'FTEX00': 30 });
+  assert.ok(SCHEDULED_VARIANTS.every(row => row.missingPolicy === (['1300', '246', '1566', '2000T', 'FTEX00'].includes(row.cohort) ? 'hold' : 'block')));
   assert.equal(PRIORITY_SHARED_6400_SKUS.size, 75);
   assert.ok(SCHEDULED_VARIANTS.filter(row => row.cohort === '6400')
     .filter(row => !PRIORITY_SHARED_6400_SKUS.has(row.sku)).length === 9);
   const minutes = Array.from({ length: 5 }, (_, minute) => scheduledAllVariants(minute * 60000));
-  assert.deepEqual(minutes.map(entries => entries.length), [199, 199, 199, 199, 199]);
+  assert.deepEqual(minutes.map(entries => entries.length), [243, 243, 243, 242, 242]);
   assert.deepEqual(minutes.flat().map(entry => entry.id).sort(), SCHEDULED_VARIANTS
     .filter(entry => !PRIORITY_SHARED_6400_SKUS.has(entry.sku)).map(entry => entry.id).sort());
-  assert.ok(minutes.every(entries => 1 + Math.ceil(entries.length / 15) * 3 <= 50));
+  assert.ok(minutes.every(entries => 1 + Math.ceil(entries.length / 16) * 3 <= 50));
 });
 
 test('scheduled batch checks pinned SKU identity and store-wide uniqueness in its combined Shopify read', async () => {
@@ -577,6 +577,13 @@ test('scheduled batch checks pinned SKU identity and store-wide uniqueness in it
   await assert.rejects(runGuardedBatch({ ...scheduledEnv, PILOT_VARIANT_SKUS: '["WRONG"]' }, deps),
     /PILOT_VARIANT_MISSING_OR_INACTIVE/);
   assert.equal(calls.length, 1);
+  calls.length = 0;
+  copy.product.status = 'UNLISTED';
+  assert.equal((await runGuardedBatch(scheduledEnv, deps)).writes, 1);
+  calls.length = 0;
+  copy.product.status = 'DRAFT';
+  await assert.rejects(runGuardedBatch(scheduledEnv, deps), /PILOT_VARIANT_MISSING_OR_INACTIVE/);
+  copy.product.status = 'ACTIVE';
 });
 
 test('closeout batch blocks an omitted supplier SKU while writing only supplier-location CAS quantities', async () => {
