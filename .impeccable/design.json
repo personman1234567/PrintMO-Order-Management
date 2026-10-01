@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-07-21T20:58:42.8244331-05:00",
+  "generatedAt": "2026-10-01T21:05:48.366517+00:00",
   "title": "Design System: PrintMO Order Management",
   "extensions": {
     "colorMeta": {
@@ -8,101 +8,316 @@
         "role": "primary",
         "displayName": "Action Blue",
         "canonical": "#1A73E8",
-        "tonalRamp": ["oklch(15% 0.18 257)", "oklch(27% 0.18 257)", "oklch(39% 0.18 257)", "oklch(51% 0.18 257)", "oklch(63% 0.18 257)", "oklch(75% 0.16 257)", "oklch(87% 0.10 257)", "oklch(95% 0.04 257)"]
+        "tonalRamp": [
+          "oklch(15% 0.18 257)",
+          "oklch(27% 0.18 257)",
+          "oklch(39% 0.18 257)",
+          "oklch(51% 0.18 257)",
+          "oklch(63% 0.18 257)",
+          "oklch(75% 0.16 257)",
+          "oklch(87% 0.10 257)",
+          "oklch(95% 0.04 257)"
+        ]
       },
       "action-blue-hover": {
         "role": "primary",
         "displayName": "Pressed Action Blue",
         "canonical": "#1765C1",
-        "tonalRamp": ["oklch(15% 0.15 257)", "oklch(27% 0.15 257)", "oklch(39% 0.15 257)", "oklch(51% 0.15 257)", "oklch(63% 0.15 257)", "oklch(75% 0.13 257)", "oklch(87% 0.08 257)", "oklch(95% 0.03 257)"]
+        "tonalRamp": [
+          "oklch(15% 0.15 257)",
+          "oklch(27% 0.15 257)",
+          "oklch(39% 0.15 257)",
+          "oklch(51% 0.15 257)",
+          "oklch(63% 0.15 257)",
+          "oklch(75% 0.13 257)",
+          "oklch(87% 0.08 257)",
+          "oklch(95% 0.03 257)"
+        ]
       },
       "ink": {
         "role": "neutral",
         "displayName": "Shop Ink",
         "canonical": "#0F172A",
-        "tonalRamp": ["oklch(15% 0.04 265)", "oklch(27% 0.04 265)", "oklch(39% 0.035 265)", "oklch(51% 0.03 265)", "oklch(63% 0.025 265)", "oklch(75% 0.02 265)", "oklch(87% 0.012 265)", "oklch(95% 0.006 265)"]
+        "tonalRamp": [
+          "oklch(15% 0.04 265)",
+          "oklch(27% 0.04 265)",
+          "oklch(39% 0.035 265)",
+          "oklch(51% 0.03 265)",
+          "oklch(63% 0.025 265)",
+          "oklch(75% 0.02 265)",
+          "oklch(87% 0.012 265)",
+          "oklch(95% 0.006 265)"
+        ]
       },
       "text": {
         "role": "neutral",
         "displayName": "Working Slate",
         "canonical": "#334155",
-        "tonalRamp": ["oklch(15% 0.03 255)", "oklch(27% 0.03 255)", "oklch(39% 0.028 255)", "oklch(51% 0.025 255)", "oklch(63% 0.02 255)", "oklch(75% 0.016 255)", "oklch(87% 0.01 255)", "oklch(95% 0.005 255)"]
+        "tonalRamp": [
+          "oklch(15% 0.03 255)",
+          "oklch(27% 0.03 255)",
+          "oklch(39% 0.028 255)",
+          "oklch(51% 0.025 255)",
+          "oklch(63% 0.02 255)",
+          "oklch(75% 0.016 255)",
+          "oklch(87% 0.01 255)",
+          "oklch(95% 0.005 255)"
+        ]
       },
       "muted": {
         "role": "neutral",
         "displayName": "Muted Slate",
         "canonical": "#64748B",
-        "tonalRamp": ["oklch(15% 0.025 250)", "oklch(27% 0.025 250)", "oklch(39% 0.023 250)", "oklch(51% 0.02 250)", "oklch(63% 0.018 250)", "oklch(75% 0.014 250)", "oklch(87% 0.008 250)", "oklch(95% 0.004 250)"]
+        "tonalRamp": [
+          "oklch(15% 0.025 250)",
+          "oklch(27% 0.025 250)",
+          "oklch(39% 0.023 250)",
+          "oklch(51% 0.02 250)",
+          "oklch(63% 0.018 250)",
+          "oklch(75% 0.014 250)",
+          "oklch(87% 0.008 250)",
+          "oklch(95% 0.004 250)"
+        ]
       },
       "canvas": {
         "role": "neutral",
         "displayName": "Cool Canvas",
         "canonical": "#F8FAFC",
-        "tonalRamp": ["oklch(15% 0.008 250)", "oklch(27% 0.008 250)", "oklch(39% 0.007 250)", "oklch(51% 0.006 250)", "oklch(63% 0.005 250)", "oklch(75% 0.004 250)", "oklch(87% 0.003 250)", "oklch(95% 0.002 250)"]
+        "tonalRamp": [
+          "oklch(15% 0.008 250)",
+          "oklch(27% 0.008 250)",
+          "oklch(39% 0.007 250)",
+          "oklch(51% 0.006 250)",
+          "oklch(63% 0.005 250)",
+          "oklch(75% 0.004 250)",
+          "oklch(87% 0.003 250)",
+          "oklch(95% 0.002 250)"
+        ]
       },
       "surface": {
         "role": "neutral",
         "displayName": "Tool Surface",
         "canonical": "#FFFFFF",
-        "tonalRamp": ["oklch(15% 0 0)", "oklch(27% 0 0)", "oklch(39% 0 0)", "oklch(51% 0 0)", "oklch(63% 0 0)", "oklch(75% 0 0)", "oklch(87% 0 0)", "oklch(95% 0 0)"]
+        "tonalRamp": [
+          "oklch(15% 0 0)",
+          "oklch(27% 0 0)",
+          "oklch(39% 0 0)",
+          "oklch(51% 0 0)",
+          "oklch(63% 0 0)",
+          "oklch(75% 0 0)",
+          "oklch(87% 0 0)",
+          "oklch(95% 0 0)"
+        ]
       },
       "border": {
         "role": "neutral",
         "displayName": "Structural Line",
         "canonical": "#CBD5E1",
-        "tonalRamp": ["oklch(15% 0.014 250)", "oklch(27% 0.014 250)", "oklch(39% 0.013 250)", "oklch(51% 0.012 250)", "oklch(63% 0.01 250)", "oklch(75% 0.008 250)", "oklch(87% 0.005 250)", "oklch(95% 0.002 250)"]
+        "tonalRamp": [
+          "oklch(15% 0.014 250)",
+          "oklch(27% 0.014 250)",
+          "oklch(39% 0.013 250)",
+          "oklch(51% 0.012 250)",
+          "oklch(63% 0.01 250)",
+          "oklch(75% 0.008 250)",
+          "oklch(87% 0.005 250)",
+          "oklch(95% 0.002 250)"
+        ]
       },
       "success": {
         "role": "secondary",
         "displayName": "Production Green",
         "canonical": "#16A34A",
-        "tonalRamp": ["oklch(15% 0.16 145)", "oklch(27% 0.17 145)", "oklch(39% 0.18 145)", "oklch(51% 0.18 145)", "oklch(63% 0.17 145)", "oklch(75% 0.14 145)", "oklch(87% 0.08 145)", "oklch(95% 0.03 145)"]
+        "tonalRamp": [
+          "oklch(15% 0.16 145)",
+          "oklch(27% 0.17 145)",
+          "oklch(39% 0.18 145)",
+          "oklch(51% 0.18 145)",
+          "oklch(63% 0.17 145)",
+          "oklch(75% 0.14 145)",
+          "oklch(87% 0.08 145)",
+          "oklch(95% 0.03 145)"
+        ]
       },
       "success-soft": {
         "role": "secondary",
         "displayName": "Completion Wash",
         "canonical": "#DCFCE7",
-        "tonalRamp": ["oklch(15% 0.05 145)", "oklch(27% 0.05 145)", "oklch(39% 0.05 145)", "oklch(51% 0.05 145)", "oklch(63% 0.045 145)", "oklch(75% 0.04 145)", "oklch(87% 0.03 145)", "oklch(95% 0.015 145)"]
+        "tonalRamp": [
+          "oklch(15% 0.05 145)",
+          "oklch(27% 0.05 145)",
+          "oklch(39% 0.05 145)",
+          "oklch(51% 0.05 145)",
+          "oklch(63% 0.045 145)",
+          "oklch(75% 0.04 145)",
+          "oklch(87% 0.03 145)",
+          "oklch(95% 0.015 145)"
+        ]
       },
       "warning": {
         "role": "tertiary",
         "displayName": "Attention Umber",
         "canonical": "#92400E",
-        "tonalRamp": ["oklch(15% 0.12 48)", "oklch(27% 0.13 48)", "oklch(39% 0.14 48)", "oklch(51% 0.14 48)", "oklch(63% 0.13 48)", "oklch(75% 0.10 48)", "oklch(87% 0.06 48)", "oklch(95% 0.025 48)"]
+        "tonalRamp": [
+          "oklch(15% 0.12 48)",
+          "oklch(27% 0.13 48)",
+          "oklch(39% 0.14 48)",
+          "oklch(51% 0.14 48)",
+          "oklch(63% 0.13 48)",
+          "oklch(75% 0.10 48)",
+          "oklch(87% 0.06 48)",
+          "oklch(95% 0.025 48)"
+        ]
       },
       "danger": {
         "role": "tertiary",
         "displayName": "Failure Red",
         "canonical": "#B42318",
-        "tonalRamp": ["oklch(15% 0.15 29)", "oklch(27% 0.16 29)", "oklch(39% 0.17 29)", "oklch(51% 0.17 29)", "oklch(63% 0.15 29)", "oklch(75% 0.12 29)", "oklch(87% 0.07 29)", "oklch(95% 0.03 29)"]
+        "tonalRamp": [
+          "oklch(15% 0.15 29)",
+          "oklch(27% 0.16 29)",
+          "oklch(39% 0.17 29)",
+          "oklch(51% 0.17 29)",
+          "oklch(63% 0.15 29)",
+          "oklch(75% 0.12 29)",
+          "oklch(87% 0.07 29)",
+          "oklch(95% 0.03 29)"
+        ]
       }
     },
     "typographyMeta": {
-      "headline": { "displayName": "Headline", "purpose": "Page and major overlay titles only." },
-      "title": { "displayName": "Title", "purpose": "Panel headers and workflow regions." },
-      "body": { "displayName": "Body", "purpose": "Order detail, notes, and supporting content." },
-      "label": { "displayName": "Label", "purpose": "Controls, status labels, and compact data headers." },
-      "caption": { "displayName": "Caption", "purpose": "Timestamps, counts, and secondary metadata." }
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page and major overlay titles only."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Panel headers and workflow regions."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Order detail, notes, and supporting content."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Controls, status labels, and compact data headers."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Timestamps, counts, and secondary metadata."
+      }
     },
     "shadows": [
-      { "name": "card-rest", "value": "0 1px 3px rgba(15, 23, 42, 0.08)", "purpose": "Movable order cards and small raised controls." },
-      { "name": "panel-rest", "value": "0 2px 6px rgba(0, 0, 0, 0.10)", "purpose": "Main workflow panels when tonal separation is insufficient." },
-      { "name": "section-lift", "value": "0 2px 9px rgba(15, 23, 42, 0.05)", "purpose": "Detail sections and nested operational groups." },
-      { "name": "overlay-lift", "value": "0 18px 44px rgba(15, 23, 42, 0.28)", "purpose": "Dialogs and drag previews only." }
+      {
+        "name": "card-rest",
+        "value": "0 1px 3px rgba(15, 23, 42, 0.08)",
+        "purpose": "Movable order cards and small raised controls."
+      },
+      {
+        "name": "panel-rest",
+        "value": "0 2px 6px rgba(0, 0, 0, 0.10)",
+        "purpose": "Main workflow panels when tonal separation is insufficient."
+      },
+      {
+        "name": "section-lift",
+        "value": "0 2px 9px rgba(15, 23, 42, 0.05)",
+        "purpose": "Detail sections and nested operational groups."
+      },
+      {
+        "name": "overlay-lift",
+        "value": "0 18px 44px rgba(15, 23, 42, 0.28)",
+        "purpose": "Dialogs and drag previews only."
+      }
     ],
     "motion": [
-      { "name": "fast-state", "value": "150ms ease", "purpose": "Press, hover, focus, and compact tab feedback." },
-      { "name": "standard-state", "value": "220ms ease", "purpose": "Card and panel state transitions." },
-      { "name": "spatial-drag", "value": "240ms cubic-bezier(0.2, 0.8, 0.2, 1)", "purpose": "Drag continuity and spatial reordering." }
+      {
+        "name": "fast-state",
+        "value": "150ms ease",
+        "purpose": "Press, hover, focus, and compact tab feedback."
+      },
+      {
+        "name": "standard-state",
+        "value": "220ms ease",
+        "purpose": "Card and panel state transitions."
+      },
+      {
+        "name": "spatial-drag",
+        "value": "240ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+        "purpose": "Drag continuity and spatial reordering."
+      }
     ],
     "breakpoints": [
-      { "name": "mobile-max", "value": "900px" },
-      { "name": "desktop-min", "value": "901px" },
-      { "name": "compact-desktop", "value": "1024px" },
-      { "name": "tight-desktop", "value": "1199px" },
-      { "name": "wide-desktop", "value": "1400px" },
-      { "name": "narrow-phone", "value": "380px" }
-    ]
+      {
+        "name": "mobile-max",
+        "value": "900px"
+      },
+      {
+        "name": "desktop-min",
+        "value": "901px"
+      },
+      {
+        "name": "compact-desktop",
+        "value": "1024px"
+      },
+      {
+        "name": "tight-desktop",
+        "value": "1199px"
+      },
+      {
+        "name": "wide-desktop",
+        "value": "1400px"
+      },
+      {
+        "name": "narrow-phone",
+        "value": "380px"
+      }
+    ],
+    "componentMeta": {
+      "shopify-draft-artwork-detail": {
+        "name": "Shopify Draft Artwork Detail",
+        "source": [
+          "order-manager-web/draft-orders.js",
+          "order-manager-web/draft-orders.css"
+        ],
+        "scope": "Shopify Draft Orders opened artwork detail only; component-local adaptations, not global tokens.",
+        "breakpoint": {
+          "name": "draft-detail-stack",
+          "value": "760px",
+          "behavior": "Full viewport native dialog; stacked file list and inspector with one scroll body."
+        },
+        "layout": {
+          "dialogWidth": "min(1200px, calc(100vw - 40px))",
+          "dialogHeight": "min(92dvh, 960px)",
+          "columns": "minmax(0, 1.15fr) minmax(320px, .85fr)",
+          "gap": "32px",
+          "mobileGap": "24px",
+          "scrollOwner": ".draft-detail-body"
+        },
+        "localColors": {
+          "divider": "#E2E8F0",
+          "hover": "#F1F5F9",
+          "selection-drop": "#EFF6FF",
+          "backdrop": "rgba(15, 23, 42, .64)"
+        },
+        "localTypography": {
+          "fileName": ".875rem",
+          "summaryControlsHelp": ".8125rem",
+          "mobileTitle": "1.05rem"
+        },
+        "localRadii": {
+          "dialog": "16px",
+          "group": "8px",
+          "media": "6px",
+          "mobileDialog": "0"
+        },
+        "api": {
+          "upload": "uploadDraftArtwork(id, file, { role, placement, lineItemIds, uploadId })",
+          "assign": "assignDraftArtwork(id, assetId, { revision, placement, lineItemIds })",
+          "remove": "removeDraftArtwork(id, assetId, revision)",
+          "privatePreview": "getDraftArtworkUrl(assetId)"
+        }
+      }
+    }
   },
   "components": [
     {
@@ -168,11 +383,18 @@
       "description": "A compact switch between adjacent production states.",
       "html": "<div class=\"ds-segments\" role=\"tablist\"><button role=\"tab\" aria-selected=\"true\">In cart <span>4</span></button><button role=\"tab\" aria-selected=\"false\">Ordered <span>7</span></button></div>",
       "css": ".ds-segments { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid #CBD5E1; border-radius: 999px; background: #F8FAFC; font-family: system-ui, sans-serif; } .ds-segments button { min-height: 36px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 0; border-radius: 999px; background: transparent; color: #334155; font-size: 0.78rem; font-weight: 700; cursor: pointer; } .ds-segments button[aria-selected=\"true\"] { background: #1A73E8; color: #FFFFFF; } .ds-segments button span { min-width: 18px; padding: 2px 5px; border-radius: 999px; background: rgba(15,23,42,0.08); font-size: 0.72rem; } .ds-segments button[aria-selected=\"true\"] span { background: rgba(255,255,255,0.22); } .ds-segments button:hover { background: #EFF6FF; color: #1765C1; } .ds-segments button[aria-selected=\"true\"]:hover { background: #1765C1; color: #FFFFFF; } .ds-segments button:focus-visible { outline: 2px solid #1A73E8; outline-offset: 1px; }"
+    },
+    {
+      "name": "Shopify Draft Artwork Detail",
+      "kind": "custom",
+      "description": "Focused file-first draft preparation with a fixed identity header, one scrolling body, and progressively disclosed intake/assignment controls. Static example of the selected-file state.",
+      "html": "<section class=\"ds-draft-detail\" aria-label=\"Example draft artwork workspace\"><header class=\"ds-draft-header\"><button class=\"ds-draft-quiet\">← Drafts</button><div class=\"ds-draft-identity\"><h2>#EXAMPLE · Sample customer</h2><p>Invoice sent · 2 order items · Example total</p></div><button class=\"ds-draft-quiet\">Open in Shopify ↗</button><button class=\"ds-draft-quiet\" aria-label=\"Refresh draft\">↻</button></header><div class=\"ds-draft-body\"><div class=\"ds-draft-toolbar\"><h3>Artwork <span>1 file</span></h3><div><button class=\"ds-draft-primary\">Add files</button> <button class=\"ds-draft-secondary\">Paste image</button></div></div><div class=\"ds-draft-layout\"><section aria-label=\"Artwork files\"><div class=\"ds-draft-row\"><button class=\"ds-draft-select\" aria-pressed=\"true\"><span class=\"ds-draft-thumb\"><svg viewBox=\"0 0 160 140\" role=\"img\" aria-label=\"Example garment artwork\"><path d=\"M48 18 20 40 35 65 48 57v66h64V57l13 8 15-25-28-22-15 12H63z\" fill=\"#E2E8F0\" stroke=\"#CBD5E1\"/><rect x=\"61\" y=\"51\" width=\"38\" height=\"24\" rx=\"2\" fill=\"#1A73E8\"/><text x=\"80\" y=\"67\" text-anchor=\"middle\" fill=\"white\" font-family=\"system-ui,sans-serif\" font-size=\"9\">PRINT-MO</text></svg></span><span class=\"ds-draft-info\"><strong>sample-mockup.jpeg</strong><span>Mockup · Front</span><small>Comfort Colors · 1717 · White / Medium · Qty 1</small></span></button><button class=\"ds-draft-menu\" aria-label=\"Actions for sample-mockup.jpeg\">⋯</button></div></section><section class=\"ds-draft-inspector\" aria-label=\"Selected artwork and assignments\"><h3>sample-mockup.jpeg</h3><div class=\"ds-draft-preview\"><svg viewBox=\"0 0 160 140\" role=\"img\" aria-label=\"Example garment artwork\"><path d=\"M48 18 20 40 35 65 48 57v66h64V57l13 8 15-25-28-22-15 12H63z\" fill=\"#E2E8F0\" stroke=\"#CBD5E1\"/><rect x=\"61\" y=\"51\" width=\"38\" height=\"24\" rx=\"2\" fill=\"#1A73E8\"/><text x=\"80\" y=\"67\" text-anchor=\"middle\" fill=\"white\" font-family=\"system-ui,sans-serif\" font-size=\"9\">PRINT-MO</text></svg></div><p class=\"ds-draft-meta\">Mockup · Front</p><p class=\"ds-draft-assignment\">Applies to: Comfort Colors · 1717 · White / Medium · Qty 1</p><button class=\"ds-draft-secondary\">Edit assignment</button><section class=\"ds-draft-reference\"><h4>Order items</h4><strong>Comfort Colors · 1717</strong><p>White / Medium · Qty 1</p><strong>DTF Print</strong><p>Breast Print · Qty 1</p></section></section></div><details class=\"ds-draft-help\"><summary>About draft artwork</summary><p>Files are internal and follow the draft into its purchased order. Manage quotes, invoices, and payment in Shopify.</p></details></div></section>",
+      "css": ".ds-draft-detail { width: min(1200px, calc(100vw - 40px)); max-width: 100%; height: min(92dvh, 960px); display: flex; flex-direction: column; overflow: hidden; border-radius: 16px; background: #FFFFFF; color: #334155; box-shadow: 0 18px 44px rgba(15,23,42,.28); font: .95rem/1.4 system-ui,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif; } .ds-draft-header { display: flex; align-items: center; gap: 16px; padding: 20px 24px; border-bottom: 1px solid #E2E8F0; background: #F8FAFC; flex: 0 0 auto; } .ds-draft-identity { flex: 1; min-width: 0; } .ds-draft-identity h2 { margin: 0; font-size: 1.2rem; line-height: 1.3; color: #0F172A; overflow-wrap: anywhere; } .ds-draft-identity p { margin: 5px 0 0; font-size: .8125rem; color: #64748B; } .ds-draft-detail button { min-height: 44px; max-width: 100%; padding: 8px 12px; border: 1px solid #CBD5E1; border-radius: 10px; font: inherit; cursor: pointer; } .ds-draft-detail button:hover { background: #F1F5F9; } .ds-draft-detail button:active { background: #E2E8F0; } .ds-draft-detail :focus-visible { outline: 2px solid #1A73E8; outline-offset: 2px; } .ds-draft-detail .ds-draft-quiet { border-color: transparent; background: transparent; color: #334155; white-space: nowrap; font-size: .8125rem; } .ds-draft-body { flex: 1; min-height: 0; padding: 24px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; } .ds-draft-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; } .ds-draft-toolbar h3 { margin: 0; color: #0F172A; font-size: 1.2rem; } .ds-draft-toolbar h3 span { margin-left: 8px; font-size: .8125rem; color: #64748B; font-weight: 400; font-variant-numeric: tabular-nums; } .ds-draft-detail .ds-draft-primary { background: #1A73E8; border-color: #1A73E8; color: white; font-weight: 600; } .ds-draft-detail .ds-draft-primary:hover,.ds-draft-detail .ds-draft-primary:active { background: #1765C1; } .ds-draft-secondary { background: white; color: #334155; } .ds-draft-layout { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(320px,.85fr); gap: 32px; align-items: start; } .ds-draft-row { display: flex; align-items: center; gap: 4px; padding: 4px; border-bottom: 1px solid #E2E8F0; border-radius: 8px; background: #EFF6FF; } .ds-draft-detail .ds-draft-select { display: flex; align-items: center; gap: 16px; flex: 1; min-width: 0; padding: 12px 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; color: #334155; } .ds-draft-detail .ds-draft-select:hover { background: #EFF6FF; } .ds-draft-thumb { flex: 0 0 72px; width: 72px; height: 72px; display: grid; place-items: center; overflow: hidden; border-radius: 6px; background: #F8FAFC; } .ds-draft-thumb svg { width: 100%; height: 100%; } .ds-draft-info { display: flex; flex-direction: column; gap: 5px; min-width: 0; overflow-wrap: anywhere; } .ds-draft-info strong { color: #0F172A; font-size: .875rem; font-weight: 600; } .ds-draft-info span,.ds-draft-info small { font-size: .8125rem; } .ds-draft-info small { color: #64748B; } .ds-draft-detail .ds-draft-menu { flex: 0 0 44px; width: 44px; border: 0; background: transparent; font-size: 1.3rem; color: #334155; } .ds-draft-inspector { min-width: 0; padding: 20px; background: #F8FAFC; border-radius: 8px; } .ds-draft-inspector h3 { margin: 0 0 16px; font-size: .95rem; color: #0F172A; overflow-wrap: anywhere; } .ds-draft-preview { display: grid; place-items: center; height: 260px; margin-bottom: 16px; border-radius: 6px; background: white; overflow: hidden; } .ds-draft-preview svg { width: 100%; height: 100%; } .ds-draft-meta { margin: 0 0 8px; font-size: .875rem; font-weight: 600; } .ds-draft-assignment { margin: 0 0 16px; font-size: .875rem; line-height: 1.5; overflow-wrap: anywhere; } .ds-draft-reference { margin-top: 24px; padding-top: 16px; border-top: 1px solid #CBD5E1; font-size: .8125rem; } .ds-draft-reference h4 { margin: 0 0 12px; font-size: .875rem; color: #0F172A; } .ds-draft-reference strong { font-weight: 500; } .ds-draft-reference p { margin: 4px 0 16px; color: #64748B; } .ds-draft-help { margin-top: 24px; padding-top: 16px; border-top: 1px solid #E2E8F0; color: #64748B; font-size: .8125rem; } .ds-draft-help summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; } .ds-draft-help summary::before { content: '+'; margin-right: 8px; } .ds-draft-help[open] summary::before { content: '−'; } @media(max-width:760px) { .ds-draft-detail { width: 100%; height: 100dvh; border-radius: 0; } .ds-draft-header { flex-wrap: wrap; gap: 4px 8px; padding: 8px 16px 12px; } .ds-draft-identity { flex-basis: 100%; order: 1; } .ds-draft-identity h2 { font-size: 1.05rem; } .ds-draft-header > button:nth-last-child(2) { order: 2; } .ds-draft-body { padding: 20px 16px; } .ds-draft-toolbar > div { flex-basis: 100%; } .ds-draft-layout { grid-template-columns: minmax(0,1fr); gap: 24px; } .ds-draft-inspector { padding: 16px; } .ds-draft-thumb { flex-basis: 56px; width: 56px; height: 56px; } .ds-draft-detail .ds-draft-select { gap: 10px; padding: 10px 4px; } .ds-draft-preview { height: 220px; } }"
     }
   ],
   "narrative": {
     "northStar": "The Precision Workbench",
-    "overview": "The interface should feel like a well-organized production surface: every tool and piece of order information has a clear place, the next action is visible, and nothing competes for attention without an operational reason. The visual register is restrained and work-focused, using a white and slate foundation with Action Blue reserved for active state and primary action. Density is allowed because this is a real shop tool, but structure must do the work. Desktop and mobile are two complete arrangements of the same workflow; mobile is not a reduced companion.",
+    "overview": "The interface should feel like a well-organized production surface: every tool and piece of order information has a clear place, the next action is visible, and nothing competes for attention without an operational reason. The visual register is restrained and work-focused, using a white and slate foundation with Action Blue reserved for active state and primary action.\n\nDensity is allowed because this is a real shop tool, but structure must do the work. Spacing, alignment, type weight, progressive disclosure, and consistent state styling should make complex order data feel calm. Desktop and mobile are two complete arrangements of the same workflow; mobile is not a reduced companion.\n\nThe system explicitly rejects generic dashboard conventions that are disconnected from PrintMO's real workflow, visual density that becomes noisy or overwhelming, and unrelated card accumulation as the product expands.",
     "keyCharacteristics": [
       "Purpose-built around the order-production sequence",
       "Compact, legible, and low-noise",
@@ -181,12 +403,36 @@
       "Modular enough to accept new stages without losing coherence"
     ],
     "rules": [
-      { "name": "The One Active Signal Rule", "body": "Action Blue marks what is active or what should happen next; it is forbidden as ambient decoration.", "section": "colors" },
-      { "name": "The Status Must Mean Something Rule", "body": "Green, umber, and red appear only when the underlying order state justifies them, and every state also has a text or icon cue.", "section": "colors" },
-      { "name": "The Scan Before Read Rule", "body": "Order number, customer, status, blocker, and next action must be distinguishable before the user reads supporting detail.", "section": "typography" },
-      { "name": "The No Decorative Type Rule", "body": "Display fonts, excessive tracking, and oversized fluid headings are forbidden in this task surface.", "section": "typography" },
-      { "name": "The Structural Shadow Rule", "body": "A shadow must explain stacking or movement. Never pair a one-pixel decorative border with a wide soft shadow on an ordinary card or button.", "section": "elevation" },
-      { "name": "The One Floating Layer Rule", "body": "Translucency and backdrop blur are reserved for the compact mobile dock; they must not spread to panels or cards.", "section": "elevation" }
+      {
+        "name": "The One Active Signal Rule",
+        "body": "Action Blue marks what is active or what should happen next; it is forbidden as ambient decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The Status Must Mean Something Rule",
+        "body": "Green, umber, and red appear only when the underlying order state justifies them, and every state also has a text or icon cue.",
+        "section": "colors"
+      },
+      {
+        "name": "The Scan Before Read Rule",
+        "body": "Order number, customer, status, blocker, and next action must be distinguishable before the user reads supporting detail.",
+        "section": "typography"
+      },
+      {
+        "name": "The No Decorative Type Rule",
+        "body": "Display fonts, excessive tracking, and oversized fluid headings are forbidden in this task surface.",
+        "section": "typography"
+      },
+      {
+        "name": "The Structural Shadow Rule",
+        "body": "A shadow must explain stacking or movement. Never pair a one-pixel decorative border with a wide soft shadow on an ordinary card or button.",
+        "section": "elevation"
+      },
+      {
+        "name": "The One Floating Layer Rule",
+        "body": "Translucency and backdrop blur are reserved for the compact mobile dock; they must not spread to panels or cards.",
+        "section": "elevation"
+      }
     ],
     "dos": [
       "Do use Action Blue only for the current state, focus, selection, and the primary action in a decision cluster.",

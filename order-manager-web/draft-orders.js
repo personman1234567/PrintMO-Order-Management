@@ -1,8 +1,8 @@
 // Extend the existing pipeline workbench; drafts are preparation, never production stages.
 (() => {
   const state = { records: [], cursor: null, query: '', filter: 'active', loaded: false,
-    loading: false, generation: 0, detail: null, editing: null, opener: null, busy: false, scrollTop: 0 };
-  const uploads = new WeakMap();
+    loading: false, generation: 0, detail: null, editing: null, opener: null, busy: false, scrollTop: 0, pending: [], adding: false, selectedAssetId: null,
+    uploadRole: 'mockup', uploadPlacement: 'front', uploadItemIds: [] };
   const placements = [['front', 'Front'], ['back', 'Back'], ['left-chest', 'Left chest'],
     ['right-chest', 'Right chest'], ['left-sleeve', 'Left sleeve'], ['right-sleeve', 'Right sleeve'], ['other', 'Other']];
   const $ = id => document.getElementById(id);
@@ -14,7 +14,7 @@
   }
   function active() { return document.body.dataset.pipelineView === 'drafts' && document.body.dataset.orderSource === 'shopify'; }
   function message(value, error = false) {
-    const el = $('draft-orders-status'); el.textContent = value; el.classList.toggle('draft-error', error);
+    const el = state.detail && $('draft-detail-status') ? $('draft-detail-status') : $('draft-orders-status'); el.textContent = value; el.classList.toggle('draft-error', error);
     el.setAttribute('role', error ? 'alert' : 'status');
   }
   const countLabel = (count, label) => `${count} ${label}${count === 1 ? '' : 's'}`;
@@ -173,117 +173,310 @@
     }
     renderList();
   }
+  function clearPending() {
+    state.pending.forEach(entry => URL.revokeObjectURL(entry.url));
+    state.pending = []; state.adding = false;
+    state.uploadRole = 'mockup'; state.uploadPlacement = 'front'; state.uploadItemIds = [];
+  }
+  function discardAssignment() {
+    return !state.editing || window.confirm('Discard the unsaved assignment changes? Pending uploads will be kept.');
+  }
+  function discardChanges() {
+    return !(state.pending.length || state.editing) || window.confirm('Discard the unsaved artwork changes? Uploaded files will be kept.');
+  }
+  function syncRecord(detail) {
+    state.detail = detail;
+    const index = state.records.findIndex(record => record.id === detail.id);
+    if (index >= 0) state.records[index] = { ...state.records[index], ...detail,
+      mockupCount: detail.artwork.filter(a => a.role === 'mockup').length,
+      designCount: detail.artwork.filter(a => a.role === 'design').length,
+      preview: detail.artwork.find(a => a.role === 'mockup') || null };
+  }
   async function open(record, opener) {
-    if (state.busy) return;
+    if (state.busy || (state.detail && !discardChanges())) return;
     const generation = ++state.generation; state.loading = false;
     if (!state.detail) state.scrollTop = $('draft-orders-workspace').scrollTop;
     pausePreviews(); loadingControls();
-    state.opener = opener; message(`Loading ${record.displayName}…`);
+    if (opener) state.opener = opener;
+    message(`Loading ${record.displayName}…`);
     try {
       const detail = await window.api.getDraftOrder(record.id);
       if (generation !== state.generation || !active()) return;
-      state.detail = detail; state.editing = null; renderDetail();
+      clearPending(); state.detail = detail; state.editing = null;
+      state.selectedAssetId = detail.artwork[0]?.assetId || null;
+      renderDetail(); message(''); $('draft-orders-status').textContent = '';
+      if (!$('draft-detail-dialog').open) $('draft-detail-dialog').showModal();
       $('draft-detail-title').focus();
     } catch (error) { if (generation === state.generation) { message(error.message, true); observePreviews(); } }
   }
   function back() {
-    if (state.busy) return;
-    ++state.generation; state.detail = null; state.editing = null;
-    $('draft-orders-detail').hidden = true; $('draft-orders-browse').hidden = false;
+    if (state.busy || !discardChanges()) return;
+    ++state.generation; clearPending(); state.detail = null; state.editing = null;
+    $('draft-detail-dialog').close(); $('draft-orders-detail').hidden = true;
+    $('draft-orders-browse').hidden = false;
     $('draft-orders-workspace').dataset.detail = 'false'; renderList();
     $('draft-orders-workspace').scrollTop = state.scrollTop;
     const opener = $('draft-orders-list').querySelector(`[data-draft-id="${state.opener?.dataset.draftId || ''}"]`);
     opener?.focus({ preventScroll: true });
   }
+  function detailControls() {
+    $('draft-orders-detail').setAttribute('aria-busy', String(state.busy));
+    $('draft-orders-detail').querySelectorAll('button, input, select').forEach(el => { el.disabled = state.busy; });
+    if (state.editing && $('draft-artwork-role')) $('draft-artwork-role').disabled = true;
+  }
   async function perform(action, success) {
     if (state.busy) return;
     state.busy = true; const generation = state.generation;
-    $('draft-orders-detail').setAttribute('aria-busy', 'true'); loadingControls();
-    $('draft-orders-detail').querySelectorAll('button, input, select').forEach(el => { el.disabled = true; });
-    message('Saving artwork…');
+    detailControls(); loadingControls(); message('Saving artwork…');
     try {
       const detail = await action();
       if (generation !== state.generation) return;
-      state.detail = detail; state.editing = null;
-      const index = state.records.findIndex(record => record.id === detail.id);
-      if (index >= 0) state.records[index] = { ...state.records[index], ...detail,
-        mockupCount: detail.artwork.filter(a => a.role === 'mockup').length,
-        designCount: detail.artwork.filter(a => a.role === 'design').length,
-        preview: detail.artwork.find(a => a.role === 'mockup') || null };
-      renderDetail(); $('draft-detail-title').focus(); message(success);
-    } catch (error) { if (generation === state.generation) message(`${error.message} Your existing files are retained.`, true); }
-    finally {
-      state.busy = false; loadingControls();
-      $('draft-orders-detail').removeAttribute('aria-busy');
-      $('draft-orders-detail').querySelectorAll('button, input, select').forEach(el => { el.disabled = false; });
-      if (state.editing && $('draft-artwork-role')) $('draft-artwork-role').disabled = true;
+      syncRecord(detail); state.editing = null;
+      if (!state.pending.length) { state.adding = false; state.uploadItemIds = []; state.uploadPlacement = 'front'; state.uploadRole = 'mockup'; }
+      renderDetail(); message(success);
+    } catch (error) {
+      if (generation === state.generation) {
+        // Earlier files in a batch are already saved; only unresolved files remain staged.
+        renderDetail();
+        const recovery = state.pending.length ? 'Saved artwork is kept. Remaining files are still pending; try Upload artwork again.'
+          : state.editing ? 'Your assignment changes are retained. Try Save assignment again.' : 'Existing artwork is kept. Try again.';
+        message(`${error.message} ${recovery}`, true);
+      }
+    } finally {
+      state.busy = false; loadingControls(); detailControls();
+      if (generation === state.generation && state.detail) {
+        (document.querySelector('.draft-assignment-form button[type="submit"]') || $('draft-edit-assignment') || $('draft-add-files'))?.focus({ preventScroll: true });
+      }
     }
   }
+  function itemLabel(item) { return `${item.title} · ${item.variantTitle || item.sku || 'Custom item'} · Qty ${item.quantity}`; }
+  function shortItemTitle(item) {
+    const parts = item.title.split(/\s+-\s+/);
+    const compact = parts.length > 2 && /^[\w-]*\d[\w-]*$/.test(parts.at(-1)) ? `${parts[0]} · ${parts.at(-1)}` : item.title;
+    return compact.length > 52 ? `${compact.slice(0, 49).trimEnd()}…` : compact;
+  }
+  function assignmentLabel(asset, full = false) {
+    if (asset.needsReassignment) return `Previously: ${asset.appliesTo}`;
+    const items = state.detail.items.filter(item => asset.lineItemIds.includes(item.id));
+    return items.length ? items.map(item => `${full ? item.title : shortItemTitle(item)} · ${item.variantTitle || item.sku || 'Custom item'} · Qty ${item.quantity}`).join('; ') : asset.appliesTo;
+  }
+  function media(asset, className) {
+    const frame = text('div', '', className);
+    const fallback = text('span', 'Loading preview…', 'draft-media-status');
+    const img = document.createElement('img'); img.alt = asset.name; img.decoding = 'async';
+    img.addEventListener('load', () => { fallback.hidden = true; });
+    img.addEventListener('error', () => { img.hidden = true; fallback.textContent = 'Preview unavailable'; });
+    frame.append(fallback, img);
+    const generation = state.generation;
+    queueMicrotask(async () => {
+      try {
+        const url = asset.url || await window.api.getDraftArtworkUrl(asset.assetId);
+        if (generation === state.generation && img.isConnected && active()) img.src = url;
+      } catch { if (frame.isConnected) { img.hidden = true; fallback.textContent = 'Preview unavailable'; } }
+    });
+    return frame;
+  }
+  function focusInspector() {
+    const title = $('draft-inspector-title'); title?.focus({ preventScroll: true });
+    if (window.matchMedia('(max-width: 760px)').matches) title?.scrollIntoView({ block: 'start', behavior: 'instant' });
+  }
+  function selectAsset(assetId) {
+    if (state.busy || !discardAssignment()) return;
+    state.editing = null; state.adding = false; state.selectedAssetId = assetId;
+    renderDetail(); focusInspector();
+  }
+  function addFiles(files) {
+    if (state.busy || !state.detail?.editable) return;
+    const selected = Array.from(files || []);
+    if (!selected.length) return;
+    if (!discardAssignment()) return;
+    if (selected.some(file => !/\.(png|svg|jpe?g|webp)$/i.test(file.name) || file.size < 1 || file.size > 50 * 1024 * 1024)) {
+      message('Choose PNG, SVG, JPG, or WebP files up to 50 MB each. No files from this selection were added.', true); return;
+    }
+    if (state.detail.artwork.length + state.pending.length + selected.length > 100) {
+      message('A draft can hold up to 100 files. Choose fewer files or remove an existing attachment.', true); return;
+    }
+    state.editing = null; state.adding = true;
+    if (!state.pending.length) {
+      state.uploadRole = selected.every(file => /\.svg$/i.test(file.name)) ? 'design' : 'mockup';
+      state.uploadItemIds = []; state.uploadPlacement = 'front';
+    }
+    selected.forEach(file => state.pending.push({ file, id: crypto.randomUUID().replace(/-/g, ''), url: URL.createObjectURL(file) }));
+    renderDetail(); message(''); focusInspector(); $('draft-artwork-role')?.focus({ preventScroll: true });
+  }
+  async function pasteImage() {
+    if (state.busy || !state.detail?.editable) return;
+    const generation = state.generation;
+    try {
+      const clipboardItems = await navigator.clipboard.read();
+      if (generation !== state.generation || !active()) return;
+      const files = [];
+      for (const item of clipboardItems) {
+        const type = item.types.find(value => ['image/png', 'image/jpeg', 'image/webp'].includes(value));
+        if (type) {
+          const blob = await item.getType(type);
+          files.push(new File([blob], `pasted-image-${state.pending.length + files.length + 1}.${type === 'image/jpeg' ? 'jpg' : type.split('/')[1]}`, { type }));
+        }
+      }
+      if (generation !== state.generation || !active()) return;
+      if (!files.length) { message('No supported image was found in the clipboard. Copy an image or use Add files.', true); return; }
+      if (state.pending.length && state.uploadRole !== 'mockup') {
+        message('Finish or cancel the pending print files before pasting a mockup.', true); return;
+      }
+      addFiles(files);
+    } catch {
+      if (generation === state.generation) message('Could not read the clipboard. Use Add files, or focus the artwork area and paste with your keyboard.', true);
+    }
+  }
+  function fileMenu(asset) {
+    const wrapper = text('div', '', 'draft-file-menu');
+    const menu = document.createElement('div'); menu.className = 'draft-file-popover'; menu.popover = 'auto'; menu.setAttribute('role', 'menu');
+    const trigger = button('⋯', () => {
+      if (menu.matches(':popover-open')) { menu.hidePopover(); return; }
+      const bounds = trigger.getBoundingClientRect();
+      menu.style.left = `${Math.max(8, Math.min(bounds.right - 160, window.innerWidth - 168))}px`;
+      menu.style.top = `${Math.min(bounds.bottom + 4, window.innerHeight - 64)}px`;
+      menu.showPopover(); menu.querySelector('button').focus();
+    }, 'draft-file-menu-trigger');
+    trigger.setAttribute('aria-label', `Actions for ${asset.name}`); trigger.setAttribute('aria-haspopup', 'menu');
+    trigger.setAttribute('aria-expanded', 'false');
+    menu.addEventListener('toggle', event => { trigger.setAttribute('aria-expanded', String(event.newState === 'open')); });
+    const remove = button('Remove file', () => {
+      menu.hidePopover(); trigger.focus();
+      if (window.confirm(`Remove ${asset.name} from this draft?`)) perform(
+        () => window.api.removeDraftArtwork(state.detail.id, asset.assetId, asset.revision), 'Artwork removed from the draft.');
+    }, 'draft-remove-file');
+    remove.setAttribute('role', 'menuitem');
+    menu.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); menu.hidePopover(); trigger.focus(); }
+    });
+    menu.append(remove); wrapper.append(trigger, menu); return wrapper;
+  }
   function renderDetail() {
-    const record = state.detail; pausePreviews(); $('draft-orders-workspace').dataset.detail = 'true';
-    $('draft-orders-browse').hidden = true; $('draft-orders-detail').hidden = false;
-    const container = $('draft-orders-detail'); container.replaceChildren();
-    const header = text('div', '', 'draft-detail-header');
-    header.append(button('← Draft orders', back));
-    const heading = text('h3', `${record.displayName} · ${record.customerName}`, 'draft-detail-title');
+    const record = state.detail;
+    if (!record) return;
+    if (!record.artwork.some(asset => asset.assetId === state.selectedAssetId)) state.selectedAssetId = record.artwork[0]?.assetId || null;
+    pausePreviews(); $('draft-orders-workspace').dataset.detail = 'true';
+    $('draft-orders-detail').hidden = false;
+    const container = $('draft-orders-detail');
+    const scrollTop = container.querySelector('.draft-detail-body')?.scrollTop || 0;
+    container.replaceChildren();
+    const header = text('header', '', 'draft-detail-header');
+    header.append(button('← Drafts', back, 'draft-back'));
+    const identity = text('div', '', 'draft-detail-identity');
+    const heading = text('h2', `${record.displayName} · ${record.customerName}`, 'draft-detail-title');
     heading.id = 'draft-detail-title'; heading.tabIndex = -1;
-    header.append(heading, shopifyLink(record)); container.append(header);
-    container.append(text('p', `${status(record)} · ${record.quantity} items · ${money(record)}`, 'draft-detail-summary'));
-    if (record.orderId) {
-      container.append(text('p', record.assignmentReview
-        ? 'Some artwork needs reassignment. Select its current order items below and save the assignment.'
-        : `Artwork is attached to ${record.orderName || 'the purchased order'}. ${record.financialStatus === 'PAID' ? 'Paid orders enter the order pipeline.' : 'The order is awaiting payment.'}`, 'draft-notice'));
-    } else container.append(text('p', 'Prepare files here. Quotes and invoices stay in Shopify. Uploaded files are internal.', 'draft-detail-summary'));
-    const artwork = text('section', '', 'draft-artwork-list');
-    artwork.append(text('h4', 'Attached artwork'));
-    if (!record.artwork.length) artwork.append(text('p', 'No files attached yet. Select garments and a placement below to add artwork.', 'draft-detail-summary'));
+    identity.append(heading, text('p', `${status(record)} · ${record.quantity} order items · ${money(record)}`, 'draft-detail-summary'));
+    const refresh = button('↻', () => open(record, state.opener), 'draft-detail-refresh');
+    refresh.setAttribute('aria-label', 'Refresh draft'); refresh.title = 'Refresh draft';
+    header.append(identity, shopifyLink(record), refresh); container.append(header);
+    const body = text('div', '', 'draft-detail-body');
+    const feedback = text('p', '', 'draft-detail-feedback'); feedback.id = 'draft-detail-status';
+    feedback.setAttribute('role', 'status'); feedback.setAttribute('aria-live', 'polite'); body.append(feedback);
+    if (record.orderId) body.append(text('p', record.assignmentReview
+      ? 'This draft became an order. Review the highlighted files and assign them to the current order items.'
+      : `Artwork is attached to ${record.orderName || 'the purchased order'}. Add or remove files from the purchased order.`, 'draft-notice'));
+    const toolbar = text('div', '', 'draft-artwork-toolbar');
+    toolbar.append(text('h3', 'Artwork'), text('span', countLabel(record.artwork.length, 'file'), 'draft-artwork-count'));
+    if (record.editable) {
+      const actions = text('div', '', 'draft-intake-actions');
+      const input = document.createElement('input'); input.type = 'file'; input.multiple = true;
+      input.id = 'draft-artwork-file'; input.accept = '.png,.svg,.jpg,.jpeg,.webp'; input.hidden = true;
+      input.addEventListener('change', () => addFiles(input.files));
+      const add = button('Add files', () => input.click(), state.adding || state.pending.length ? '' : 'draft-primary'); add.id = 'draft-add-files';
+      actions.append(add, button('Paste image', pasteImage), input);
+      if (state.pending.length && !state.adding) actions.append(button('Continue upload', () => {
+        if (!discardAssignment()) return;
+        state.editing = null; state.adding = true; renderDetail(); focusInspector(); $('draft-artwork-role')?.focus({ preventScroll: true });
+      }, 'draft-primary'));
+      toolbar.append(actions);
+    }
+    body.append(toolbar);
+    const layout = text('div', '', 'draft-artwork-layout');
+    layout.tabIndex = 0; layout.setAttribute('aria-label', 'Draft artwork. Drop files here or paste an image.');
+    if (record.editable) {
+      layout.addEventListener('dragover', event => {
+        if (Array.from(event.dataTransfer?.types || []).includes('Files')) { event.preventDefault(); layout.classList.add('is-dropping'); }
+      });
+      layout.addEventListener('dragleave', event => { if (!layout.contains(event.relatedTarget)) layout.classList.remove('is-dropping'); });
+      layout.addEventListener('drop', event => { event.preventDefault(); layout.classList.remove('is-dropping'); addFiles(event.dataTransfer?.files); });
+    }
+    const list = text('section', '', 'draft-artwork-list'); list.setAttribute('aria-label', 'Artwork files');
+    if (!record.artwork.length && !state.pending.length) {
+      const empty = text('div', '', 'draft-artwork-empty');
+      empty.append(text('h4', 'Start with your artwork'), text('p', record.editable
+        ? 'Add files, drop them here, or paste an image. Then choose the items and placement.' : 'No artwork is attached to this draft.'));
+      list.append(empty);
+    }
     for (const asset of record.artwork) {
       const row = text('div', '', 'draft-artwork-row');
-      const img = document.createElement('img'); img.alt = asset.name; img.loading = 'lazy';
-      row.append(img); queueMicrotask(() => preview(asset, img, state.generation));
-      const info = text('div', '', 'draft-artwork-info');
-      info.append(text('strong', asset.name), text('span', `${asset.role === 'mockup' ? 'Mockup' : 'Print file'} · ${placementLabel(asset.placement)}`),
-        text('span', asset.needsReassignment ? `Needs reassignment · Previously: ${asset.appliesTo}` : asset.appliesTo, asset.needsReassignment ? 'draft-error' : ''));
-      const actions = text('div', '', 'draft-artwork-actions');
-      actions.append(button('Preview', async () => {
-        try {
-          const url = await window.api.getDraftArtworkUrl(asset.assetId);
-          const viewer = document.createElement('dialog'); viewer.className = 'draft-artwork-preview'; viewer.setAttribute('aria-label', `Preview ${asset.name}`);
-          const image = document.createElement('img'); image.src = url; image.alt = asset.name;
-          const close = button('Close preview', () => viewer.close());
-          viewer.append(text('h3', asset.name), close, image); document.body.append(viewer);
-          viewer.addEventListener('close', () => { viewer.remove(); actions.querySelector('button')?.focus(); }, { once: true });
-          viewer.showModal(); close.focus();
-        } catch (error) { message(error.message, true); }
-      }));
-      actions.append(button('Reassign', () => { state.editing = asset; renderDetail(); $('draft-artwork-placement').focus(); }));
-      if (record.editable) actions.append(button('Remove', () => {
-        if (window.confirm(`Remove ${asset.name} from this draft?`)) perform(
-          () => window.api.removeDraftArtwork(record.id, asset.assetId, asset.revision), 'Artwork removed from the draft.');
-      }));
-      info.append(actions); row.append(info); artwork.append(row);
+      row.dataset.selected = String(state.selectedAssetId === asset.assetId && !state.adding);
+      const select = button('', () => selectAsset(asset.assetId), 'draft-file-select');
+      select.dataset.assetId = asset.assetId; select.setAttribute('aria-pressed', row.dataset.selected);
+      select.setAttribute('aria-label', `View ${asset.name}, ${asset.role === 'mockup' ? 'Mockup' : 'Print file'}, ${placementLabel(asset.placement)}`);
+      select.append(media(asset, 'draft-file-thumbnail'));
+      const info = text('span', '', 'draft-artwork-info');
+      const name = text('strong', asset.name); name.title = asset.name;
+      const assignment = text('span', assignmentLabel(asset), 'draft-file-assignment'); assignment.title = assignmentLabel(asset, true);
+      info.append(name, text('span', `${asset.role === 'mockup' ? 'Mockup' : 'Print file'} · ${placementLabel(asset.placement)}`, 'draft-file-meta'), assignment);
+      if (asset.needsReassignment) info.append(text('span', 'Needs reassignment', 'draft-file-warning'));
+      select.append(info); row.append(select);
+      if (record.editable) row.append(fileMenu(asset));
+      list.append(row);
     }
-    container.append(artwork);
-    if (record.editable || state.editing) container.append(assignmentForm(record));
-    message(record.assignmentReview ? 'Artwork needs reassignment.' : `${record.artwork.length} files attached.`, record.assignmentReview);
+    if (state.pending.length) {
+      list.append(text('h4', `Pending upload · ${countLabel(state.pending.length, 'file')}`, 'draft-pending-title'));
+      state.pending.forEach(entry => {
+        const row = text('div', '', 'draft-pending-row');
+        row.append(media({ name: entry.file.name, url: entry.url }, 'draft-file-thumbnail'));
+        const info = text('div', '', 'draft-artwork-info');
+        info.append(text('strong', entry.file.name), text('span', 'Not uploaded yet', 'draft-file-meta')); row.append(info);
+        const remove = button('×', () => {
+          URL.revokeObjectURL(entry.url); state.pending = state.pending.filter(value => value !== entry);
+          renderDetail(); $('draft-artwork-role')?.focus({ preventScroll: true });
+        }, 'draft-pending-remove');
+        remove.setAttribute('aria-label', `Discard pending ${entry.file.name}`); row.append(remove); list.append(row);
+      });
+    }
+    const inspector = text('section', '', 'draft-artwork-inspector'); inspector.setAttribute('aria-label', 'Selected artwork and assignments');
+    let selected = record.artwork.find(asset => asset.assetId === state.selectedAssetId);
+    if (!selected) { selected = record.artwork[0]; state.selectedAssetId = selected?.assetId || null; }
+    const inspectorTitle = text('h3', state.adding ? 'Upload artwork' : selected?.name || 'Order items');
+    inspectorTitle.id = 'draft-inspector-title'; inspectorTitle.tabIndex = -1; inspector.append(inspectorTitle);
+    if (state.adding && record.editable) {
+      inspector.append(assignmentForm(record));
+    } else if (selected) {
+      inspector.append(media(selected, 'draft-selected-preview'));
+      if (state.editing) inspector.append(assignmentForm(record));
+      else {
+        inspector.append(text('p', `${selected.role === 'mockup' ? 'Mockup' : 'Print file'} · ${placementLabel(selected.placement)}`, 'draft-selected-meta'));
+        inspector.append(text('p', `${selected.needsReassignment ? 'Previously applied to' : 'Applies to'}: ${assignmentLabel(selected).replace(/^Previously: /, '')}`, 'draft-selected-assignment'));
+        if (selected.needsReassignment) inspector.append(text('p', 'Needs reassignment. Choose the current order items to repair this file.', 'draft-file-warning'));
+        const edit = button('Edit assignment', () => {
+          state.editing = { ...selected, draftPlacement: selected.placement, draftItemIds: [...selected.lineItemIds] };
+          renderDetail(); focusInspector(); $('draft-artwork-placement').focus({ preventScroll: true });
+        }); edit.id = 'draft-edit-assignment'; inspector.append(edit);
+      }
+    }
+    if (!state.adding && !state.editing) {
+      const items = text('section', '', 'draft-reference-items');
+      if (selected) items.append(text('h4', 'Order items'));
+      for (const item of record.items) {
+        const row = text('div', '', 'draft-reference-item');
+        row.title = itemLabel(item); row.append(text('strong', shortItemTitle(item)), text('span', `${item.variantTitle || item.sku || 'Custom item'} · Qty ${item.quantity}`));
+        items.append(row);
+      }
+      inspector.append(items);
+    }
+    layout.append(list, inspector); body.append(layout);
+    const help = document.createElement('details'); help.className = 'draft-context-help';
+    help.append(text('summary', 'About draft artwork'), text('p', 'Files are internal and follow the draft into its purchased order. Manage quotes, invoices, and payment in Shopify.'));
+    body.append(help); container.append(body); body.scrollTop = scrollTop;
+    detailControls();
   }
   function assignmentForm(record) {
     const editing = state.editing;
     const form = document.createElement('form'); form.className = 'draft-assignment-form';
-    form.append(text('h4', editing ? `Reassign ${editing.name}` : 'Add artwork'));
-    const fieldset = document.createElement('fieldset'); fieldset.className = 'draft-item-picker';
-    fieldset.append(text('legend', 'Applies to garments'));
-    fieldset.append(text('p', 'Select every size or item that shares this artwork.', 'draft-detail-summary'));
-    const all = button('Select all items', () => fieldset.querySelectorAll('input').forEach(el => { el.checked = true; }));
-    fieldset.append(all);
-    record.items.forEach(item => {
-      const label = document.createElement('label'); label.className = 'draft-item-option';
-      const input = document.createElement('input'); input.type = 'checkbox'; input.name = 'lineItemId'; input.value = item.id;
-      input.checked = editing?.lineItemIds.includes(item.id) || false;
-      label.append(input, text('span', `${item.title} · ${item.variantTitle || item.sku || 'Custom item'} · ${item.quantity} items`));
-      fieldset.append(label);
-    });
-    form.append(fieldset);
     const fields = text('div', '', 'draft-upload-fields');
     function selectField(id, title, options, selected) {
       const label = document.createElement('label'); label.htmlFor = id; label.append(text('span', title));
@@ -291,49 +484,75 @@
       options.forEach(([value, title]) => { const option = text('option', title); option.value = value; select.append(option); });
       select.value = selected; label.append(select); fields.append(label); return select;
     }
-    const role = selectField('draft-artwork-role', 'File type', [['mockup', 'Mockup'], ['design', 'Print file']], editing?.role || 'mockup');
+    const role = selectField('draft-artwork-role', 'File purpose', [['mockup', 'Mockup'], ['design', 'Print file']], editing?.role || state.uploadRole);
     role.disabled = Boolean(editing);
-    const placement = selectField('draft-artwork-placement', 'Placement', placements, editing?.placement || 'front');
+    const placement = selectField('draft-artwork-placement', 'Placement', placements, editing?.draftPlacement || state.uploadPlacement);
+    placement.addEventListener('change', () => { if (editing) editing.draftPlacement = placement.value; else state.uploadPlacement = placement.value; });
     form.append(fields);
-    let file;
     if (!editing) {
-      const label = document.createElement('label'); label.htmlFor = 'draft-artwork-file'; label.append(text('span', 'Files'));
-      file = document.createElement('input'); file.id = 'draft-artwork-file'; file.type = 'file'; file.multiple = true; file.required = true;
-      const accept = () => { file.accept = role.value === 'design' ? '.png,.svg' : '.png,.jpg,.jpeg,.webp'; };
-      accept(); role.addEventListener('change', accept); label.append(file); form.append(label);
-      form.append(text('p', 'Print files: PNG or SVG. Mockups: PNG, JPG, or WebP. Up to 50 MB per file.', 'draft-detail-summary'));
+      const hint = text('p', '', 'draft-format-hint');
+      const updateHint = () => {
+        state.uploadRole = role.value;
+        hint.textContent = `${role.value === 'design' ? 'Print files: PNG or SVG.' : 'Mockups: PNG, JPG, or WebP.'} Up to 50 MB per file.`;
+      };
+      updateHint(); role.addEventListener('change', updateHint); form.append(hint);
+      if (state.pending.length > 1) form.append(text('p', `This assignment will apply to all ${state.pending.length} pending files.`, 'draft-batch-hint'));
+      if (!state.pending.length) form.append(text('p', 'Use Add files or Paste image to choose artwork.', 'draft-format-hint'));
     }
+    const fieldset = document.createElement('fieldset'); fieldset.className = 'draft-item-picker';
+    fieldset.append(text('legend', 'Applies to items'));
+    const all = button('Select all', () => {
+      fieldset.querySelectorAll('input').forEach(el => { el.checked = true; });
+      if (editing) editing.draftItemIds = record.items.map(item => item.id); else state.uploadItemIds = record.items.map(item => item.id);
+    }, 'draft-select-all'); fieldset.append(all);
+    record.items.forEach(item => {
+      const label = document.createElement('label'); label.className = 'draft-item-option';
+      const input = document.createElement('input'); input.type = 'checkbox'; input.name = 'lineItemId'; input.value = item.id;
+      input.checked = (editing ? editing.draftItemIds : state.uploadItemIds).includes(item.id); input.setAttribute('aria-label', itemLabel(item));
+      input.addEventListener('change', () => {
+        const ids = Array.from(fieldset.querySelectorAll('input:checked'), el => el.value);
+        if (editing) editing.draftItemIds = ids; else state.uploadItemIds = ids;
+      });
+      const info = text('span', '', 'draft-item-label'); info.title = itemLabel(item);
+      info.append(text('strong', shortItemTitle(item)), text('span', `${item.variantTitle || item.sku || 'Custom item'} · Qty ${item.quantity}`));
+      label.append(input, info); fieldset.append(label);
+    }); form.append(fieldset);
     const actions = text('div', '', 'draft-form-actions');
     const save = text('button', editing ? 'Save assignment' : 'Upload artwork', 'draft-primary'); save.type = 'submit'; actions.append(save);
-    if (editing) actions.append(button('Cancel reassignment', () => { state.editing = null; renderDetail(); }));
-    form.append(actions);
+    actions.append(button('Cancel', () => {
+      if (editing ? !discardAssignment() : !discardChanges()) return;
+      state.editing = null; if (!editing) clearPending(); renderDetail(); ($('draft-edit-assignment') || $('draft-add-files'))?.focus({ preventScroll: true });
+    })); form.append(actions);
     form.addEventListener('submit', event => {
       event.preventDefault();
       const ids = Array.from(fieldset.querySelectorAll('input:checked'), el => el.value);
-      if (!ids.length) { message('Select the garments this artwork applies to.', true); fieldset.querySelector('input')?.focus(); return; }
+      if (!ids.length) { message('Select the items this artwork applies to.', true); fieldset.querySelector('input')?.focus(); return; }
       if (editing) return perform(() => window.api.assignDraftArtwork(record.id, editing.assetId,
         { revision: editing.revision, placement: placement.value, lineItemIds: ids }), 'Artwork assignment saved.');
-      const files = Array.from(file.files || []);
-      if (!files.length) return;
-      // Validate the whole selection before starting so one wrong file does not cause a partial batch.
+      if (!state.pending.length) { message('Choose files or paste an image before uploading.', true); $('draft-add-files').focus(); return; }
       const extension = role.value === 'design' ? /\.(png|svg)$/i : /\.(png|jpe?g|webp)$/i;
-      if (files.some(file => !extension.test(file.name) || file.size < 1 || file.size > 50 * 1024 * 1024)) {
-        message('Choose supported files smaller than 50 MB each.', true); return;
+      if (state.pending.some(entry => !extension.test(entry.file.name))) {
+        message(role.value === 'design' ? 'Print files must be PNG or SVG. Remove unsupported pending files or choose Mockup.' : 'Mockups must be PNG, JPG, or WebP. Remove unsupported pending files or choose Print file.', true); return;
       }
+      const total = state.pending.length;
+      const generation = state.generation;
       perform(async () => {
-        let detail;
-        for (const selected of files) {
-          if (!uploads.has(selected)) uploads.set(selected, crypto.randomUUID().replace(/-/g, ''));
-          detail = await window.api.uploadDraftArtwork(record.id, selected,
-            { role: role.value, placement: placement.value, lineItemIds: ids, uploadId: uploads.get(selected) });
+        let detail = record;
+        for (const entry of [...state.pending]) {
+          detail = await window.api.uploadDraftArtwork(record.id, entry.file,
+            { role: role.value, placement: placement.value, lineItemIds: ids, uploadId: entry.id });
+          if (generation !== state.generation || !active() || state.detail?.id !== record.id) throw new Error('The draft workspace changed. Reopen the draft to review uploaded files.');
+          syncRecord(detail); state.selectedAssetId = detail.artwork.at(-1)?.assetId || state.selectedAssetId;
+          state.pending = state.pending.filter(value => value !== entry); URL.revokeObjectURL(entry.url);
         }
-        return detail;
-      }, 'Artwork saved. It will follow this draft into the purchased order.');
+        clearPending(); return detail;
+      }, `${countLabel(total, 'file')} uploaded. Artwork will follow this draft into the purchased order.`);
     });
     return form;
   }
   function switchView(view) {
     if (state.busy || document.body.dataset.orderSource !== 'shopify') return;
+    if (view !== 'drafts' && state.detail) { back(); if (state.detail) return; }
     if (active() && !state.detail) state.scrollTop = $('draft-orders-workspace').scrollTop;
     ++state.generation; state.loading = false; pausePreviews(); loadingControls();
     document.body.dataset.pipelineView = view;
@@ -350,6 +569,19 @@
   }
   function init() {
     if (!$('draft-orders-workspace') || !window.api?.getDraftOrders) return;
+    const dialog = document.createElement('dialog'); dialog.id = 'draft-detail-dialog';
+    dialog.setAttribute('aria-labelledby', 'draft-detail-title');
+    dialog.append($('draft-orders-detail')); document.body.append(dialog);
+    dialog.addEventListener('cancel', event => { event.preventDefault(); back(); });
+    dialog.addEventListener('paste', event => {
+      if (state.busy || !state.detail?.editable || event.target.closest('input, textarea, [contenteditable="true"]')) return;
+      const files = Array.from(event.clipboardData?.files || []);
+      if (files.length) {
+        event.preventDefault();
+        if (state.pending.length && state.uploadRole !== 'mockup') { message('Finish or cancel the pending print files before pasting a mockup.', true); return; }
+        addFiles(files);
+      }
+    });
     $('col-received').setAttribute('role', 'tabpanel');
     $('col-received').setAttribute('aria-label', 'Orders');
     $('pipeline-view-tabs').querySelectorAll('button').forEach(tab => tab.addEventListener('click', () => switchView(tab.dataset.pipelineView)));
@@ -369,7 +601,8 @@
       if (state.detail) open(state.detail, state.opener); else load({ reset: true, retain: state.loaded });
     });
     new MutationObserver(() => { if (document.body.dataset.orderSource !== 'shopify') {
-      ++state.generation; state.loading = false; pausePreviews(); loadingControls(); document.body.dataset.pipelineView = 'orders'; $('draft-orders-workspace').hidden = true;
+      ++state.generation; state.loading = false; clearPending(); state.detail = null; state.editing = null; dialog.close(); $('draft-orders-detail').hidden = true;
+      $('draft-orders-workspace').dataset.detail = 'false'; pausePreviews(); loadingControls(); document.body.dataset.pipelineView = 'orders'; $('draft-orders-workspace').hidden = true;
       $('col-received').setAttribute('aria-hidden', 'false');
       $('pipeline-view-tabs').querySelectorAll('[role="tab"]').forEach(tab => {
         const selected = tab.dataset.pipelineView === 'orders'; tab.setAttribute('aria-selected', String(selected)); tab.tabIndex = selected ? 0 : -1;

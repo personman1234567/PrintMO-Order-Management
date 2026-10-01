@@ -11,12 +11,22 @@ The September 30 owner decisions supersede the broader July invoicing-engine pro
 
 ## Current Continuation State
 
-- **Current state**: Live and enabled since 2026-09-30; browsing refinement and bulk list optimization released on 2026-10-01. Production D1 migration 0012 remains applied; Worker `02724e16-34b5-4a4a-987f-a83abf607a02`; Pages marker `1790876574885`; existing Shopify release `draft-artwork-2026-09-30` includes draft create/update/delete notifications.
-- **Next safe action**: Owner hands-on review of the refined draft browsing area; live artwork/payment/conversion acceptance remains separate.
+- **Current state**: Live and enabled since 2026-09-30; browsing refinement and bulk list optimization released on 2026-10-01. Production D1 migration 0012 remains applied; Worker `02724e16-34b5-4a4a-987f-a83abf607a02`; Pages marker `1790889867120` (focused detail workspace); existing Shopify release `draft-artwork-2026-09-30` includes draft create/update/delete notifications.
+- **Next safe action**: Refresh the embedded Order Manager and review the deployed focused draft-detail workspace. Live artwork/payment/conversion acceptance remains separate.
 - **Remaining blockers**: Live artwork upload/payment/conversion and changed/duplicate-garment acceptance remain unverified. Release blockers are cleared.
-- **Owner / external actions**: Owner authorized the October 1 browsing/loading implementation and release; no additional scopes, migrations, or Shopify configuration release were required.
+- **Owner / external actions**: Owner authorized the October 1 browsing/loading and focused draft-detail implementation and releases; no additional scopes, migrations, or Shopify configuration release were required.
 - **Last verified evidence**: Worker optimization deployed before Pages; production marker and draft JS/CSS hashes match the prepared bundle. Actual `DRAFT_ORDERS_ENABLED=1`, `SS_TEST_ORDER=1`, and existing integration flags verified. All 15 focused draft tests, proxy checks/build, Phase 1/2, documentation checks, and Worker dry-run passed. Synthetic browser checks cover 320px/393px and desktop layout, square/wide/slow/failed previews, four-request concurrency, stale results, retained refresh/pagination, and detail/tab continuity. No live purchase acceptance claimed.
 - **Recovery evidence**: Pre-migration D1 bookmark `00004566-00000576-000050f6-6cace2ff8544d964dedc6c9a60ffd1b3`; first disabled Worker release `ab11ca21-e490-4ab1-ba44-ed8fdbdbdf2b`; deployments used `--keep-vars`. Shopify release: https://dev.shopify.com/dashboard/102036845/apps/305079713793/versions/1150423072769.
+
+### Focused Draft Detail Workspace — Deployed (2026-10-01)
+
+Deployed with owner authorization to Cloudflare Pages (`d91a8f69`, production marker `1790889867120`). Production marker and served draft JS/CSS hashes match the prepared bundle. Opening a draft now uses a wide native dialog with the incumbent Order Detail visual language, fixed identity header, one inner body scroller, thumbnail file list, and selected-file inspector. At 760px and below the dialog fills the embedded viewport and the list/inspector stack. Returning restores draft browsing state and originating tile focus.
+
+Add files, drag/drop, Paste image, and keyboard image paste stage files locally before an explicit item/placement assignment and upload. Clipboard image intake defaults to Mockup; print files retain PNG/SVG validation. One batch shares one assignment, explained before submission. Pending files can survive selecting/editing a saved file and resume through Continue upload. Assignment edits use separate form state. A failed batch retains only unresolved files with their original upload IDs; confirmed earlier uploads remain visible. New intake never inherits the preceding file's item selection.
+
+The selected inspector retains the uncropped preview while editing assignments. Removal stays behind a top-layer file menu with confirmation. Full item identities remain accessible behind compact brand/style or shortened title presentation. Converted drafts retain assignment repair against current order items, with no new upload or removal controls. Shopify commerce and existing authenticated private artwork/revision/conversion APIs are unchanged.
+
+Verification: 43 synthetic browser assertions cover staged paste/drop/file intake, clipboard errors, explicit assignments, partial-batch retry identity, file selection while uploads are pending, isolated edit state, focus after save/failure, converted reassignment, unavailable previews, empty and populated drafts, long titles, and 393px/320px layouts. Fifteen owning draft service tests, Phase 1/2 contracts, syntax checks and local Pages preparation passed. The finish review's four material findings were corrected and checked. These checks do not establish real browser clipboard permission inside the authenticated Shopify embedding or live upload/purchase acceptance. Optional Product Register cleanup is deferred.
 
 ## Open Questions & Brainstorming
 
@@ -32,7 +42,7 @@ The September 30 owner decisions supersede the broader July invoicing-engine pro
 - [x] Nested Draft Orders toggle, matching tile layout, status filters, search, cursor pagination, explicit permission/loading/error/empty states.
 - [x] Compact two-row browse controls and responsive tiles: optional uncropped 16:9 mockup frame, shorter no-mockup tiles, positive artwork counts, conversion references and sync warnings.
 - [x] Summaries render independently of previews. The draft scroller observes nearby tiles, uses the existing private URL cache, and limits tile preview requests to four. Static skeletons cover initial/search/filter loading; refresh failures retain results and cursors, and appended pages preserve existing tiles.
-- [x] Draft detail in the pipeline scroll area; keyboard tab navigation and focus restoration; responsive controls and an accessible in-app artwork preview.
+- [x] Wide focused draft-detail dialog with a fixed header, one inner body scroller, file list/inspector, mobile stacking, keyboard focus restoration and uncropped in-app artwork previews (deployed to Pages on 2026-10-01).
 - [x] Explicit garment selections and named placements: front, back, left/right chest, left/right sleeve, other. Upload one or multiple files using one selected assignment; reassign each attachment afterward.
 - [x] Print exports: PNG/SVG. Mockups: PNG/JPG/WebP. Maximum 50 MB per file and 100 active files per draft.
 - [x] Converted drafts retain previews and allow assignment repair against the purchased order's current items. New uploads/removal happen through the normal purchased-order workflow.
