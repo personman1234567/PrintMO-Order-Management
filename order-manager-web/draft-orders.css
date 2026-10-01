@@ -1,10 +1,62 @@
 /* The pipeline owns the scroll area on desktop and Shopify Admin mobile. */
+#pipeline-view-toggle, #pipeline-view-popover, .pipeline-filter-check { display: none; }
+body[data-order-source="shopify"] .pipeline { container: pipeline-header / inline-size; }
+body[data-order-source="shopify"] .pipeline .panel-header {
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  align-items: center; gap: 8px; min-height: 64px; padding: 8px 12px;
+  flex: 0 0 auto; border-bottom: 1px solid #E2E8F0;
+}
+body[data-order-source="shopify"] .pipeline .panel-title { grid-column: 1; margin: 0; font-size: 1rem; white-space: nowrap; }
+body[data-order-source="shopify"] .pipeline #pipeline-count { grid-column: 2; grid-row: 1; position: static; order: initial; margin: 0; min-width: 0; padding: 0; border-radius: 0; background: transparent; color: #64748B; font-size: .78rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+body[data-order-source="shopify"] .pipeline #mobile-selection-toggle { grid-column: 3; grid-row: 1; justify-self: end; min-height: 44px; }
+body[data-order-source="shopify"] #pipeline-view-tabs { grid-column: 4; grid-row: 1; }
+body[data-order-source="shopify"] .pipeline #pipeline-view-toggle { grid-column: 5; grid-row: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px; position: static; margin: 0; min-width: 58px; min-height: 44px; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: #334155; font: inherit; font-size: .78rem; font-weight: 600; white-space: nowrap; cursor: pointer; box-shadow: none; }
+body[data-order-source="shopify"] .pipeline #pipeline-view-toggle:hover,
+body[data-order-source="shopify"] .pipeline #pipeline-view-toggle[aria-expanded="true"] { background: #F1F5F9; }
+.pipeline-view-indicator { display: none; width: 5px; height: 5px; border-radius: 50%; background: #1A73E8; }
+#pipeline-view-toggle[data-modified="true"] .pipeline-view-indicator { display: block; }
+#pipeline-view-popover { position: fixed; inset: auto; z-index: 2000; box-sizing: border-box; margin: 0; width: min(300px, calc(100vw - 24px)); padding: 12px; overflow: auto; overscroll-behavior: contain; border: 0; border-radius: 12px; background: #FFF; color: #334155; box-shadow: 0 8px 24px rgba(15, 23, 42, .18); font: .875rem/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body[data-order-source="shopify"] #pipeline-view-popover:popover-open { display: block; }
+body[data-order-source="shopify"] #pipeline-view-popover.is-open { display: block; }
+.pipeline-view-popover-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+#pipeline-view-popover-title { margin: 0; color: #0F172A; font-size: .875rem; font-weight: 600; }
+#pipeline-view-close { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: #334155; cursor: pointer; }
+body[data-order-source="shopify"] #pipeline-view-popover #dashboard-triage-toolbar { display: grid !important; grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 0; border: 0; background: transparent; }
+body[data-order-source="shopify"] #pipeline-view-popover .dashboard-filter-group { display: flex; flex-direction: column; align-items: stretch; gap: 0; width: 100%; padding: 0; overflow: visible; }
+body[data-order-source="shopify"] #pipeline-view-popover .dashboard-filter { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: #334155; font: inherit; font-weight: 500; text-align: left; cursor: pointer; transition: none; transform: none; box-shadow: none; }
+body[data-order-source="shopify"] #pipeline-view-popover .dashboard-filter:hover,
+#pipeline-view-close:hover, #pipeline-view-reset:hover { background: #F8FAFC; }
+body[data-order-source="shopify"] #pipeline-view-popover .dashboard-filter.active { background: #EFF6FF; color: #1765C1; font-weight: 600; }
+#pipeline-view-popover .pipeline-filter-check { display: block; flex: 0 0 16px; width: 16px; height: 16px; visibility: hidden; }
+#pipeline-view-popover .active .pipeline-filter-check { visibility: visible; }
+body[data-order-source="shopify"] #pipeline-view-popover .dashboard-filter span { min-width: 0; margin-left: auto; padding: 0; border-radius: 0; background: transparent; color: #64748B; font-size: .78rem; font-variant-numeric: tabular-nums; }
+body[data-order-source="shopify"] #pipeline-view-popover .dashboard-sort-control { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; color: #334155; font-size: .78rem; font-weight: 600; }
+body[data-order-source="shopify"] #pipeline-view-popover .dashboard-sort-control select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid #CBD5E1; border-radius: 8px; background: #FFF; color: #334155; font: inherit; font-size: .875rem; }
+#pipeline-view-reset { width: 100%; min-height: 44px; margin-top: 12px; padding: 8px; border: 0; border-top: 1px solid #E2E8F0; border-radius: 0; background: transparent; color: #1765C1; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+#pipeline-view-popover :focus-visible, #pipeline-view-toggle:focus-visible { outline: 2px solid #1A73E8; outline-offset: 2px; }
+#pipeline-view-popover select { accent-color: #1A73E8; }
+@container pipeline-header (max-width: 490px) {
+  body[data-order-source="shopify"] .pipeline .panel-header { grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 0 8px; padding-top: 6px; padding-bottom: 6px; }
+  body[data-order-source="shopify"] .pipeline #mobile-selection-toggle { grid-column: 4; }
+  body[data-order-source="shopify"] #pipeline-view-tabs { grid-column: 1 / 4; grid-row: 2; }
+  body[data-order-source="shopify"] .pipeline #pipeline-view-toggle { grid-column: 4; grid-row: 2; }
+}
+@media (max-width: 900px) {
+  body[data-order-source="shopify"] .pipeline .panel-header { grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 0 8px; padding: 6px 12px; }
+  body[data-order-source="shopify"] .pipeline .panel-title { min-height: 44px; display: flex; align-items: center; }
+  body[data-order-source="shopify"] .pipeline #mobile-selection-toggle { grid-column: 4; }
+  body[data-order-source="shopify"] #pipeline-view-tabs { grid-column: 1 / 4; grid-row: 2; }
+  body[data-order-source="shopify"] .pipeline #pipeline-view-toggle { grid-column: 4; grid-row: 2; }
+}
 #pipeline-view-tabs { display: none; }
-body[data-order-source="shopify"] #pipeline-view-tabs { display: flex; gap: 4px; padding: 0 12px 10px; }
-#pipeline-view-tabs button { flex: 1; min-height: 44px; padding: 8px 12px; border: 1px solid #CBD5E1; border-radius: 10px; background: #FFF; color: #334155; font: inherit; font-weight: 600; cursor: pointer; }
-#pipeline-view-tabs button[aria-selected="true"] { background: #1A73E8; border-color: #1A73E8; color: #FFF; }
+body[data-order-source="shopify"] #pipeline-view-tabs { display: flex; align-items: center; gap: 4px; padding: 0; }
+body[data-order-source="shopify"] #pipeline-view-tabs button { flex: 0 0 auto; position: relative; min-height: 44px; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: #334155; font: inherit; font-size: .78rem; font-weight: 600; white-space: nowrap; cursor: pointer; box-shadow: none; }
+body[data-order-source="shopify"] #pipeline-view-tabs button:hover { background: #F8FAFC; }
+body[data-order-source="shopify"] #pipeline-view-tabs button[aria-selected="true"] { color: #1765C1; }
+body[data-order-source="shopify"] #pipeline-view-tabs button[aria-selected="true"]::after { content: ""; position: absolute; bottom: 2px; left: 8px; right: 8px; height: 2px; border-radius: 2px; background: #1A73E8; }
 body[data-order-source="shopify"][data-pipeline-view="drafts"] .pipeline #col-received,
 body[data-order-source="shopify"][data-pipeline-view="drafts"] #dashboard-triage-toolbar,
+body[data-order-source="shopify"][data-pipeline-view="drafts"] #pipeline-view-toggle,
 body[data-order-source="shopify"][data-pipeline-view="drafts"] #pipeline-count,
 body[data-order-source="shopify"][data-pipeline-view="drafts"] #mobile-selection-toggle,
 body[data-order-source="shopify"][data-pipeline-view="drafts"] #pipeline-selection-shell { display: none !important; }

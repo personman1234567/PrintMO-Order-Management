@@ -2,10 +2,13 @@
   const desktopQuery = window.matchMedia('(min-width: 901px)');
   const FILTERS = ['all', 'attention', 'stale', 'missing-mockup', 'ready'];
   const SORTS = new Set(['attention', 'oldest', 'newest', 'value']);
-  const state = {
-    filter: 'all',
-    sort: 'attention'
+  const sourceStates = {
+    shopify: { filter: 'all', sort: 'newest' },
+    legacy: { filter: 'all', sort: 'attention' }
   };
+  const isShopify = () => document.body?.dataset.orderSource === 'shopify';
+  let state = sourceStates[isShopify() ? 'shopify' : 'legacy'];
+  const defaultSort = () => isShopify() ? 'newest' : 'attention';
 
   function getOrders() {
     try {
@@ -344,20 +347,135 @@
     const empty = ensureEmptyState(container);
     const boardState = document.body?.dataset.boardLoadState || 'ready';
     empty.hidden = boardState !== 'ready' || visible > 0;
+    updateViewControls();
+  }
+
+  function updateViewControls() {
+    document.querySelectorAll('[data-dashboard-filter]').forEach(item => {
+      const active = item.dataset.dashboardFilter === state.filter;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-pressed', String(active));
+    });
+    const select = document.getElementById('dashboard-sort-select');
+    if (select) select.value = state.sort;
+    const toggle = document.getElementById('pipeline-view-toggle');
+    if (!toggle) return;
+    const filter = document.querySelector(`[data-dashboard-filter="${state.filter}"]`);
+    const filterLabel = filter?.dataset.filterLabel || 'All';
+    const sortLabel = select?.selectedOptions[0]?.textContent || 'Newest first';
+    const summary = `${filterLabel === 'All' ? 'All orders' : filterLabel} · ${sortLabel}`;
+    toggle.dataset.modified = String(state.filter !== 'all' || state.sort !== defaultSort());
+    toggle.title = summary;
+    toggle.setAttribute('aria-label', `Pipeline view options: ${summary}`);
+  }
+
+  function setupViewPopover() {
+    const toggle = document.getElementById('pipeline-view-toggle');
+    const popover = document.getElementById('pipeline-view-popover');
+    const toolbar = document.getElementById('dashboard-triage-toolbar');
+    const tabs = document.getElementById('pipeline-view-tabs');
+    if (!toggle || !popover || !toolbar || !tabs) return;
+    const header = toggle.parentElement;
+    const toolbarHome = document.createComment('Pipeline toolbar home');
+    const tabsHome = document.createComment('Pipeline tabs home');
+    toolbar.before(toolbarHome);
+    tabs.before(tabsHome);
+    document.body.appendChild(popover);
+    const nativePopover = typeof popover.showPopover === 'function';
+    let open = false;
+
+    function position() {
+      if (!open) return;
+      const rect = toggle.getBoundingClientRect();
+      const margin = 12;
+      const width = document.documentElement.clientWidth;
+      const height = window.innerHeight;
+      popover.style.maxHeight = `${Math.max(0, height - margin * 2)}px`;
+      const left = Math.max(margin, Math.min(rect.right - popover.offsetWidth, width - popover.offsetWidth - margin));
+      const top = Math.max(margin, Math.min(rect.bottom + 6, height - popover.offsetHeight - margin));
+      popover.style.left = `${left}px`;
+      popover.style.top = `${top}px`;
+    }
+
+    function close(restoreFocus = false) {
+      if (!open) return;
+      open = false;
+      if (nativePopover) popover.hidePopover();
+      popover.classList.remove('is-open');
+      toggle.setAttribute('aria-expanded', 'false');
+      if (restoreFocus && toggle.getClientRects().length) toggle.focus({ preventScroll: true });
+    }
+
+    toggle.addEventListener('click', () => {
+      if (open) return close(true);
+      if (!isShopify() || document.body.dataset.pipelineView === 'drafts') return;
+      open = true;
+      if (nativePopover) popover.showPopover();
+      else popover.classList.add('is-open');
+      toggle.setAttribute('aria-expanded', 'true');
+      position();
+      popover.querySelector('[data-dashboard-filter][aria-pressed="true"]')?.focus({ preventScroll: true });
+    });
+    popover.addEventListener('toggle', event => {
+      // Native light-dismiss also keeps the trigger's expanded state truthful.
+      if (event.newState === 'closed' && open) close(popover.contains(document.activeElement));
+    });
+    document.getElementById('pipeline-view-close').addEventListener('click', () => close(true));
+    document.getElementById('pipeline-view-reset').addEventListener('click', () => {
+      state.filter = 'all';
+      state.sort = defaultSort();
+      applyDashboardTriage();
+    });
+    document.addEventListener('pointerdown', event => {
+      if (open && !popover.contains(event.target) && !toggle.contains(event.target)) close();
+    });
+    document.addEventListener('focusin', event => {
+      if (open && !popover.contains(event.target) && !toggle.contains(event.target)) close();
+    });
+    document.addEventListener('keydown', event => {
+      if (open && event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        close(true);
+      }
+    }, true);
+    window.addEventListener('resize', position);
+    document.addEventListener('scroll', position, true);
+
+    function syncSource() {
+      close();
+      state = sourceStates[isShopify() ? 'shopify' : 'legacy'];
+      if (isShopify()) {
+        header.insertBefore(tabs, toggle);
+        popover.insertBefore(toolbar, document.getElementById('pipeline-view-reset'));
+      } else {
+        tabsHome.after(tabs);
+        toolbarHome.after(toolbar);
+      }
+      applyDashboardTriage();
+    }
+    syncSource();
+    new MutationObserver(mutations => {
+      if (mutations.some(item => item.attributeName === 'data-order-source')) syncSource();
+      else if (document.body.dataset.pipelineView === 'drafts' || document.body.dataset.activeView !== 'orders'
+        || (document.body.classList.contains('mobile-mode') && document.body.dataset.activeTab !== 'pipeline')) close();
+    }).observe(document.body, { attributes: true, attributeFilter: ['data-order-source', 'data-pipeline-view', 'data-active-view', 'data-active-tab'] });
   }
 
   function wireControls() {
     document.querySelectorAll('[data-dashboard-filter]').forEach(button => {
       if (button.dataset.dashboardFilterWired) return;
       button.dataset.dashboardFilterWired = 'true';
+      button.dataset.filterLabel = button.firstChild.textContent.trim();
+      const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      check.setAttribute('class', 'pipeline-filter-check');
+      check.setAttribute('viewBox', '0 0 16 16');
+      check.setAttribute('aria-hidden', 'true');
+      check.innerHTML = '<path d="m3 8 3 3 7-7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />';
+      button.prepend(check);
       button.addEventListener('click', () => {
         const next = button.dataset.dashboardFilter || 'all';
         state.filter = FILTERS.includes(next) ? next : 'all';
-        document.querySelectorAll('[data-dashboard-filter]').forEach(item => {
-          const active = item.dataset.dashboardFilter === state.filter;
-          item.classList.toggle('active', active);
-          item.setAttribute('aria-pressed', active ? 'true' : 'false');
-        });
         applyDashboardTriage();
       });
     });
@@ -367,7 +485,7 @@
       select.dataset.dashboardSortWired = 'true';
       select.value = state.sort;
       select.addEventListener('change', () => {
-        state.sort = SORTS.has(select.value) ? select.value : 'attention';
+        state.sort = SORTS.has(select.value) ? select.value : defaultSort();
         applyDashboardTriage();
       });
     }
@@ -406,6 +524,7 @@
   patchCardFactories();
   document.addEventListener('DOMContentLoaded', () => {
     wireControls();
+    setupViewPopover();
     patchCardFactories();
     requestAnimationFrame(applyDashboardTriage);
   });

@@ -230,6 +230,17 @@ Desktop navigation uses quiet pill controls with one Action Blue active state. M
 
 The order card is the signature component. It prioritizes order identity, customer, mockup availability, stage, urgency, and production state while keeping secondary detail behind the detail view. Drag feedback must preserve spatial continuity; selection and drag state must never be visually confused.
 
+### Shopify Order Pipeline
+
+The Shopify Pipeline keeps the order workspace visible and moves filtering and sorting into a compact View overlay. This is a local component adaptation of the Precision Workbench.
+
+- **Header:** A single row (64px minimum height, 8px by 12px padding) places the heading, plain count, Orders / Draft Orders tabs, and View trigger together at desktop column widths such as 544px. The count uses tabular numerals and shows visible/total when filtered. The text-led active tab uses blue text and a 2px underline; it does not inherit the filled-pill navigation treatment.
+- **Responsive arrangement:** At Pipeline column widths of 490px or less, or mobile viewport widths of 900px or less, the header uses two rows: heading/count and selection above tabs/View. Tabs and controls retain at least 44px targets. Preserve the Pipeline's existing inner scroll ownership.
+- **View overlay:** The named, nonmodal Pipeline view dialog is portaled to the document body and uses the native popover top layer when available, with a fixed-position fallback. It is at most 300px wide, fits within 12px viewport margins, and scrolls internally when height is constrained. Checkmarked filter rows with aligned counts offer All, Attention, Stale, No Mockup, and Ready. A labeled sort select offers Newest first, Needs attention, Oldest first, and Highest total; Reset view restores the defaults.
+- **State and accessibility:** Each fresh page load starts Shopify at All / Newest first. Manual filter and sort choices remain during the visit, including source/view switching. A blue indicator marks a nondefault view, and the trigger's accessible label and tooltip summarize the current filter and sort. Opening focuses the selected filter; Escape or Close restores trigger focus. Clicking outside or moving focus outside dismisses the overlay, as does leaving the Orders workspace. Draft Orders hides the order count, selection controls, and View trigger.
+- **Scoped visual details:** The compact heading (1rem), overlay body (.875rem/1.4), hover corners (6px), quiet divider (#E2E8F0), trigger hover wash (#F1F5F9), and selected-filter wash (#EFF6FF) belong to this Pipeline component. The white overlay uses 12px corners and a structural shadow (`0 8px 24px rgba(15, 23, 42, .18)`); keyboard focus uses the existing 2px Action Blue outline. These adaptations do not extend the global type, color, radius, or elevation scales.
+- **Boundary:** Legacy Redis retains its inline triage toolbar and All / Needs attention defaults, with separate visit state. This component does not redefine order cards, Draft Orders internals, other panels, or global navigation.
+
 ## Do's and Don'ts
 
 ### Do:
