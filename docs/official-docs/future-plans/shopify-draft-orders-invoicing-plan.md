@@ -11,11 +11,11 @@ The September 30 owner decisions supersede the broader July invoicing-engine pro
 
 ## Current Continuation State
 
-- **Current state**: Live and enabled on 2026-09-30. Production D1 migration 0012 applied; Worker `f6390d4b-6da4-4d2e-a866-36bc4e068841`; Pages marker `1790805582875`; Shopify release `draft-artwork-2026-09-30` includes draft create/update/delete notifications.
-- **Next safe action**: Owner hands-on review in Draft Orders beside Orders. Stop further agent testing as requested.
+- **Current state**: Live and enabled since 2026-09-30; browsing refinement and bulk list optimization released on 2026-10-01. Production D1 migration 0012 remains applied; Worker `02724e16-34b5-4a4a-987f-a83abf607a02`; Pages marker `1790876574885`; existing Shopify release `draft-artwork-2026-09-30` includes draft create/update/delete notifications.
+- **Next safe action**: Owner hands-on review of the refined draft browsing area; live artwork/payment/conversion acceptance remains separate.
 - **Remaining blockers**: Live artwork upload/payment/conversion and changed/duplicate-garment acceptance remain unverified. Release blockers are cleared.
-- **Owner / external actions**: Owner authorized deployment after updating draft permission and will test the workflow.
-- **Last verified evidence**: Production marker and actual `DRAFT_ORDERS_ENABLED=1` verified; existing flags including `SS_TEST_ORDER=1` preserved. Live invoice-sent drafts and garment/placement controls loaded in Shopify Admin. Shopify app build and configuration release succeeded. Previous local service, regression and synthetic browser checks passed; no live purchase acceptance claimed.
+- **Owner / external actions**: Owner authorized the October 1 browsing/loading implementation and release; no additional scopes, migrations, or Shopify configuration release were required.
+- **Last verified evidence**: Worker optimization deployed before Pages; production marker and draft JS/CSS hashes match the prepared bundle. Actual `DRAFT_ORDERS_ENABLED=1`, `SS_TEST_ORDER=1`, and existing integration flags verified. All 15 focused draft tests, proxy checks/build, Phase 1/2, documentation checks, and Worker dry-run passed. Synthetic browser checks cover 320px/393px and desktop layout, square/wide/slow/failed previews, four-request concurrency, stale results, retained refresh/pagination, and detail/tab continuity. No live purchase acceptance claimed.
 - **Recovery evidence**: Pre-migration D1 bookmark `00004566-00000576-000050f6-6cace2ff8544d964dedc6c9a60ffd1b3`; first disabled Worker release `ab11ca21-e490-4ab1-ba44-ed8fdbdbdf2b`; deployments used `--keep-vars`. Shopify release: https://dev.shopify.com/dashboard/102036845/apps/305079713793/versions/1150423072769.
 
 ## Open Questions & Brainstorming
@@ -30,6 +30,8 @@ The September 30 owner decisions supersede the broader July invoicing-engine pro
 ### Experience
 
 - [x] Nested Draft Orders toggle, matching tile layout, status filters, search, cursor pagination, explicit permission/loading/error/empty states.
+- [x] Compact two-row browse controls and responsive tiles: optional uncropped 16:9 mockup frame, shorter no-mockup tiles, positive artwork counts, conversion references and sync warnings.
+- [x] Summaries render independently of previews. The draft scroller observes nearby tiles, uses the existing private URL cache, and limits tile preview requests to four. Static skeletons cover initial/search/filter loading; refresh failures retain results and cursors, and appended pages preserve existing tiles.
 - [x] Draft detail in the pipeline scroll area; keyboard tab navigation and focus restoration; responsive controls and an accessible in-app artwork preview.
 - [x] Explicit garment selections and named placements: front, back, left/right chest, left/right sleeve, other. Upload one or multiple files using one selected assignment; reassign each attachment afterward.
 - [x] Print exports: PNG/SVG. Mockups: PNG/JPG/WebP. Maximum 50 MB per file and 100 active files per draft.
@@ -40,6 +42,7 @@ The September 30 owner decisions supersede the broader July invoicing-engine pro
 
 - Shopify owns draft status, invoice state, commerce, and the resulting `DraftOrder.order` relationship. Only `read_draft_orders` is added to the existing app scopes; no `write_draft_orders` or `read_customers` scope is added. See Shopify's [DraftOrder reference](https://shopify.dev/docs/api/admin-graphql/latest/objects/DraftOrder) and [draftOrders search/pagination reference](https://shopify.dev/docs/api/admin-graphql/latest/queries/draftOrders).
 - D1 stores draft projections, file manifests, immutable item snapshots, assignment revisions, conversion progress, and operator audit events. R2 stores private file bytes. No draft or production writes use Redis.
+- List requests retain Shopify's 25-draft newest-updated cursor query and response contract. Each nonempty page resolves its shop once, batches timestamp-guarded projection upserts, and reads active artwork metadata in one shop-scoped query ordered by creation time and asset ID. Detail/upload/conversion operations retain their existing paths.
 - Authenticated `/order-manager/v1/drafts` routes use the existing partner identity boundary. Private previews reuse short-lived asset tickets; SVG responses retain sandbox and `nosniff` protections. Object keys never appear in draft DTOs.
 - Upload IDs plus file checksums make retries reuse one asset identity and byte object. Assignment/removal require an expected revision. A removal that loses the conversion race cannot remove purchased artwork.
 - On conversion, the same asset ID and R2 object are linked into the existing order manifest/link tables. All selected items must match uniquely by SKU, title, variant title, and all custom attributes. Within the same item kind, matching IDs are preferred only when that identity still matches. If any selection is ambiguous, the file transfers with `needs_review` and no guessed garment links.

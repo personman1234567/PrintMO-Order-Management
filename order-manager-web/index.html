@@ -217,23 +217,24 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         <button type="button" role="tab" data-pipeline-view="drafts" aria-selected="false" aria-controls="draft-orders-workspace" tabindex="-1">Draft Orders</button>
       </div>
       <section id="draft-orders-workspace" role="tabpanel" aria-label="Draft Orders" hidden>
-        <div class="draft-browse-controls">
-          <button id="draft-orders-refresh" type="button">Refresh drafts</button>
-        </div>
-        <p id="draft-orders-status" role="status" aria-live="polite">Select Draft Orders to load Shopify drafts.</p>
-        <div id="draft-orders-browse">
           <div class="draft-browse-controls">
             <form id="draft-orders-search" role="search">
               <input id="draft-orders-search-input" type="search" aria-label="Search draft orders" placeholder="Draft number or customer email" />
-              <button type="submit">Search</button>
+              <button type="submit" aria-label="Search drafts" title="Search drafts"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg></button>
             </form>
-            <select id="draft-orders-filter" aria-label="Draft order status">
+            <div class="draft-browse-meta">
+              <select id="draft-orders-filter" aria-label="Draft order status">
               <option value="active">All active drafts</option>
               <option value="open">Saved drafts</option>
               <option value="invoice">Invoice sent</option>
               <option value="converted">Converted to orders</option>
-            </select>
+              </select>
+              <span id="draft-orders-count" aria-live="polite"></span>
+              <button id="draft-orders-refresh" type="button" aria-label="Refresh drafts" title="Refresh drafts"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.5-1L20 12M4 12l2.4 6A7 7 0 0 0 17.9 17"/></svg></button>
+            </div>
           </div>
+        <p id="draft-orders-status" role="status" aria-live="polite">Select Draft Orders to load Shopify drafts.</p>
+        <div id="draft-orders-browse">
           <div id="draft-orders-list" aria-label="Draft order tiles"></div>
           <button id="draft-orders-load-more" type="button" hidden>Load more drafts</button>
         </div>

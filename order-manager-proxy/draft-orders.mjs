@@ -108,14 +108,16 @@ export function createDraftOrderService(env, deps) {
     } while (after);
     return items;
   }
-  async function saveProjection(node) {
-    const owner = await shop();
-    await db.prepare(`INSERT INTO draft_order_projection (shop_id, draft_gid, status, order_gid, summary_json, shopify_updated_at, synced_at)
+  function projectionStatement(node, owner, stamp) {
+    return db.prepare(`INSERT INTO draft_order_projection (shop_id, draft_gid, status, order_gid, summary_json, shopify_updated_at, synced_at)
       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(shop_id, draft_gid) DO UPDATE SET
       status = excluded.status, order_gid = excluded.order_gid, summary_json = excluded.summary_json,
       shopify_updated_at = excluded.shopify_updated_at, synced_at = excluded.synced_at, deleted_at = NULL
       WHERE excluded.shopify_updated_at >= draft_order_projection.shopify_updated_at`)
-      .bind(owner.id, node.id, node.status, node.order?.id || null, JSON.stringify(normalizeDraft(node)), node.updatedAt, now()).run();
+      .bind(owner.id, node.id, node.status, node.order?.id || null, JSON.stringify(normalizeDraft(node)), node.updatedAt, stamp);
+  }
+  async function saveProjection(node) {
+    await projectionStatement(node, await shop(), now()).run();
   }
   async function rows(id) {
     const owner = await shop();
@@ -178,17 +180,29 @@ export function createDraftOrderService(env, deps) {
     const data = await graphql(LIST_QUERY, { query: `${filter}${search ? ` AND "${search}"` : ''}`, after }, 'PrintMODrafts');
     const connection = data.draftOrders;
     if (!connection) fail('DRAFT_SYNC_FAILED', 'Draft orders could not load. Try refreshing.', 502);
-    const drafts = [];
-    for (const node of connection.nodes || []) {
-      await saveProjection(node);
-      const files = await rows(node.id);
+    const nodes = connection.nodes || [];
+    const artwork = new Map();
+    if (nodes.length) {
+      const owner = await shop(), stamp = now();
+      await db.batch(nodes.map(node => projectionStatement(node, owner, stamp)));
+      // Only list metadata crosses this boundary; private keys and assignments stay in detail.
+      const files = (await db.prepare(`SELECT draft_gid, id, role, revision, converted_revision FROM draft_artwork
+        WHERE shop_id = ? AND draft_gid IN (${nodes.map(() => '?').join(',')}) AND state = 'active'
+        ORDER BY draft_gid, created_at, id`).bind(owner.id, ...nodes.map(node => node.id)).all()).results || [];
+      for (const file of files) {
+        if (!artwork.has(file.draft_gid)) artwork.set(file.draft_gid, []);
+        artwork.get(file.draft_gid).push(file);
+      }
+    }
+    const drafts = nodes.map(node => {
+      const files = artwork.get(node.id) || [];
       const summary = normalizeDraft(node);
-      drafts.push({ ...summary, artworkCount: files.length,
+      return { ...summary, artworkCount: files.length,
         mockupCount: files.filter(file => file.role === 'mockup').length,
         designCount: files.filter(file => file.role === 'design').length,
         preview: files.find(file => file.role === 'mockup') ? { assetId: files.find(file => file.role === 'mockup').id } : null,
-        syncPending: files.some(file => node.order && file.converted_revision !== file.revision) });
-    }
+        syncPending: files.some(file => node.order && file.converted_revision !== file.revision) };
+    });
     return { drafts, nextCursor: connection.pageInfo?.hasNextPage ? connection.pageInfo.endCursor : null };
   }
   async function selectedItems(node, ids) {

@@ -241,6 +241,16 @@ The Shopify Pipeline keeps the order workspace visible and moves filtering and s
 - **Scoped visual details:** The compact heading (1rem), overlay body (.875rem/1.4), hover corners (6px), quiet divider (#E2E8F0), trigger hover wash (#F1F5F9), and selected-filter wash (#EFF6FF) belong to this Pipeline component. The white overlay uses 12px corners and a structural shadow (`0 8px 24px rgba(15, 23, 42, .18)`); keyboard focus uses the existing 2px Action Blue outline. These adaptations do not extend the global type, color, radius, or elevation scales.
 - **Boundary:** Legacy Redis retains its inline triage toolbar and All / Needs attention defaults, with separate visit state. This component does not redefine order cards, Draft Orders internals, other panels, or global navigation.
 
+### Shopify Draft Browse / Tiles
+
+Draft browsing extends the Pipeline workbench with compact artwork-preparation tiles. These conventions apply only inside the Draft Orders workspace.
+
+- **Browse controls:** Leave 16px between the Pipeline header and the workspace controls. Use two rows with an 8px gap: a full-width search field with an embedded submit icon, then the status select, a quiet count of drafts shown, and a refresh icon. Submit and refresh retain 44px targets and explicit accessible names; the count uses tabular numerals and a polite live region.
+- **Grid and tile shape:** Use two equal columns with a 12px gap when each tile can be at least 220px wide; switch to one column at browse widths of 451px or less. Align tiles at the top and let their content determine height rather than stretching a tile without artwork to match its illustrated neighbor. Tiles retain white surfaces, 8px corners, 12px padding, and visible keyboard focus.
+- **Information order:** Lead with draft identity and a quiet text status, then the mockup when present, customer, item quantity and total, artwork counts, and updated date. Keep customer names wrapping, totals aligned and unbroken, and secondary metadata readable. Show an explicit Artwork sync pending message when that state applies.
+- **Mockup treatment:** Reserve a full-width 16:9 frame only for an attached mockup. Fit the complete image inside it with contain sizing. Drafts without a mockup use a compact No mockup line instead of an empty image frame. Retain the same frame through idle/loading and unavailable-preview states so resolving an image does not change the tile's geometry; show Loading preview… or Preview unavailable until the image can be displayed.
+- **Loading and feedback:** Initial/reset loading uses static tile skeletons with no shimmer. Keep loading and error text separate from the decorative skeletons, expose list busy state, and provide recovery through Refresh drafts or Load more drafts. Appending drafts preserves existing tiles and resolved images; previews load as their tiles approach the workspace viewport.
+
 ## Do's and Don'ts
 
 ### Do:

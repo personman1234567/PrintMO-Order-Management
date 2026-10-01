@@ -1,7 +1,7 @@
 // Extend the existing pipeline workbench; drafts are preparation, never production stages.
 (() => {
   const state = { records: [], cursor: null, query: '', filter: 'active', loaded: false,
-    loading: false, generation: 0, detail: null, editing: null, opener: null, busy: false };
+    loading: false, generation: 0, detail: null, editing: null, opener: null, busy: false, scrollTop: 0 };
   const uploads = new WeakMap();
   const placements = [['front', 'Front'], ['back', 'Back'], ['left-chest', 'Left chest'],
     ['right-chest', 'Right chest'], ['left-sleeve', 'Left sleeve'], ['right-sleeve', 'Right sleeve'], ['other', 'Other']];
@@ -37,78 +37,168 @@
       if (generation === state.generation && img.isConnected && active()) img.src = url;
     } catch { if (img.isConnected) img.alt = 'Preview unavailable'; }
   }
+  const tiles = new Map();
+  let observer, previewEpoch = 0, previewQueue = [], previewRequests = 0;
+  function pausePreviews() {
+    ++previewEpoch; observer?.disconnect();
+    previewQueue.forEach(task => { task.tile.dataset.previewState = 'idle'; }); previewQueue = [];
+  }
+  function validPreview(task) {
+    return task.epoch === previewEpoch && active() && !state.detail && task.tile.isConnected
+      && task.tile.dataset.assetId === task.assetId;
+  }
+  function pumpPreviews() {
+    while (previewRequests < 4 && previewQueue.length) {
+      const task = previewQueue.shift();
+      if (!validPreview(task)) { task.tile.dataset.previewState = 'idle'; continue; }
+      ++previewRequests;
+      (async () => {
+        try {
+          const url = await window.api.getDraftArtworkUrl(task.assetId);
+          if (!validPreview(task)) return;
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => finish(false), 20000);
+            const finish = ok => {
+              clearTimeout(timer); task.img.onload = task.img.onerror = null;
+              ok ? resolve() : reject(new Error('Preview unavailable'));
+            };
+            task.img.onload = () => finish(true); task.img.onerror = () => finish(false); task.img.src = url;
+          });
+          if (validPreview(task)) { task.tile.dataset.previewState = 'ready'; task.label.hidden = true; }
+        } catch {
+          if (validPreview(task)) {
+            task.tile.dataset.previewState = 'error'; task.img.removeAttribute('src'); task.label.textContent = 'Preview unavailable';
+          }
+        } finally {
+          --previewRequests;
+          if (!validPreview(task) && task.tile.dataset.previewState === 'loading') {
+            task.tile.dataset.previewState = 'idle'; task.img.removeAttribute('src');
+            if (active() && !state.detail) observer?.observe(task.tile);
+          }
+          pumpPreviews();
+        }
+      })();
+    }
+  }
+  function observePreviews() {
+    if (!active() || state.detail) return;
+    if (!observer) observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        const tile = entry.target;
+        if (!entry.isIntersecting || tile.dataset.previewState !== 'idle') continue;
+        observer.unobserve(tile); tile.dataset.previewState = 'loading';
+        previewQueue.push({ tile, assetId: tile.dataset.assetId, epoch: previewEpoch,
+          img: tile.querySelector('img'), label: tile.querySelector('.draft-preview-label') });
+      }
+      pumpPreviews();
+    }, { root: $('draft-orders-workspace'), rootMargin: '200px 0px' });
+    tiles.forEach(({ el }) => { if (el.dataset.previewState === 'idle') observer.observe(el); });
+  }
   function card(record) {
     const el = button('', () => open(record, el), 'draft-order-card');
     el.dataset.draftId = record.id;
     el.setAttribute('aria-label', `Prepare artwork for ${record.displayName}, ${record.customerName}`);
     const heading = text('span', '', 'draft-card-heading');
     heading.append(text('strong', record.displayName), text('span', status(record), 'draft-state'));
-    const media = text('span', '', 'draft-card-media');
+    el.append(heading);
     if (record.preview) {
-      const img = document.createElement('img'); img.alt = `Mockup for ${record.displayName}`; img.loading = 'lazy';
-      media.append(img); queueMicrotask(() => preview(record.preview, img, state.generation));
-    } else media.append(text('span', 'No mockup'));
-    const body = text('span', '', 'draft-card-body');
-    body.append(media, text('strong', record.customerName, 'draft-card-customer'));
+      el.dataset.assetId = record.preview.assetId; el.dataset.previewState = 'idle';
+      const media = text('span', '', 'draft-card-media');
+      const img = document.createElement('img'); img.alt = `Mockup for ${record.displayName}`; img.decoding = 'async';
+      media.append(text('span', 'Loading preview…', 'draft-preview-label'), img); el.append(media);
+    }
+    el.append(text('strong', record.customerName, 'draft-card-customer'));
     const footer = text('span', '', 'draft-card-footer');
-    footer.append(text('span', `${record.quantity} items · ${money(record)}`),
-      text('span', `${countLabel(record.mockupCount, 'mockup')} · ${countLabel(record.designCount, 'print file')}`));
+    footer.append(text('span', countLabel(record.quantity, 'item')), text('span', money(record), 'draft-card-total')); el.append(footer);
+    if (!record.preview) el.append(text('span', 'No mockup', 'draft-card-no-mockup'));
+    const artwork = [];
+    if (record.mockupCount) artwork.push(countLabel(record.mockupCount, 'mockup'));
+    if (record.designCount) artwork.push(countLabel(record.designCount, 'print file'));
+    if (artwork.length) el.append(text('span', artwork.join(' · '), 'draft-card-artwork'));
     const updated = new Date(record.updatedAt);
     const time = text('time', `Updated ${updated.toLocaleDateString()}`, 'draft-card-updated'); time.dateTime = record.updatedAt;
-    el.append(heading, body, footer, time);
-    if (record.syncPending) el.append(text('span', 'Artwork sync pending', 'draft-state'));
+    el.append(time);
+    if (record.syncPending) el.append(text('span', 'Artwork sync pending', 'draft-card-sync'));
     return el;
   }
+  function loadingControls() {
+    $('draft-orders-load-more').disabled = state.loading; $('draft-orders-refresh').disabled = state.loading || state.busy;
+    $('draft-orders-list').setAttribute('aria-busy', String(state.loading));
+  }
   function renderList() {
-    $('draft-orders-list').replaceChildren(...state.records.map(card));
+    const list = $('draft-orders-list'), ids = new Set(state.records.map(record => record.id));
+    for (const [id, tile] of tiles) if (!ids.has(id)) { observer?.unobserve(tile.el); tile.el.remove(); tiles.delete(id); }
+    state.records.forEach((record, index) => {
+      const signature = JSON.stringify(record); let tile = tiles.get(record.id);
+      if (!tile || tile.signature !== signature) {
+        if (tile) { observer?.unobserve(tile.el); tile.el.remove(); }
+        tile = { el: card(record), signature }; tiles.set(record.id, tile);
+      }
+      // Appending pages keeps existing buttons and resolved previews in place.
+      if (list.children[index] !== tile.el) list.insertBefore(tile.el, list.children[index] || null);
+    });
+    list.querySelectorAll('.draft-card-skeleton').forEach(el => el.remove());
+    $('draft-orders-count').textContent = `${state.records.length} shown`;
     $('draft-orders-load-more').hidden = !state.cursor;
-    $('draft-orders-load-more').disabled = state.loading;
-    if (!state.loading) message(state.records.length
-      ? `${state.records.length} drafts shown${state.cursor ? ' · More available' : ''}`
+    loadingControls(); observePreviews();
+    if (!state.loading) message(state.records.length ? ''
       : state.query ? 'No drafts match your search. Try a draft number or customer email.'
         : state.filter === 'converted' ? 'No converted drafts found.' : 'No drafts found. Create a draft in Shopify, then refresh here to prepare its artwork.');
   }
-  async function load({ reset = false } = {}) {
+  function skeletons() {
+    pausePreviews(); tiles.clear();
+    $('draft-orders-list').replaceChildren(...Array.from({ length: 6 }, () => {
+      const el = text('div', '', 'draft-card-skeleton'); el.setAttribute('aria-hidden', 'true');
+      el.append(...Array.from({ length: 4 }, () => text('span', ''))); return el;
+    }));
+    $('draft-orders-count').textContent = ''; $('draft-orders-load-more').hidden = true; $('draft-orders-workspace').scrollTop = 0;
+  }
+  async function load({ reset = false, retain = false } = {}) {
     if (state.loading && !reset) return;
     const generation = ++state.generation; state.loading = true;
-    if (reset) { state.cursor = null; $('draft-orders-list').replaceChildren(); }
-    message('Loading Shopify drafts…'); $('draft-orders-load-more').disabled = true;
+    if (reset && !retain) { state.records = []; state.cursor = null; state.loaded = false; skeletons(); }
+    message(reset && !retain ? 'Loading Shopify drafts…' : reset ? 'Refreshing drafts…' : 'Loading more drafts…'); loadingControls();
     try {
-      const page = await window.api.getDraftOrders({ cursor: state.cursor, q: state.query, status: state.filter });
+      const page = await window.api.getDraftOrders({ cursor: reset ? null : state.cursor, q: state.query, status: state.filter });
       if (generation !== state.generation) return;
+      if (reset) pausePreviews();
       state.records = reset ? page.drafts : [...new Map([...state.records, ...page.drafts].map(record => [record.id, record])).values()];
       state.cursor = page.nextCursor; state.loaded = true;
     } catch (error) {
       if (generation !== state.generation) return;
-      message(`${error.message} Use Refresh to try again.`, true); return;
+      $('draft-orders-list').querySelectorAll('.draft-card-skeleton').forEach(el => el.remove());
+      message(`${error.message} ${reset ? 'Use Refresh drafts' : 'Use Load more drafts'} to try again.`, true); return;
     } finally {
-      if (generation === state.generation) { state.loading = false; $('draft-orders-load-more').disabled = false; }
+      if (generation === state.generation) { state.loading = false; loadingControls(); }
     }
     renderList();
   }
   async function open(record, opener) {
     if (state.busy) return;
     const generation = ++state.generation; state.loading = false;
+    if (!state.detail) state.scrollTop = $('draft-orders-workspace').scrollTop;
+    pausePreviews(); loadingControls();
     state.opener = opener; message(`Loading ${record.displayName}…`);
     try {
       const detail = await window.api.getDraftOrder(record.id);
       if (generation !== state.generation || !active()) return;
       state.detail = detail; state.editing = null; renderDetail();
       $('draft-detail-title').focus();
-    } catch (error) { if (generation === state.generation) message(error.message, true); }
+    } catch (error) { if (generation === state.generation) { message(error.message, true); observePreviews(); } }
   }
   function back() {
     if (state.busy) return;
     ++state.generation; state.detail = null; state.editing = null;
     $('draft-orders-detail').hidden = true; $('draft-orders-browse').hidden = false;
-    renderList();
+    $('draft-orders-workspace').dataset.detail = 'false'; renderList();
+    $('draft-orders-workspace').scrollTop = state.scrollTop;
     const opener = $('draft-orders-list').querySelector(`[data-draft-id="${state.opener?.dataset.draftId || ''}"]`);
-    opener?.focus();
+    opener?.focus({ preventScroll: true });
   }
   async function perform(action, success) {
     if (state.busy) return;
     state.busy = true; const generation = state.generation;
-    $('draft-orders-detail').setAttribute('aria-busy', 'true');
+    $('draft-orders-detail').setAttribute('aria-busy', 'true'); loadingControls();
     $('draft-orders-detail').querySelectorAll('button, input, select').forEach(el => { el.disabled = true; });
     message('Saving artwork…');
     try {
@@ -123,14 +213,14 @@
       renderDetail(); $('draft-detail-title').focus(); message(success);
     } catch (error) { if (generation === state.generation) message(`${error.message} Your existing files are retained.`, true); }
     finally {
-      state.busy = false;
+      state.busy = false; loadingControls();
       $('draft-orders-detail').removeAttribute('aria-busy');
       $('draft-orders-detail').querySelectorAll('button, input, select').forEach(el => { el.disabled = false; });
       if (state.editing && $('draft-artwork-role')) $('draft-artwork-role').disabled = true;
     }
   }
   function renderDetail() {
-    const record = state.detail;
+    const record = state.detail; pausePreviews(); $('draft-orders-workspace').dataset.detail = 'true';
     $('draft-orders-browse').hidden = true; $('draft-orders-detail').hidden = false;
     const container = $('draft-orders-detail'); container.replaceChildren();
     const header = text('div', '', 'draft-detail-header');
@@ -244,7 +334,8 @@
   }
   function switchView(view) {
     if (state.busy || document.body.dataset.orderSource !== 'shopify') return;
-    ++state.generation; state.loading = false;
+    if (active() && !state.detail) state.scrollTop = $('draft-orders-workspace').scrollTop;
+    ++state.generation; state.loading = false; pausePreviews(); loadingControls();
     document.body.dataset.pipelineView = view;
     $('draft-orders-workspace').hidden = view !== 'drafts';
     $('col-received').setAttribute('aria-hidden', String(view === 'drafts'));
@@ -254,7 +345,7 @@
     if (view === 'drafts') {
       if (state.detail) renderDetail();
       else if (!state.loaded) load({ reset: true });
-      else renderList();
+      else { renderList(); $('draft-orders-workspace').scrollTop = state.scrollTop; }
     }
   }
   function init() {
@@ -275,10 +366,10 @@
     $('draft-orders-load-more').addEventListener('click', () => load());
     $('draft-orders-refresh').addEventListener('click', () => {
       if (state.busy) return;
-      if (state.detail) open(state.detail, state.opener); else load({ reset: true });
+      if (state.detail) open(state.detail, state.opener); else load({ reset: true, retain: state.loaded });
     });
     new MutationObserver(() => { if (document.body.dataset.orderSource !== 'shopify') {
-      ++state.generation; state.loading = false; document.body.dataset.pipelineView = 'orders'; $('draft-orders-workspace').hidden = true;
+      ++state.generation; state.loading = false; pausePreviews(); loadingControls(); document.body.dataset.pipelineView = 'orders'; $('draft-orders-workspace').hidden = true;
       $('col-received').setAttribute('aria-hidden', 'false');
       $('pipeline-view-tabs').querySelectorAll('[role="tab"]').forEach(tab => {
         const selected = tab.dataset.pipelineView === 'orders'; tab.setAttribute('aria-selected', String(selected)); tab.tabIndex = selected ? 0 : -1;

@@ -57,6 +57,59 @@ function fixture() {
   return { db, deps, sqlite, draft, objects, calls, env, service, request, upload, convert, setOrderItems: items => { currentOrderItems = items; } };
 }
 
+test('list batches 25 guarded projections, resolves one shop and reads artwork once without changing pagination', async () => {
+  const f = fixture(), calls = { shop: 0, batch: 0, reads: 0, writes: 0 };
+  const nodes = Array.from({ length: 25 }, (_, i) => ({ ...structuredClone(f.draft), id: `gid://shopify/DraftOrder/${42 + i}`, name: `#D${42 + i}` }));
+  f.deps.shop = async () => { ++calls.shop; return { id: 1 }; };
+  f.deps.graphql = async (_env, query, variables) => {
+    assert.match(query, /first: 25/); assert.match(query, /sortKey: UPDATED_AT, reverse: true/);
+    assert.equal(variables.after, 'incoming-cursor');
+    return { data: { draftOrders: { nodes, pageInfo: { hasNextPage: true, endCursor: 'unchanged-cursor' } } } };
+  };
+  const prepare = f.db.prepare, batch = f.db.batch;
+  f.db.prepare = sql => {
+    if (/SELECT/.test(sql)) ++calls.reads; else ++calls.writes;
+    return prepare(sql);
+  };
+  f.db.batch = async statements => { ++calls.batch; assert.equal(statements.length, 25); return batch(statements); };
+  const page = await f.service.list({ after: 'incoming-cursor' });
+  assert.deepEqual(calls, { shop: 1, batch: 1, reads: 1, writes: 25 });
+  assert.equal(page.drafts.length, 25); assert.equal(page.nextCursor, 'unchanged-cursor');
+  assert.deepEqual(page.drafts.map(d => d.id), nodes.map(d => d.id));
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS count FROM draft_order_projection').get().count, 25);
+});
+test('bulk artwork summaries are shop scoped, active only, deterministic and retain sync-pending semantics', async () => {
+  const f = fixture();
+  f.sqlite.prepare(`INSERT INTO shops (id, shop_domain, installed_at, created_at, updated_at) VALUES (2, 'other.myshopify.com', 'now', 'now', 'now')`).run();
+  const insert = f.sqlite.prepare(`INSERT INTO draft_artwork
+    (id, shop_id, draft_gid, object_key, filename, content_type, byte_size, sha256, role, placement, items_json, item_kind, revision, state, created_by, created_at, updated_at, converted_revision)
+    VALUES (?, ?, ?, ?, 'fixture.png', 'image/png', 1, 'hash', ?, 'front', '[]', 'draft', 2, ?, 'fixture', ?, 'now', ?)`);
+  const seed = (id, role, owner = 1, state = 'active', stamp = '2026-09-30', revision = 2, draft = f.draft.id) =>
+    insert.run(id, owner, draft, `private/${id}`, role, state, stamp, revision);
+  seed('mockup-z', 'mockup'); seed('mockup-a', 'mockup'); seed('design', 'design');
+  seed('foreign', 'mockup', 2); seed('removed', 'mockup', 1, 'removed', '2026-01-01');
+  seed('other-draft', 'mockup', 1, 'active', '2026-01-01', 1, 'gid://shopify/DraftOrder/99');
+  f.convert();
+  let [draft] = (await f.service.list()).drafts;
+  assert.equal(draft.artworkCount, 3); assert.equal(draft.mockupCount, 2); assert.equal(draft.designCount, 1);
+  assert.deepEqual(draft.preview, { assetId: 'mockup-a' }); assert.equal(draft.syncPending, false);
+  assert.equal(JSON.stringify(draft).includes('private/'), false);
+  f.sqlite.prepare("UPDATE draft_artwork SET converted_revision = 1 WHERE id = 'design'").run();
+  [draft] = (await f.service.list()).drafts; assert.equal(draft.syncPending, true);
+  f.draft.order = null;
+  [draft] = (await f.service.list()).drafts; assert.equal(draft.syncPending, false);
+});
+test('bulk projection upserts cannot overwrite a newer snapshot and empty pages skip database work', async () => {
+  const f = fixture(); await f.service.list();
+  f.sqlite.prepare("UPDATE draft_order_projection SET summary_json = ?, shopify_updated_at = ?, deleted_at = ? WHERE shop_id = 1")
+    .run('{"displayName":"newer"}', '2026-10-01T00:00:00Z', 'retained');
+  await f.service.list();
+  const projection = f.sqlite.prepare('SELECT * FROM draft_order_projection').get();
+  assert.equal(projection.summary_json, '{"displayName":"newer"}'); assert.equal(projection.deleted_at, 'retained');
+  f.deps.graphql = async () => ({ data: { draftOrders: { nodes: [], pageInfo: { hasNextPage: false } } } });
+  f.deps.shop = async () => { assert.fail('Empty pages need no shop database lookup'); };
+  assert.deepEqual(await f.service.list(), { drafts: [], nextCursor: null });
+});
 test('matching preserves explicit garment identity and refuses duplicate or different artwork', () => {
   const saved = line('draft');
   assert.deepEqual(matchDraftAssignments([saved], [line('order')]).matched.map(item => item.id), ['order']);
