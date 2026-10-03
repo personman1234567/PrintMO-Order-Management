@@ -945,7 +945,9 @@ window.api.getOrderDetail = async (orderId, { signal } = {}) => {
   return result;
 };
 
-window.api.uploadOrderDesignAsset = async (orderId, file, side) => {
+window.api.getOrderArtworkUrl = assetId => candidateAssetObjectUrl({ assetId });
+
+window.api.uploadOrderDesignAsset = async (orderId, file, side, { signal } = {}) => {
   if (!orderId) throw new Error("An order ID is required");
   if (!file) throw new Error("A design file is required");
   const form = new FormData();
@@ -953,7 +955,7 @@ window.api.uploadOrderDesignAsset = async (orderId, file, side) => {
   form.set("side", side || "extra");
   return apiFetch(
     `/order-manager/v1/orders/${encodeURIComponent(orderId)}/assets`,
-    { method: "POST", body: form }
+    { method: "POST", body: form, ...(signal ? { signal } : {}) }
   );
 };
 

@@ -19,6 +19,9 @@
   function show(order, snapshot, notice = '') {
     root.replaceChildren();
     root.hidden = false;
+    const compactSummary = document.getElementById('production-blanks-summary');
+    if (compactSummary) compactSummary.hidden = false;
+    const copy = document.getElementById('production-blanks-copy');
     const header = el('div', undefined, 'shelf-order-header');
     const title = el('div');
     title.append(el('h3', 'Blanks for this order'),
@@ -31,6 +34,7 @@
       ordered: acc.ordered + line.quantity, reserved: acc.reserved + line.reserved,
       pulled: acc.pulled + line.pulled, supplier: acc.supplier + line.supplierNeeded
     }), { ordered: 0, reserved: 0, pulled: 0, supplier: 0 });
+    if (copy) copy.textContent = `Blanks · ${totals.ordered} needed · ${totals.pulled} pulled · ${totals.supplier} for S&S${snapshot.needsReview ? ' · Review needed' : ''}`;
     const summary = el('dl', undefined, 'shelf-order-summary');
     summary.append(metric('Tultex 202 needed', totals.ordered), metric('Reserved to pull', totals.reserved),
       metric('Pulled', totals.pulled), metric('For S&S', totals.supplier));
@@ -149,10 +153,16 @@
     const turn = ++serial;
     root.dataset.orderId = id || '';
     root.hidden = true;
+    const summary = document.getElementById('production-blanks-summary');
+    if (summary) summary.hidden = true;
     if (!(order?.items || []).some(item => item?.title === 'Tultex - Fine Jersey T-Shirt - 202')) return;
     root.hidden = false;
+    if (summary) summary.hidden = false;
+    const summaryCopy = document.getElementById('production-blanks-copy');
+    if (summaryCopy) summaryCopy.textContent = 'Loading blanks…';
     root.replaceChildren(el('p', 'Loading in-house blank inventory…', 'shelf-status'));
     if (!order?._candidate || order?._provider !== 'shopify' || !id || !window.api?.getShelfOrder) {
+      if (summaryCopy) summaryCopy.textContent = 'Blank inventory unavailable for this order.';
       root.replaceChildren(el('p', 'In-house inventory is unavailable for this order. Refresh Order Manager and try again.'));
       return;
     }
@@ -160,12 +170,14 @@
       const snapshot = await window.api.getShelfOrder(id);
       if (turn !== serial || root.dataset.orderId !== id) return;
       if (!snapshot?.lines?.length) {
+        if (summaryCopy) summaryCopy.textContent = 'Blanks need a variant match. Open Manage blanks.';
         root.replaceChildren(el('p', 'This order could not be matched to current Tultex 202 variants. Reservations are unavailable.'));
         return;
       }
       show(order, snapshot);
     } catch (error) {
       if (turn !== serial || root.dataset.orderId !== id) return;
+      if (summaryCopy) summaryCopy.textContent = 'Blanks could not load. Open Manage blanks for details.';
       root.replaceChildren(el('p', error.message || 'In-house inventory could not load.'));
     }
   };

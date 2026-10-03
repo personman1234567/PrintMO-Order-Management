@@ -506,6 +506,7 @@
   }
 
   function applyCanonicalDesignMetadata(result) {
+    if (document.getElementById('detail-design-panel')?.classList.contains('production-artwork-active')) return;
     const lineItemSizes = new Map(canonicalLineItems(result).map(item => {
       const size = (item.customAttributes || []).find(attribute => String(attribute?.key || '').trim().toLowerCase() === 'size_inches')?.value;
       return [item.id, String(size || '').trim()];
@@ -916,6 +917,7 @@
       const result = await window.api.getOrderDetail(order._gid, { signal: controller.signal });
       if (!canonicalDetailStillActive(order, generation)) return;
       renderCanonicalDetail(order, result);
+      return { ok: true };
     } catch (error) {
       if (error?.name === 'AbortError' || !canonicalDetailStillActive(order, generation)) return;
       setDetailDataState(
@@ -925,6 +927,7 @@
       );
       const retry = document.getElementById('detail-data-retry');
       if (retry) retry.onclick = () => hydrateCanonicalDetail(order, { retry: true });
+      return { ok: false, error };
     } finally {
       if (generation === detailHydrationGeneration) detailHydrationController = null;
     }
@@ -1970,7 +1973,7 @@
       extBadge.className = 'design-file-extension';
       (row.querySelector('.design-file-info') || meta || labelButton)?.appendChild(extBadge);
     }
-    extBadge.textContent = parts.extension;
+    if (extBadge.textContent !== parts.extension) extBadge.textContent = parts.extension;
     extBadge.title = `${parts.extension} file`;
 
     const previewUrl = image?.src || image?.getAttribute('src') || '';
@@ -1994,7 +1997,7 @@
       group.dataset.fileCount = String(count);
       group.classList.toggle('has-files', count > 0);
       group.classList.toggle('is-empty', count === 0);
-      if (countLabel) countLabel.textContent = String(count);
+      if (countLabel && countLabel.textContent !== String(count)) countLabel.textContent = String(count);
       if (title) {
         title.setAttribute('aria-label', `${label}, ${count} ${count === 1 ? 'file' : 'files'}`);
         title.title = `${label}: ${count} ${count === 1 ? 'file' : 'files'}`;
@@ -2010,6 +2013,7 @@
   }
 
   function enhanceDesignFilesPanel() {
+    if (document.getElementById('detail-design-panel')?.classList.contains('production-artwork-active')) return;
     setDesignEmptyState();
     const panel = document.getElementById('detail-design-panel');
     const rows = designRows();
@@ -2020,7 +2024,8 @@
     panel.classList.toggle('has-many-design-files', rows.length > 8);
     document.getElementById('detail-main-column')?.classList.toggle('has-many-design-files', rows.length > 8);
     if (count) {
-      count.textContent = `${rows.length} ${rows.length === 1 ? 'file' : 'files'}`;
+      const copy = `${rows.length} ${rows.length === 1 ? 'file' : 'files'}`;
+      if (count.textContent !== copy) count.textContent = copy;
       count.title = `${rows.length} design ${rows.length === 1 ? 'file' : 'files'}`;
     }
 
@@ -2543,6 +2548,7 @@
     const enhancedOpenDetail = function enhancedOpenDetail(order, ...args) {
       targetDateContext = null;
       const result = originalOpenDetail.call(this, order, ...args);
+      if (result === false) return false;
       const overlay = document.getElementById('detail-overlay');
       overlay?.setAttribute('aria-hidden', 'false');
       activateDetailTab('tab-overview');

@@ -82,6 +82,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./shopify-preview.css" />
   <link rel="stylesheet" href="./order-detail-split.css" />
   <link rel="stylesheet" href="./shelf-allocation.css" />
+  <link rel="stylesheet" href="./production-artwork-workspace.css" />
 </head>
 <body data-active-tab="pipeline" data-active-view="orders" data-order-source="shopify" data-board-load-state="loading">
   <header class="app-header">
@@ -661,22 +662,6 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                     <strong>Customer checkout note</strong>
                     <span id="customer-checkout-note-text"></span>
                   </div>
-                  <section id="production-order-context" class="detail-section detail-context-section" aria-labelledby="production-order-context-title">
-                    <div class="detail-section-heading">
-                      <div>
-                        <h3 id="production-order-context-title">Production context</h3>
-                        <p>PrintMO workflow metadata connected to this Shopify order.</p>
-                      </div>
-                      <span id="production-attention-badge" class="detail-context-badge hidden">Needs attention</span>
-                    </div>
-                    <dl class="detail-fact-grid">
-                      <div><dt>Stage</dt><dd id="production-stage-val">Loading</dd></div>
-                      <div><dt>Bundle</dt><dd id="production-bundle-val">None</dd></div>
-                      <div><dt>Revision</dt><dd id="production-revision-val">—</dd></div>
-                      <div><dt>Last production update</dt><dd id="production-updated-val">—</dd></div>
-                    </dl>
-                  </section>
-                  <section id="shelf-allocation" class="shelf-allocation" aria-label="In-house blank inventory" hidden></section>
                   <section id="detail-design-panel" class="vector-files-card" aria-labelledby="detail-design-title">
                     <div class="design-panel-header">
                       <div>
@@ -685,6 +670,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                       </div>
                       <div class="manual-design-tools">
                         <span id="design-files-count" class="design-files-count">0 files</span>
+                        <button id="production-add-design" type="button" class="production-primary" hidden>Add design</button>
                         <div class="manual-design-upload-actions">
                           <label class="manual-design-placement-label" for="manual-design-side">Placement</label>
                           <select id="manual-design-side" class="manual-design-side" aria-label="Design placement">
@@ -698,7 +684,22 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                         <p id="manual-design-upload-status" class="manual-design-upload-status" role="status" aria-live="polite"></p>
                       </div>
                     </div>
+                    <p id="production-artwork-status" role="status" aria-live="polite"></p>
+                    <section id="production-upload-form" aria-labelledby="production-upload-title" hidden>
+                      <h4 id="production-upload-title" tabindex="-1">Pending upload</h4>
+                      <p id="production-pending-summary"></p>
+                      <div id="production-pending-files"></div>
+                      <p>SVG, PNG, JPG, or WebP · Up to 50 MB per file</p>
+                      <p id="production-saved-files"></p>
+                      <div class="production-pending-controls">
+                        <label>Placement<select id="production-pending-placement"><option value="front">Front</option><option value="back">Back</option><option value="extra">Extras</option></select></label>
+                        <button id="production-upload-submit" class="production-primary" type="button">Upload designs</button>
+                        <button id="production-discard-pending" type="button">Discard pending</button>
+                        <button id="production-cancel-upload" type="button" hidden>Cancel upload</button>
+                      </div>
+                    </section>
                     <div class="design-panel-body">
+                      <div class="production-file-list">
                       <div class="design-group" id="design-group-front">
                         <button class="design-group-title" type="button" aria-expanded="true">
                           <span>Front prints</span>
@@ -721,11 +722,23 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                         <div class="design-tiles" id="design-extras-list"></div>
                       </div>
                       <p id="detail-designs-placeholder" class="detail-assets-empty">No design files found</p>
+                      </div>
+                      <section id="production-file-inspector" aria-labelledby="production-selected-title" hidden></section>
                     </div>
                   </section>
+                  <div id="production-blanks-summary" hidden><span id="production-blanks-copy">Loading blanks…</span><button id="production-manage-blanks" type="button">Manage blanks</button></div>
+                  <details id="production-order-context"><summary id="production-order-context-title">Production details</summary>
+                    <dl class="detail-fact-grid">
+                      <div><dt>Stage</dt><dd id="production-stage-val">Loading</dd></div>
+                      <div><dt>Bundle</dt><dd id="production-bundle-val">None</dd></div>
+                      <div><dt>Revision</dt><dd id="production-revision-val">—</dd></div>
+                      <div><dt>Last production update</dt><dd id="production-updated-val">—</dd></div>
+                    </dl>
+                  </details>
                 </section>
 
                 <section id="tab-items" class="detail-tab-panel" role="tabpanel" aria-labelledby="detail-tab-items" aria-hidden="true" hidden>
+                  <section id="shelf-allocation" class="shelf-allocation" aria-label="In-house blank inventory" hidden></section>
                   <section id="detail-items-section" class="detail-section">
                     <div class="detail-items-header-row">
                       <h3>Items in order</h3>
@@ -1140,6 +1153,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./shopify-preview.js"></script>
   <script src="./dashboard-triage-enhancements.js"></script>
   <script src="./blanks-batches.js"></script>
+  <script src="./production-artwork-workspace.js"></script>
   <script src="./detail-overlay-enhancements.js"></script>
   <script src="./shelf-allocation.js"></script>
   <script src="./shelf-inventory.js"></script>

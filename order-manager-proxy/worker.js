@@ -6434,7 +6434,7 @@ async function handleV1DesignAssetUpload(request, env, allowOrigin, reqAllowHead
                 updated_at = excluded.updated_at
             `).bind(
                 assetId, shop.id, orderIdentity.id, objectKey, metadata.name, metadata.contentType,
-                bytes.byteLength, sha256, sourceKey, actor, now, now, metadata.side
+                bytes.byteLength, sha256, sourceKey, actor, now, now, metadata.side || null
             ).run();
         }
 

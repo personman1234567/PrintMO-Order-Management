@@ -1866,6 +1866,8 @@ function renderOrderAssets(order) {
     });
   }
 
+  if (window.ProductionArtworkWorkspace?.render(order, assets)) return;
+
   const totalDesigns = assets.front.length + assets.back.length + assets.extras.length;
   designPlaceholder.classList.toggle('hidden', totalDesigns > 0);
 
@@ -2045,6 +2047,12 @@ function setManualDesignUploadStatus(message, state = '') {
 
 async function uploadManualDesignFiles(files) {
   const order = detailOrder;
+  if (order?._candidate && (order._provider || 'shopify') === 'shopify' && window.ProductionArtworkWorkspace) {
+    window.ProductionArtworkWorkspace.stage(order, files);
+    const fileInput = document.getElementById('manual-design-file-input');
+    if (fileInput) fileInput.value = '';
+    return;
+  }
   const input = document.getElementById('manual-design-file-input');
   const upload = document.getElementById('manual-design-upload-btn');
   const placementControl = document.getElementById('manual-design-side');
@@ -2171,15 +2179,17 @@ function renderCustomerItemInstructions(order, items = order?.items || []) {
   if (!groups.length) return;
   const designPanel = document.getElementById('detail-design-panel');
   if (designPanel) {
-    const section = document.createElement('section');
+    const workspace = designPanel.classList.contains('production-artwork-active');
+    const section = document.createElement(workspace ? 'details' : 'section');
     section.id = 'customer-item-instructions';
-    section.className = 'customer-item-instructions';
+    section.className = `customer-item-instructions${workspace ? ' production-all-instructions' : ''}`;
     section.setAttribute('aria-labelledby', 'customer-item-instructions-title');
-    const heading = document.createElement('h3');
+    const heading = document.createElement(workspace ? 'summary' : 'h3');
     heading.id = 'customer-item-instructions-title';
-    heading.textContent = 'Customer item instructions';
+    heading.textContent = workspace ? 'All item instructions' : 'Customer item instructions';
     section.append(heading, ...groups.map(customerInstructionContent));
-    designPanel.before(section);
+    if (workspace) designPanel.after(section);
+    else designPanel.before(section);
   }
   const rows = [...document.querySelectorAll('#detail-items tbody tr[data-instruction-key]')];
   groups.forEach(group => {
@@ -2271,6 +2281,7 @@ function consolidateLineItemsForDisplay(items = []) {
 }
 
 function openDetail(o) {
+  if (window.ProductionArtworkWorkspace?.canLeave(o) === false) return false;
   const historyReadOnly = Boolean(o?._historyReadOnly);
   detailOrder = o;
   renderOrderAssets(o);
@@ -2526,6 +2537,8 @@ function openDetail(o) {
 }
 
 function closeDetail() {
+  if (window.ProductionArtworkWorkspace?.canLeave(null) === false) return false;
+  window.ProductionArtworkWorkspace?.close();
   const overlay = document.getElementById('detail-overlay');
   overlay.classList.replace('visible', 'hidden');
   overlay.setAttribute('aria-hidden', 'true');

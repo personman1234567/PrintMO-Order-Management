@@ -1999,6 +1999,32 @@ async function run() {
     assert.equal(manualDesignManifest.content_type, 'image/svg+xml');
     assert(String(manualDesignManifest.source_key).startsWith('manual-upload:'));
 
+    const extraFile = new Blob(['<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>'], { type: 'image/svg+xml' });
+    const uploadExtra = () => {
+      const form = new FormData();
+      form.set('side', 'extra'); form.set('file', extraFile, 'manual-extra.svg');
+      return worker.fetch(new Request(
+        `https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/assets`,
+        { method: 'POST', headers: { Authorization: headers.Authorization }, body: form }
+      ), env);
+    };
+    const extraUpload = await uploadExtra();
+    assert.equal(extraUpload.status, 201, 'Extras must persist without violating the manifest side constraint');
+    const extraJson = await extraUpload.json();
+    const extraManifest = await env.ORDER_DB.prepare('SELECT side FROM asset_manifests WHERE id = ?').bind(extraJson.assetId).first();
+    assert.equal(extraManifest.side, null, 'Extras use SQL NULL in the blob manifest');
+    const extraLink = await env.ORDER_DB.prepare('SELECT side FROM asset_manifest_links WHERE asset_id = ?').bind(extraJson.assetId).first();
+    assert.equal(extraLink.side, '', 'Extras retain the empty-string association key');
+    const extraRetry = await uploadExtra();
+    assert.equal(extraRetry.status, 201);
+    assert.equal((await extraRetry.json()).assetId, extraJson.assetId, 'An interrupted Extras upload can retry without a duplicate asset');
+    assert.equal((await env.ORDER_DB.prepare('SELECT COUNT(*) AS count FROM asset_manifest_links WHERE asset_id = ?').bind(extraJson.assetId).first()).count, 1);
+    const extraDelete = await worker.fetch(new Request(
+      `https://worker.test/order-manager/v1/assets/${encodeURIComponent(extraJson.assetId)}?side=extra`,
+      { method: 'DELETE', headers: { Authorization: headers.Authorization } }
+    ), env);
+    assert.equal(extraDelete.status, 200, 'Extras remain removable through the existing placement contract');
+
     const invalidDesignForm = new FormData();
     invalidDesignForm.set('side', 'front');
     invalidDesignForm.set('file', new Blob(['not artwork'], { type: 'application/pdf' }), 'manual.pdf');
