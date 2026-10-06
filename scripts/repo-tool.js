@@ -108,7 +108,8 @@ function runRegisteredCommand(args) {
   const [group, action, ...rest] = args;
   const commandArgs = rest[0] === '--' ? rest.slice(1) : rest;
   if (group === 'inventory' && ['audit', 'dry-run'].includes(action)) return runNode('inventory-sync/cli.mjs', [action, ...commandArgs]);
-  if (group === 'inventory' && action === 'test') return run(process.execPath, ['--test', path.join(root, 'inventory-sync/inventory-sync.test.mjs')]);
+  if (group === 'inventory' && ['enroll', 'sync'].includes(action)) return runNode('inventory-sync/enroll-cli.mjs', [action, ...commandArgs]);
+  if (group === 'inventory' && action === 'test') return run(process.execPath, ['--test', path.join(root, 'inventory-sync/inventory-sync.test.mjs'), path.join(root, 'inventory-sync/enrollment.test.mjs')]);
   if (group === 'verify' && ['phase1', 'phase2'].includes(action)) {
     return runNode(`scripts/verify-${action}.js`, rest);
   }
@@ -138,6 +139,7 @@ Usage:
   npm run repo -- tools [tool-id] [--json]
   npm run repo -- inventory audit|dry-run [--env-file PATH] [--shop DOMAIN]
   npm run repo -- inventory test
+  npm run repo -- inventory enroll|sync PRODUCT [--execute]
   npm run repo -- docs check
   npm run repo -- verify phase1|phase2
   npm run repo -- redis backup

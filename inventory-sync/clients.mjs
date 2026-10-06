@@ -6,7 +6,7 @@ export async function requestJson(url, options = {}, { fetchImpl = fetch, sleep 
     let response;
     // Workers reject redirect: 'error'. Manual mode also keeps credentials off redirected hosts.
     try { response = await fetchImpl(url, { ...options, redirect: 'manual', signal: AbortSignal.timeout(15000) }); }
-    catch { throw new SyncError('UPSTREAM_TRANSPORT_FAILED'); }
+    catch (error) { if (error instanceof SyncError) throw error; throw new SyncError('UPSTREAM_TRANSPORT_FAILED'); }
     if ((response.status === 429 || response.status >= 500) && attempt === 0) {
       const header = response.headers.get('Retry-After');
       const retry = header === null ? 0.5 : /^\d+$/.test(header) ? Number(header) : (Date.parse(header) - Date.now()) / 1000;

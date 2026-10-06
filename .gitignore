@@ -44,4 +44,5 @@ src/plugins/impeccable-live.client.ts
 inventory-sync/.dev.vars*
 inventory-sync/.env*
 inventory-sync/.wrangler/
+inventory-sync/.enrollment-*/
 .wrangler/

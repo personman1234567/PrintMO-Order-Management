@@ -94,6 +94,13 @@
       "script": "inventory-sync/cli.mjs"
     },
     {
+      "id": "inventory-enrollment",
+      "command": "npm run repo -- inventory enroll|sync PRODUCT [execute]",
+      "purpose": "Plan or execute product-scoped supplier enrollment, safe refresh, readback and schedule deployment; no catalog re-onboarding.",
+      "mode": "remote-read-by-default",
+      "script": "inventory-sync/enroll-cli.mjs"
+    },
+    {
       "id": "inventory-tests",
       "command": "npm run repo -- inventory test",
       "purpose": "Verify isolated inventory observation, gateway auth, missing-data, and no-write contracts locally.",
@@ -669,7 +676,7 @@
     },
     {
       "id": "supplier-inventory-sync",
-      "description": "S&S inventory availability observation and bounded six-variant supplier-location sync pilot",
+      "description": "Product-scoped S&S inventory enrollment, refresh, guarded schedule and failure diagnosis",
       "taskTypes": [
         "implementation",
         "diagnosis",
@@ -677,6 +684,8 @@
       ],
       "keywords": [
         "inventory sync",
+        "enroll product",
+        "sync inventory",
         "supplier stock",
         "S&S availability",
         "supplier location",
@@ -687,6 +696,8 @@
       ],
       "symbols": [
         "runGuardedWrite",
+        "enrollBatch",
+        "discoverProduct",
         "runGuardedBatch",
         "scheduledAllVariants",
         "runDryRun",
@@ -702,18 +713,15 @@
       "read": [
         {
           "path": "docs/official-docs/runbooks/supplier-inventory-pilot.md",
-          "anchor": "pilot-operating-state"
-        },
-        {
-          "path": "docs/official-docs/future-plans/supplier-inventory-sync-plan.md",
-          "anchor": "current-continuation-state"
+          "anchor": "enroll-an-existing-catalog-product"
         }
       ],
       "inspect": [
         {
-          "path": "inventory-sync/writer.mjs",
+          "path": "inventory-sync/enrollment.mjs",
           "symbols": [
-            "runGuardedBatch"
+            "enrollBatch",
+            "discoverProduct"
           ]
         },
         {
@@ -736,6 +744,7 @@
         }
       ],
       "tools": [
+        "inventory-enrollment",
         "inventory-observation",
         "inventory-tests"
       ],
@@ -744,7 +753,7 @@
         "npm run docs:check"
       ],
       "stop": [
-        "Check exact SKUs, physical S&S source, Shopify commitments, and shared listings before enrollment. The 75 shared 6400 SKUs remain held until one sellable listing is chosen."
+        "For ordinary enrollment, run the product-scoped command and stop at its verified report; do not rerun catalog onboarding, CSV mapping or manual shard watching. Investigate only its specific blocker. Run inventory tests when implementation changes. Shared 6400 SKUs remain held."
       ]
     }
   ]
