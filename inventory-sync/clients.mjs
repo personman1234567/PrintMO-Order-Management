@@ -54,7 +54,7 @@ const PILOT_VARIANT_FIELDS = `id sku inventoryPolicy availableForSale sellableOn
 export async function readPilot(env, token, ids, deps) {
   const data = await shopifyRead(env, token, `query InventoryPilot($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { ${PILOT_VARIANT_FIELDS} } } }`, { ids }, deps);
   requireValue(Array.isArray(data.nodes) && data.nodes.length === ids.length
-    && data.nodes.every((v, i) => v?.id === ids[i] && v.product?.status === 'ACTIVE' && v.inventoryItem?.id), 'PILOT_VARIANT_MISSING_OR_INACTIVE');
+    && data.nodes.every((v, i) => v?.id === ids[i] && ['ACTIVE', 'UNLISTED'].includes(v.product?.status) && v.inventoryItem?.id), 'PILOT_VARIANT_MISSING_OR_INACTIVE');
   return data.nodes;
 }
 export async function readSupplierGateway(env, skus, deps) {
