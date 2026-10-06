@@ -16,7 +16,7 @@ function wrangler(args,input){
  requireValue(process.env.npm_execpath,'RUN_RELEASE_THROUGH_REPO_COMMAND');
  const r=spawnSync(process.execPath,[process.env.npm_execpath,'exec','--','wrangler',...args],{cwd:directory,encoding:'utf8',input,maxBuffer:8*1024*1024,env:{...process.env,WRANGLER_SEND_METRICS:'false'}});
  // Never print secret bulk input or provider error bodies.
- requireValue(!r.error&&r.status===0,'WRANGLER_RELEASE_FAILED');return r.stdout;
+ if(r.error||r.status!==0){const dir=path.join(root,'backups','inventory-release');fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,'wrangler-error.txt'),String(r.stderr||r.stdout||r.error));throw new SyncError('WRANGLER_RELEASE_FAILED');}return r.stdout;
 }
 function cloudflareToken(){
  if(process.env.CLOUDFLARE_API_TOKEN)return process.env.CLOUDFLARE_API_TOKEN;
@@ -27,9 +27,9 @@ function cloudflareToken(){
  throw new SyncError('CLOUDFLARE_AUTH_REQUIRED');
 }
 export async function main(args=process.argv.slice(2)){
- if(!args.includes('execute')){console.log('Usage: npm run repo -- inventory release execute [--policy-env-file PATH]\nCode release/migration only: preserves live enrollments, provisions the permanent endpoint key, deploys, and verifies registry coverage. Routine enrollment needs no deployment.');return 0;}
+ if(!args.includes('execute')){console.log('Usage: npm run repo -- inventory release execute [POLICY_ENV_FILE]\nCode release/migration only: preserves live enrollments, provisions the permanent endpoint key, deploys, and verifies registry coverage. Routine enrollment needs no deployment.');return 0;}
  const token=cloudflareToken(),base=`https://api.cloudflare.com/client/v4/accounts/${account}`;
- const cf=async suffix=>{const r=await fetch(base+suffix,{headers:{Authorization:'Bearer '+token}});const d=await r.json();requireValue(r.ok&&d.success,'CLOUDFLARE_READ_FAILED');return d.result;};
+ const cf=async(suffix,options={})=>{const r=await fetch(base+suffix,{...options,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'}});const d=await r.json();requireValue(r.ok&&d.success,'CLOUDFLARE_READ_FAILED');return d.result;};
  const deployment=async()=>{const d=await cf(`/workers/scripts/${worker}/deployments`);const latest=d.deployments[0];requireValue(latest?.versions.length===1&&latest.versions[0].percentage===100,'SPLIT_DEPLOYMENT_UNSUPPORTED');return latest.versions[0].version_id;};
  const receiptFile=path.join(directory,'deployment.json'),receipt=JSON.parse(fs.readFileSync(receiptFile,'utf8'));
  requireValue(await deployment()===receipt.version,'DEPLOYMENT_DRIFT_FETCH_SOURCE_FIRST');
@@ -43,8 +43,8 @@ export async function main(args=process.argv.slice(2)){
  if(!env.INVENTORY_ADMIN_KEY){env.INVENTORY_ADMIN_KEY=randomBytes(32).toString('hex');fs.appendFileSync(envFile,'\nINVENTORY_ADMIN_KEY='+env.INVENTORY_ADMIN_KEY+'\n');}
  requireValue(env.INVENTORY_ADMIN_KEY.length>=32,'INVALID_ADMIN_KEY');
  const secrets={INVENTORY_ADMIN_KEY:env.INVENTORY_ADMIN_KEY};
- const policyArg=args.indexOf('--policy-env-file');
- if(policyArg>=0){requireValue(args[policyArg+1],'POLICY_ENV_FILE_REQUIRED');const p=loadEnvFile(path.resolve(args[policyArg+1]),{});
+ const policyArg=args.indexOf('--policy-env-file'),policyFile=policyArg>=0?args[policyArg+1]:args.find(a=>a!=='execute');
+ if(policyFile){const p=loadEnvFile(path.resolve(policyFile),{});
   requireValue(p.SHOPIFY_STOREFRONT_MANAGER_CLIENT_ID&&p.SHOPIFY_STOREFRONT_MANAGER_CLIENT_SECRET,'POLICY_CREDENTIALS_MISSING');
   secrets.SHOPIFY_POLICY_CLIENT_ID=p.SHOPIFY_STOREFRONT_MANAGER_CLIENT_ID;secrets.SHOPIFY_POLICY_CLIENT_SECRET=p.SHOPIFY_STOREFRONT_MANAGER_CLIENT_SECRET;
  }
@@ -56,10 +56,13 @@ export async function main(args=process.argv.slice(2)){
   const values=SCHEDULED_VARIANTS.map(e=>`(${[e.id,e.sku,e.cohort||'',e.missingPolicy].map(quoted).join(',')},${PRIORITY_SHARED_6400_SKUS.has(e.sku)?0:1},${now})`);
   const sql=fs.readFileSync(path.join(directory,'migrations','0001_inventory_registry.sql'),'utf8')+'\nINSERT INTO inventory_sync_variants(variant_id,sku,product_id,missing_policy,enabled,registered_at) VALUES\n'+values.join(',\n')+'\nON CONFLICT(variant_id) DO NOTHING;\n';
   const file=path.join(backup,'registry-migration.sql');fs.writeFileSync(file,sql);
-  wrangler(['d1','execute','printmo-order-manager','--remote','--file',file,'-c','wrangler.jsonc','--yes']);
+  const query=async sql=>{const result=await cf('/d1/database/7fce58d5-d3f3-4f42-b084-6f3715cc48cc/query',{method:'POST',body:JSON.stringify({sql})});requireValue(result.every(r=>r.success),'REGISTRY_MIGRATION_FAILED');};
+  await query(fs.readFileSync(path.join(directory,'migrations','0001_inventory_registry.sql'),'utf8'));
+  for(let i=0;i<values.length;i+=100)await query('INSERT INTO inventory_sync_variants(variant_id,sku,product_id,missing_policy,enabled,registered_at) VALUES '+values.slice(i,i+100).join(',')+' ON CONFLICT(variant_id) DO NOTHING;');
  }
- wrangler(['secret','bulk','-c','wrangler.jsonc'],JSON.stringify(secrets));
+ // Deploy reviewed code first: older uploaded preview versions can otherwise block secret updates.
  wrangler(['deploy','-c','wrangler.jsonc']);
+ wrangler(['secret','bulk','-c','wrangler.jsonc'],JSON.stringify(secrets));
  const version=await deployment(),invoke=serviceClient(env);let health;
  // A normal code release can take a few seconds to reach the stable hostname.
  for(let i=0;i<6;i++){try{health=await invoke('/inventory/health');break;}catch(e){if(i===5)throw e;await new Promise(r=>setTimeout(r,2000));}}

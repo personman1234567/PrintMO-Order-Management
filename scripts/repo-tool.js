@@ -140,7 +140,9 @@ Usage:
   npm run repo -- tools [tool-id] [--json]
   npm run repo -- inventory audit|dry-run [--env-file PATH] [--shop DOMAIN]
   npm run repo -- inventory test
-  npm run repo -- inventory enroll|sync PRODUCT [--execute]
+  npm run repo -- inventory enroll|sync PRODUCT [execute]
+  npm run repo -- inventory status|health
+  npm run repo -- inventory release execute [POLICY_ENV_FILE]
   npm run repo -- docs check
   npm run repo -- verify phase1|phase2
   npm run repo -- redis backup

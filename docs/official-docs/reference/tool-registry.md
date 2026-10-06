@@ -42,7 +42,7 @@ The machine-readable authority is `../retrieval-manifest.json`. Run `npm run rep
 <!-- tool:inventory-release -->
 ### `inventory-release`
 
-- Command: `npm run repo -- inventory release execute [--policy-env-file PATH]`.
+- Command: `npm run repo -- inventory release execute [POLICY_ENV_FILE]`.
 - Mode: remote mutating; for reviewed code releases only.
 - Prerequisites: authenticated Wrangler, tracked deployment receipt, Workers Paid, passing inventory tests and docs check. Optional policy credential file uses the existing storefront-manager app's client ID/secret; values are sent over stdin without printing or a secret file.
 - Output: deployed version and verified registry coverage. The first release imports the existing pinned schedule into D1; later releases preserve the database registry.

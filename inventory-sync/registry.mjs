@@ -34,11 +34,11 @@ export async function registerEntries(env,entries,{productId='',now=Date.now(),v
   const enabled=PRIORITY_SHARED_6400_SKUS.has(e.sku)?0:1;
   return db.prepare(`INSERT INTO inventory_sync_variants(variant_id,sku,product_id,missing_policy,enabled,registered_at,last_success_at,next_due_at)
    VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(variant_id) DO UPDATE SET product_id=CASE WHEN excluded.product_id='' THEN inventory_sync_variants.product_id ELSE excluded.product_id END,
-   missing_policy=excluded.missing_policy,enabled=excluded.enabled,last_success_at=COALESCE(excluded.last_success_at,inventory_sync_variants.last_success_at),
+   missing_policy=CASE WHEN ? THEN excluded.missing_policy ELSE inventory_sync_variants.missing_policy END,enabled=excluded.enabled,last_success_at=COALESCE(excluded.last_success_at,inventory_sync_variants.last_success_at),
    next_due_at=CASE WHEN excluded.last_success_at IS NULL THEN inventory_sync_variants.next_due_at ELSE excluded.next_due_at END,
    last_error=CASE WHEN excluded.last_success_at IS NULL THEN inventory_sync_variants.last_error ELSE NULL END
    WHERE inventory_sync_variants.sku=excluded.sku`)
-   .bind(e.id,e.sku,productId||e.cohort||'',e.missingPolicy||'hold',enabled,now,verified?now:null,verified?now+refreshInterval(env):0);
+   .bind(e.id,e.sku,productId||e.cohort||'',e.missingPolicy||'hold',enabled,now,verified?now:null,verified?now+refreshInterval(env):0,e.missingPolicy?1:0);
  });
  const results=await db.batch(statements);requireValue(results.every(r=>r.success&&r.meta.changes===1),'PINNED_SKU_CHANGED');
 }

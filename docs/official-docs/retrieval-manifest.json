@@ -116,7 +116,7 @@
     },
     {
       "id": "inventory-release",
-      "command": "npm run repo -- inventory release execute [--policy-env-file PATH]",
+      "command": "npm run repo -- inventory release execute [POLICY_ENV_FILE]",
       "purpose": "Release inventory code and migrate existing enrollments with live deployment drift and registry readback checks. Code releases only.",
       "mode": "remote-mutating",
       "script": "inventory-sync/release.mjs"

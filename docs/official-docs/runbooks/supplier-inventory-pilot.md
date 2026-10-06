@@ -54,7 +54,7 @@ npm run repo -- inventory status
 
 Health verifies the permanent endpoint, hosted inventory scope and product-policy write capability. Status reports registered/enabled/excluded counts, failures, oldest refresh age and durable job progress. A shared database lease prevents enrollment and scheduled batches from writing concurrently; expired leases recover automatically. Status reads do not take the lease.
 
-For a reviewed code release, run `npm run repo -- inventory release execute`. Initial provisioning can add `--policy-env-file PATH` to reuse the existing storefront-manager app's product-write credentials when the inventory app lacks `write_products`. Secrets are sent over stdin and never printed. Provider secrets are not added to the repository.
+For a reviewed code release, run `npm run repo -- inventory release execute`. Initial provisioning can add a positional `POLICY_ENV_FILE` path (this avoids PowerShell/npm flag forwarding) to reuse the existing storefront-manager app's product-write credentials when the inventory app lacks `write_products`. Secrets are sent over stdin and never printed. Provider secrets are not added to the repository.
 
 To pause, set `INVENTORY_SYNC_MODE=disabled` and `triggers.crons=[]` in `inventory-sync/wrangler.jsonc`, then run the release command and confirm no cron trigger. Restore `pilot-refresh` and the one-minute cron to resume. Pausing does not roll back stock, tracking or registry rows. Version preview URLs remain disabled; the permanent workers.dev route requires authentication and returns 404 otherwise.
 

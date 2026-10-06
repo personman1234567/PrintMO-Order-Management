@@ -53,6 +53,11 @@ test('registry keeps shared 6400 SKUs disabled and rejects identity drift before
  await registerEntries(f.env,[{id:'gid://shopify/ProductVariant/100',sku:[...PRIORITY_SHARED_6400_SKUS][0]}]);
  const status=await registryStatus(f.env);assert.equal(status.scheduled,1);assert.equal(status.excluded,1);f.sqlite.close();
 });
+test('refreshing an enrolled product preserves its existing missing-source policy',async()=>{
+ const f=fixture(),row={...entries(1)[0],missingPolicy:'block'};await registerEntries(f.env,[row]);
+ await registerEntries(f.env,[{id:row.id,sku:row.sku}],{verified:true});
+ assert.equal(f.sqlite.prepare('SELECT missing_policy FROM inventory_sync_variants').get().missing_policy,'block');f.sqlite.close();
+});
 test('permanent service rejects unauthenticated calls before upstream access and identifies authenticated health',async()=>{
  const f=fixture();let calls=0;const deps={fetchImpl:async()=>{calls++;return Response.json({data:{currentAppInstallation:{accessScopes:[{handle:'write_inventory'},{handle:'write_products'}]}}});}};
  const url='https://example.com/inventory/health';assert.equal((await inventoryService(new Request(url),f.env,deps)).status,404);assert.equal(calls,0);
