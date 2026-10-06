@@ -542,7 +542,7 @@ test('expanded schedule covers every enrolled SKU while holding shared 6400 SKUs
   assert.deepEqual(minutes.map(entries => entries.length), [264, 264, 264, 263, 263]);
   assert.deepEqual(minutes.flat().map(entry => entry.id).sort(), SCHEDULED_VARIANTS
     .filter(entry => !PRIORITY_SHARED_6400_SKUS.has(entry.sku)).map(entry => entry.id).sort());
-  assert.ok(minutes.every(entries => 1 + Math.ceil(entries.length / 17) * 3 <= 50));
+  assert.ok(minutes.every(entries => 1 + Math.ceil(entries.length / 25) * 3 <= 50));
 });
 
 test('scheduled batch checks pinned SKU identity and store-wide uniqueness in its combined Shopify read', async () => {
@@ -579,8 +579,8 @@ test('scheduled batch checks pinned SKU identity and store-wide uniqueness in it
   assert.equal(calls.length, 1);
 });
 
-test('expanded 17-variant batches stay within three requests and reject 18 before network access', async () => {
-  const variants = Array.from({ length: 17 }, (_, i) => {
+test('expanded 25-variant batches stay within three requests and reject 26 before network access', async () => {
+  const variants = Array.from({ length: 25 }, (_, i) => {
     const v = structuredClone(variant);
     v.id = `gid://shopify/ProductVariant/${i + 1}`;
     v.sku = `BTEST${i + 1}`;
@@ -608,15 +608,47 @@ test('expanded 17-variant batches stay within three requests and reject 18 befor
   const batchEnv = { ...env, INVENTORY_SYNC_MODE: 'pilot-refresh', SS_WAREHOUSES: '["*"]', SS_SAFETY_BUFFER: '0',
     SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only',
     PILOT_VARIANT_IDS: JSON.stringify(variants.map(v => v.id)), PILOT_VARIANT_SKUS: JSON.stringify(variants.map(v => v.sku)) };
-  assert.equal((await runGuardedBatch(batchEnv, deps)).writes, 17);
+  assert.equal((await runGuardedBatch(batchEnv, deps)).writes, 25);
   assert.equal(calls.length, 3);
   const quantities = JSON.parse(calls.at(-1).options.body).variables.input.quantities;
-  assert.equal(quantities.length, 17);
+  assert.equal(quantities.length, 25);
   assert.ok(quantities.every(q => q.locationId === supplierId && q.quantity === 5 && q.changeFromQuantity === 8));
   calls.length = 0;
   await assert.rejects(runGuardedBatch({ ...batchEnv, PILOT_VARIANT_IDS: JSON.stringify([
-    ...variants.map(v => v.id), 'gid://shopify/ProductVariant/18']) }, deps), /PILOT_VARIANT_SCOPE_INVALID/);
+    ...variants.map(v => v.id), 'gid://shopify/ProductVariant/26']) }, deps), /PILOT_VARIANT_SCOPE_INVALID/);
   assert.equal(calls.length, 0);
+});
+
+test('expanded schedule enforces its actual request budget including HTTP retries', async () => {
+  let requests = 0;
+  const attempted = new Set();
+  const deps = { sleep: async () => {}, fetchImpl: async (url, options) => {
+    requests++;
+    const key = url + (options.body || '');
+    if (!attempted.has(key)) { attempted.add(key); return response({}, 500); }
+    if (!url.includes('myshopify')) return response({ observedAt: new Date().toISOString(),
+      items: new URL(url).searchParams.get('skus').split(',').map(sku => ({ sku,
+        warehouses: [{ warehouseAbbr: 'IL', qty: 5, dropship: false }] })) });
+    const { query, variables } = JSON.parse(options.body);
+    if (query.startsWith('mutation')) return response({ data: { inventorySetQuantities: {
+      inventoryAdjustmentGroup: { id: 'adjustment' }, userErrors: [] } } });
+    const nodes = variables.ids.map((id, i) => {
+      const v = structuredClone(variant);v.id = id;v.sku = variables['sku' + i].slice(4);
+      v.inventoryItem.id = id.replace('ProductVariant', 'InventoryItem');
+      v.inventoryItem.inventoryLevels.nodes[0].quantities = [{ name: 'available', quantity: 0 }, { name: 'committed', quantity: 0 }, { name: 'on_hand', quantity: 0 }];
+      v.inventoryItem.inventoryLevels.nodes[1].quantities = [{ name: 'available', quantity: 8 }, { name: 'committed', quantity: 0 }, { name: 'on_hand', quantity: 8 }];
+      return v;
+    });
+    return response({ data: { nodes, location: { id: supplierId, isActive: true, fulfillsOnlineOrders: true },
+      currentAppInstallation: { accessScopes: [{ handle: 'write_inventory' }] },
+      ...Object.fromEntries(nodes.map((v, i) => ['sku' + i, { nodes: [{ id: v.id, sku: v.sku }], pageInfo: { hasNextPage: false } }])) } });
+  } };
+  const settings = { ...env, SHOPIFY_ACCESS_TOKEN: 'test', INVENTORY_SYNC_MODE: 'pilot-refresh',
+    PRIORITY_SYNC_ENABLED: 'true', BELLA_3001_SYNC_ENABLED: 'true', PILOT_SHARD_COUNT: '5',
+    PILOT_VARIANT_IDS: JSON.stringify(SCHEDULED_VARIANTS.slice(0, 72).map(v => v.id)),
+    SS_WAREHOUSES: '["*"]', SS_SAFETY_BUFFER: '0', SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only' };
+  await assert.rejects(runInventorySync(settings, deps, 0), /PILOT_BATCH_PARTIAL_FAILURE/);
+  assert.equal(requests, 49);
 });
 
 test('closeout batch blocks an omitted supplier SKU while writing only supplier-location CAS quantities', async () => {
@@ -659,6 +691,20 @@ test('closeout batch blocks an omitted supplier SKU while writing only supplier-
   await assert.rejects(runGuardedBatch({ ...closeoutEnv, SUPPLIER_MISSING_SKU_POLICY: 'hold' }, deps),
     /PILOT_BATCH_PARTIAL_FAILURE/);
   assert.deepEqual(mutations[0].quantities.map(q => q.quantity), [3]);
+});
+
+test('missing hold SKU already at zero stays unchanged without a failed batch; sellable stock still blocks', async () => {
+  for (const available of [0, 5]) {
+    const fixture = pilotWriteFixture({ available });
+    const deps = { fetchImpl: async (url, options) => url.includes('myshopify')
+      ? fixture.deps.fetchImpl(url, options)
+      : response({ observedAt: new Date().toISOString(), items: [] }) };
+    const settings = { ...fixture.writeEnv, INVENTORY_SYNC_MODE: 'pilot-refresh',
+      SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only', SUPPLIER_MISSING_SKU_POLICY: 'hold' };
+    if (available === 0) assert.equal((await runGuardedBatch(settings, deps)).writes, 0);
+    else await assert.rejects(runGuardedBatch(settings, deps), /PILOT_BATCH_PARTIAL_FAILURE/);
+    assert.equal(fixture.calls.filter(c => JSON.parse(c.options.body).query.startsWith('mutation')).length, 0);
+  }
 });
 
 test('scheduled restock reopens only units beyond all Shopify commitments', async () => {

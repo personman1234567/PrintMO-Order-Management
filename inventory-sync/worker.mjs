@@ -4,6 +4,7 @@ import { runGuardedWrite, runGuardedBatch } from './writer.mjs';
 import { BELLA_3001_VARIANT_IDS } from './bella-3001-allowlist.mjs';
 import { SCHEDULED_VARIANTS } from './scheduled-variants.mjs';
 import { PRIORITY_SHARED_6400_SKUS } from './priority-shared-6400.mjs';
+import { BATCH_SIZE } from './enrollment.mjs';
 function jsonSetting(env, key) {
   try { return JSON.parse(env[key] || '[]'); } catch { throw new SyncError(`INVALID_${key}`); }
 }
@@ -50,6 +51,13 @@ export function scheduledAllVariants(scheduledTime) {
     .filter((_, index) => index % 5 === minute % 5);
 }
 async function runExpandedSchedule(env, deps, scheduledTime) {
+  let requests = 0;
+  const upstream = deps?.fetchImpl || fetch;
+  deps = { ...deps, fetchImpl: (...args) => {
+    requireValue(requests < 49, 'SCHEDULE_REQUEST_BUDGET_DEFERRED');
+    requests++;
+    return upstream(...args);
+  } };
   const token = await shopifyToken(env, deps);
   if (env.PRIORITY_SYNC_ENABLED === 'true') {
     const pinnedTultex = jsonSetting(env, 'PILOT_VARIANT_IDS');
@@ -57,15 +65,16 @@ async function runExpandedSchedule(env, deps, scheduledTime) {
       && Array.isArray(pinnedTultex) && pinnedTultex.length === 72
       && pinnedTultex.every((id, index) => id === SCHEDULED_VARIANTS[index].id), 'SCHEDULE_CONFIG_MISMATCH');
     const entries = scheduledAllVariants(scheduledTime);
-    const groups = Array.from({ length: Math.ceil(entries.length / 17) },
-      (_, index) => entries.slice(index * 17, index * 17 + 17));
+    const groups = Array.from({ length: Math.ceil(entries.length / BATCH_SIZE) },
+      (_, index) => entries.slice(index * BATCH_SIZE, index * BATCH_SIZE + BATCH_SIZE));
     // Each group uses one combined Shopify identity/level read, one S&S read,
     // and at most one CAS mutation. One token request plus at most 16 x 3 = 49.
-    requireValue(groups.length <= 16 && groups.every(group => group.length >= 1 && group.length <= 17),
+    requireValue(groups.length <= 16 && groups.every(group => group.length >= 1 && group.length <= BATCH_SIZE),
       'SCHEDULE_SCOPE_INVALID');
     let writes = 0;
     let increases = 0;
     let failures = 0;
+    let held = 0;
     for (const [index, group] of groups.entries()) {
       try {
         const result = await runGuardedBatch({ ...env, SHOPIFY_ACCESS_TOKEN: token,
@@ -74,6 +83,7 @@ async function runExpandedSchedule(env, deps, scheduledTime) {
           PILOT_MISSING_SKU_POLICIES: JSON.stringify(group.map(entry => entry.missingPolicy)) }, deps);
         writes += result.writes;
         increases += result.increases;
+        held += result.held || 0;
       } catch (error) {
         failures++;
         console.error(JSON.stringify({ event: 'inventory-shard-failed', group: index,
@@ -81,7 +91,7 @@ async function runExpandedSchedule(env, deps, scheduledTime) {
       }
     }
     if (failures) throw new SyncError('PILOT_BATCH_PARTIAL_FAILURE');
-    return { mode: 'pilot-refresh', writes, increases, variants: entries.length };
+    return { mode: 'pilot-refresh', writes, increases, held, variants: entries.length };
   }
   const tultexIds = JSON.parse(scheduledShard(env, scheduledTime).PILOT_VARIANT_IDS);
   const bellaIds = scheduledBella3001Ids(scheduledTime);
@@ -131,6 +141,7 @@ export default {
         else statuses.unknown++;
       }
       console.log(JSON.stringify({ event: 'inventory-observation', mode: result.mode, writes: result.writes || 0,
+        held: result.held || 0,
         increases: result.increases || 0,
         variants: result.variants || (['pilot-write', 'pilot-refresh'].includes(result.mode) ? 1 : result.rows?.length || 0),
         blocked: result.rows?.filter(r => r.blockers.length).length || 0,

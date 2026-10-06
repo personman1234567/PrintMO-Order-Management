@@ -150,7 +150,7 @@ export async function setSupplierAvailable(env, token, { inventoryItemId, suppli
 }
 
 async function setSupplierAvailableBatch(env, token, updates, observedAt, deps) {
-  requireValue(env.INVENTORY_SYNC_MODE === 'pilot-refresh' && updates.length > 0 && updates.length <= 17,
+  requireValue(env.INVENTORY_SYNC_MODE === 'pilot-refresh' && updates.length > 0 && updates.length <= 25,
     'INVALID_BATCH_WRITE');
   const supplierLocationId = env.SUPPLIER_LOCATION_ID;
   requireValue(shopDomain(env) === PRINTMO_SHOP && supplierLocationId === SS_SUPPLIER_LOCATION,
@@ -188,7 +188,7 @@ async function setSupplierAvailableBatch(env, token, updates, observedAt, deps) 
 }
 
 // Large scheduled catalogs use one combined guarded Shopify read and one CAS
-// mutation per at-most-17-variant batch, staying inside the Worker request budget.
+// mutation per at-most-25-variant batch, staying inside the Worker request budget.
 // A stale CAS fails the batch; the next shard run rereads every quantity.
 export async function runGuardedBatch(env, deps) {
   requireValue(env.INVENTORY_SYNC_MODE === 'pilot-refresh', 'WRITE_MODE_REQUIRED');
@@ -203,7 +203,7 @@ export async function runGuardedBatch(env, deps) {
     && protectedLocationIds.every(id => /^gid:\/\/shopify\/Location\/\d+$/.test(id))
     && !protectedLocationIds.includes(env.SUPPLIER_LOCATION_ID), 'PROTECTED_LOCATIONS_REQUIRED');
   const ids = uniqueStrings(jsonSetting(env, 'PILOT_VARIANT_IDS'), /^gid:\/\/shopify\/ProductVariant\/\d+$/,
-    17, 'PILOT_VARIANT_SCOPE_INVALID');
+    25, 'PILOT_VARIANT_SCOPE_INVALID');
   const token = await shopifyToken(env, deps);
   const scheduledSkus = env.PILOT_VARIANT_SKUS ? jsonSetting(env, 'PILOT_VARIANT_SKUS') : null;
   requireValue(scheduledSkus === null || Array.isArray(scheduledSkus)
@@ -222,6 +222,7 @@ export async function runGuardedBatch(env, deps) {
   const preflight = scheduled?.preflight || await readBatchPrerequisites(env, token, variants, env.SUPPLIER_LOCATION_ID, deps);
   const updates = [];
   let failures = 0;
+  let held = 0;
   for (const [index, variant] of variants.entries()) {
     try {
       requireValue(preflight.matches[index], 'SHARED_SUPPLIER_SKU');
@@ -234,11 +235,25 @@ export async function runGuardedBatch(env, deps) {
       const resolvedByPilot = new Set(['PENDING_COMMITMENTS_UNVERIFIED', 'CATALOG_SHARED_SKUS_UNVERIFIED',
         'COMMITMENT_MODEL_REQUIRED_FOR_REOPEN']);
       const missingPolicy = missingPolicies?.[index] || env.SUPPLIER_MISSING_SKU_POLICY;
+      const existingLevel = variant.inventoryItem.inventoryLevels.nodes.find(node => node.location.id === env.SUPPLIER_LOCATION_ID);
+      // A successful feed omitting an already zero, uncommitted SKU is a held
+      // observation, not a zero write or a failed batch. Keep checking for return.
+      if (missingSupplierSku && missingPolicy === 'hold' && row.gate.otherLocationAvailable === 0
+        && row.blockers.every(blocker => resolvedByPilot.has(blocker) || blocker === 'SUPPLIER_SKU_MISSING')
+        && existingLevel?.isActive && quantity(existingLevel, 'available') === 0
+        && quantity(existingLevel, 'committed') === 0 && quantity(existingLevel, 'on_hand') === 0
+        && variant.inventoryItem.inventoryLevels.nodes.every(level => quantity(level, 'committed') === 0)) {
+        console.log(JSON.stringify({ event: 'inventory-variant-held', variantId: variant.id, code: 'SUPPLIER_SKU_MISSING_ZERO_UNCOMMITTED' }));
+        held++;
+        continue;
+      }
       if (missingSupplierSku && missingPolicy === 'block')
         resolvedByPilot.add('SUPPLIER_SKU_MISSING');
-      requireValue(row.blockers.every(blocker => resolvedByPilot.has(blocker))
-        && (row.capacityBeforeCommitments !== null || missingSupplierSku && missingPolicy === 'block')
-        && row.gate.otherLocationAvailable === 0, 'WRITE_GUARD_BLOCKED');
+      requireValue(row.blockers.every(blocker => resolvedByPilot.has(blocker)),
+        'WRITE_GUARD_' + (row.blockers.find(blocker => !resolvedByPilot.has(blocker)) || 'BLOCKED'));
+      requireValue(row.capacityBeforeCommitments !== null || missingSupplierSku && missingPolicy === 'block',
+        'WRITE_GUARD_SUPPLIER_CAPACITY_UNKNOWN');
+      requireValue(row.gate.otherLocationAvailable === 0, 'WRITE_GUARD_OTHER_LOCATION_HAS_STOCK');
       const level = variant.inventoryItem.inventoryLevels.nodes.find(node => node.location.id === env.SUPPLIER_LOCATION_ID);
       const available = quantity(level, 'available');
       const committed = quantity(level, 'committed');
@@ -269,7 +284,7 @@ export async function runGuardedBatch(env, deps) {
   }
   const writes = updates.length ? await setSupplierAvailableBatch(env, token, updates, supplier.observedAt, deps) : 0;
   if (failures) throw new SyncError('PILOT_BATCH_PARTIAL_FAILURE');
-  return { mode: 'pilot-refresh', writes,
+  return { mode: 'pilot-refresh', writes, held,
     increases: updates.filter(update => update.targetAvailable > update.currentAvailable).length,
     unchanged: ids.length - writes, variants: ids.length };
 }

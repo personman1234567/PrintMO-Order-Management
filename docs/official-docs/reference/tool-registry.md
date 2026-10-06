@@ -21,6 +21,17 @@
 
 The machine-readable authority is `../retrieval-manifest.json`. Run `npm run repo -- tools` for the current executable listing.
 
+<!-- tool:inventory-enrollment -->
+### `inventory-enrollment`
+
+- Plan: `npm run repo -- inventory enroll PRODUCT`.
+- Execute enrollment or refresh: `npm run repo -- inventory enroll PRODUCT execute` or `npm run repo -- inventory sync PRODUCT execute`.
+- Mode: plan by default; `execute` explicitly authorizes product-scoped Shopify inventory changes and additive schedule deployment. The positional word avoids PowerShell's npm flag forwarding issue; `--execute` also works when invoking through `npm.cmd`.
+- Prerequisites: the existing local read-only Shopify credentials in `.env`, authenticated Wrangler, and a current checkout matching `inventory-sync/deployment.json`. Production Shopify and gateway secrets stay hosted.
+- Output: one compact JSON result and a report/checkpoint under ignored `backups/inventory-enrollment/`.
+- Exit codes: 0 planned/verified, 2 specific blocker, 1 operational failure. A plan uploads a private, authenticated, expiring Worker version; it performs no Shopify mutations or production deployment.
+- Procedure and recovery: [supplier inventory enrollment](../runbooks/supplier-inventory-pilot.md#enroll-an-existing-catalog-product).
+
 <!-- tool:route -->
 ### `route`
 
