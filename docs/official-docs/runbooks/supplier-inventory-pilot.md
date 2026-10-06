@@ -67,7 +67,7 @@ Do not force a higher Shopify supplier quantity from a stale or guessed S&S valu
 ## Common Failure Modes & Recovery
 
 - `PRODUCT_AMBIGUOUS_USE_HANDLE`: use the exact existing handle; do not guess a product or create one.
-- `SHARED_SUPPLIER_SKU`, `OVERSELL_POLICY`, or `OTHER_LOCATION_HAS_STOCK`: the tool has found a real catalog/location exception. Resolve only that exception; preserve HQ stock and duplicate-listing holds.
+- `SHARED_SUPPLIER_SKU`, `OVERSELL_POLICY`, or `OTHER_LOCATION_HAS_STOCK`: resolve only that exception; preserve HQ stock and duplicate-listing holds. A copied SKU on a Draft product is permitted only after a complete live SKU lookup proves zero commitments at every draft inventory level. Active/Unlisted copies, incomplete reads, and committed draft copies remain blocked. Enrollment and scheduled refresh write only the selected variant IDs; they never change the draft copy.
 - `SUPPLIER_SKU_MISSING_OR_UNKNOWN`: enrollment stops before mutation. A supplier failure or missing row is never seeded as zero.
 - `DEPLOYMENT_DRIFT_FETCH_SOURCE_FIRST`: the active Worker version or pinned scope differs from the tracked deployment receipt. Fetch/reconcile the owning release before applying; do not bypass the receipt.
 - `COMMIT_INVENTORY_IMPLEMENTATION_BEFORE_ENROLLMENT`: commit reviewed implementation changes before the tool deploys additional products.

@@ -46,6 +46,39 @@ export async function shopifyRead(env, token, query, variables = {}, deps) {
   return data.data;
 }
 export const VARIANT_FIELDS = 'id sku inventoryPolicy product { status } inventoryItem { id tracked }';
+export const SKU_MATCH_FIELDS = `id sku product { status } inventoryItem { inventoryLevels(first:10, includeInactive:true) {
+  nodes { quantities(names:["committed"]) { name quantity } } pageInfo { hasNextPage }
+} }`;
+// Ignore a draft's copied SKU only when every inventory level verifies that it
+// has no outstanding customer commitments. Active and Unlisted copies block.
+export function isUniqueSellableSku(result, variant) {
+  if (result?.pageInfo?.hasNextPage !== false || !Array.isArray(result.nodes)) return false;
+  const exact = result.nodes.filter(node => node.sku === variant.sku);
+  if (exact.filter(node => node.id === variant.id).length !== 1) return false;
+  return exact.filter(node => node.id !== variant.id).every(node => {
+    const levels = node.inventoryItem?.inventoryLevels;
+    return node.product?.status === 'DRAFT' && levels?.pageInfo?.hasNextPage === false
+      && Array.isArray(levels.nodes) && levels.nodes.every(level => {
+        const values = level.quantities?.filter(q => q.name === 'committed');
+        return values?.length === 1 && values[0].quantity === 0;
+      });
+  });
+}
+export async function verifyDraftSkuDuplicates(env, token, variants, deps) {
+  const duplicates = variants.filter(v => v.inventoryItem?.duplicateSkuCount > 0);
+  const verified = new Set();
+  if (!duplicates.length) return verified;
+  const variables = Object.fromEntries(duplicates.map((v,i) => ['sku'+i,'sku:'+v.sku]));
+  const declarations = duplicates.map((_,i) => `$sku${i}:String!`).join(',');
+  const fields = duplicates.map((_,i) => `sku${i}:productVariants(first:2,query:$sku${i}){nodes{${SKU_MATCH_FIELDS}}pageInfo{hasNextPage}}`).join('\n');
+  const data = await shopifyRead(env,token,`query VerifyDraftSkuDuplicates(${declarations}){${fields}}`,variables,deps);
+  duplicates.forEach((v,i) => {
+    const result = data['sku'+i];
+    requireValue(isUniqueSellableSku(result,v) && result.nodes.filter(n=>n.sku===v.sku&&n.id!==v.id).length===v.inventoryItem.duplicateSkuCount,'SHARED_SUPPLIER_SKU');
+    verified.add(v.id);
+  });
+  return verified;
+}
 const PILOT_VARIANT_FIELDS = `id sku inventoryPolicy availableForSale sellableOnlineQuantity product { status }
   inventoryItem { id tracked inventoryLevels(first: 10, includeInactive: true) {
     nodes { isActive location { id } quantities(names: ["available", "committed", "on_hand"]) { name quantity } }

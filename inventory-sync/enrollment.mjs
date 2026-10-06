@@ -1,6 +1,6 @@
 // Hosted operations for the product-scoped CLI. Secrets remain in the existing Worker.
 import {requireValue, SyncError, makePlan} from './core.mjs';
-import {shopDomain, shopifyToken, shopifyRead, requestJson, readSupplierGateway} from './clients.mjs';
+import {shopDomain, shopifyToken, shopifyRead, requestJson, readSupplierGateway, verifyDraftSkuDuplicates} from './clients.mjs';
 
 export const SHOP = '429cc0-3.myshopify.com';
 export const SUPPLIER = 'gid://shopify/Location/95240290552';
@@ -36,17 +36,17 @@ export async function discoverProduct(env, selector, deps) {
   cursor=product.variants.pageInfo.hasNextPage ? product.variants.pageInfo.endCursor : null;
   requireValue(!product.variants.pageInfo.hasNextPage || cursor, 'PRODUCT_PAGINATION_INCOMPLETE');
  } while(cursor);
- validateVariants(variants, id);
+ validateVariants(variants, id, await verifyDraftSkuDuplicates(env,token,variants,deps));
  return {id,handle:product.handle,title:product.title,status:product.status,variants};
 }
 
-export function validateVariants(variants, productId) {
+export function validateVariants(variants, productId, verifiedDraftDuplicates = new Set()) {
  requireValue(variants.length>0 && new Set(variants.map(v=>v.id)).size===variants.length, 'INVALID_PRODUCT_VARIANTS');
  requireValue(new Set(variants.map(v=>v.sku)).size===variants.length, 'SHARED_SUPPLIER_SKU');
  for(const v of variants){
   requireValue(v.product?.id===productId && ['ACTIVE','UNLISTED'].includes(v.product.status), 'PRODUCT_IDENTITY_CHANGED');
   requireValue(/^[A-Za-z0-9_-]{1,64}$/.test(v.sku), 'INVALID_SUPPLIER_SKU');
-  requireValue(v.inventoryItem?.duplicateSkuCount===0, 'SHARED_SUPPLIER_SKU');
+  requireValue(v.inventoryItem?.duplicateSkuCount===0 || verifiedDraftDuplicates.has(v.id), 'SHARED_SUPPLIER_SKU');
   requireValue(v.inventoryPolicy==='DENY', 'OVERSELL_POLICY');
   requireValue(v.inventoryItem.inventoryLevels?.pageInfo.hasNextPage===false, 'SHOPIFY_LEVELS_UNVERIFIED');
   for(const l of v.inventoryItem.inventoryLevels.nodes){
@@ -89,7 +89,7 @@ export async function enrollBatch(env,input,deps){
  const read=async()=>{
   const d=await shopifyRead(env,token,`query EnrollmentBatch($ids:[ID!]!,$location:ID!){nodes(ids:$ids){... on ProductVariant{${FIELDS}}}location(id:$location){id isActive fulfillsOnlineOrders}currentAppInstallation{accessScopes{handle}}}`,{ids:entries.map(e=>e.id),location:SUPPLIER},deps);
   requireValue(d.nodes.length===entries.length && d.nodes.every((v,i)=>v?.id===entries[i].id&&v.sku===entries[i].sku), 'PRODUCT_IDENTITY_CHANGED');
-  validateVariants(d.nodes,input.productId);
+  validateVariants(d.nodes,input.productId,await verifyDraftSkuDuplicates(env,token,d.nodes,deps));
   requireValue(d.location?.isActive&&d.location.fulfillsOnlineOrders, 'SUPPLIER_LOCATION_NOT_ONLINE');
   requireValue(d.currentAppInstallation.accessScopes.some(s=>s.handle==='write_inventory'), 'INVENTORY_WRITE_SCOPE_MISSING');
   return d;

@@ -2,15 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {enrollBatch,validateVariants,enrollmentHandler,SUPPLIER,HQ,SHOP} from './enrollment.mjs';
 import {checkScope,parseLiveEntries} from './enroll-cli.mjs';
+import {isUniqueSellableSku} from './clients.mjs';
 const productId='gid://shopify/Product/100';
 const levels=(id,a=0,c=0)=>({isActive:true,location:{id},quantities:[{name:'available',quantity:a},{name:'committed',quantity:c},{name:'on_hand',quantity:a+c}]});
-function fixture({tracked=false,available=0,committed=0,missing=false,failSeed=false,race=false}={}){
+function fixture({tracked=false,available=0,committed=0,missing=false,failSeed=false,race=false,draftCopy=null}={}){
  const variant={id:'gid://shopify/ProductVariant/100',sku:'B123',inventoryPolicy:'DENY',availableForSale:true,sellableOnlineQuantity:0,product:{id:productId,status:'ACTIVE'},inventoryItem:{id:'gid://shopify/InventoryItem/100',tracked,duplicateSkuCount:0,inventoryLevels:{nodes:[levels(HQ),...(tracked?[levels(SUPPLIER,available,committed)]:[])],pageInfo:{hasNextPage:false}}}};
  const env={SHOPIFY_SHOP_DOMAIN:SHOP,SHOPIFY_ACCESS_TOKEN:'test',SUPPLIER_LOCATION_ID:SUPPLIER,PROTECTED_LOCATION_IDS:JSON.stringify([HQ]),SS_SAFETY_BUFFER:'0',SUPPLIER_INVENTORY_URL:'https://example.com/order-manager/v1/supplier/ss/inventory',INVENTORY_READ_KEY:'test'};
  const requests=[];
  const deps={fetchImpl:async(url,options)=>{
   if(String(url).includes('/supplier/ss/inventory'))return Response.json({observedAt:new Date().toISOString(),items:missing?[]:[{sku:'B123',warehouses:[{warehouseAbbr:'TX',qty:40,dropship:false},{warehouseAbbr:'DS',qty:999,dropship:true}]}]});
   const {query,variables}=JSON.parse(options.body);requests.push({query,variables});
+  if(query.includes('VerifyDraftSkuDuplicates'))return Response.json({data:{sku0:{nodes:[structuredClone(variant),structuredClone(draftCopy)],pageInfo:{hasNextPage:false}}}});
   if(query.startsWith('query'))return Response.json({data:{nodes:[structuredClone(variant)],location:{id:SUPPLIER,isActive:true,fulfillsOnlineOrders:true},currentAppInstallation:{accessScopes:[{handle:'write_inventory'}]}}});
   if(query.includes('ActivateSupplierLevels')){variant.inventoryItem.inventoryLevels.nodes.push(levels(SUPPLIER));return Response.json({data:{a0:{inventoryLevel:{id:'level'},userErrors:[]}}});}
   if(query.includes('RestoreTracking')){variant.inventoryItem.tracked=false;return Response.json({data:{inventoryItemUpdate:{inventoryItem:{tracked:false},userErrors:[]}}});}
@@ -75,4 +77,20 @@ test('deployment drift and capacity are checked before writes',()=>{
 test('temporary hosted endpoint rejects absent authorization without any upstream access',async()=>{
  const handler=enrollmentHandler({productId,keyHash:'bad',expiresAt:Date.now()+60000});const r=await handler(new Request('https://example.com/inventory/enroll',{method:'POST'}),{});
  assert.equal(r.status,404);
+});
+test('enrollment accepts a zero-commitment draft SKU copy and writes only the selected product',async()=>{
+ const draft={id:'gid://shopify/ProductVariant/200',sku:'B123',product:{status:'DRAFT'},inventoryItem:{inventoryLevels:{nodes:[levels(HQ)],pageInfo:{hasNextPage:false}}}};
+ const before=structuredClone(draft),f=fixture({draftCopy:draft});f.variant.inventoryItem.duplicateSkuCount=1;
+ const r=await enrollBatch(f.env,f.input,f.deps);assert.equal(r.ready,true);assert.deepEqual(draft,before);
+ const writes=f.requests.filter(r=>r.query.startsWith('mutation'));
+ assert.ok(writes.length);assert.ok(writes.every(r=>!JSON.stringify(r.variables).includes(draft.id)));
+});
+test('shared-SKU verification blocks sellable copies, draft commitments, missing levels, and pagination',()=>{
+ const target={id:'target',sku:'B123'},draft={id:'draft',sku:'B123',product:{status:'DRAFT'},inventoryItem:{inventoryLevels:{nodes:[levels(HQ)],pageInfo:{hasNextPage:false}}}};
+ const check=(copy,hasNextPage=false)=>isUniqueSellableSku({nodes:[target,copy],pageInfo:{hasNextPage}},target);
+ assert.equal(check(draft),true);
+ for(const status of ['ACTIVE','UNLISTED','ARCHIVED'])assert.equal(check({...draft,product:{status}}),false);
+ const committed=structuredClone(draft);committed.inventoryItem.inventoryLevels.nodes=[levels(HQ,0,1)];assert.equal(check(committed),false);
+ assert.equal(check({...draft,inventoryItem:{}}),false);assert.equal(check(draft,true),false);
+ const paginated=structuredClone(draft);paginated.inventoryItem.inventoryLevels.pageInfo.hasNextPage=true;assert.equal(check(paginated),false);
 });
