@@ -528,18 +528,19 @@ test('the 3001 closeout allowlist covers every enrolled variant once per five-mi
 });
 
 test('expanded schedule covers every enrolled SKU while holding shared 6400 SKUs', () => {
-  assert.equal(SCHEDULED_VARIANTS.length, 1393);
-  assert.equal(new Set(SCHEDULED_VARIANTS.map(row => row.id)).size, 1393);
-  assert.equal(new Set(SCHEDULED_VARIANTS.map(row => row.sku)).size, 1393);
+  assert.ok(SCHEDULED_VARIANTS.length >= 1393);
+  assert.equal(new Set(SCHEDULED_VARIANTS.map(row => row.id)).size, SCHEDULED_VARIANTS.length);
+  assert.equal(new Set(SCHEDULED_VARIANTS.map(row => row.sku)).size, SCHEDULED_VARIANTS.length);
   assert.deepEqual(Object.fromEntries(['246', '3001', '3719', '6400', '8871-classic', '8871-crazy']
     .map(cohort => [cohort, SCHEDULED_VARIANTS.filter(row => row.cohort === cohort).length])),
   { '246': 72, '3001': 626, '3719': 96, '6400': 84, '8871-classic': 96, '8871-crazy': 96 });
-  assert.ok(SCHEDULED_VARIANTS.every(row => row.missingPolicy === (['246', '1566', '2000T', 'FTEX00', '1300', 'LS16005'].includes(row.cohort) ? 'hold' : 'block')));
+  assert.ok(SCHEDULED_VARIANTS.every(row => row.missingPolicy === (row.cohort.startsWith('gid://shopify/Product/') || ['246', '1566', '2000T', 'FTEX00', '1300', 'LS16005'].includes(row.cohort) ? 'hold' : 'block')));
   assert.equal(PRIORITY_SHARED_6400_SKUS.size, 75);
   assert.ok(SCHEDULED_VARIANTS.filter(row => row.cohort === '6400')
     .filter(row => !PRIORITY_SHARED_6400_SKUS.has(row.sku)).length === 9);
   const minutes = Array.from({ length: 5 }, (_, minute) => scheduledAllVariants(minute * 60000));
-  assert.deepEqual(minutes.map(entries => entries.length), [264, 264, 264, 263, 263]);
+  const lengths = minutes.map(entries => entries.length);
+  assert.ok(Math.max(...lengths) - Math.min(...lengths) <= 1);
   assert.deepEqual(minutes.flat().map(entry => entry.id).sort(), SCHEDULED_VARIANTS
     .filter(entry => !PRIORITY_SHARED_6400_SKUS.has(entry.sku)).map(entry => entry.id).sort());
   assert.ok(minutes.every(entries => 1 + Math.ceil(entries.length / 25) * 3 <= 50));

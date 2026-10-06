@@ -1,5 +1,5 @@
 import { SyncError, requireValue, uniqueStrings, warehouseList, makePlan } from './core.mjs';
-import { requestJson, shopDomain, shopifyRead, shopifyToken, readPilot, readSupplierGateway } from './clients.mjs';
+import { requestJson, shopDomain, shopifyRead, shopifyToken, readPilot, readSupplierGateway, SKU_MATCH_FIELDS, isUniqueSellableSku } from './clients.mjs';
 
 const PRINTMO_SHOP = '429cc0-3.myshopify.com';
 const SS_SUPPLIER_LOCATION = 'gid://shopify/Location/95240290552';
@@ -17,7 +17,7 @@ export const WRITE_PREREQUISITES_QUERY = `query InventoryWritePrerequisites($loc
   currentAppInstallation { accessScopes { handle } }
   location(id: $locationId) { id isActive fulfillsOnlineOrders }
   productVariants(first: 2, query: $skuQuery) {
-    nodes { id sku }
+    nodes { ${SKU_MATCH_FIELDS} }
     pageInfo { hasNextPage }
   }
 }`;
@@ -36,9 +36,7 @@ async function readWritePrerequisites(env, token, variant, supplierLocationId, d
   requireValue(data.location?.id === supplierLocationId && data.location.isActive && data.location.fulfillsOnlineOrders,
     'SUPPLIER_LOCATION_NOT_ONLINE');
   const matches = data.productVariants;
-  requireValue(matches?.pageInfo?.hasNextPage === false && Array.isArray(matches.nodes)
-    && matches.nodes.filter(node => node.sku === variant.sku).length === 1
-    && matches.nodes.find(node => node.sku === variant.sku)?.id === variant.id, 'SHARED_SUPPLIER_SKU');
+  requireValue(isUniqueSellableSku(matches,variant), 'SHARED_SUPPLIER_SKU');
   return data.location;
 }
 
@@ -47,7 +45,7 @@ async function readBatchPrerequisites(env, token, variants, supplierLocationId, 
   const searches = variants.map((variant, index) => {
     variables[`sku${index}`] = `sku:${variant.sku}`;
     return `sku${index}: productVariants(first: 2, query: $sku${index}) {
-      nodes { id sku } pageInfo { hasNextPage }
+      nodes { ${SKU_MATCH_FIELDS} } pageInfo { hasNextPage }
     }`;
   });
   const declarations = variants.map((_, index) => `$sku${index}: String!`).join(', ');
@@ -63,9 +61,7 @@ async function readBatchPrerequisites(env, token, variants, supplierLocationId, 
     'SUPPLIER_LOCATION_NOT_ONLINE');
   const matches = variants.map((variant, index) => {
     const result = data[`sku${index}`];
-    return result?.pageInfo?.hasNextPage === false && Array.isArray(result.nodes)
-      && result.nodes.filter(node => node.sku === variant.sku).length === 1
-      && result.nodes.find(node => node.sku === variant.sku)?.id === variant.id;
+    return isUniqueSellableSku(result,variant);
   });
   return { location: data.location, matches };
 }
@@ -78,7 +74,7 @@ async function readScheduledBatch(env, token, entries, supplierLocationId, deps)
   const searches = entries.map((entry, index) => {
     variables[`sku${index}`] = `sku:${entry.sku}`;
     return `sku${index}: productVariants(first: 2, query: $sku${index}) {
-      nodes { id sku } pageInfo { hasNextPage }
+      nodes { ${SKU_MATCH_FIELDS} } pageInfo { hasNextPage }
     }`;
   });
   const declarations = entries.map((_, index) => `$sku${index}: String!`).join(', ');
@@ -103,9 +99,7 @@ async function readScheduledBatch(env, token, entries, supplierLocationId, deps)
     'SUPPLIER_LOCATION_NOT_ONLINE');
   const matches = entries.map((entry, index) => {
     const result = data[`sku${index}`];
-    return result?.pageInfo?.hasNextPage === false && Array.isArray(result.nodes)
-      && result.nodes.filter(node => node.sku === entry.sku).length === 1
-      && result.nodes.find(node => node.sku === entry.sku)?.id === entry.id;
+    return isUniqueSellableSku(result,entry);
   });
   return { variants: data.nodes, preflight: { location: data.location, matches } };
 }
