@@ -96,7 +96,7 @@
     {
       "id": "inventory-enrollment",
       "command": "npm run repo -- inventory enroll|sync PRODUCT [execute]",
-      "purpose": "Plan or execute product-scoped supplier enrollment, safe refresh, readback and schedule deployment; no catalog re-onboarding.",
+      "purpose": "Plan or execute product-scoped supplier enrollment, automatic oversell correction, safe refresh and persistent registry enrollment; no per-product deployment.",
       "mode": "remote-read-by-default",
       "script": "inventory-sync/enroll-cli.mjs"
     },
@@ -106,6 +106,20 @@
       "purpose": "Verify isolated inventory observation, gateway auth, missing-data, and no-write contracts locally.",
       "mode": "read-only",
       "script": "inventory-sync/inventory-sync.test.mjs"
+    },
+    {
+      "id": "inventory-status",
+      "command": "npm run repo -- inventory status|health",
+      "purpose": "Read durable registry progress, failed batches, oldest refresh age and permanent endpoint health.",
+      "mode": "remote-read-only",
+      "script": "inventory-sync/enroll-cli.mjs"
+    },
+    {
+      "id": "inventory-release",
+      "command": "npm run repo -- inventory release execute [POLICY_ENV_FILE]",
+      "purpose": "Release inventory code and migrate existing enrollments with live deployment drift and registry readback checks. Code releases only.",
+      "mode": "remote-mutating",
+      "script": "inventory-sync/release.mjs"
     }
   ],
   "routes": [
@@ -702,7 +716,10 @@
         "scheduledAllVariants",
         "runDryRun",
         "makePlan",
-        "gatewayInventoryHandler"
+        "gatewayInventoryHandler",
+        "inventoryService",
+        "runRegistrySchedule",
+        "registryStatus"
       ],
       "errors": [
         "SUPPLIER_GATEWAY_UNCONFIGURED",
@@ -725,9 +742,10 @@
           ]
         },
         {
-          "path": "inventory-sync/worker.mjs",
+          "path": "inventory-sync/registry.mjs",
           "symbols": [
-            "scheduledAllVariants"
+            "runRegistrySchedule",
+            "registryStatus"
           ]
         },
         {
@@ -746,7 +764,9 @@
       "tools": [
         "inventory-enrollment",
         "inventory-observation",
-        "inventory-tests"
+        "inventory-tests",
+        "inventory-status",
+        "inventory-release"
       ],
       "verify": [
         "npm run repo -- inventory test",

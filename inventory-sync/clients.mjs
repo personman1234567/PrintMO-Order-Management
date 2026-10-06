@@ -16,7 +16,16 @@ export async function requestJson(url, options = {}, { fetchImpl = fetch, sleep 
       continue;
     }
     if (!response.ok) throw new SyncError(`UPSTREAM_HTTP_${response.status}`, response.status);
-    try { return await response.json(); } catch { throw new SyncError('UPSTREAM_INVALID_JSON'); }
+    let data;try { data=await response.json(); } catch { throw new SyncError('UPSTREAM_INVALID_JSON'); }
+    if(data.errors?.some(e=>e.extensions?.code==='THROTTLED')&&attempt===0){
+      const cost=data.extensions?.cost,rate=cost?.throttleStatus?.restoreRate;
+      const wait=rate>0?Math.ceil(Math.max(1,(cost.requestedQueryCost||50)-cost.throttleStatus.currentlyAvailable)/rate*1000):1000;
+      if(wait>15000)throw new SyncError('UPSTREAM_RETRY_DEFERRED');
+      await sleep(Math.max(250,wait));continue;
+    }
+    const budget=data.extensions?.cost?.throttleStatus;
+    if(budget?.restoreRate>0&&budget.currentlyAvailable<50)await sleep(Math.ceil((50-budget.currentlyAvailable)/budget.restoreRate*1000));
+    return data;
   }
 }
 export function shopDomain(env) {
@@ -68,15 +77,18 @@ export async function verifyDraftSkuDuplicates(env, token, variants, deps) {
   const duplicates = variants.filter(v => v.inventoryItem?.duplicateSkuCount > 0);
   const verified = new Set();
   if (!duplicates.length) return verified;
-  const variables = Object.fromEntries(duplicates.map((v,i) => ['sku'+i,'sku:'+v.sku]));
-  const declarations = duplicates.map((_,i) => `$sku${i}:String!`).join(',');
-  const fields = duplicates.map((_,i) => `sku${i}:productVariants(first:2,query:$sku${i}){nodes{${SKU_MATCH_FIELDS}}pageInfo{hasNextPage}}`).join('\n');
+  for(let offset=0;offset<duplicates.length;offset+=25){
+  const batch=duplicates.slice(offset,offset+25);
+  const variables = Object.fromEntries(batch.map((v,i) => ['sku'+i,'sku:'+v.sku]));
+  const declarations = batch.map((_,i) => `$sku${i}:String!`).join(',');
+  const fields = batch.map((_,i) => `sku${i}:productVariants(first:2,query:$sku${i}){nodes{${SKU_MATCH_FIELDS}}pageInfo{hasNextPage}}`).join('\n');
   const data = await shopifyRead(env,token,`query VerifyDraftSkuDuplicates(${declarations}){${fields}}`,variables,deps);
-  duplicates.forEach((v,i) => {
+  batch.forEach((v,i) => {
     const result = data['sku'+i];
     requireValue(isUniqueSellableSku(result,v) && result.nodes.filter(n=>n.sku===v.sku&&n.id!==v.id).length===v.inventoryItem.duplicateSkuCount,'SHARED_SUPPLIER_SKU');
     verified.add(v.id);
   });
+  }
   return verified;
 }
 const PILOT_VARIANT_FIELDS = `id sku inventoryPolicy availableForSale sellableOnlineQuantity product { status }

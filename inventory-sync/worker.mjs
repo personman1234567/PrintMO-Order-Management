@@ -5,6 +5,8 @@ import { BELLA_3001_VARIANT_IDS } from './bella-3001-allowlist.mjs';
 import { SCHEDULED_VARIANTS } from './scheduled-variants.mjs';
 import { PRIORITY_SHARED_6400_SKUS } from './priority-shared-6400.mjs';
 import { BATCH_SIZE } from './enrollment.mjs';
+import {inventoryService} from './service.mjs';
+import {runRegistrySchedule} from './registry.mjs';
 function jsonSetting(env, key) {
   try { return JSON.parse(env[key] || '[]'); } catch { throw new SyncError(`INVALID_${key}`); }
 }
@@ -51,13 +53,6 @@ export function scheduledAllVariants(scheduledTime) {
     .filter((_, index) => index % 5 === minute % 5);
 }
 async function runExpandedSchedule(env, deps, scheduledTime) {
-  let requests = 0;
-  const upstream = deps?.fetchImpl || fetch;
-  deps = { ...deps, fetchImpl: (...args) => {
-    requireValue(requests < 49, 'SCHEDULE_REQUEST_BUDGET_DEFERRED');
-    requests++;
-    return upstream(...args);
-  } };
   const token = await shopifyToken(env, deps);
   if (env.PRIORITY_SYNC_ENABLED === 'true') {
     const pinnedTultex = jsonSetting(env, 'PILOT_VARIANT_IDS');
@@ -68,8 +63,8 @@ async function runExpandedSchedule(env, deps, scheduledTime) {
     const groups = Array.from({ length: Math.ceil(entries.length / BATCH_SIZE) },
       (_, index) => entries.slice(index * BATCH_SIZE, index * BATCH_SIZE + BATCH_SIZE));
     // Each group uses one combined Shopify identity/level read, one S&S read,
-    // and at most one CAS mutation. One token request plus at most 16 x 3 = 49.
-    requireValue(groups.length <= 16 && groups.every(group => group.length >= 1 && group.length <= BATCH_SIZE),
+    // and at most one CAS mutation; this legacy schedule has no application request cap.
+    requireValue(groups.every(group => group.length >= 1 && group.length <= BATCH_SIZE),
       'SCHEDULE_SCOPE_INVALID');
     let writes = 0;
     let increases = 0;
@@ -122,6 +117,7 @@ async function runExpandedSchedule(env, deps, scheduledTime) {
   return { mode: 'pilot-refresh', writes, increases, variants: tultexIds.length + bellaIds.length };
 }
 export async function runInventorySync(env, deps, scheduledTime) {
+  if(scheduledTime!==undefined&&env.INVENTORY_REGISTRY_ENABLED==='true'&&env.INVENTORY_SYNC_MODE==='pilot-refresh')return runRegistrySchedule(env,deps,scheduledTime);
   if (scheduledTime !== undefined && env.INVENTORY_SYNC_MODE === 'pilot-refresh'
     && env.BELLA_3001_SYNC_ENABLED === 'true')
     return runExpandedSchedule(env, deps, scheduledTime);
@@ -130,7 +126,7 @@ export async function runInventorySync(env, deps, scheduledTime) {
   return runDryRun(env, deps);
 }
 export default {
-  async fetch() { return new Response('Not found', { status: 404 }); },
+  fetch:inventoryService,
   async scheduled(event, env) {
     try {
       const result = await runInventorySync(env, undefined, event.scheduledTime);

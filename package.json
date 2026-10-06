@@ -20,7 +20,7 @@
     "simulate:ss-feedback": "node scripts/simulate-ss-feedback.js",
     "inventory:audit": "node inventory-sync/cli.mjs audit",
     "inventory:dry-run": "node inventory-sync/cli.mjs dry-run",
-    "inventory:test": "node --test inventory-sync/inventory-sync.test.mjs"
+    "inventory:test": "node --test inventory-sync/inventory-sync.test.mjs inventory-sync/enrollment.test.mjs inventory-sync/registry.test.mjs"
   },
   "dependencies": {
     "dotenv": "^16.5.0",
