@@ -216,7 +216,8 @@ test('paid-order-first reconciliation finds a prepared recent conversion', async
 });
 test('Worker authenticates draft routes, verifies draft webhooks, retries failures and keeps private SVG tickets isolated', async () => {
   const source = readFileSync(new URL('./worker.js', import.meta.url), 'utf8')
-    .replace("'./draft-orders.mjs'", JSON.stringify(new URL('./draft-orders.mjs', import.meta.url).href));
+    .replace("'./draft-orders.mjs'", JSON.stringify(new URL('./draft-orders.mjs', import.meta.url).href))
+    .replace("'./garment-costs.mjs'", JSON.stringify(new URL('./garment-costs.mjs', import.meta.url).href));
   const { default: worker } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
   const f = fixture(); const secret = 'draft-fixture-secret';
   Object.assign(f.env, { SHOPIFY_API_KEY: 'draft-fixture-app', SHOPIFY_API_SECRET: secret,

@@ -91,6 +91,31 @@ Confirmed batches leave `readiness.blanksOrdered` false so newly submitted cards
 
 Legacy Redis mode continues using its existing process-batch route until final cutover; candidate mode never calls it.
 
+## Garment COGs Estimates
+
+The Shopify board hydrates catalog-derived garment costs after rendering through authenticated
+`POST /order-manager/v1/garment-costs` with up to 50 Shopify GIDs or Etsy order keys.
+Native Shopify lines use their current variant identity; Etsy lines require one exact
+Shopify catalog match for the resolved supplier SKU. Customer sale prices are never used.
+Catalog `inventoryItem.unitCost` values are cached for five minutes. Lookup requests have
+a 20-second budget and fail independently of board rendering and ordering.
+
+**In S&S Cart** shows the estimated supplier purchase total and expandable manual/missing-cost
+exclusions. **Items & financials** separates total garment cost, shelf cost, and the amount
+to buy from S&S, with a per-garment breakdown. Prints, manual items, shipping, and taxes
+are excluded. Only USD costs are summed; null, changed/ambiguous SKUs, inaccessible variants,
+and different currencies are explicit exclusions. Zero-dollar catalog costs are valid.
+
+Creating a receiving manifest captures a server-derived `garmentCostSnapshot` on each
+identified order in the private R2 manifest. Receiving and membership transfers preserve
+the capture. Later line changes are flagged as outside the saved estimate; older records
+without captures use a clearly labeled current catalog estimate. Missing lookup data is
+saved as unavailable and never prevents marking ordered. These amounts are estimates,
+not S&S checkout/invoice totals, and no supplier price sync or retail-price mutation occurs.
+
+Focused checks: `node --test order-manager-proxy/garment-costs.test.mjs`; Phase 2 covers
+endpoint authorization, server-derived amounts, and receiving/transfer preservation.
+
 ## Safe Local Feedback Simulation
 
 Run `npm run repo -- simulate ss-feedback -- --scenario random` to pass three synthetic shirts through the real Worker response normalizer and print the product, variant, SKU, affected PrintMO order, quantities, and supplier reason. The command is fully local: it makes no S&S, Shopify, Worker, or database request. Use `--scenario partial`, `out-of-stock`, `invalid-sku`, `accepted`, or `timeout` for a specific outcome, `--seed <integer>` to repeat a random fixture, and `--json` for the normalized report payload.

@@ -1,0 +1,40 @@
+/* Catalog cost information inherits the existing Precision Workbench. */
+body[data-order-source="shopify"] .garment-cart-cost,
+body[data-order-source="shopify"] .detail-garment-cost {
+  color: #334155;
+  background: #F8FAFC;
+  border: 1px solid #CBD5E1;
+  border-radius: 8px;
+  padding: 12px;
+  margin: 0 0 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.garment-cart-cost[hidden] { display: none; }
+.garment-cost-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+.garment-cost-heading h4, .detail-garment-cost h4 { margin: 0; font-size: .95rem; line-height: 1.4; color: #0F172A; }
+.garment-cost-heading strong { font-size: .95rem; font-variant-numeric: tabular-nums; }
+.garment-cost-source { color: #64748B; font-size: .78rem; line-height: 1.4; margin: 8px 0 0; }
+.garment-cost-exclusions summary, .garment-cost-lines summary { cursor: pointer; padding: 12px 0; min-height: 44px; box-sizing: border-box; font-size: .95rem; font-weight: 600; }
+.garment-cost-exclusions ul, .detail-garment-cost ul { margin: 0; padding-left: 20px; font-size: .95rem; line-height: 1.5; }
+.garment-cost-exclusions li + li, .detail-garment-cost li + li { margin-top: 8px; }
+.garment-card-cost { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; width: 100%; font-size: .78rem; line-height: 1.4; color: inherit; }
+.card-footer:has(.garment-card-cost) { flex-wrap: wrap; row-gap: 8px; }
+.garment-card-cost span:last-child, .garment-cost-totals dd { font-weight: 600; font-variant-numeric: tabular-nums; }
+.garment-cost-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
+.garment-cost-totals dt { font-size: .78rem; line-height: 1.4; color: #64748B; }
+.garment-cost-totals dd { margin: 4px 0 0; font-size: .95rem; color: #0F172A; }
+.garment-cost-lines ul { list-style: none; padding: 0; }
+.garment-cost-lines li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding: 8px 0; border-top: 1px solid #CBD5E1; }
+.garment-cost-line-name { flex: 1 1 180px; }
+.garment-cost-line-value { font-variant-numeric: tabular-nums; }
+.garment-cost-lines .garment-cost-source { flex-basis: 100%; margin-top: 0; }
+.garment-cost-retry { background: #FFFFFF; color: #334155; border: 1px solid #CBD5E1; border-radius: 8px; padding: 8px 12px; min-height: 44px; font: inherit; font-size: .95rem; margin-top: 8px; cursor: pointer; }
+.garment-cost-retry:hover { background: #F8FAFC; }
+.garment-cost-retry:disabled { cursor: wait; opacity: .65; }
+.garment-cost-retry:focus-visible, .garment-cost-exclusions summary:focus-visible, .garment-cost-lines summary:focus-visible { outline: 2px solid #1A73E8; outline-offset: 2px; }
+@media (max-width: 480px) {
+  .garment-cost-totals { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .garment-cost-totals > div { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .garment-cost-totals dd { margin: 0; }
+}

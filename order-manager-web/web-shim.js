@@ -993,6 +993,9 @@ window.api.updateProductionMetadata = async (orderId, payload = {}) => {
 window.api.getShelfOrder = (orderId) => apiFetch(
   `/order-manager/v1/orders/${encodeURIComponent(orderId)}/shelf`, { method: "GET" }
 );
+window.api.getGarmentCosts = orderIds => apiFetch('/order-manager/v1/garment-costs', {
+  method: 'POST', body: JSON.stringify({ orderIds })
+});
 window.api.getShelfInventory = () => apiFetch('/order-manager/v1/shelf-stock', { method: 'GET' });
 window.api.setShelfClaim = (orderId, payload) => apiFetch(
   `/order-manager/v1/orders/${encodeURIComponent(orderId)}/shelf`,

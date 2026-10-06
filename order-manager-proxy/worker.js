@@ -1,5 +1,6 @@
 // worker.js — Order Manager proxy + R2 Storage Browser endpoints
 import { createDraftOrderService } from './draft-orders.mjs';
+import { createGarmentCostService, unavailableEstimate } from './garment-costs.mjs';
 
 function draftOrderService(env) {
     return createDraftOrderService(env, { shop: () => d1Shop(env), graphql: coordinatorGraphQL });
@@ -311,6 +312,9 @@ export default {
             );
         }
 
+        if (url.pathname === '/order-manager/v1/garment-costs' && request.method === 'POST') {
+            return handleGarmentCosts(request, env, allowOrigin || origin || '*', reqAllowHeaders);
+        }
         if (url.pathname === "/order-manager/blanks-batches") {
             return handleBlanksBatches(
                 request,
@@ -721,6 +725,87 @@ function makeBlanksBatchLabel(now) {
     return `S&S Batch ${day}`;
 }
 
+const GARMENT_COST_ORDER_QUERY = `query PrintMOGarmentCostOrder($id: ID!, $after: String) {
+  order(id: $id) { id name lineItems(first: 100, after: $after) {
+    nodes { id title variantTitle sku currentQuantity variant { id } }
+    pageInfo { hasNextPage endCursor }
+  } }
+}`;
+
+function validCostOrderId(id) {
+    return /^gid:\/\/shopify\/Order\/\d+$/.test(id) || /^etsy:\d+:\d+$/.test(id);
+}
+
+function garmentCostService(env) {
+    return createGarmentCostService({
+        shopKey: shopDomain(env), isPrint: isBatchPrintItem,
+        graphql: (query, variables, name) => coordinatorGraphQL(env, query, variables, name),
+        readOrder: async id => {
+            if (id.startsWith('etsy:')) {
+                const { record } = await readProviderOrder(env, id);
+                return { id, name: record.contract.displayName, provider: 'etsy',
+                    items: providerDetailLineItems(record.contract) };
+            }
+            const shop = await d1Shop(env);
+            const claims = shelfEnabled(env) ? (await requireOrderDb(env).prepare(
+                'SELECT line_item_gid, variant_gid, sku, qty FROM shelf_claims WHERE shop_id = ? AND order_gid = ?'
+            ).bind(shop.id, id).all()).results || [] : [];
+            const held = new Map(claims.filter(claim => claim.qty > 0).map(claim => [claim.line_item_gid, claim]));
+            const items = [];
+            let after = null;
+            let name = '';
+            for (let page = 0; page < 20; page++) {
+                const result = await coordinatorGraphQL(env, GARMENT_COST_ORDER_QUERY,
+                    { id, after }, 'PrintMOGarmentCostOrder');
+                const order = requireShopifyData(result, 'PrintMOGarmentCostOrder').order;
+                if (!order) throw new Error('Order not found');
+                name = order.name;
+                for (const item of order.lineItems.nodes) {
+                    const claim = held.get(item.id);
+                    if (claim && (claim.variant_gid !== item.variant?.id || claim.sku !== item.sku || claim.qty > item.currentQuantity))
+                        throw new Error('Shelf allocation needs review');
+                    held.delete(item.id);
+                    items.push({ ...item, variantId: item.variant?.id || null, shelfQuantity: claim?.qty || 0 });
+                }
+                if (!order.lineItems.pageInfo.hasNextPage) {
+                    if (held.size) throw new Error('Shelf allocation needs review');
+                    return { id, name, provider: 'shopify', items };
+                }
+                after = order.lineItems.pageInfo.endCursor;
+                if (!after) break;
+            }
+            throw new Error('Order lines incomplete');
+        }
+    });
+}
+
+async function handleGarmentCosts(request, env, origin, headers) {
+    try {
+        const body = await request.json();
+        const ids = Array.isArray(body.orderIds) ? [...new Set(body.orderIds)] : [];
+        if (!ids.length || ids.length > 50 || ids.some(id => typeof id !== 'string' || !validCostOrderId(id)))
+            return v1Error({ code: 'INVALID_ORDER_IDS', message: 'Supply 1–50 valid order identities.' }, origin, headers, 400);
+        return jsonResponse({ estimates: await garmentCostService(env).estimates(ids) }, origin, headers);
+    } catch (_) {
+        return v1Error({ code: 'COST_LOOKUP_FAILED', message: 'Catalog costs could not load. Retry the estimate.' }, origin, headers, 503);
+    }
+}
+
+async function captureGarmentCosts(env, body) {
+    const orders = Array.isArray(body.orders) ? body.orders.slice(0, 300) : [];
+    // Client prices are never accepted as supplier costs.
+    const ids = orders.map(order => String(order.orderId || order.gid || order.id || '')).filter(validCostOrderId);
+    let estimates = [];
+    try { estimates = await garmentCostService(env).estimates(ids); } catch (_) { /* Ordering remains available. */ }
+    const byId = new Map(estimates.map(estimate => [estimate.orderId, estimate]));
+    const capturedAt = isoNow();
+    return { ...body, orders: orders.map(order => {
+        const id = String(order.orderId || order.gid || order.id || '');
+        return { ...order, garmentCostSnapshot: validCostOrderId(id)
+            ? { ...(byId.get(id) || unavailableEstimate(id, order.name)), capturedAt } : null };
+    }) };
+}
+
 function buildBlanksBatch(body) {
     const now = new Date();
     const nowIso = now.toISOString();
@@ -794,6 +879,7 @@ function buildBlanksBatch(body) {
             customer,
             receivedAt,
             garmentCount,
+            ...(rawOrder.garmentCostSnapshot ? { garmentCostSnapshot: rawOrder.garmentCostSnapshot } : {}),
         });
     });
 
@@ -1308,6 +1394,11 @@ async function assignOrdersToBatch(env, targetBatch, body) {
     const emptiedBatchIds = [];
 
     sources.forEach(source => {
+        for (const incoming of newOrders) {
+            const previous = (source.orders || []).find(order => blanksBatchOrderIdentity(order) === blanksBatchOrderIdentity(incoming));
+            // Moving a receiving order preserves its original captured estimate.
+            if (previous?.garmentCostSnapshot) incoming.garmentCostSnapshot = previous.garmentCostSnapshot;
+        }
         const result = removeIncomingOrdersFromBatch(source, newOrders);
         result.movedReceivedByItemKey.forEach((quantity, itemKey) => {
             movedReceivedByItemKey.set(itemKey, (movedReceivedByItemKey.get(itemKey) || 0) + quantity);
@@ -1760,6 +1851,7 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
             return jsonResponse({ error: "Invalid JSON body" }, allowOrigin, reqAllowHeaders, 400);
         }
 
+        body = await captureGarmentCosts(env, body);
         const batch = buildBlanksBatch(body);
         if (batch.source === "outside-order" && !batch.supplierOrderNumber) {
             return jsonResponse({ error: "S&S order number is required for an outside purchase" }, allowOrigin, reqAllowHeaders, 400);
@@ -1838,6 +1930,7 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
                 return jsonResponse({ error: "This S&S order number already has a receiving record" }, allowOrigin, reqAllowHeaders, 409);
             }
         }
+        if (action === "add-orders" || action === "assign-orders") body = await captureGarmentCosts(env, body);
         const result = action === "assign-orders"
             ? await assignOrdersToBatch(env, batch, body)
             : applyBatchOrderAction(batch, body);

@@ -17,6 +17,7 @@
   }
 
   function show(order, snapshot, notice = '') {
+    if (notice) document.dispatchEvent(new CustomEvent('printmo:shelf-changed', { detail: { orderId: order._gid } }));
     root.replaceChildren();
     root.hidden = false;
     const compactSummary = document.getElementById('production-blanks-summary');

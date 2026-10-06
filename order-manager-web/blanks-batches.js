@@ -105,6 +105,7 @@
     if (suppliesOrdered) suppliesOrdered.textContent = String(orderedCount);
     if (total) total.textContent = String(operationalBlanks.length);
     syncSuppliesLayout();
+    window.garmentCosts?.renderBoard();
   }
 
   window.setActiveBlanksView = function setActiveBlanksView(view, { render = true } = {}) {
@@ -486,6 +487,7 @@
 
       buildOrderAccounting();
       annotateAccountingCards();
+      window.garmentCosts?.renderDetail();
       renderDetailAccounting(detailAccountingOrderName || currentDetailOrderName());
     })().catch(error => {
       console.warn('Unable to hydrate blanks batch accounting', error);
@@ -644,6 +646,7 @@
       const originalRenderBoard = renderBoard;
       renderBoard = async function patchedRenderBoard(...args) {
         const result = await originalRenderBoard.apply(this, args);
+        window.garmentCosts?.refreshBoard();
         hydrateAccountingForCurrentOrders().catch(error => {
           console.warn('Unable to update blanks accounting after board render', error);
         });
@@ -665,6 +668,7 @@
       renderStatusColumn = function patchedRenderStatusColumn(status, ...args) {
         const result = originalRenderStatusColumn.call(this, status, ...args);
         if (status === 'blanks' || status === 'print') annotateAccountingCards();
+        if (status === 'blanks') window.garmentCosts?.refreshBoard();
         return result;
       };
       renderStatusColumn.__blanksBatchAccountingPatched = true;
@@ -680,6 +684,7 @@
       openDetail = function patchedOpenDetail(order, ...args) {
         detailAccountingOrderName = order?.name || '';
         const result = originalOpenDetail.call(this, order, ...args);
+        window.garmentCosts?.openDetail(order);
         renderDetailAccounting(detailAccountingOrderName);
         hydrateAccountingForCurrentOrders().catch(error => {
           console.warn('Unable to update blanks accounting for detail', error);
@@ -805,6 +810,7 @@
   }
 
   function renderDetailAccounting(orderName) {
+    window.garmentCosts?.renderDetail();
     // Clean up the old standalone panel if it still exists in the DOM.
     const oldPanel = document.getElementById('detail-blanks-accounting-section');
     if (oldPanel) oldPanel.remove();
@@ -2435,7 +2441,15 @@
     saveBatchForOrders,
     openReceiveOverlay,
     hydrateAccounting: hydrateAccountingForCurrentOrders,
-    accountingForOrder
+    accountingForOrder,
+    costSnapshotForOrder(order) {
+      for (const batch of batchDetailsById.values()) {
+        const match = (batch.orders || []).find(entry => entry.orderId
+          ? entry.orderId === order._gid : entry.name === order.name);
+        if (match?.garmentCostSnapshot) return match.garmentCostSnapshot;
+      }
+      return null;
+    }
   };
 
   document.addEventListener('printmo:detail-items-rendered', event => {

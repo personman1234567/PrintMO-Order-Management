@@ -210,7 +210,8 @@ async function run() {
 
   const root = path.join(__dirname, '..');
   const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8')
-    .replace("'./draft-orders.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'draft-orders.mjs')).href));
+    .replace("'./draft-orders.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'draft-orders.mjs')).href))
+    .replace("'./garment-costs.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'garment-costs.mjs')).href));
   const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql', '0007_etsy_webhook_delivery.sql', '0008_etsy_catalog_previews.sql', '0009_etsy_preview_refresh_and_supplier_skus.sql', '0010_tultex_shelf_allocation.sql', '0011_shelf_physical_reservations.sql', '0012_draft_artwork.sql']
     .map(file => fs.readFileSync(path.join(root, 'order-manager-proxy', 'migrations', file), 'utf8'))
     .join('\n');
@@ -634,6 +635,19 @@ async function run() {
     }
     if (target.includes('/graphql.json')) {
       const request = JSON.parse(options.body);
+      if (request.query.includes('PrintMOGarmentCostOrder')) {
+        const id = request.variables.id;
+        const node = shopifyNode();
+        const custom = /\/200[12]$/.test(id);
+        return Response.json({ data: { order: { ...node, id, lineItems: custom ? {
+          nodes: [{ id: `cost-line-${id}`, title: 'Fixture Shirt', sku: 'FIXTURE-A',
+            currentQuantity: id.endsWith('2001') ? 2 : 1, variant: { id: 'gid://shopify/ProductVariant/201' } }],
+          pageInfo: { hasNextPage: false }
+        } : node.lineItems } } });
+      }
+      if (request.query.includes('PrintMOGarmentVariantCost')) return Response.json({ data: { productVariant: {
+        id: request.variables.id, sku: 'FIXTURE-A', inventoryItem: { unitCost: { amount: '3.79', currencyCode: 'USD' } }
+      } } });
       if (request.query.includes('PrintMOShelfAccess')) return Response.json({ data: { currentAppInstallation: {
         accessScopes: [{ handle: 'read_orders' }, ...(shelfProductScopeGranted ? [{ handle: 'read_products' }] : [])]
       } } });
@@ -2145,10 +2159,27 @@ async function run() {
       headers,
       body: JSON.stringify({ orders: [order], source: 'phase2-fixture' })
     }), env);
+    const unauthorizedCost = await worker.fetch(new Request('https://worker.test/order-manager/v1/garment-costs', {
+      method: 'POST', body: JSON.stringify({ orderIds: [firstBatchOrder.orderId] })
+    }), env);
+    assert.equal(unauthorizedCost.status, 401, 'costs require authenticated access');
+    const invalidCosts = await worker.fetch(new Request('https://worker.test/order-manager/v1/garment-costs', {
+      method: 'POST', headers, body: JSON.stringify({ orderIds: ['invalid'] })
+    }), env);
+    assert.equal(invalidCosts.status, 400);
+    const orderCosts = await worker.fetch(new Request('https://worker.test/order-manager/v1/garment-costs', {
+      method: 'POST', headers, body: JSON.stringify({ orderIds: [firstBatchOrder.orderId, missedBatchOrder.orderId] })
+    }), env);
+    const estimates = (await orderCosts.json()).estimates;
+    assert.equal(estimates[0].supplierMinor, 758);
+    assert.equal(estimates[1].supplierMinor, 379);
+    firstBatchOrder.garmentCostSnapshot = { supplierMinor: 1, currencyCode: 'BTC' };
     const firstBatchResponse = await createBatch(firstBatchOrder);
     assert.equal(firstBatchResponse.status, 201, 'first receiving batch must be created');
     const firstBatch = (await firstBatchResponse.json()).batch;
     assert.equal(firstBatch.orderIds[0], firstBatchOrder.orderId, 'batch identity must retain the immutable Shopify order GID');
+    assert.equal(firstBatch.orders[0].garmentCostSnapshot.supplierMinor, 758);
+    assert(firstBatch.orders[0].garmentCostSnapshot.capturedAt, 'ordered estimates must have a capture time');
     const secondBatchResponse = await createBatch(missedBatchOrder);
     assert.equal(secondBatchResponse.status, 201, 'a separately created missed-order batch must be represented before transfer');
     const secondBatch = (await secondBatchResponse.json()).batch;
@@ -2175,6 +2206,10 @@ async function run() {
     assert.equal(assignMissedOrder.status, 200, 'a missed order must be assignable to the intended existing batch');
     const assignment = await assignMissedOrder.json();
     assert.equal(assignment.batch.orders.length, 2, 'the intended batch must contain both orders after transfer');
+    assert.deepEqual(assignment.batch.orders.find(order => order.orderId === missedBatchOrder.orderId).garmentCostSnapshot,
+      secondBatch.orders[0].garmentCostSnapshot, 'moving a receiving order preserves its captured cost');
+    assert.deepEqual(assignment.batch.orders.find(order => order.orderId === firstBatchOrder.orderId).garmentCostSnapshot,
+      firstBatch.orders[0].garmentCostSnapshot, 'receiving and membership changes preserve existing captured costs');
     assert.equal(assignment.batch.totals.receivedGarments, 1, 'received inventory must move with the transferred order');
     assert.deepEqual(assignment.removedBatchIds, [secondBatch.id], 'an emptied accidental batch must leave the active index');
 
