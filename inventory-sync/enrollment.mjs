@@ -53,7 +53,7 @@ export function validateVariants(variants, productId, verifiedDraftDuplicates = 
    const a=quantity(l,'available'),c=quantity(l,'committed'),h=quantity(l,'on_hand');
    requireValue([a,c,h].every(Number.isSafeInteger) && c>=0, 'INVENTORY_STATES_UNVERIFIED');
    if(l.location.id===SUPPLIER) requireValue(a>=0 && h===a+c, 'SUPPLIER_INVENTORY_STATES_INVALID');
-   else requireValue(!l.isActive || a===0, 'OTHER_LOCATION_HAS_STOCK');
+   else requireValue(!l.isActive || a===0 || (a<0 && h===0), 'OTHER_LOCATION_HAS_STOCK');
   }
  }
 }

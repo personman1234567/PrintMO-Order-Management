@@ -65,6 +65,7 @@ test('plan is read-only and protected-location stock produces a specific blocker
  const f=fixture();await enrollBatch(f.env,{...f.input,mode:'plan'},f.deps);
  assert.equal(f.requests.filter(r=>r.query.startsWith('mutation')).length,0);
  f.variant.inventoryItem.inventoryLevels.nodes[0]=levels(HQ,1);await assert.rejects(enrollBatch(f.env,f.input,f.deps),/OTHER_LOCATION_HAS_STOCK/);
+ f.variant.inventoryItem.inventoryLevels.nodes[0]=levels(HQ,-1,1);f.variant.inventoryItem.tracked=true;assert.doesNotThrow(()=>validateVariants([f.variant],productId));
 });
 test('deployment drift and capacity are checked before writes',()=>{
  const entry={id:'gid://shopify/ProductVariant/1',sku:'B1',missingPolicy:'hold',cohort:'x'};
