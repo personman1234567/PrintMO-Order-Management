@@ -528,21 +528,21 @@ test('the 3001 closeout allowlist covers every enrolled variant once per five-mi
 });
 
 test('expanded schedule covers every enrolled SKU while holding shared 6400 SKUs', () => {
-  assert.equal(SCHEDULED_VARIANTS.length, 1070);
-  assert.equal(new Set(SCHEDULED_VARIANTS.map(row => row.id)).size, 1070);
-  assert.equal(new Set(SCHEDULED_VARIANTS.map(row => row.sku)).size, 1070);
+  assert.equal(SCHEDULED_VARIANTS.length, 1393);
+  assert.equal(new Set(SCHEDULED_VARIANTS.map(row => row.id)).size, 1393);
+  assert.equal(new Set(SCHEDULED_VARIANTS.map(row => row.sku)).size, 1393);
   assert.deepEqual(Object.fromEntries(['246', '3001', '3719', '6400', '8871-classic', '8871-crazy']
     .map(cohort => [cohort, SCHEDULED_VARIANTS.filter(row => row.cohort === cohort).length])),
   { '246': 72, '3001': 626, '3719': 96, '6400': 84, '8871-classic': 96, '8871-crazy': 96 });
-  assert.ok(SCHEDULED_VARIANTS.every(row => row.missingPolicy === (row.cohort === '246' ? 'hold' : 'block')));
+  assert.ok(SCHEDULED_VARIANTS.every(row => row.missingPolicy === (['246', '1566', '2000T', 'FTEX00', '1300', 'LS16005'].includes(row.cohort) ? 'hold' : 'block')));
   assert.equal(PRIORITY_SHARED_6400_SKUS.size, 75);
   assert.ok(SCHEDULED_VARIANTS.filter(row => row.cohort === '6400')
     .filter(row => !PRIORITY_SHARED_6400_SKUS.has(row.sku)).length === 9);
   const minutes = Array.from({ length: 5 }, (_, minute) => scheduledAllVariants(minute * 60000));
-  assert.deepEqual(minutes.map(entries => entries.length), [199, 199, 199, 199, 199]);
+  assert.deepEqual(minutes.map(entries => entries.length), [264, 264, 264, 263, 263]);
   assert.deepEqual(minutes.flat().map(entry => entry.id).sort(), SCHEDULED_VARIANTS
     .filter(entry => !PRIORITY_SHARED_6400_SKUS.has(entry.sku)).map(entry => entry.id).sort());
-  assert.ok(minutes.every(entries => 1 + Math.ceil(entries.length / 15) * 3 <= 50));
+  assert.ok(minutes.every(entries => 1 + Math.ceil(entries.length / 17) * 3 <= 50));
 });
 
 test('scheduled batch checks pinned SKU identity and store-wide uniqueness in its combined Shopify read', async () => {
@@ -577,6 +577,46 @@ test('scheduled batch checks pinned SKU identity and store-wide uniqueness in it
   await assert.rejects(runGuardedBatch({ ...scheduledEnv, PILOT_VARIANT_SKUS: '["WRONG"]' }, deps),
     /PILOT_VARIANT_MISSING_OR_INACTIVE/);
   assert.equal(calls.length, 1);
+});
+
+test('expanded 17-variant batches stay within three requests and reject 18 before network access', async () => {
+  const variants = Array.from({ length: 17 }, (_, i) => {
+    const v = structuredClone(variant);
+    v.id = `gid://shopify/ProductVariant/${i + 1}`;
+    v.sku = `BTEST${i + 1}`;
+    v.inventoryItem.id = `gid://shopify/InventoryItem/${i + 1}`;
+    v.inventoryItem.inventoryLevels.nodes[0].quantities = [
+      { name: 'available', quantity: 0 }, { name: 'committed', quantity: 0 }, { name: 'on_hand', quantity: 0 }];
+    v.inventoryItem.inventoryLevels.nodes[1].quantities.push({ name: 'on_hand', quantity: 8 });
+    return v;
+  });
+  const calls = [];
+  const deps = { fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    if (!url.includes('myshopify')) return response({ observedAt: new Date().toISOString(),
+      items: variants.map(v => ({ sku: v.sku, warehouses: [{ warehouseAbbr: 'IL', qty: 5, dropship: false }] })) });
+    const { query } = JSON.parse(options.body);
+    if (query.startsWith('query InventoryScheduledBatch')) return response({ data: {
+      nodes: variants, currentAppInstallation: { accessScopes: [{ handle: 'write_inventory' }] },
+      location: { id: supplierId, isActive: true, fulfillsOnlineOrders: true },
+      ...Object.fromEntries(variants.map((v, i) => ['sku' + i, { nodes: [{ id: v.id, sku: v.sku }], pageInfo: { hasNextPage: false } }]))
+    } });
+    if (query.startsWith('mutation SetSupplierAvailable')) return response({ data: {
+      inventorySetQuantities: { inventoryAdjustmentGroup: { id: 'gid://shopify/InventoryAdjustmentGroup/1' }, userErrors: [] } } });
+    throw Error('unexpected request');
+  } };
+  const batchEnv = { ...env, INVENTORY_SYNC_MODE: 'pilot-refresh', SS_WAREHOUSES: '["*"]', SS_SAFETY_BUFFER: '0',
+    SUPPLIER_FEED_SEMANTICS: 'ss-available-for-sale-downward-only',
+    PILOT_VARIANT_IDS: JSON.stringify(variants.map(v => v.id)), PILOT_VARIANT_SKUS: JSON.stringify(variants.map(v => v.sku)) };
+  assert.equal((await runGuardedBatch(batchEnv, deps)).writes, 17);
+  assert.equal(calls.length, 3);
+  const quantities = JSON.parse(calls.at(-1).options.body).variables.input.quantities;
+  assert.equal(quantities.length, 17);
+  assert.ok(quantities.every(q => q.locationId === supplierId && q.quantity === 5 && q.changeFromQuantity === 8));
+  calls.length = 0;
+  await assert.rejects(runGuardedBatch({ ...batchEnv, PILOT_VARIANT_IDS: JSON.stringify([
+    ...variants.map(v => v.id), 'gid://shopify/ProductVariant/18']) }, deps), /PILOT_VARIANT_SCOPE_INVALID/);
+  assert.equal(calls.length, 0);
 });
 
 test('closeout batch blocks an omitted supplier SKU while writing only supplier-location CAS quantities', async () => {

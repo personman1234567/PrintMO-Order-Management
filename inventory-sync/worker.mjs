@@ -57,11 +57,11 @@ async function runExpandedSchedule(env, deps, scheduledTime) {
       && Array.isArray(pinnedTultex) && pinnedTultex.length === 72
       && pinnedTultex.every((id, index) => id === SCHEDULED_VARIANTS[index].id), 'SCHEDULE_CONFIG_MISMATCH');
     const entries = scheduledAllVariants(scheduledTime);
-    const groups = Array.from({ length: Math.ceil(entries.length / 15) },
-      (_, index) => entries.slice(index * 15, index * 15 + 15));
+    const groups = Array.from({ length: Math.ceil(entries.length / 17) },
+      (_, index) => entries.slice(index * 17, index * 17 + 17));
     // Each group uses one combined Shopify identity/level read, one S&S read,
-    // and at most one CAS mutation. Today: one token request plus 14 x 3 = 43.
-    requireValue(groups.length <= 15 && groups.every(group => group.length >= 1 && group.length <= 15),
+    // and at most one CAS mutation. One token request plus at most 16 x 3 = 49.
+    requireValue(groups.length <= 16 && groups.every(group => group.length >= 1 && group.length <= 17),
       'SCHEDULE_SCOPE_INVALID');
     let writes = 0;
     let increases = 0;
