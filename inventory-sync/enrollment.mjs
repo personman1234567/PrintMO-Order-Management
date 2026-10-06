@@ -15,7 +15,7 @@ const supplierLevel = v => v.inventoryItem.inventoryLevels.nodes.find(l => l.loc
 const others = v => v.inventoryItem.inventoryLevels.nodes.filter(l => l.location.id !== SUPPLIER);
 const fingerprint = v => JSON.stringify(others(v));
 
-export async function discoverProduct(env, selector, deps) {
+export async function discoverProduct(env, selector, deps, {allowOversell=false}={}) {
  requireValue(shopDomain(env) === SHOP && typeof selector === 'string' && /^[A-Za-z0-9_:/.-]{1,150}$/.test(selector), 'INVALID_PRODUCT_SELECTOR');
  const token = await shopifyToken(env, deps);
  let id = /^gid:\/\/shopify\/Product\/\d+$/.test(selector) ? selector : null;
@@ -32,22 +32,21 @@ export async function discoverProduct(env, selector, deps) {
   const d = await shopifyRead(env, token, `query InventoryProduct($id:ID!,$cursor:String){product(id:$id){id handle title status variants(first:250,after:$cursor){nodes{${FIELDS}}pageInfo{hasNextPage endCursor}}}}`, {id,cursor}, deps);
   requireValue(d.product && ['ACTIVE','UNLISTED'].includes(d.product.status), 'PRODUCT_NOT_SELLABLE');
   product=d.product; variants.push(...product.variants.nodes);
-  requireValue(variants.length<=2000, 'PRODUCT_SCOPE_TOO_LARGE');
   cursor=product.variants.pageInfo.hasNextPage ? product.variants.pageInfo.endCursor : null;
   requireValue(!product.variants.pageInfo.hasNextPage || cursor, 'PRODUCT_PAGINATION_INCOMPLETE');
  } while(cursor);
- validateVariants(variants, id, await verifyDraftSkuDuplicates(env,token,variants,deps));
+ validateVariants(variants, id, await verifyDraftSkuDuplicates(env,token,variants,deps), {allowOversell});
  return {id,handle:product.handle,title:product.title,status:product.status,variants};
 }
 
-export function validateVariants(variants, productId, verifiedDraftDuplicates = new Set()) {
+export function validateVariants(variants, productId, verifiedDraftDuplicates = new Set(), {allowOversell=false}={}) {
  requireValue(variants.length>0 && new Set(variants.map(v=>v.id)).size===variants.length, 'INVALID_PRODUCT_VARIANTS');
  requireValue(new Set(variants.map(v=>v.sku)).size===variants.length, 'SHARED_SUPPLIER_SKU');
  for(const v of variants){
   requireValue(v.product?.id===productId && ['ACTIVE','UNLISTED'].includes(v.product.status), 'PRODUCT_IDENTITY_CHANGED');
   requireValue(/^[A-Za-z0-9_-]{1,64}$/.test(v.sku), 'INVALID_SUPPLIER_SKU');
   requireValue(v.inventoryItem?.duplicateSkuCount===0 || verifiedDraftDuplicates.has(v.id), 'SHARED_SUPPLIER_SKU');
-  requireValue(v.inventoryPolicy==='DENY', 'OVERSELL_POLICY');
+  requireValue(v.inventoryPolicy==='DENY' || (allowOversell && v.inventoryPolicy==='CONTINUE'), 'OVERSELL_POLICY');
   requireValue(v.inventoryItem.inventoryLevels?.pageInfo.hasNextPage===false, 'SHOPIFY_LEVELS_UNVERIFIED');
   for(const l of v.inventoryItem.inventoryLevels.nodes){
    const a=quantity(l,'available'),c=quantity(l,'committed'),h=quantity(l,'on_hand');
@@ -86,15 +85,15 @@ export async function enrollBatch(env,input,deps){
  requireValue(Array.isArray(entries) && entries.length>0 && entries.length<=BATCH_SIZE
   && entries.every(e=>/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(e.id)&&/^[A-Za-z0-9_-]{1,64}$/.test(e.sku)), 'INVALID_ENROLLMENT_BATCH');
  const token=await shopifyToken(env,deps);
- const read=async()=>{
+ const read=async(allowOversell=false)=>{
   const d=await shopifyRead(env,token,`query EnrollmentBatch($ids:[ID!]!,$location:ID!){nodes(ids:$ids){... on ProductVariant{${FIELDS}}}location(id:$location){id isActive fulfillsOnlineOrders}currentAppInstallation{accessScopes{handle}}}`,{ids:entries.map(e=>e.id),location:SUPPLIER},deps);
   requireValue(d.nodes.length===entries.length && d.nodes.every((v,i)=>v?.id===entries[i].id&&v.sku===entries[i].sku), 'PRODUCT_IDENTITY_CHANGED');
-  validateVariants(d.nodes,input.productId,await verifyDraftSkuDuplicates(env,token,d.nodes,deps));
+  validateVariants(d.nodes,input.productId,await verifyDraftSkuDuplicates(env,token,d.nodes,deps),{allowOversell});
   requireValue(d.location?.isActive&&d.location.fulfillsOnlineOrders, 'SUPPLIER_LOCATION_NOT_ONLINE');
   requireValue(d.currentAppInstallation.accessScopes.some(s=>s.handle==='write_inventory'), 'INVENTORY_WRITE_SCOPE_MISSING');
   return d;
  };
- const before=await read();
+ let before=await read(true);
  const supplier=await readSupplierGateway(env,entries.map(e=>e.sku),deps);
  const plan=makePlan({variants:before.nodes,inventory:supplier.items,observedAt:supplier.observedAt,warehouses:['*'],safetyBuffer:Number(env.SS_SAFETY_BUFFER),supplierLocationId:SUPPLIER,supplierLocation:before.location,protectedLocationIds:[HQ]});
  const rows=before.nodes.map((v,i)=>{
@@ -106,7 +105,19 @@ export async function enrollBatch(env,input,deps){
   const target=!v.inventoryItem.tracked ? source : source<current ? source : Math.max(current,Math.max(0,source-committed));
   return {id:v.id,sku:v.sku,source,target,current,tracked:v.inventoryItem.tracked,supplierActive:!!l?.isActive,committed};
  });
- if(input.mode!=='apply') return {mode:input.mode,observedAt:supplier.observedAt,rows,ready:rows.every(r=>r.tracked&&r.supplierActive&&r.current===r.target)};
+ const overselling=before.nodes.filter(v=>v.inventoryPolicy!=='DENY');
+ if(input.mode!=='apply') return {mode:input.mode,observedAt:supplier.observedAt,rows,policyChanges:overselling.length,ready:!overselling.length&&rows.every(r=>r.tracked&&r.supplierActive&&r.current===r.target)};
+ if(overselling.length){
+  let policyToken=token;
+  if(!before.currentAppInstallation.accessScopes.some(s=>s.handle==='write_products')){
+   requireValue(env.SHOPIFY_POLICY_CLIENT_ID&&env.SHOPIFY_POLICY_CLIENT_SECRET,'PRODUCT_POLICY_WRITE_SCOPE_MISSING');
+   policyToken=await shopifyToken({...env,SHOPIFY_ACCESS_TOKEN:undefined,SHOPIFY_API_KEY:env.SHOPIFY_POLICY_CLIENT_ID,SHOPIFY_API_SECRET:env.SHOPIFY_POLICY_CLIENT_SECRET},deps);
+  }
+  await mutate(env,policyToken,{query:'mutation DisableInventoryOverselling($productId:ID!,$variants:[ProductVariantsBulkInput!]!){productVariantsBulkUpdate(productId:$productId,variants:$variants,allowPartialUpdates:false){productVariants{id inventoryPolicy}userErrors{field message}}}',variables:{productId:input.productId,variants:overselling.map(v=>({id:v.id,inventoryPolicy:'DENY'}))}},deps);
+  const policyReadback=await read();
+  requireValue(policyReadback.nodes.every((v,i)=>JSON.stringify(v.inventoryItem)===JSON.stringify(before.nodes[i].inventoryItem)), 'ENROLLMENT_READBACK_CHANGED_REQUERY');
+  before=policyReadback;
+ }
  const fresh=before.nodes.filter(v=>!v.inventoryItem.tracked);
  const activate=before.nodes.filter(v=>!supplierLevel(v)?.isActive);
  if(activate.length){
@@ -133,18 +144,5 @@ export async function enrollBatch(env,input,deps){
  }
  const after=await read();
  requireValue(after.nodes.every((v,i)=>v.inventoryItem.tracked&&supplierLevel(v)?.isActive&&quantity(supplierLevel(v),'available')===rows[i].target&&fingerprint(v)===fingerprint(before.nodes[i])), 'ENROLLMENT_READBACK_CHANGED_REQUERY');
- return {mode:'apply',observedAt:supplier.observedAt,rows:rows.map(r=>({...r,current:r.target,tracked:true,supplierActive:true})),ready:true,writes:updates.length};
-}
-
-export function enrollmentHandler({productId,keyHash,expiresAt}){
- return async(request,env)=>{
-  const key=request.headers.get('Authorization')?.replace(/^Bearer /,'')||'';
-  const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(key)))).map(b=>b.toString(16).padStart(2,'0')).join('');
-  if(!Number.isSafeInteger(expiresAt)||Date.now()>expiresAt||request.method!=='POST'||new URL(request.url).pathname!=='/inventory/enroll'||digest!==keyHash) return new Response('Not found',{status:404});
-  try{
-   const input=await request.json();
-   requireValue(input.productId===productId,'PRODUCT_OUTSIDE_ENROLLMENT_SCOPE');
-   return Response.json(await enrollBatch(env,input),{headers:{'Cache-Control':'no-store'}});
-  }catch(e){return Response.json({error:e instanceof SyncError?e.code:'ENROLLMENT_FAILED'},{status:409,headers:{'Cache-Control':'no-store'}});}
- };
+ return {mode:'apply',observedAt:supplier.observedAt,rows:rows.map(r=>({...r,current:r.target,tracked:true,supplierActive:true})),policyChanges:overselling.length,ready:true,writes:updates.length};
 }

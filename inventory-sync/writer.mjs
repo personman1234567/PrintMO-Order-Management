@@ -1,5 +1,5 @@
 import { SyncError, requireValue, uniqueStrings, warehouseList, makePlan } from './core.mjs';
-import { requestJson, shopDomain, shopifyRead, shopifyToken, readPilot, readSupplierGateway, SKU_MATCH_FIELDS, isUniqueSellableSku } from './clients.mjs';
+import { requestJson, shopDomain, shopifyRead, shopifyToken, readPilot, readSupplierGateway, SKU_MATCH_FIELDS, isUniqueSellableSku, verifyDraftSkuDuplicates } from './clients.mjs';
 
 const PRINTMO_SHOP = '429cc0-3.myshopify.com';
 const SS_SUPPLIER_LOCATION = 'gid://shopify/Location/95240290552';
@@ -68,25 +68,17 @@ async function readBatchPrerequisites(env, token, variants, supplierLocationId, 
 
 // The full five-minute catalog needs one Shopify read per batch. Expected SKU
 // identities are pinned at enrollment and checked against live variants and a
-// store-wide exact-SKU search in the same GraphQL request.
+// duplicate count in the same query; look up actual copies only when nonzero.
 async function readScheduledBatch(env, token, entries, supplierLocationId, deps) {
   const variables = { ids: entries.map(entry => entry.id), locationId: supplierLocationId };
-  const searches = entries.map((entry, index) => {
-    variables[`sku${index}`] = `sku:${entry.sku}`;
-    return `sku${index}: productVariants(first: 2, query: $sku${index}) {
-      nodes { ${SKU_MATCH_FIELDS} } pageInfo { hasNextPage }
-    }`;
-  });
-  const declarations = entries.map((_, index) => `$sku${index}: String!`).join(', ');
-  const query = `query InventoryScheduledBatch($ids: [ID!]!, $locationId: ID!, ${declarations}) {
+  const query = `query InventoryScheduledBatch($ids: [ID!]!, $locationId: ID!) {
     nodes(ids: $ids) { ... on ProductVariant { id sku inventoryPolicy availableForSale sellableOnlineQuantity
-      product { status } inventoryItem { id tracked inventoryLevels(first: 10, includeInactive: true) {
+      product { status } inventoryItem { id tracked duplicateSkuCount inventoryLevels(first: 10, includeInactive: true) {
         nodes { isActive location { id } quantities(names: ["available", "committed", "on_hand"]) { name quantity } }
         pageInfo { hasNextPage }
       } } } }
     currentAppInstallation { accessScopes { handle } }
     location(id: $locationId) { id isActive fulfillsOnlineOrders }
-    ${searches.join('\n')}
   }`;
   const data = await shopifyRead(env, token, query, variables, deps);
   requireValue(Array.isArray(data.nodes) && data.nodes.length === entries.length
@@ -97,10 +89,8 @@ async function readScheduledBatch(env, token, entries, supplierLocationId, deps)
     'INVENTORY_WRITE_SCOPE_MISSING');
   requireValue(data.location?.id === supplierLocationId && data.location.isActive && data.location.fulfillsOnlineOrders,
     'SUPPLIER_LOCATION_NOT_ONLINE');
-  const matches = entries.map((entry, index) => {
-    const result = data[`sku${index}`];
-    return isUniqueSellableSku(result,entry);
-  });
+  const drafts=await verifyDraftSkuDuplicates(env,token,data.nodes,deps);
+  const matches=data.nodes.map(v=>v.inventoryItem.duplicateSkuCount===0||drafts.has(v.id));
   return { variants: data.nodes, preflight: { location: data.location, matches } };
 }
 
@@ -182,8 +172,8 @@ async function setSupplierAvailableBatch(env, token, updates, observedAt, deps) 
 }
 
 // Large scheduled catalogs use one combined guarded Shopify read and one CAS
-// mutation per at-most-25-variant batch, staying inside the Worker request budget.
-// A stale CAS fails the batch; the next shard run rereads every quantity.
+// mutation per at-most-25-variant batch. The scheduler saves progress after each batch.
+// A stale CAS fails the batch; the next refresh rereads every quantity.
 export async function runGuardedBatch(env, deps) {
   requireValue(env.INVENTORY_SYNC_MODE === 'pilot-refresh', 'WRITE_MODE_REQUIRED');
   requireValue(shopDomain(env) === PRINTMO_SHOP && env.SUPPLIER_LOCATION_ID === SS_SUPPLIER_LOCATION,

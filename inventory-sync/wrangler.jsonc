@@ -2,7 +2,7 @@
   "name": "printmo-inventory-sync",
   "main": "worker.mjs",
   "compatibility_date": "2026-09-16",
-  "workers_dev": false,
+  "workers_dev": true,
   "preview_urls": false,
   "observability": {
     "enabled": true
@@ -20,11 +20,22 @@
     "SUPPLIER_REOPEN_POLICY": "subtract-shopify-commitments",
     "PILOT_SHARD_COUNT": "5",
     "BELLA_3001_SYNC_ENABLED": "true",
-    "PRIORITY_SYNC_ENABLED": "true"
+    "PRIORITY_SYNC_ENABLED": "true",
+    "INVENTORY_REGISTRY_ENABLED": "true",
+    "INVENTORY_REFRESH_SECONDS": "300",
+    "INVENTORY_RUN_SECONDS": "45"
   },
   "triggers": {
     "crons": [
       "* * * * *"
     ]
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "INVENTORY_DB",
+      "database_name": "printmo-order-manager",
+      "database_id": "7fce58d5-d3f3-4f42-b084-6f3715cc48cc",
+      "migrations_dir": "migrations"
+    }
+  ]
 }

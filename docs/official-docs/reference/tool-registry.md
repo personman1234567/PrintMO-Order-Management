@@ -26,11 +26,27 @@ The machine-readable authority is `../retrieval-manifest.json`. Run `npm run rep
 
 - Plan: `npm run repo -- inventory enroll PRODUCT`.
 - Execute enrollment or refresh: `npm run repo -- inventory enroll PRODUCT execute` or `npm run repo -- inventory sync PRODUCT execute`.
-- Mode: plan by default; `execute` explicitly authorizes product-scoped Shopify inventory changes and additive schedule deployment. The positional word avoids PowerShell's npm flag forwarding issue; `--execute` also works when invoking through `npm.cmd`.
-- Prerequisites: the existing local read-only Shopify credentials in `.env`, authenticated Wrangler, and a current checkout matching `inventory-sync/deployment.json`. Production Shopify and gateway secrets stay hosted.
+- Mode: plan by default; `execute` explicitly authorizes product-scoped Shopify inventory changes and database registration. The positional word avoids PowerShell's npm flag forwarding issue; `--execute` also works when invoking through `npm.cmd`.
+- Prerequisites: `INVENTORY_ADMIN_KEY` in root `.env`; the stable service URL defaults in the CLI. Shopify and gateway credentials stay hosted. Wrangler is needed only for code releases.
 - Output: one compact JSON result and a report/checkpoint under ignored `backups/inventory-enrollment/`.
-- Exit codes: 0 planned/verified, 2 specific blocker, 1 operational failure. A plan uploads a private, authenticated, expiring Worker version; it performs no Shopify mutations or production deployment.
+- Exit codes: 0 planned/verified, 2 specific blocker, 1 operational failure. A plan makes authenticated reads only; it performs no Shopify mutations or deployment.
 - Procedure and recovery: [supplier inventory enrollment](../runbooks/supplier-inventory-pilot.md#enroll-an-existing-catalog-product).
+
+<!-- tool:inventory-status -->
+### `inventory-status`
+
+- Command: `npm run repo -- inventory status` or `inventory health`.
+- Mode: remote read-only. Uses the same permanent endpoint key as enrollment.
+- Output: registry counts, refresh age, failed batches and saved job progress; health verifies hosted app scopes and policy-write capability.
+
+<!-- tool:inventory-release -->
+### `inventory-release`
+
+- Command: `npm run repo -- inventory release execute [--policy-env-file PATH]`.
+- Mode: remote mutating; for reviewed code releases only.
+- Prerequisites: authenticated Wrangler, tracked deployment receipt, Workers Paid, passing inventory tests and docs check. Optional policy credential file uses the existing storefront-manager app's client ID/secret; values are sent over stdin without printing or a secret file.
+- Output: deployed version and verified registry coverage. The first release imports the existing pinned schedule into D1; later releases preserve the database registry.
+- Provider/readback failures stop the release. Inspect the actual deployed version before retrying; quantities are not reset.
 
 <!-- tool:route -->
 ### `route`

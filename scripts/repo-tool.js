@@ -108,8 +108,9 @@ function runRegisteredCommand(args) {
   const [group, action, ...rest] = args;
   const commandArgs = rest[0] === '--' ? rest.slice(1) : rest;
   if (group === 'inventory' && ['audit', 'dry-run'].includes(action)) return runNode('inventory-sync/cli.mjs', [action, ...commandArgs]);
-  if (group === 'inventory' && ['enroll', 'sync'].includes(action)) return runNode('inventory-sync/enroll-cli.mjs', [action, ...commandArgs]);
-  if (group === 'inventory' && action === 'test') return run(process.execPath, ['--test', path.join(root, 'inventory-sync/inventory-sync.test.mjs'), path.join(root, 'inventory-sync/enrollment.test.mjs')]);
+  if (group === 'inventory' && ['enroll', 'sync', 'status', 'health'].includes(action)) return runNode('inventory-sync/enroll-cli.mjs', [action, ...commandArgs]);
+  if (group === 'inventory' && action === 'release') return runNode('inventory-sync/release.mjs', commandArgs);
+  if (group === 'inventory' && action === 'test') return run(process.execPath, ['--test', path.join(root, 'inventory-sync/inventory-sync.test.mjs'), path.join(root, 'inventory-sync/enrollment.test.mjs'), path.join(root, 'inventory-sync/registry.test.mjs')]);
   if (group === 'verify' && ['phase1', 'phase2'].includes(action)) {
     return runNode(`scripts/verify-${action}.js`, rest);
   }
