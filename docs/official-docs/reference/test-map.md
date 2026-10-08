@@ -38,6 +38,10 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 
 ## Subsystem Manual Verification Matrix
 
+Items cleanup (local, 2026-10-07): 30 synthetic browser assertions passed with real cost, shelf, receiving, and detail-enhancement scripts at desktop, 393px, and 320px. For authenticated acceptance, open a small order and a multi-variant Tultex order; verify the table leads Items, the header cost stays visible across tabs, its action focuses the cost disclosure, stock opens through Production's Manage blanks, and receipt status remains outside canonical variant text. Toggle receiving, type a quantity, hide/show it, explicitly save, and verify refreshed receipt status. Check saved/changed, partial, unavailable/retry, read-only history, one outer scroller, and no horizontal overflow. Live acceptance and the delivery-first receiving redesign remain separate.
+
+Items visual finish (2026-10-07): 72 focused synthetic browser assertions passed at 1600px, 1050px, 393px, and 320px with the actual HTML/CSS and cost, stock, receiving, and table-enhancement scripts. Coverage includes the full-width financial header, 18px cost amount, compact totals, cost jump/focus, unknown/partial values and retry, stock variants, plain tax count, receiving visibility, retained input, 44px receiving fields, horizontal containment, and runtime errors. The blue-surface text pairs pass 4.5:1 and the focus blue passes 3:1. Desktop/mobile captures were inspected; fixtures do not establish authenticated acceptance or contain customer artwork. Also check long saved-cost/change labels and real artwork in owner-authenticated use.
+
 | Component / Workflow | Manual Verification Procedure | Success Criteria |
 |---|---|---|
 | Desktop App Local Boot | Run `npm start` | OIDC sign-in succeeds, the window launches, and the authenticated legacy board loads through the Worker. |

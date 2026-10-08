@@ -1,6 +1,5 @@
 /* Catalog cost information inherits the existing Precision Workbench. */
-body[data-order-source="shopify"] .garment-cart-cost,
-body[data-order-source="shopify"] .detail-garment-cost {
+body[data-order-source="shopify"] .garment-cart-cost {
   color: #334155;
   background: #F8FAFC;
   border: 1px solid #CBD5E1;
@@ -10,6 +9,40 @@ body[data-order-source="shopify"] .detail-garment-cost {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+body[data-order-source="shopify"] .detail-garment-cost {
+  margin-top: 16px;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid #E2E8F0;
+  background: transparent;
+  color: #334155;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.garment-cost-detail-heading {
+  min-height: 44px;
+  padding: 12px 0;
+  cursor: pointer;
+  color: #334155;
+  font-size: .8125rem;
+}
+.garment-cost-detail-heading strong { margin-left: auto; font-variant-numeric: tabular-nums; text-align: end; }
+.garment-cost-detail-heading:focus-visible { outline: 2px solid #1A73E8; outline-offset: 2px; }
+.garment-cost-detail-body {
+  padding: 16px;
+  border-radius: 8px;
+  background: #EFF6FF;
+  color: #334155;
+}
+.detail-garment-cost .garment-cost-totals { gap: 16px; margin: 0 0 12px; }
+.detail-garment-cost .garment-cost-totals > div + div { padding-left: 16px; border-left: 1px solid #CBD5E1; }
+.detail-garment-cost .garment-cost-totals dt { color: #475569; font-size: .8125rem; }
+.detail-garment-cost .garment-cost-totals dd { font-size: 1rem; }
+.detail-garment-cost .garment-cost-totals > div:first-child dd { font-size: 1.125rem; }
+.detail-garment-cost .garment-cost-source { color: #475569; font-size: .8125rem; margin-top: 4px; }
+.detail-garment-cost .garment-cost-lines > summary,
+.detail-garment-cost .garment-cost-exclusions > summary { font-size: .8125rem; font-weight: 500; }
+.detail-garment-cost .garment-cost-lines ul { font-size: .8125rem; }
 .garment-cart-cost[hidden] { display: none; }
 .garment-cost-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
 .garment-cost-heading h4, .detail-garment-cost h4 { margin: 0; font-size: .95rem; line-height: 1.4; color: #0F172A; }
@@ -37,4 +70,6 @@ body[data-order-source="shopify"] .detail-garment-cost {
   .garment-cost-totals { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .garment-cost-totals > div { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
   .garment-cost-totals dd { margin: 0; }
+  .detail-garment-cost .garment-cost-totals { gap: 8px; }
+  .detail-garment-cost .garment-cost-totals > div + div { padding: 0; border: 0; }
 }

@@ -46,6 +46,8 @@
   const orderAccountingByName = new Map();
   let accountingHydratePromise = null;
   let detailAccountingOrderName = '';
+  let detailReceivingKey = '';
+  let detailReceivingEditing = false;
   let activeBlanksView = 'cart';
   let activeSuppliesView = 'cart';
   let suppliesHoverTimer = null;
@@ -682,6 +684,9 @@
       if (typeof openDetail !== 'function' || openDetail.__blanksBatchAccountingPatched) return;
       const originalOpenDetail = openDetail;
       openDetail = function patchedOpenDetail(order, ...args) {
+        const key = `${order?._provider || 'legacy'}:${order?._gid || order?._orderKey || order?.name || ''}`;
+        if (key !== detailReceivingKey) detailReceivingEditing = false;
+        detailReceivingKey = key;
         detailAccountingOrderName = order?.name || '';
         const result = originalOpenDetail.call(this, order, ...args);
         window.garmentCosts?.openDetail(order);
@@ -819,10 +824,39 @@
     const accounting = accountingForOrder(detailAccountingOrderName);
     const itemsSection = document.getElementById('detail-items-section');
     if (!itemsSection) return;
+    const compact = isShopifyBoard();
+    let readOnly = false;
+    try { readOnly = Boolean(detailOrder?._historyReadOnly); } catch (_) {}
+    const canReceive = Boolean(accounting?.expectedGarments && accounting.batches.size && !readOnly);
+    let receivingToggle = document.getElementById('detail-receiving-toggle');
+    if (compact && canReceive) {
+      if (!receivingToggle) {
+        receivingToggle = document.createElement('button');
+        receivingToggle.id = 'detail-receiving-toggle';
+        receivingToggle.className = 'fullscreen-btn';
+        receivingToggle.type = 'button';
+        receivingToggle.setAttribute('aria-controls', 'detail-items');
+        receivingToggle.onclick = () => {
+          detailReceivingEditing = !detailReceivingEditing;
+          itemsSection.classList.toggle('is-receiving', detailReceivingEditing);
+          itemsSection.querySelectorAll('.detail-accounting-action-row').forEach(row => { row.hidden = !detailReceivingEditing; });
+          itemsSection.querySelectorAll('.detail-receipt-status').forEach(status => { status.hidden = detailReceivingEditing; });
+          const batchButton = document.getElementById('detail-inline-receive-batch-btn');
+          if (batchButton) batchButton.hidden = !detailReceivingEditing;
+          receivingToggle.textContent = detailReceivingEditing ? 'Hide receiving' : 'Receive garments';
+          receivingToggle.setAttribute('aria-expanded', String(detailReceivingEditing));
+          receivingToggle.focus({ preventScroll: true });
+        };
+        itemsSection.querySelector('.detail-items-header-row')?.append(receivingToggle);
+      }
+      receivingToggle.textContent = detailReceivingEditing ? 'Hide receiving' : 'Receive garments';
+      receivingToggle.setAttribute('aria-expanded', String(detailReceivingEditing));
+    } else { receivingToggle?.remove(); detailReceivingEditing = false; }
+    itemsSection.classList.toggle('is-receiving', compact && detailReceivingEditing);
 
     // --- Receive Batch button in the Items in Order header ---
     let receiveBatchBtn = document.getElementById('detail-inline-receive-batch-btn');
-    if (!accounting || !accounting.expectedGarments || !accounting.batches.size) {
+    if (!canReceive) {
       if (receiveBatchBtn) receiveBatchBtn.remove();
     } else {
       if (!receiveBatchBtn) {
@@ -838,7 +872,8 @@
         });
       }
       receiveBatchBtn.textContent = accounting.batches.size > 1 ? 'Receive Batches' : 'Receive Batch';
-      const h4 = itemsSection.querySelector('h4');
+      receiveBatchBtn.hidden = compact && !detailReceivingEditing;
+      const h4 = itemsSection.querySelector('h3, h4');
       if (h4 && receiveBatchBtn.parentElement !== h4.parentElement) {
         // Wrap header in a flex row if not already wrapped
         let headerRow = itemsSection.querySelector('.detail-items-header-row');
@@ -869,9 +904,7 @@
       }
       const statusClass = accounting.fullyAccounted ? 'is-complete' : 'is-missing';
       summaryChip.className = `inline-accounting-summary ${statusClass}`;
-      summaryChip.textContent = accounting.fullyAccounted
-        ? `✓ ${accounting.accountedGarments}/${accounting.expectedGarments} garments accounted`
-        : `${accounting.accountedGarments}/${accounting.expectedGarments} accounted · ${accounting.missingGarments} missing`;
+      summaryChip.textContent = `${accounting.accountedGarments}/${accounting.expectedGarments} supplier garments received${accounting.fullyAccounted ? '' : ` · ${accounting.missingGarments} remaining`}`;
     }
 
     // --- Add a dedicated receiving action beneath each garment row ---
@@ -879,6 +912,7 @@
     if (!tbody) return;
 
     tbody.querySelectorAll('.detail-accounting-action-row').forEach(row => row.remove());
+    tbody.querySelectorAll('.detail-receipt-status').forEach(status => status.remove());
     tbody.querySelectorAll('.detail-item-row.has-accounting-action').forEach(row => {
       row.classList.remove('has-accounting-action');
     });
@@ -920,8 +954,17 @@
       if (!match) return;
 
       const complete = match.accountedQty >= match.expectedQty;
+      if (compact) {
+        const receipt = document.createElement('span');
+        receipt.className = 'detail-receipt-status';
+        receipt.hidden = detailReceivingEditing;
+        receipt.textContent = `${match.accountedQty}/${match.expectedQty} received`;
+        cells[3].append(receipt);
+      }
+      if (readOnly) return;
       const actionRow = document.createElement('tr');
       actionRow.className = `detail-accounting-action-row ${complete ? 'is-complete' : 'is-missing'}`;
+      actionRow.hidden = compact && !detailReceivingEditing;
       const actionCell = document.createElement('td');
       actionCell.colSpan = cells.length;
 
@@ -946,18 +989,18 @@
         const decrement = document.createElement('button');
         decrement.type = 'button';
         decrement.textContent = '−';
-        decrement.setAttribute('aria-label', 'Decrease received garment count');
+        decrement.setAttribute('aria-label', `Decrease received count for ${title}, ${variant}, ${sku}`);
         const input = document.createElement('input');
         input.type = 'number';
         input.min = '0';
         input.max = String(match.expectedQty);
         input.inputMode = 'numeric';
         input.value = String(match.accountedQty);
-        input.setAttribute('aria-label', `Received quantity for ${title}`);
+        input.setAttribute('aria-label', `Received quantity for ${title}, ${variant}, ${sku}`);
         const increment = document.createElement('button');
         increment.type = 'button';
         increment.textContent = '+';
-        increment.setAttribute('aria-label', 'Increase received garment count');
+        increment.setAttribute('aria-label', `Increase received count for ${title}, ${variant}, ${sku}`);
         const save = document.createElement('button');
         save.type = 'button';
         save.className = 'inline-accounting-save';

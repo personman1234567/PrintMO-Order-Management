@@ -2340,7 +2340,12 @@
   }
 
   function cellText(cell) {
-    return cell?.textContent?.replace(/\s+/g, ' ').trim() || '';
+    if (!cell) return '';
+    const copy = cell.querySelector('.detail-cell-copy');
+    if (copy) return copy.textContent.replace(/\s+/g, ' ').trim();
+    const text = cell.cloneNode(true);
+    text.querySelectorAll('.detail-receipt-status').forEach(status => status.remove());
+    return text.textContent.replace(/\s+/g, ' ').trim();
   }
 
   function wrapCellText(cell, className) {
@@ -2350,11 +2355,13 @@
     if (text) cell.title = text;
     if (cell.querySelector('.detail-cell-copy') || cell.querySelector('.inline-accounting-pill')) return;
 
+    const receipt = cell.querySelector('.detail-receipt-status');
     cell.textContent = '';
     const copy = document.createElement('span');
     copy.className = 'detail-cell-copy';
     copy.textContent = text;
     cell.appendChild(copy);
+    if (receipt) cell.appendChild(receipt);
   }
 
   function enhanceItemsTable(order) {
@@ -2373,7 +2380,10 @@
     if (count) {
       const itemLabel = itemRows.length === 1 ? 'grouped item' : 'grouped items';
       const pieceLabel = quantity === 1 ? 'piece' : 'pieces';
-      count.textContent = `${itemRows.length} ${itemLabel} · ${quantity} ${pieceLabel}`;
+      const counts = order?._candidate ? itemCounts(order) : null;
+      count.textContent = counts
+        ? `${counts.apparel} garments · ${counts.prints} prints${counts.other ? ` · ${counts.other} other` : ''}`
+        : `${itemRows.length} ${itemLabel} · ${quantity} ${pieceLabel}`;
       count.title = 'Sizes are combined within each designed item; separate designs stay separate';
     }
 

@@ -105,6 +105,10 @@ exclusions. **Items & financials** separates total garment cost, shelf cost, and
 to buy from S&S, with a per-garment breakdown. Prints, manual items, shipping, and taxes
 are excluded. Only USD costs are summed; null, changed/ambiguous SKUs, inaccessible variants,
 and different currencies are explicit exclusions. Zero-dollar catalog costs are valid.
+The persistent detail header shows overall garment cost across tabs, including shelf garments;
+it does not substitute the S&S purchasing amount. Its action opens the supporting disclosure
+after commerce totals. Loading, unavailable, partial-known totals, saved provenance, and changed
+capture quantities remain explicit.
 
 Creating a receiving manifest captures a server-derived `garmentCostSnapshot` on each
 identified order in the private R2 manifest. Receiving and membership transfers preserve
@@ -126,7 +130,7 @@ After **Mark In Cart Ordered**, the browser records an authenticated receiving m
 
 The receiving UI has two levels:
 
-1. The normal order-detail garment sub-row exposes `−`, quantity, `+`, and **Save** controls. It updates the matching batch manifest line without opening another modal over Order Detail; newly complete orders surface a review/move notification.
+1. Order detail defaults to compact per-variant receipt statuses. **Receive garments** reveals the existing garment sub-rows with `−`, quantity, `+`, and **Save**, plus the order's **Receive Batch/Batches** entry point. **Hide receiving** preserves typed input without committing it. Save/Enter commits typed quantities; steppers retain immediate saves. Controls update the matching batch manifest line without opening another modal over Order Detail; newly complete orders surface a review/move notification. This is presentation cleanup, not the separately deferred delivery-first receiving redesign.
 2. **Receive Batches** is the shipment lookup and aggregate manifest workspace. Staff can link an outside S&S purchase to selected unbatched customer orders without placing another supplier order, edit shipment references, check in all remaining garments in one action when the delivery contains them all, adjust individual quantities for split deliveries with automatic save, and correct membership with **Add Orders**. Navigation waits for an in-flight receiving save instead of asking staff to discard a draft.
 
 Only physically checked, usable garment quantities are entered as received. A carrier delivery alone never updates received counts. Shared-SKU quantities are proposed oldest-first, but affected customer orders remain incomplete until staff confirms the per-order allocation. After a check-in or allocation confirmation newly completes orders, the workspace lists those orders and offers **Review** or **Move all newly complete**. The move action re-reads each order, excludes unpaid orders, and moves only the orders completed by that check-in. Ready to Print cards show a prints-pending blocker when `printsStatus` is false; the Worker rejects an increase in printed count until prints are marked ready.

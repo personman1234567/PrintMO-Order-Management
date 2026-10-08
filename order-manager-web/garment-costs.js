@@ -134,27 +134,51 @@
     if (!section) return;
     let panel = document.getElementById('detail-garment-cost');
     if (!panel) {
-      panel = element('section', null, 'detail-garment-cost'); panel.id = 'detail-garment-cost';
+      panel = element('details', null, 'detail-garment-cost'); panel.id = 'detail-garment-cost';
       panel.setAttribute('aria-label', 'Garment cost of goods');
-      section.querySelector('#detail-items-wrapper')?.before(panel);
+      section.append(panel);
     }
+    const sameOrder = panel.dataset.orderId === idFor(order);
+    if (!sameOrder) panel.open = false;
+    panel.dataset.orderId = idFor(order);
     const saved = snapshot(order);
     const value = saved || cached(order);
-    const open = panel.querySelector('.garment-cost-lines')?.open;
-    const exclusionsOpen = panel.querySelector('.garment-cost-exclusions')?.open;
-    panel.replaceChildren(element('h4', 'Garment COGs — estimate'));
-    if (!value) { panel.append(element('p', 'Loading catalog costs…', 'garment-cost-source')); return; }
+    const open = sameOrder && panel.querySelector('.garment-cost-lines')?.open;
+    const exclusionsOpen = sameOrder && panel.querySelector('.garment-cost-exclusions')?.open;
+    const label = saved ? 'Saved garment cost' : 'Garment estimate';
+    const amount = !value ? 'Calculating…' : value.garmentMinor == null ? 'Unavailable'
+      : `${money(value.garmentMinor)}${value.status !== 'complete' ? ' · Partial' : ''}`;
+    const heading = element('summary', null, 'garment-cost-detail-heading');
+    heading.append(element('span', `${label} details`), element('strong', amount));
+    const content = element('div', null, 'garment-cost-detail-body');
+    panel.replaceChildren(heading, content);
+    const header = document.getElementById('detail-header-garment-cost');
+    if (header) {
+      header.hidden = false;
+      header.setAttribute('aria-busy', String(!value));
+      document.getElementById('detail-header-garment-label').textContent = label;
+      document.getElementById('detail-header-garment-value').textContent = amount;
+      header.title = saved ? 'Garment cost saved when ordered; open for source and quantity changes.' : sourceCopy;
+      header.onclick = () => {
+        document.getElementById('detail-tab-items')?.click();
+        if (document.getElementById('tab-items')?.hidden) return;
+        panel.open = true;
+        panel.scrollIntoView({ block: 'nearest' });
+        panel.querySelector('summary')?.focus({ preventScroll: true });
+      };
+    }
+    if (!value) { content.append(element('p', 'Loading catalog costs…', 'garment-cost-source')); return; }
     if (value.status === 'unavailable' && value.garmentMinor == null) {
-      panel.append(element('p', 'Cost unavailable.', 'garment-cost-source'));
-      if (!saved) panel.append(retryButton(() => load([order], true)));
+      content.append(element('p', 'Cost unavailable.', 'garment-cost-source'));
+      if (!saved) content.append(retryButton(() => load([order], true)));
       return;
     }
     const totals = element('dl', null, 'garment-cost-totals');
     [['Garment cost', value.garmentMinor], ['From shelf', value.shelfMinor], ['To buy from S&S', value.supplierMinor]].forEach(([label, minor]) => {
       const group = element('div'); group.append(element('dt', label), element('dd', minor == null ? 'Unavailable' : money(minor))); totals.append(group);
     });
-    panel.append(totals, element('p', `${saved ? `Saved when ordered · ${new Date(value.capturedAt || value.lookupAt).toLocaleDateString()}` : 'Current catalog estimate'}${value.status !== 'complete' ? ' · Incomplete; totals include known costs only.' : ''}`, 'garment-cost-source'), element('p', sourceCopy, 'garment-cost-source'));
-    addExclusions(panel, value.exclusions || []);
+    content.append(totals, element('p', `${saved ? `Saved when ordered · ${new Date(value.capturedAt || value.lookupAt).toLocaleDateString()}` : 'Current catalog estimate'}${value.status !== 'complete' ? ' · Incomplete; totals include known costs only.' : ''}`, 'garment-cost-source'), element('p', sourceCopy, 'garment-cost-source'));
+    addExclusions(content, value.exclusions || []);
     if (exclusionsOpen && panel.querySelector('.garment-cost-exclusions')) panel.querySelector('.garment-cost-exclusions').open = true;
     const breakdown = element('details', null, 'garment-cost-lines'); breakdown.open = open || false;
     breakdown.append(element('summary', 'Garment cost breakdown'));
@@ -166,18 +190,20 @@
       if (line.shelfQuantity) row.append(element('span', `${line.shelfQuantity} from shelf · ${line.supplierQuantity} for S&S`, 'garment-cost-source'));
       list.append(row);
     });
-    breakdown.append(list); panel.append(breakdown);
+    breakdown.append(list); content.append(breakdown);
     if (saved) {
       const captured = new Map((saved.lines || []).map(line => [line.lineId, line.quantity]));
       const changed = (order.items || []).filter(item => !(typeof PRINT_TITLES !== 'undefined' && PRINT_TITLES.has(item.title)) && Number(item.qty) > 0 && captured.get(item.id) !== Number(item.qty));
       const currentIds = new Set((order.items || []).map(item => item.id));
       if (changed.length || (saved.lines || []).some(line => !currentIds.has(line.lineId))) {
-        panel.append(element('p', 'Items changed after this estimate was saved. The saved total uses the quantities ordered at capture.', 'garment-cost-source'));
+        heading.querySelector('strong').textContent = `${amount} · Items changed`;
+        if (header) document.getElementById('detail-header-garment-value').textContent = `${amount} · Items changed`;
+        content.append(element('p', 'Items changed after this estimate was saved. The saved total uses the quantities ordered at capture.', 'garment-cost-source'));
         const changes = element('ul');
         changed.forEach(item => changes.append(element('li', `${item.title} · ${item.qty} × · ${captured.has(item.id) ? 'Quantity changed since capture' : 'Outside saved estimate'}`)));
-        panel.append(changes);
+        content.append(changes);
       }
-    } else if (value.lookupFailed) panel.append(retryButton(() => load([order], true)));
+    } else if (value.lookupFailed) content.append(retryButton(() => load([order], true)));
   }
   function refreshBoard(force = false) {
     if (!enabled()) return;
@@ -186,7 +212,12 @@
   }
   function openDetail(order) {
     currentDetail = order?._candidate ? order : null;
-    if (!currentDetail) { document.getElementById('detail-garment-cost')?.remove(); return; }
+    if (!currentDetail || !enabled()) {
+      document.getElementById('detail-garment-cost')?.remove();
+      const header = document.getElementById('detail-header-garment-cost');
+      if (header) { header.hidden = true; header.onclick = null; }
+      return;
+    }
     renderDetail();
     if (!snapshot(order)) load([order]);
   }

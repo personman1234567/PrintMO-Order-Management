@@ -297,6 +297,8 @@
   $('production-manage-blanks').onclick = () => {
     $('detail-tab-items').click();
     const target = $('shelf-allocation');
+    const disclosure = target.querySelector('details');
+    if (disclosure) disclosure.open = true;
     target.tabIndex = -1; target.scrollIntoView({ block: 'start', behavior: 'instant' }); target.focus({ preventScroll: true });
   };
   panel.addEventListener('dragover', event => {

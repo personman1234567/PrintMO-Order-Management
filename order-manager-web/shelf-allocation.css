@@ -139,3 +139,30 @@ body:not([data-active-view="inventory"]) #inventory-view { display: none !import
   .shelf-line-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .shelf-stock-counts { gap: 8px; }
 }
+
+/* Order-specific stock stays out of the item table's reading path. */
+.shelf-allocation { margin: 0 0 16px; padding: 0 16px; border: 0; border-radius: 0; background: transparent; }
+.shelf-order-disclosure { min-height: 44px; padding: 12px 0; border-top: 1px solid #E2E8F0; font-size: .8125rem; cursor: pointer; }
+.shelf-order-summary-copy { display: block; margin: 6px 0 0 16px; color: #475569; font-weight: 400; font-variant-numeric: tabular-nums; }
+.shelf-order-header { margin: 8px 0 12px; }
+.shelf-order-header p { margin: 0; font-size: .8125rem; }
+.shelf-order-table { width: 100%; border-collapse: collapse; font-size: .8125rem; }
+.shelf-order-table th, .shelf-order-table td { padding: 10px 8px; text-align: end; vertical-align: top; border-bottom: 1px solid #E2E8F0; font-variant-numeric: tabular-nums; }
+.shelf-order-table thead th { color: #475569; font-size: .75rem; font-weight: 600; white-space: nowrap; }
+.shelf-order-table th:first-child { text-align: start; }
+.shelf-order-table .shelf-order-identity strong { font-size: .8125rem; }
+.shelf-order-table .shelf-line-controls { margin: 0; }
+.shelf-order-table .shelf-order-actions td { text-align: start; background: #F8FAFC; }
+.shelf-order-disclosure:focus-visible { outline: 2px solid #1A73E8; outline-offset: 2px; }
+.shelf-allocation .shelf-status { margin: 8px 0 0; min-height: 0; font-size: .75rem; }
+.shelf-allocation .shelf-status[hidden] { display: none; }
+@media (max-width: 650px) {
+  .shelf-allocation { padding: 0 12px; }
+  .shelf-order-table, .shelf-order-table tbody { display: block; }
+  .shelf-order-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .shelf-order-table .shelf-order-line { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 8px; padding: 12px 0; border-bottom: 1px solid #E2E8F0; }
+  .shelf-order-table .shelf-order-line th { grid-column: 1 / -1; }
+  .shelf-order-table .shelf-order-line th, .shelf-order-table .shelf-order-line td { padding: 0; border: 0; text-align: start; }
+  .shelf-order-table .shelf-order-line td::before { content: attr(data-label); display: block; margin-bottom: 4px; color: #475569; font-size: .75rem; }
+  .shelf-order-table .shelf-order-actions, .shelf-order-table .shelf-order-actions td { display: block; }
+}

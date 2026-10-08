@@ -9,67 +9,74 @@
   };
   const mutationKey = () => `shelf:${crypto.randomUUID()}`;
   let serial = 0;
-
-  function metric(label, value) {
-    const item = el('div');
-    item.append(el('dt', label), el('dd', String(value)));
-    return item;
-  }
+  let disclosureOrderId = '';
+  let disclosureOpen = false;
 
   function show(order, snapshot, notice = '') {
     if (notice) document.dispatchEvent(new CustomEvent('printmo:shelf-changed', { detail: { orderId: order._gid } }));
+    const wasOpen = disclosureOrderId === order._gid && disclosureOpen;
+    disclosureOrderId = order._gid;
     root.replaceChildren();
     root.hidden = false;
     const compactSummary = document.getElementById('production-blanks-summary');
     if (compactSummary) compactSummary.hidden = false;
     const copy = document.getElementById('production-blanks-copy');
+    const details = el('details', undefined, 'shelf-order-details');
+    details.open = wasOpen;
+    details.addEventListener('toggle', () => {
+      if (root.querySelector('details') === details) disclosureOpen = details.open;
+    });
+    const disclosure = el('summary', undefined, 'shelf-order-disclosure');
+    disclosure.append(el('strong', 'Shop stock · Tultex 202'));
+    details.append(disclosure); root.append(details);
     const header = el('div', undefined, 'shelf-order-header');
     const title = el('div');
-    title.append(el('h3', 'Blanks for this order'),
-      el('p', 'Reserve shop stock for this order, then mark it pulled when it leaves the shelf.'));
+    title.append(el('p', 'Reserve blanks, then mark them pulled when they leave the shelf.'));
     const inventory = el('button', 'Open inventory', 'shelf-quiet-button');
     inventory.type = 'button'; inventory.onclick = () => window.openShelfInventory?.();
-    header.append(title, inventory); root.append(header);
+    header.append(title, inventory); details.append(header);
 
     const totals = snapshot.lines.reduce((acc, line) => ({
       ordered: acc.ordered + line.quantity, reserved: acc.reserved + line.reserved,
       pulled: acc.pulled + line.pulled, supplier: acc.supplier + line.supplierNeeded
     }), { ordered: 0, reserved: 0, pulled: 0, supplier: 0 });
     if (copy) copy.textContent = `Blanks · ${totals.ordered} needed · ${totals.pulled} pulled · ${totals.supplier} for S&S${snapshot.needsReview ? ' · Review needed' : ''}`;
-    const summary = el('dl', undefined, 'shelf-order-summary');
-    summary.append(metric('Tultex 202 needed', totals.ordered), metric('Reserved to pull', totals.reserved),
-      metric('Pulled', totals.pulled), metric('For S&S', totals.supplier));
-    root.append(summary);
+    disclosure.append(el('span', `${totals.ordered} needed · ${totals.reserved} reserved · ${totals.pulled} pulled · ${totals.supplier} for S&S`, 'shelf-order-summary-copy'));
     const status = el('p', notice, 'shelf-status');
     status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
     root.append(status);
     if (snapshot.needsReview) status.textContent = 'A reservation no longer matches the Shopify order. Review it before purchasing or pulling.';
     else if (snapshot.cancelled) status.textContent = 'This order was canceled. Return and release blanks explicitly; stock does not return automatically.';
     else if (snapshot.locked) status.textContent = 'Supplier purchasing has started. Reservations are locked; reserved blanks can still be marked pulled.';
+    status.hidden = !status.textContent;
+    if (snapshot.lines.some(line => line.onShelf === null)) {
+      details.append(el('p', 'Uncounted variants must be counted in Inventory before reserving.', 'shelf-line-hint'));
+    }
+    const table = el('table', undefined, 'shelf-order-table');
+    const head = el('thead'); const headingRow = el('tr');
+    const labels = ['Variant', 'Needed', 'On shelf', 'Free', 'Reserved', 'Pulled', 'For S&S'];
+    labels.forEach(label => { const cell = el('th', label); cell.scope = 'col'; headingRow.append(cell); });
+    head.append(headingRow); const body = el('tbody'); table.append(head, body); details.append(table);
 
     const itemById = new Map((order.items || []).map(item => [item.id, item]));
     for (const line of snapshot.lines) {
       const item = itemById.get(line.lineItemId);
-      const section = el('article', undefined, 'shelf-order-line');
+      const section = el('tr', undefined, 'shelf-order-line');
       const identity = el('div', undefined, 'shelf-order-identity');
       identity.append(el('strong', item?.variantTitle || line.sku), el('span', line.sku));
-      section.append(identity);
-      const counts = el('dl', undefined, 'shelf-line-counts');
-      counts.append(metric('Needed', line.quantity),
-        metric('On shelf', line.onShelf === null ? 'Not counted' : line.onShelf),
-        metric('Free', line.available === null ? '—' : line.available),
-        metric('Reserved', line.reserved), metric('Pulled', line.pulled),
-        metric('For S&S', line.supplierNeeded));
-      section.append(counts);
-      if (line.needsReview) section.append(el('p', 'This line changed in Shopify. Review it before changing its reservation.', 'shelf-line-warning'));
+      const identityCell = el('th'); identityCell.scope = 'row'; identityCell.append(identity); section.append(identityCell);
+      [line.quantity, line.onShelf === null ? 'Not counted' : line.onShelf,
+        line.available === null ? '—' : line.available, line.reserved, line.pulled, line.supplierNeeded].forEach((value, index) => {
+        const cell = el('td', String(value)); cell.dataset.label = labels[index + 1]; section.append(cell);
+      });
+      body.append(section);
 
       const controls = el('div', undefined, 'shelf-line-controls');
       const canReserve = !snapshot.locked && !order._historyReadOnly &&
         (!line.needsReview || (snapshot.cancelled && line.claimed > line.pulled)) &&
         (!snapshot.cancelled || line.claimed > line.pulled);
-      if (line.onShelf === null) {
-        controls.append(el('p', 'Count this variant in Inventory before reserving it.', 'shelf-line-hint'));
-      } else if (canReserve) {
+      if (line.needsReview) controls.append(el('p', 'This line changed in Shopify. Review its reservation.', 'shelf-line-warning'));
+      if (line.onShelf !== null && canReserve) {
         const label = el('label', 'Reserve for this order');
         const amount = el('input'); amount.type = 'number'; amount.min = String(line.pulled);
         amount.max = String(snapshot.cancelled ? line.claimed : line.quantity);
@@ -145,13 +152,18 @@
         };
         controls.append(returnLabel, returned);
       }
-      section.append(controls); root.append(section);
+      if (controls.children.length) {
+        const actionRow = el('tr', undefined, 'shelf-order-actions');
+        const actionCell = el('td'); actionCell.colSpan = labels.length;
+        actionCell.append(controls); actionRow.append(actionCell); body.append(actionRow);
+      }
     }
   }
 
   window.renderShelfAllocationForOrder = async order => {
     const id = order?._gid;
     const turn = ++serial;
+    if (disclosureOrderId !== id) { disclosureOpen = false; disclosureOrderId = id || ''; }
     root.dataset.orderId = id || '';
     root.hidden = true;
     const summary = document.getElementById('production-blanks-summary');

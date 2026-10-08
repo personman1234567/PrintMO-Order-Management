@@ -397,9 +397,13 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
               <span class="detail-summary-label">Items</span>
               <span id="detail-header-pieces">0 pieces</span>
             </div>
-            <div class="detail-summary-metric">
+            <div class="detail-summary-metric detail-financial-summary">
               <span class="detail-summary-label">Total</span>
               <span id="detail-header-total">$0.00</span>
+              <button id="detail-header-garment-cost" type="button" aria-controls="detail-garment-cost" hidden>
+                <span id="detail-header-garment-label">Garment estimate</span>
+                <strong id="detail-header-garment-value" aria-live="polite">Calculating…</strong>
+              </button>
             </div>
           </div>
           <button id="detail-close" type="button" aria-label="Close order details">
@@ -739,7 +743,6 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                 </section>
 
                 <section id="tab-items" class="detail-tab-panel" role="tabpanel" aria-labelledby="detail-tab-items" aria-hidden="true" hidden>
-                  <section id="shelf-allocation" class="shelf-allocation" aria-label="In-house blank inventory" hidden></section>
                   <section id="detail-items-section" class="detail-section">
                     <div class="detail-items-header-row">
                       <h3>Items in order</h3>
@@ -784,6 +787,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                       </tbody>
                     </table>
                   </section>
+                  <section id="shelf-allocation" class="shelf-allocation" aria-label="In-house blank inventory" hidden></section>
                   <section id="detail-item-discounts" class="detail-section detail-rich-list-section hidden" aria-labelledby="detail-item-discounts-title">
                     <div class="detail-section-heading">
                       <h3 id="detail-item-discounts-title">Line-item discounts</h3>
