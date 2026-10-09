@@ -4,6 +4,11 @@ let allOrders = [];
 let renderTimer = null;
 let boardFetchGeneration = 0;
 let boardHasRendered = false;
+function publishOrderManagerBoardSnapshot() {
+  if (typeof window.CustomEvent === 'function' && typeof document.dispatchEvent === 'function') {
+    document.dispatchEvent(new window.CustomEvent('printmo:board-updated'));
+  }
+}
 window.getOrderManagerBoardSnapshot = () => {
   const snapshot = allOrders.slice();
   window.orderManagerPerformanceDebug?.log?.('board-snapshot-read', {
@@ -57,6 +62,7 @@ function isGarmentItem(li) {
 }
 
 function printablePieceTotal(order) {
+  if (window.OrderBoardModel) return window.OrderBoardModel.printableTotal(order, { isGarmentItem });
   return (order.items || []).reduce((total, item) => {
     const overrides = order._candidate ? order.printEligibility || {} : {};
     const included = Object.hasOwn(overrides, item.id) ? overrides[item.id] : isGarmentItem(item);
@@ -615,6 +621,7 @@ function renderStatusColumn(status) {
   if (status === 'print') {
     syncPrintViewUi();
   }
+  publishOrderManagerBoardSnapshot();
 }
 
 /**
@@ -844,11 +851,18 @@ function makeCard(o, style = 'default') {
 
   // count apparel vs prints
   let apparel = 0, prints = 0, other = 0;
-  (o.items || []).forEach(it => {
-    if (isPrintItem(it)) prints += it.qty;
-    else if (isGarmentItem(it)) apparel += it.qty;
-    else other += it.qty;
-  });
+  if (window.OrderBoardModel) {
+    const counts = window.OrderBoardModel.quantities(o, { isPrintItem, isGarmentItem });
+    apparel = counts.garments;
+    prints = counts.prints;
+    other = counts.other;
+  } else {
+    (o.items || []).forEach(it => {
+      if (isPrintItem(it)) prints += it.qty;
+      else if (isGarmentItem(it)) apparel += it.qty;
+      else other += it.qty;
+    });
+  }
   const firstMockupUrl = getFirstMockupUrl(o);
   const hasMockup = !!firstMockupUrl;
   const showBoardPreview = hasMockup || Boolean(o._candidate);
@@ -898,7 +912,9 @@ function makeCard(o, style = 'default') {
     // Ready to Print style with progress percentage
     const totalApparel = printablePieceTotal(o);
     const prog = typeof o.progress === 'number' ? o.progress : 0;
-    const pct = totalApparel ? Math.round((prog / totalApparel) * 100) : 0;
+    const pct = window.OrderBoardModel
+      ? window.OrderBoardModel.progress(o, totalApparel).percent
+      : totalApparel ? Math.round((prog / totalApparel) * 100) : 0;
     const showProductionPreview = Boolean(o._candidate);
     const productionMockupState = getProductionMockupState(o, hasMockup);
     card.classList.add('pipeline-card', 'print-card');
@@ -2565,6 +2581,9 @@ function closeDetail() {
     window.removeEventListener('resize', notesResizeHandler);
     notesResizeHandler = null;
   }
+  if (typeof window.CustomEvent === 'function' && typeof document.dispatchEvent === 'function') {
+    document.dispatchEvent(new window.CustomEvent('printmo:detail-closed'));
+  }
 }
 
 window.openOrderManagerDetail = openDetail;
@@ -3027,6 +3046,7 @@ async function renderBoard(options = {}) {
         : normalizeBoardStatuses(changedStatuses);
       if (boardHasRendered && snapshotStatuses.length === 0) {
         refreshVisibleRelativeTimes();
+        publishOrderManagerBoardSnapshot();
         return false;
       }
       snapshotStatuses.forEach(status => {

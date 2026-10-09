@@ -24,6 +24,7 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Main Electron Process | `node --check main.js` | Silent exit code 0 |
 | Preload Script | `node --check preload.js` | Silent exit code 0 |
 | Desktop Renderer | `node --check renderer.js` | Silent exit code 0 |
+| Optional Order List Browsing | `npm run verify:order-list` | Stable provider identities, six canonical stages, individual bundle counts, active/history exclusion, material milestones, printable eligibility, target dates, combined search/filter counts, deterministic sorts, unknown money, and separate attention/accounting/cached supplier summaries pass |
 | Cloudflare Worker Proxy | `node --check order-manager-proxy/worker.js` | Silent exit code 0 |
 | Phase 1 Auth/Transport Contract | `npm run verify:phase1` | `Phase 1 contract verification passed.` |
 | Shopify/D1 Candidate and Etsy Provider Contract | `npm run verify:phase2` | Verifies Shopify webhook enrollment, D1 projection, stale-summary refresh, stable board rendering, Shopify CAS/conflict details, Redis isolation, optimistic board contracts, blanks tabs, order detail, S&S batching, Designer Studio private assets, migrations, and Etsy state/PKCE/encrypted-token/redacted reads plus provider identity, paid/unshipped hidden shadow, raw-body webhook HMAC, timestamp/replay rejection, exact shop/resource validation, delivery deduplication/conflict handling, shadow-only ingestion, durable retry, scheduled recovery, bounded reconciliation, synthetic create/delete confirmation, unified board paging, provider detail, revisioned/idempotent production mutation, stale conflict rejection, stage filtering, and hostname-boundary CORS matching |
@@ -37,6 +38,20 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 ---
 
 ## Subsystem Manual Verification Matrix
+
+List browsing (local, 2026-10-09): twenty-one focused tests pass. Normal loads
+retain Board with preview controls hidden. Candidate preview uses
+`?printmo_list_preview=1` and **List preview**. Synthetic actual-browser checks
+at 1600/1050/393/320px covered the eight facts, partial/zero/unknown values,
+multiple supplier batches and pending allocation, search/filter/count behavior,
+empty results and cached refresh failure, Orders/Drafts return, source fallback,
+keyed updates, keyboard opening, focus/scroll recovery after stage changes and
+fulfillment, 44px controls and horizontal containment. Request counters stayed
+at one queue read and zero detail reads throughout browsing; normal detail
+hydration occurred only after opening. Independent finish review checked
+approved composition and progress tracks. Owner-requested production release `1791580136344` was separately verified
+on 2026-10-09. Authenticated shop acceptance remains pending. Workflow actions and dedicated mobile refinement remain
+in the [list-view plan](../future-plans/order-dashboard-list-view-plan.md).
 
 Items cleanup (local, 2026-10-07): 30 synthetic browser assertions passed with real cost, shelf, receiving, and detail-enhancement scripts at desktop, 393px, and 320px. For authenticated acceptance, open a small order and a multi-variant Tultex order; verify the table leads Items, the header cost stays visible across tabs, its action focuses the cost disclosure, stock opens through Production's Manage blanks, and receipt status remains outside canonical variant text. Toggle receiving, type a quantity, hide/show it, explicitly save, and verify refreshed receipt status. Check saved/changed, partial, unavailable/retry, read-only history, one outer scroller, and no horizontal overflow. Live acceptance and the delivery-first receiving redesign remain separate.
 

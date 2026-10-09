@@ -95,6 +95,11 @@
     const totals = itemTotals(order);
     const buckets = assetBuckets(order);
     const designCount = buckets.front.length + buckets.back.length + buckets.extras.length;
+    if (window.OrderBoardModel) {
+      return window.OrderBoardModel.evaluateTriage(order, {
+        totals, designCount, hasMockup: hasMockup(order, buckets)
+      });
+    }
     const ready = bool(order?.blanksStatus) && bool(order?.printsStatus);
     const stale = ageHours(order) >= 48;
     const aging = ageHours(order) >= 24;
@@ -162,6 +167,8 @@
       ready
     };
   }
+
+  window.OrderManagerTriage = Object.freeze({ evaluateOrder });
 
   function cardAlert(triage) {
     if (triage.missingFiles) return ['Missing files', 'danger'];

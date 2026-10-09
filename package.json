@@ -17,6 +17,7 @@
     "docs:check": "node scripts/check-docs.js",
     "verify:phase1": "node scripts/verify-phase1.js",
     "verify:phase2": "node scripts/verify-phase2.js",
+    "verify:order-list": "node --test scripts/order-list-foundation.test.js",
     "simulate:ss-feedback": "node scripts/simulate-ss-feedback.js",
     "inventory:audit": "node inventory-sync/cli.mjs audit",
     "inventory:dry-run": "node inventory-sync/cli.mjs dry-run",

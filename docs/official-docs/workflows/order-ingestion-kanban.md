@@ -67,6 +67,29 @@ flowchart LR
 - Candidate queue loads are generation-guarded and repaint only changed columns.
 - Slow private assets hydrate after commerce/production cards are usable.
 
+The Stage 2 list is an opt-in embedded candidate extension
+(`?printmo_list_preview=1`). Board remains the reload default; Legacy remains
+Board. Its controller reads `getOrderManagerBoardSnapshot()` and existing
+board/accounting events, with a read-only supplier getter from the batch cache.
+Browsing does not fetch queue/detail or write production state. Opening a row
+resolves its latest immutable identity and uses the existing shared detail path,
+including that path's normal on-demand hydration.
+
+The pure `order-board-model.js` shares quantities, printable progress and
+Pipeline triage. Search covers order number, customer and bundle only. Additional
+filters combine with AND; stage counts reflect search/additional filters before
+stage selection. In-memory query, sort and filters survive Board/List, Draft
+Orders and detail. Closing detail restores focus/scroll; when the order leaves
+results, the nearest surviving row receives focus and the list announces it.
+
+The eight-column desktop table has sticky headings; below 1200px, stacked rows
+retain the same facts inside the list's vertical scroller. Counts remain individual
+bundle members, material milestones do not imply artwork approval or release,
+and supplier delivery does not imply received or allocated garments. Missing
+financial/receiving data stays unknown. This preview carries no selection
+or inline workflow actions; see the
+[staged list-view plan](../future-plans/order-dashboard-list-view-plan.md).
+
 Candidate moves are optimistic and atomic:
 
 1. Derive the complete destination stage.

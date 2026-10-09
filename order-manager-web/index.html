@@ -84,6 +84,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./shelf-allocation.css" />
   <link rel="stylesheet" href="./production-artwork-workspace.css" />
   <link rel="stylesheet" href="./garment-costs.css">
+  <link rel="stylesheet" href="./order-list-foundation.css" />
 </head>
 <body data-active-tab="pipeline" data-active-view="orders" data-order-source="shopify" data-board-load-state="loading">
   <header class="app-header">
@@ -192,6 +193,41 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     </dialog>
   </section>
   <div id="orders-view" class="app-view">
+    <div id="order-layout-controls" class="order-layout-controls" role="group" aria-label="Order layout" hidden>
+      <button type="button" data-order-layout="board" aria-pressed="true">Board</button>
+      <button type="button" data-order-layout="list" aria-pressed="false">List preview</button>
+    </div>
+    <section id="order-list-foundation" class="order-list-foundation" aria-labelledby="order-list-foundation-title" hidden>
+      <header class="order-list-heading">
+        <div class="order-list-heading-title"><h2 id="order-list-foundation-title">Orders</h2><span id="order-list-foundation-count"></span></div>
+        <div id="order-list-tabs-mount"></div>
+        <div id="order-list-layout-mount"></div>
+      </header>
+      <div id="order-list-stages" class="order-list-stages" role="group" aria-label="Filter orders by stage"></div>
+      <div class="order-list-toolbar">
+        <label class="order-list-search"><span class="visually-hidden">Search orders, customers or bundles</span><input id="order-list-search" type="search" placeholder="Search orders, customers or bundles" autocomplete="off"></label>
+        <button id="order-list-filters-toggle" type="button" aria-expanded="false" aria-controls="order-list-filters">Filters</button>
+        <label class="order-list-sort"><span class="visually-hidden">Sort orders</span><select id="order-list-sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="target">Target date</option><option value="customer">Customer</option></select></label>
+      </div>
+      <div id="order-list-filters" class="order-list-filters" hidden>
+        <label>Source<select data-list-filter="source"><option value="all">All sources</option><option value="shopify">PrintMO</option><option value="etsy">Etsy</option></select></label>
+        <label>Blanks<select data-list-filter="blanks"><option value="all">All states</option><option value="ready">Marked ready</option><option value="not-ready">Not marked ready</option></select></label>
+        <label>Print materials<select data-list-filter="prints"><option value="all">All states</option><option value="ready">Marked ready</option><option value="not-ready">Not marked ready</option></select></label>
+        <label>Payment<select data-list-filter="payment"><option value="all">All statuses</option></select></label>
+        <label>Attention<select data-list-filter="attention"><option value="all">All orders</option><option value="needed">Needs attention</option><option value="handoff">Awaiting handoff</option></select></label>
+        <label>Target date<select data-list-filter="target"><option value="all">All dates</option><option value="late">Late</option><option value="today">Today</option><option value="tomorrow">Tomorrow</option><option value="none">No date</option></select></label>
+      </div>
+      <div class="order-list-result-line"><p id="order-list-foundation-notice" role="status" aria-live="polite"></p><button id="order-list-clear" type="button" hidden>Clear filters</button></div>
+      <div id="order-list-scroll" class="order-list-scroll">
+        <table class="order-list-table" aria-label="Active production orders">
+          <colgroup><col class="list-col-identity"><col class="list-col-stage"><col class="list-col-target"><col class="list-col-quantity"><col class="list-col-blanks"><col class="list-col-progress"><col class="list-col-payment"><col class="list-col-attention"></colgroup>
+          <thead><tr><th scope="col">Order / Customer</th><th scope="col">Stage</th><th scope="col">Target / Age</th><th scope="col">Quantities</th><th scope="col">Blanks</th><th scope="col">Print materials / Progress</th><th scope="col">Payment / Total</th><th scope="col">Attention</th></tr></thead>
+          <tbody id="order-list-foundation-rows"></tbody>
+        </table>
+        <p id="order-list-empty" class="order-list-empty" hidden></p>
+      </div>
+      <p class="order-list-preview-note">List preview · Use Board for workflow actions.</p>
+    </section>
     <section id="board-load-state" class="board-load-state" data-state="loading" role="status" aria-live="polite" aria-atomic="true">
       <div class="board-load-state-copy">
         <strong id="board-load-state-title">Loading orders</strong>
@@ -1148,10 +1184,13 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   </div>
   </main>
 
+  <!-- List foundation inherits the Precision Workbench; Board stays the default.
+       The opt-in preview renders cached order facts without workflow mutations. -->
   <!-- existing renderer logic -->
   <script src="./web-shim.js"></script>
   <script src="./storage-browser.js"></script>
   <script src="./order-detail-state.js"></script>
+  <script src="./order-board-model.js"></script>
   <script src="./renderer.js"></script>
   <script src="./previous-orders.js"></script>
   <script src="./draft-orders.js"></script>
@@ -1167,5 +1206,6 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./manual-add-checklist.js"></script>
   <script src="./accessibility-hardening.js"></script>
   <script src="./shopify-embedded-mobile.js"></script>
+  <script src="./order-list-foundation.js"></script>
 </body>
 </html>

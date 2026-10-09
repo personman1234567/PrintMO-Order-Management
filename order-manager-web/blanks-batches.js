@@ -550,6 +550,7 @@
       accounting.fullyAccounted = expected > 0 && accounting.missingGarments === 0
         && !accounting.lines.some(line => line.allocationPending);
     });
+    document.dispatchEvent(new CustomEvent('printmo:blanks-accounting-updated'));
   }
 
   function accountingForOrder(orderName) {
@@ -731,6 +732,22 @@
       canceled: 'S&S canceled', not_found: 'S&S order not found',
     };
     return labels[status?.state] || '';
+  }
+
+  // Presentation reads the same supplier cache as the board. No fetch or write.
+  function supplierSummaryForOrder(orderName) {
+    const matches = batchIndex.filter(batch => (batch.orderNames || []).includes(orderName) && batch.supplierStatus);
+    if (!matches.length) return null;
+    if (matches.length > 1) {
+      const labels = [...new Set(matches.map(batch => supplierStatusLabel(batch.supplierStatus, Number(batch.missingGarments) > 0)).filter(Boolean))];
+      return { label: `${matches.length} S&S batches · ${labels.join(' / ')}`, multiple: true,
+        stale: matches.some(batch => batch.supplierStatus.observedAt && Date.now() - Date.parse(batch.supplierStatus.observedAt) > 30 * 60 * 1000) };
+    }
+    const batch = matches[0];
+    const observedAt = batch.supplierStatus.observedAt;
+    return { label: supplierStatusLabel(batch.supplierStatus, Number(batch.missingGarments) > 0),
+      state: batch.supplierStatus.state, observedAt,
+      stale: Boolean(observedAt && Date.now() - Date.parse(observedAt) > 30 * 60 * 1000) };
   }
 
   function upsertSupplierDeliveryBadge(card, orderName) {
@@ -1723,6 +1740,7 @@
     }
     const data = await window.api.listBlanksBatches();
     batchIndex = Array.isArray(data?.batches) ? data.batches : [];
+    document.dispatchEvent(new CustomEvent('printmo:blanks-accounting-updated'));
   }
 
   async function loadBatch(id) {
@@ -2485,6 +2503,7 @@
     openReceiveOverlay,
     hydrateAccounting: hydrateAccountingForCurrentOrders,
     accountingForOrder,
+    supplierSummaryForOrder,
     costSnapshotForOrder(order) {
       for (const batch of batchDetailsById.values()) {
         const match = (batch.orders || []).find(entry => entry.orderId
