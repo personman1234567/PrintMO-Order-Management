@@ -245,6 +245,43 @@
     });
   }
 
+  function reconcileSelection(selected, visibleKeys) {
+    const visible = new Set(visibleKeys);
+    const kept = Array.from(new Set(selected)).filter(key => visible.has(key));
+    return { selected: kept, removed: Array.from(new Set(selected)).filter(key => !visible.has(key)) };
+  }
+
+  function actionEligibility(action, selectedKeys, orders, destination) {
+    const selected = Array.from(new Set(selectedKeys));
+    const active = snapshot(orders).rows;
+    const activeKeys = new Set(active.map(row => row.key));
+    const resolved = selected.map(key => orders.filter(order => orderKey(order) === key));
+    const deny = reason => ({ enabled: false, reason });
+    if (!selected.length) return deny('Select orders first.');
+    if (resolved.some(matches => matches.length !== 1) || selected.some(key => !activeKeys.has(key))) return deny('An order is no longer available or its identity is ambiguous. Refresh and review.');
+    const jobs = resolved.map(matches => matches[0]);
+    if (new Set(jobs.map(order => order._provider)).size !== 1) return deny('Select orders from one source.');
+    if (jobs.some(order => order._capabilities?.productionWrite === false || (order._provider !== 'shopify' && order._capabilities?.productionWrite !== true))) return deny('Production changes are not available for every selected order.');
+    const stages = jobs.map(stageForOrder);
+    if (stages.some(stage => !STAGES.some(item => item.id === stage))) return deny('Review the unknown stage in detail before changing this order.');
+    if (action === 'supplier' || action === 'ordered') {
+      if (jobs.some(order => order._provider !== 'shopify' || order._capabilities?.supplierBatch === false)) return deny('This list supplier workflow is available for Shopify orders only.');
+      if (stages.some(stage => stage !== (action === 'supplier' ? 'to_order' : 'blanks_cart'))) return deny(action === 'supplier' ? 'Select only Build Order jobs.' : 'Select only In S&S Cart jobs.');
+      if (action === 'supplier' && jobs.length > 50) return deny('Select up to 50 orders for one S&S submission.');
+      if (jobs.some(order => !(order.items || []).some(item => String(item.sku || '').trim() && Number(item.qty) > 0))) return deny('Every order needs supplier garments. Review the items in detail.');
+    } else if (action === 'bundle') {
+      if (jobs.length < 2) return deny('Select at least two orders to create a bundle.');
+      if (jobs.some(order => order.bundle)) return deny('Select unbundled orders to create a new bundle.');
+      if (new Set(stages).size !== 1) return deny('Select orders in the same stage to create a bundle.');
+    } else if (action === 'unbundle') {
+      if (jobs.some(order => !order.bundle)) return deny('Every selected order must belong to a bundle.');
+    } else if (action === 'move') {
+      if (!['received', 'to_order', 'blanks_cart', 'print'].includes(destination)) return deny('Choose an existing manual destination.');
+      if (stages.includes(destination)) return deny('Some selected orders are already in this stage.');
+    } else return deny('This action is unavailable.');
+    return { enabled: true, reason: '' };
+  }
+
   return Object.freeze({ STAGES, orderKey, stageForOrder, materialState, quantities,
-    printableTotal, progress, evaluateTriage, summarize, snapshot, indicators, browse, FILTER_DEFAULTS, createViewState });
+    printableTotal, progress, evaluateTriage, summarize, snapshot, indicators, browse, FILTER_DEFAULTS, createViewState, reconcileSelection, actionEligibility });
 });

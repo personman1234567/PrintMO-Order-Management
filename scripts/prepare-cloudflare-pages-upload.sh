@@ -40,7 +40,7 @@ if [[ "$SOURCE_RENDERER_HASH" != "$(node -e "const fs=require('fs'); const crypt
   exit 1
 fi
 
-for required in draft-orders.js draft-orders.css index.html renderer.js web-shim.js storage-browser.js blanks-batches.js shelf-allocation.js shelf-allocation.css production-artwork-workspace.js production-artwork-workspace.css desktop.css mobile.css accessibility-hardening.css accessibility-hardening.js shopify-embedded-mobile.js shopify-preview.css shopify-preview.js order-detail-state.js detail-overlay-enhancements.js order-detail-split.css order-board-model.js order-list-foundation.js order-list-foundation.css; do
+for required in draft-orders.js draft-orders.css index.html renderer.js web-shim.js storage-browser.js blanks-batches.js shelf-allocation.js shelf-allocation.css production-artwork-workspace.js production-artwork-workspace.css desktop.css mobile.css accessibility-hardening.css accessibility-hardening.js shopify-embedded-mobile.js shopify-preview.css shopify-preview.js order-detail-state.js detail-overlay-enhancements.js order-detail-split.css order-board-model.js order-list-foundation.js order-list-workflows.js order-list-foundation.css; do
   if [[ ! -f "$OUT_DIR/$required" ]]; then
     echo "Missing required deploy file: $required" >&2
     exit 1

@@ -651,12 +651,13 @@ function refreshOpenBundleModal() {
  * @returns {Set<string>} Statuses touched before or after the patch.
  */
 function patchLocalOrders(orderNames, patcher) {
-  const names = new Set((orderNames || []).filter(Boolean));
+  const names = new Set((orderNames || []).filter(value => typeof value === "string"));
+  const identities = new Set((orderNames || []).filter(value => value && typeof value === "object").map(value => JSON.stringify([value.provider, String(value.orderKey)])));
   const touchedStatuses = new Set();
-  if (!names.size) return touchedStatuses;
+  if (!names.size && !identities.size) return touchedStatuses;
 
   allOrders.forEach(order => {
-    if (!names.has(order.name)) return;
+    if (!names.has(order.name) && !identities.has(JSON.stringify([order._provider, String(order._orderKey || order._gid)]))) return;
     touchedStatuses.add(order.status || 'received');
     const patch = typeof patcher === 'function' ? patcher(order) : patcher;
     if (patch && typeof patch === 'object') {
@@ -3414,6 +3415,46 @@ function closeSupplierSubmissionReport() {
   document.getElementById('ss-submission-overlay')?.classList.add('hidden');
 }
 
+// Explicit order references let Board and List share supplier submission and reporting.
+async function submitOrderManagerSupplierOrders(orderRefs) {
+        const result = await window.api.processBatch(orderRefs);
+        const report = normalizedSupplierSubmissionReport(result);
+        const acceptedOrderNames = Array.isArray(result?.acceptedOrderKeys) && orderRefs.some(value => typeof value === "object")
+          ? orderRefs.filter(value => result.acceptedOrderKeys.includes(JSON.stringify([value.provider, String(value.orderKey)])))
+          : Array.isArray(result?.acceptedOrderNames)
+          ? result.acceptedOrderNames
+          : report.outcome === 'confirmed'
+            ? orderRefs
+            : [];
+
+        // A confirmed supplier submission always enters In S&S Cart.
+        if (acceptedOrderNames.length && !result?.canonicalStageUpdated && typeof window.api.updateStatuses === 'function') {
+          await window.api.updateStatuses(acceptedOrderNames, 'blanks');
+        } else if (acceptedOrderNames.length && !result?.canonicalStageUpdated) {
+          await Promise.all(acceptedOrderNames.map(id => window.api.updateStatus(id, 'blanks')));
+        }
+
+        const pendingRepair = new Set(report.metadataRepairRequired || []);
+        const visibleAccepted = acceptedOrderNames.filter(value => typeof value !== 'object' || !pendingRepair.has(value.orderKey));
+        const touchedStatuses = patchLocalOrders(visibleAccepted, order => ({ status: 'blanks', blanksOrdered: 0,
+          ...(order._candidate && !pendingRepair.has(order._orderKey || order._gid) ? { productionStage: 'blanks_cart' } : {}) }));
+        // Both ends of the move must repaint even if an adapter has already
+        // adopted canonical batch metadata in its local cache.
+        touchedStatuses.add('toOrder');
+        touchedStatuses.add('blanks');
+        if (
+          document.body?.dataset.orderSource === 'shopify'
+          && typeof window.setActiveBlanksView === 'function'
+        ) {
+          window.setActiveBlanksView('cart', { render: false });
+        }
+        await renderBoardFromLocalState(touchedStatuses);
+        showSupplierSubmissionReport(report);
+        return { result, report, accepted: acceptedOrderNames };
+}
+window.submitOrderManagerSupplierOrders = submitOrderManagerSupplierOrders;
+window.showOrderManagerSupplierError = error => showSupplierSubmissionReport(supplierSubmissionReportFromError(error));
+
 function setupSupplierSubmissionReport() {
   const overlay = document.getElementById('ss-submission-overlay');
   document.getElementById('ss-submission-close')?.addEventListener('click', closeSupplierSubmissionReport);
@@ -3494,34 +3535,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (submitStatus) submitStatus.textContent = 'Sending the selected garment lines to S&S…';
 
       try {
-        const result = await window.api.processBatch(toOrder);
-        const report = normalizedSupplierSubmissionReport(result);
-        const acceptedOrderNames = Array.isArray(result?.acceptedOrderNames)
-          ? result.acceptedOrderNames
-          : report.outcome === 'confirmed'
-            ? toOrder
-            : [];
-
-        // A confirmed supplier submission always enters In S&S Cart.
-        if (acceptedOrderNames.length && !result?.canonicalStageUpdated && typeof window.api.updateStatuses === 'function') {
-          await window.api.updateStatuses(acceptedOrderNames, 'blanks');
-        } else if (acceptedOrderNames.length && !result?.canonicalStageUpdated) {
-          await Promise.all(acceptedOrderNames.map(id => window.api.updateStatus(id, 'blanks')));
-        }
-
-        const touchedStatuses = patchLocalOrders(acceptedOrderNames, { status: 'blanks', blanksOrdered: 0 });
-        // Both ends of the move must repaint even if an adapter has already
-        // adopted canonical batch metadata in its local cache.
-        touchedStatuses.add('toOrder');
-        touchedStatuses.add('blanks');
-        if (
-          document.body?.dataset.orderSource === 'shopify'
-          && typeof window.setActiveBlanksView === 'function'
-        ) {
-          window.setActiveBlanksView('cart', { render: false });
-        }
-        await renderBoardFromLocalState(touchedStatuses);
-        showSupplierSubmissionReport(report);
+        const { report } = await submitOrderManagerSupplierOrders(toOrder);
         const presentation = supplierOutcomePresentation(report.outcome, report.preflightFailed);
         submitBtn.textContent = report.outcome === 'partial' ? 'Review result' : 'Submitted';
         if (submitStatus) submitStatus.textContent = presentation.status;

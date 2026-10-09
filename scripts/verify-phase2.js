@@ -3192,6 +3192,7 @@ async function run() {
     const cached = { _gid: 'fixture', _version: 1, targetDate: baseline };
     const sandbox = {
       candidateByName: () => cached,
+      candidateIdentity: order => JSON.stringify([order._provider, order._gid]),
       candidateStageToBoard: stage => stage,
       newIdempotencyKey: () => 'target-fixture-key',
       candidateMutationChains: new Map(),

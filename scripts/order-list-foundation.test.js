@@ -256,3 +256,212 @@ test('supplier getter uses the existing batch cache, separates multiple states, 
   assert.equal(multiple.stale, true);
   assert.equal(reads, before);
 });
+
+const workflows = require('../order-manager-web/order-list-workflows');
+function workflowFixture(jobs, overrides = {}) {
+  const writes = [], manifests = [];
+  const resolve = ref => jobs.find(job => job._provider === ref.provider && (job._orderKey || job._gid) === ref.orderKey);
+  const deps = { getOrders: () => jobs,
+    api: { setBundle: async ([ref], label) => { writes.push(['bundle', ref.orderKey, label]); resolve(ref).bundle = label; } },
+    blanks: {
+      prepareExplicitMove: async (_, status, opts) => ({ patch: { status, ...opts }, batchChoice: 'keep', batchRefs: [] }),
+      moveExplicitOrder: async (ref, patch) => { writes.push(['move', ref.orderKey]); const job = resolve(ref); job.productionStage = patch.status === 'blanks' ? patch.blanksOrdered ? 'blanks_ordered' : 'blanks_cart' : patch.status === 'toOrder' ? 'to_order' : patch.status; },
+      correctExplicitBatch: async job => { writes.push(['correction', job._gid]); },
+      recordExplicitOrdered: async selected => { manifests.push(selected.map(job => job._gid)); return { batch: { id: 'saved' } }; }
+    }, submit: async () => ({ result: { acceptedOrderKeys: jobs.map(model.orderKey) }, report: { outcome: 'confirmed' } }),
+    ...overrides
+  };
+  return { controller: workflows.create(deps), writes, manifests, deps };
+}
+
+test('selection reconciles only visible identities; sorting and renames preserve selection', () => {
+  const keys = ['a', 'b', 'c'];
+  assert.deepEqual(model.reconcileSelection(keys, ['c', 'a']), { selected: ['a', 'c'], removed: ['b'] });
+  assert.deepEqual(model.reconcileSelection(['a', 'a'], ['a']), { selected: ['a'], removed: [] });
+  const first = order('1'), renamed = { ...first, name: 'Renamed' };
+  assert.deepEqual(model.reconcileSelection([model.orderKey(first)], [model.orderKey(renamed)]).removed, []);
+});
+
+test('all selected orders must qualify, with provider authority and canonical destinations', () => {
+  const jobs = [order('1', 'to_order'), order('2', 'received'), order('etsy', 'to_order', { _provider: 'etsy', _capabilities: { productionWrite: true, supplierBatch: false } })];
+  assert.equal(model.actionEligibility('supplier', jobs.slice(0, 2).map(model.orderKey), jobs).enabled, false);
+  assert.match(model.actionEligibility('supplier', [model.orderKey(jobs[2])], jobs).reason, /Shopify/);
+  assert.match(model.actionEligibility('bundle', [model.orderKey(jobs[0]), model.orderKey(jobs[2])], jobs).reason, /one source/);
+  assert.equal(model.actionEligibility('move', [model.orderKey(jobs[2])], jobs, 'print').enabled, true);
+  assert.equal(model.actionEligibility('move', [model.orderKey(jobs[0])], jobs, 'completed').enabled, false);
+  assert.equal(model.actionEligibility('move', [model.orderKey(jobs[0])], jobs, 'blanks_ordered').enabled, false);
+  assert.equal(model.actionEligibility('move', [model.orderKey(order('unknown', 'unexpected'))], [order('unknown', 'unexpected')], 'received').enabled, false);
+});
+
+test('bundle and stage changes use exact identities despite colliding display names', async () => {
+  const jobs = [order('1'), order('2'), order('hidden', 'received', { bundle: 'Keep' })];
+  const fixture = workflowFixture(jobs);
+  await fixture.controller.execute(fixture.controller.review('bundle', jobs.slice(0, 2).map(model.orderKey), { label: 'Team' }));
+  assert.deepEqual(jobs.map(job => job.bundle), ['Team', 'Team', 'Keep']);
+  await fixture.controller.execute(fixture.controller.review('unbundle', [model.orderKey(jobs[0])]));
+  assert.equal(jobs[1].bundle, 'Team');
+  assert.equal(jobs[2].bundle, 'Keep');
+  assert.throws(() => fixture.controller.review('bundle', jobs.map(model.orderKey)), /unbundled/);
+});
+
+test('bundle label collision is rejected before writes', async () => {
+  const jobs = [order('1'), order('2'), order('hidden', 'received', { bundle: 'Existing' })];
+  const fixture = workflowFixture(jobs);
+  await assert.rejects(fixture.controller.execute(fixture.controller.review('bundle', jobs.slice(0, 2).map(model.orderKey), { label: ' Existing ' })), /already in use/);
+  assert.deepEqual(fixture.writes, []);
+});
+
+test('review rejects stage or garment changes before mutation', async () => {
+  const jobs = [order('1')], fixture = workflowFixture(jobs);
+  const review = fixture.controller.review('move', jobs.map(model.orderKey), { destination: 'print' });
+  jobs[0].items = [{ sku: 'changed', qty: 2 }];
+  await assert.rejects(fixture.controller.execute(review), /changed/);
+  assert.deepEqual(fixture.writes, []);
+});
+
+test('metadata partial failure retains successful members without global rollback', async () => {
+  const jobs = [order('1'), order('2')], fixture = workflowFixture(jobs);
+  fixture.deps.api.setBundle = async ([ref], label) => { if (ref.orderKey === '2') throw new Error('Save failed'); jobs[0].bundle = label; };
+  const result = await fixture.controller.execute(fixture.controller.review('bundle', jobs.map(model.orderKey), { label: 'Team' }));
+  assert.deepEqual(result.results.map(item => item.outcome), ['saved', 'failed']);
+  assert.equal(jobs[0].bundle, 'Team'); assert.equal(jobs[1].bundle, undefined);
+});
+
+test('manifest success plus stage failure retries only stage advancement', async () => {
+  const jobs = [order('1', 'blanks_cart'), order('2', 'blanks_cart')], fixture = workflowFixture(jobs);
+  const original = fixture.deps.blanks.moveExplicitOrder; let fail = true;
+  fixture.deps.blanks.moveExplicitOrder = async (ref, patch) => { if (ref.orderKey === '2' && fail) throw new Error('Offline'); await original(ref, patch); };
+  const result = await fixture.controller.execute(fixture.controller.review('ordered', jobs.map(model.orderKey), { supplierOrderNumber: '123456' }));
+  assert.deepEqual(result.results.map(item => item.outcome), ['saved', 'remaining']);
+  assert.equal(fixture.manifests.length, 1);
+  assert.match(fixture.controller.eligibility('ordered', [model.orderKey(jobs[1])]).reason, /Retry remaining/);
+  fail = false;
+  const retry = await fixture.controller.retryRemaining(fixture.controller.remaining());
+  assert.equal(retry.results[0].outcome, 'saved');
+  assert.equal(fixture.manifests.length, 1);
+  assert.equal(jobs[1].productionStage, 'blanks_ordered');
+});
+
+test('stage success plus membership failure retries only batch correction', async () => {
+  const jobs = [order('1', 'blanks_ordered')], fixture = workflowFixture(jobs);
+  fixture.deps.blanks.prepareExplicitMove = async () => ({ patch: { status: 'received' }, batchChoice: 'remove', batchRefs: [{ id: 'a' }, { id: 'b' }] });
+  let fail = true;
+  fixture.deps.blanks.correctExplicitBatch = async () => { if (fail) throw new Error('Batch save failed'); };
+  const result = await fixture.controller.execute(fixture.controller.review('move', jobs.map(model.orderKey), { destination: 'received' }));
+  assert.equal(result.results[0].outcome, 'remaining');
+  assert.equal(jobs[0].productionStage, 'received');
+  fail = false; await fixture.controller.retryRemaining(fixture.controller.remaining());
+  assert.equal(fixture.writes.filter(item => item[0] === 'move').length, 1);
+});
+
+test('supplier partial, rejected and unknown results never mark rejected jobs saved or auto retry', async () => {
+  for (const outcome of ['partial', 'rejected', 'unknown', 'confirmed']) {
+    const jobs = [order('1', 'to_order'), order('2', 'to_order')]; let calls = 0;
+    const fixture = workflowFixture(jobs, { submit: async () => { calls++; return { result: { acceptedOrderKeys: outcome === 'confirmed' ? jobs.map(model.orderKey) : outcome === 'partial' ? [model.orderKey(jobs[0])] : [] }, report: { outcome, summary: 'Review supplier result' } }; } });
+    const result = await fixture.controller.execute(fixture.controller.review('supplier', jobs.map(model.orderKey)));
+    assert.equal(result.results.filter(item => item.outcome === 'saved').length, outcome === 'confirmed' ? 2 : outcome === 'partial' ? 1 : 0);
+    assert.equal(calls, 1);
+    if (outcome === 'unknown') assert.match(fixture.controller.eligibility('supplier', jobs.map(model.orderKey)).reason, /reconcile/);
+  }
+});
+
+test('duplicate submit is blocked while an operation is in flight', async () => {
+  const jobs = [order('1', 'to_order')]; let release;
+  const fixture = workflowFixture(jobs, { submit: () => new Promise(resolve => { release = resolve; }) });
+  const reviewed = fixture.controller.review('supplier', jobs.map(model.orderKey));
+  const running = fixture.controller.execute(reviewed);
+  await assert.rejects(fixture.controller.execute(reviewed), /already running/);
+  assert.equal(fixture.controller.eligibility('supplier', jobs.map(model.orderKey)).enabled, false);
+  release({ result: { acceptedOrderKeys: jobs.map(model.orderKey) }, report: { outcome: 'confirmed' } }); await running;
+});
+
+const fs = require('node:fs'), vm = require('node:vm'), path = require('node:path');
+function adapterFixture() {
+  const context = vm.createContext({ document: { body: { dataset: { orderSource: 'shopify' } } }, window: {}, console, URL, URLSearchParams, crypto: require('node:crypto').webcrypto, setTimeout, clearTimeout });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../order-manager-web/web-shim.js'), 'utf8'), context);
+  const jobs = ['1', '2'].map(id => context.candidateOrderToBoard({ id, displayName: '#Same', source: { provider: 'shopify' }, commerce: { customerName: 'Same' }, production: { stage: 'received', version: 1 } }));
+  return { context, jobs };
+}
+
+test('real adapter mutations address exact order and preserve name callers', async () => {
+  const { context, jobs } = adapterFixture(), calls = [];
+  context.window.api.updateProductionMetadata = async (id, payload) => { calls.push(id); return { production: { stage: payload.patch.stage || 'received', bundleId: payload.patch.bundle_id, version: 2 } }; };
+  await context.window.api.setBundle([{ provider: 'shopify', orderKey: '1' }], 'Exact');
+  assert.deepEqual(calls, ['1']); assert.equal(jobs[0].bundle, 'Exact'); assert.equal(jobs[1].bundle, '');
+  await context.window.api.updateBoardMove(jobs[1].name, { status: 'print' });
+  assert.deepEqual(calls, ['1', '2']);
+  await assert.rejects(context.window.api.updateBoardMove({ provider: 'etsy', orderKey: '1' }, { status: 'print' }), /no longer/);
+});
+
+test('real adapter serializes exact identity through names and descriptors', async () => {
+  const { context, jobs } = adapterFixture(); let release, concurrent = 0, peak = 0;
+  context.window.api.updateProductionMetadata = async () => { concurrent++; peak = Math.max(peak, concurrent); if (!release) await new Promise(resolve => { release = resolve; }); concurrent--; return { production: { version: 2 } }; };
+  const first = context.window.api.updateBoardMove({ provider: 'shopify', orderKey: '2' }, { status: 'print' });
+  const second = context.window.api.setBundle([jobs[1].name], 'Name path');
+  await new Promise(resolve => setImmediate(resolve)); release(); await Promise.all([first, second]);
+  assert.equal(peak, 1);
+});
+
+test('real adapter never retries a workflow whose prerequisites changed during CAS reconciliation', async () => {
+  const { context, jobs } = adapterFixture(); let calls = 0;
+  context.window.api.updateProductionMetadata = async () => { calls++; throw Object.assign(new Error('Conflict'), { status: 409, code: 'VERSION_CONFLICT', details: { current: { stage: 'blanks_ordered', version: 2, bundleId: '' } } }); };
+  await assert.rejects(context.window.api.updateBoardMove({ provider: 'shopify', orderKey: '1' }, { status: 'print' }, { workflowBaseline: { stage: 'received', bundle: '' } }), error => error.code === 'WORKFLOW_CHANGED');
+  assert.equal(calls, 1); assert.equal(jobs[0].productionStage, 'blanks_ordered');
+});
+
+test('immutable mutation descriptors fail closed after switching to Legacy', async () => {
+  const { context } = adapterFixture(); context.document.body.dataset.orderSource = 'legacy';
+  const ref = { provider: 'shopify', orderKey: '1' };
+  await assert.rejects(context.window.api.updateBoardMove(ref, { status: 'print' }), /source changed/);
+  await assert.rejects(context.window.api.setBundle([ref], 'Team'), /source changed/);
+  await assert.rejects(context.window.api.processBatch([ref]), /source changed/);
+});
+
+test('accepted supplier orders requiring metadata repair are retained for reconciliation without resubmission', async () => {
+  const jobs = [order('1', 'to_order')];
+  const fixture = workflowFixture(jobs, { submit: async () => ({ result: { acceptedOrderKeys: jobs.map(model.orderKey) }, report: { outcome: 'confirmed', metadataRepairRequired: ['1'] } }) });
+  const result = await fixture.controller.execute(fixture.controller.review('supplier', jobs.map(model.orderKey)));
+  assert.equal(result.results[0].outcome, 'unknown');
+  assert.match(result.results[0].message, /accepted.*reconciliation/);
+  assert.equal(fixture.controller.eligibility('supplier', jobs.map(model.orderKey)).enabled, false);
+});
+
+test('multiple batch correction retries skip already confirmed manifest removals', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../order-manager-web/blanks-batches.js'), 'utf8');
+  const start = source.indexOf('  async function correctExplicitBatch('), end = source.indexOf('  async function recordExplicitOrdered(', start);
+  const cache = new Map([['a', { orderNames: ['Exact'] }], ['b', { orderNames: ['Exact'] }]]), calls = [];
+  let fail = true;
+  const context = vm.createContext({ assertReceivingNames: () => {}, batchDetailsById: cache,
+    removeOrderNamesFromBatchRefs: async (_, [ref]) => { calls.push(ref.id); if (ref.id === 'b' && fail) throw new Error('Offline'); cache.set(ref.id, { orderNames: [] }); }
+  });
+  vm.runInContext(source.slice(start, end), context);
+  const refs = [{ id: 'a' }, { id: 'b' }];
+  await assert.rejects(context.correctExplicitBatch({ name: 'Exact' }, refs), /Offline/);
+  fail = false; await context.correctExplicitBatch({ name: 'Exact' }, refs);
+  assert.deepEqual(calls, ['a', 'b', 'b']);
+});
+
+test('receiving manifest subtracts partial shelf claims and rejects fully shelf-covered selected jobs before saving', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../order-manager-web/blanks-batches.js'), 'utf8');
+  const start = source.indexOf('  function buildBlanksBatchPayload('), end = source.indexOf('  function visibleOrderNames(', start);
+  let claimed = 24, calls = 0, savedPayload;
+  const context = vm.createContext({ Map, Number, cleanText: value => String(value || ''),
+    orderPayload: order => ({ orderId: order._gid, name: order.name, items: order.items.map(item => ({ ...item })) }),
+    window: { api: { getShelfOrder: async () => ({ lines: [{ lineItemId: 'shirt', claimed }] }), createBlanksBatch: async payload => { calls++; savedPayload = payload; return { batch: {} }; } } }
+  });
+  vm.runInContext(source.slice(start, end), context);
+  const selected = [order('1', 'blanks_cart', { items: [{ id: 'shirt', sku: 'B102', qty: 24 }] })];
+  await assert.rejects(context.saveBatchForOrders(selected, { requireAllOrders: true }), /supplier garments remaining/);
+  assert.equal(calls, 0);
+  claimed = 22; await context.saveBatchForOrders(selected, { requireAllOrders: true });
+  assert.equal(savedPayload.expectedGarments, 2); assert.equal(calls, 1);
+});
+
+test('recovery remains available after a different selection finishes another action', async () => {
+  const jobs = [order('1', 'blanks_cart'), order('2', 'received')], fixture = workflowFixture(jobs);
+  const original = fixture.deps.blanks.moveExplicitOrder;
+  fixture.deps.blanks.moveExplicitOrder = async (ref, patch, baseline) => { if (ref.orderKey === '1') throw new Error('Offline'); return original(ref, patch, baseline); };
+  await fixture.controller.execute(fixture.controller.review('ordered', [model.orderKey(jobs[0])], { supplierOrderNumber: '123456' }));
+  await fixture.controller.execute(fixture.controller.review('move', [model.orderKey(jobs[1])], { destination: 'print' }));
+  assert.deepEqual(fixture.controller.remainingJobs().map(job => job.key), [model.orderKey(jobs[0])]);
+});

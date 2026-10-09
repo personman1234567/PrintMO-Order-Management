@@ -1,13 +1,22 @@
 /* Precision Workbench extension: the approved eight-column browse view shares
-   cached facts, preserves the normal detail, and carries no workflow mutations. */
+   cached facts, preserves normal detail, and reviews explicit workflow selections. */
 (() => {
   const model = window.OrderBoardModel;
   if (!model) return;
   const state = model.createViewState();
-  const preview = new URLSearchParams(window.location.search).get('printmo_list_preview') === '1';
+  // Normal Shopify launches expose the optional layout; an explicit 0 keeps the rollback escape hatch.
+  const preview = new URLSearchParams(window.location.search).get('printmo_list_preview') !== '0';
   const rowNodes = new Map(), stageNodes = new Map();
   const headings = ['Order / Customer', 'Stage', 'Target / Age', 'Quantities', 'Blanks', 'Print materials / Progress', 'Payment / Total', 'Attention'];
-  let pending = false, elements, latest, opener, controlsHome, tabsHome;
+  let pending = false, elements, latest, opener, controlsHome, tabsHome, workflows, busy = false;
+  let selected = [], visibleKeys = [], workspace = '', lastResults = [], workflowReturn;
+  const actionChoices = [
+    ['supplier', 'Add to S&S cart'], ['ordered', 'Mark Ordered'],
+    ['move:received', 'Move to Pipeline'], ['move:to_order', 'Move to Build Order'],
+    ['move:blanks_cart', 'Move to In S&S Cart'], ['move:print', 'Move to To Print'],
+    ['bundle', 'Create bundle'], ['unbundle', 'Remove from bundle']
+  ];
+  const choiceParts = value => { const [action, destination] = value.split(':'); return { action, destination }; };
   const isCandidate = () => document.body.dataset.orderSource === 'shopify';
   const cachedOrders = () => window.getOrderManagerBoardSnapshot?.() || [];
   const paymentKey = value => String(value || 'UNKNOWN').trim().replace(/\s+/g, '_').toUpperCase();
@@ -85,11 +94,16 @@
     const identity = text('div', '', 'order-list-identity-line'); identity.append(button, badges);
     const customerLine = text('div', '', 'order-list-customer-line'), bundle = text('small', '', 'order-list-bundle');
     customerLine.append(customer, bundle); cells[0].append(identity, customerLine);
-    const record = { node, cells, button, customer, badges, bundle, signature: '' };
+    const check = document.createElement('input'); check.type = 'checkbox'; check.dataset.selectOrder = key;
+    const checkLabel = text('label', '', 'order-list-row-select'); checkLabel.append(check); identity.prepend(checkLabel);
+    const record = { node, cells, button, customer, badges, bundle, check, signature: '' };
     rowNodes.set(key, record); return record;
   }
 
   function renderRow(row, record) {
+    record.check.checked = selected.includes(row.key); record.check.disabled = busy;
+    record.check.setAttribute('aria-label', `Select order ${row.number}, ${row.customer}`);
+    record.node.classList.toggle('is-selected', record.check.checked);
     const signature = JSON.stringify([row, typeof timeAgo === 'function' && row.receivedAt ? timeAgo(row.receivedAt) : null]);
     if (record.signature === signature) return;
     record.signature = signature;
@@ -171,9 +185,17 @@
     elements.list.hidden = layout !== 'list';
     elements.controls.querySelectorAll('button').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.orderLayout === state.get().layout)));
     moveNavigation(layout);
+    const nextWorkspace = `${document.body.dataset.orderSource}|${document.body.dataset.pipelineView || 'orders'}|${document.querySelector('.app-nav-tab[aria-pressed="true"]')?.dataset.view || 'orders'}`;
+    if (workspace && workspace !== nextWorkspace) { selected = []; workflowReturn = null; }
+    workspace = nextWorkspace;
     if (!candidate || layout !== 'list') return;
     latest = readSnapshot();
     const result = state.browse(latest);
+    visibleKeys = result.rows.map(row => row.key);
+    const reconciled = model.reconcileSelection(selected, visibleKeys);
+    selected = reconciled.selected;
+    if (reconciled.removed.length) elements.selectionNotice.textContent = `${reconciled.removed.length} selected ${reconciled.removed.length === 1 ? 'order left' : 'orders left'} this view and were deselected.`;
+    renderSelection();
     elements.count.textContent = `${latest.total} active`;
     updateStages(result); updatePaymentOptions();
     elements.search.value = state.get().query; elements.sort.value = state.get().sort;
@@ -187,6 +209,7 @@
     elements.empty.textContent = latest.total ? 'No matching orders. Clear filters to see all active orders.'
       : loadState === 'loading' ? 'Loading orders…' : loadState === 'error' ? 'Orders could not be loaded. Use Refresh to try again.' : 'No active orders.';
     reconcileRows(result, preserve);
+    renderBusy();
     if (!preserve) elements.notice.setAttribute('aria-live', 'polite');
   }
 
@@ -197,6 +220,8 @@
   }
 
   function openRow(key) {
+    if (busy) return;
+    workflowReturn = null;
     const order = cachedOrders().find(value => model.orderKey(value) === key);
     const record = rowNodes.get(key);
     if (!order || !record || !isCandidate()) { schedule(); return; }
@@ -225,6 +250,129 @@
     });
   }
 
+  function renderBusy() {
+    if (!elements) return;
+    elements.list.setAttribute('aria-busy', String(busy));
+    elements.list.querySelectorAll('input, select, button').forEach(control => {
+      if (busy) {
+        if (!control.hasAttribute('data-before-busy')) control.dataset.beforeBusy = String(control.disabled);
+        control.disabled = true;
+      } else if (control.hasAttribute('data-before-busy')) {
+        control.disabled = control.dataset.beforeBusy === 'true'; delete control.dataset.beforeBusy;
+      }
+    });
+    if (!busy) {
+      rowNodes.forEach(record => record.check.disabled = false);
+      renderSelection();
+    }
+  }
+
+  function renderSelection() {
+    elements.selection.hidden = !selected.length;
+    elements.selectedCount.textContent = `${selected.length} selected`;
+    const wideTable = window.matchMedia('(min-width: 1200px)').matches;
+    for (const [index, input] of elements.selectAll.entries()) {
+      const shown = index === 0 ? wideTable : !wideTable;
+      input.setAttribute('aria-hidden', String(!shown)); input.tabIndex = shown ? 0 : -1;
+      input.checked = !!visibleKeys.length && selected.length === visibleKeys.length;
+      input.indeterminate = selected.length > 0 && selected.length < visibleKeys.length;
+      input.disabled = busy || !shown || !visibleKeys.length;
+    }
+    const reasons = [];
+    for (const [value, label] of actionChoices) {
+      const { action, destination } = choiceParts(value);
+      const eligibility = workflows.eligibility(action, selected, destination);
+      const option = elements.action.querySelector(`[value="${value}"]`);
+      const sameDestination = action === 'move' && selected.length && selected.every(key => model.stageForOrder(cachedOrders().find(order => model.orderKey(order) === key)) === destination);
+      option.hidden = !!sameDestination;
+      option.disabled = busy || !eligibility.enabled;
+      if (!eligibility.enabled && !sameDestination && !busy) reasons.push(text('li', `${label}: ${eligibility.reason}`));
+    }
+    if (!busy && (elements.action.selectedOptions[0]?.disabled || elements.action.selectedOptions[0]?.hidden)) elements.action.value = '';
+    elements.review.disabled = busy || !elements.action.value;
+    elements.reasons.replaceChildren(...reasons);
+    elements.availability.hidden = !reasons.length;
+    elements.retry.hidden = !workflows.remaining().length;
+    elements.retry.disabled = busy;
+  }
+
+  function showResults(result) {
+    if (result.cancelled) return;
+    lastResults = result.results;
+    for (const item of lastResults) if (item.outcome === 'saved') selected = selected.filter(key => key !== item.key);
+    elements.results.hidden = !lastResults.length;
+    const saved = lastResults.filter(item => item.outcome === 'saved').length;
+    elements.resultSummary.textContent = `${saved} of ${lastResults.length} orders saved${saved !== lastResults.length ? ' · Review remaining orders' : ''}`;
+    elements.resultItems.replaceChildren(...lastResults.map(item => text('li', `${item.number}: ${item.message}`, `result-${item.outcome}`)));
+    elements.results.open = saved !== lastResults.length || workflows.remaining().length > 0;
+  }
+
+  async function reviewAction(retry = false) {
+    if (busy) return;
+    const savedAnchor = anchor();
+    const source = retry ? elements.retry : elements.review;
+    let reviewed;
+    try {
+      if (!retry) {
+        const { action, destination } = choiceParts(elements.action.value);
+        reviewed = workflows.review(action, selected, { destination });
+      }
+    } catch (error) { elements.selectionNotice.textContent = error.message; render(); return; }
+    const dialog = elements.dialog, form = dialog.querySelector('form');
+    const title = dialog.querySelector('h2'), description = dialog.querySelector('[data-review-description]');
+    title.textContent = retry ? 'Retry remaining steps' : actionChoices.find(([value]) => value === elements.action.value)[1];
+    description.textContent = retry ? 'Continue only the unsaved steps. Saved receiving records and stage moves will be kept.'
+      : reviewed.action === 'supplier' ? 'Send these orders through the existing S&S cart workflow. Review the supplier result before any retry.'
+      : reviewed.action === 'ordered' ? 'Record the S&S order number and create a receiving record for these orders. This does not place a supplier order.'
+      : reviewed.action === 'unbundle' ? 'Remove only these selected members. Other orders in each bundle will stay bundled.'
+      : 'Apply this change only to the orders listed below. Material readiness does not establish artwork approval or production release.';
+    const jobs = retry ? workflows.remainingJobs() : reviewed.jobs;
+    dialog.querySelector('[data-review-orders]').replaceChildren(...jobs.map(job => text('li', retry ? job.number : `${job.name}${job.bundle ? ` · Bundle: ${job.bundle}` : ''}`)));
+    const field = dialog.querySelector('[data-review-field]'), input = field.querySelector('input');
+    field.hidden = retry || !['ordered', 'bundle'].includes(reviewed.action);
+    field.querySelector('span').textContent = !retry && reviewed.action === 'ordered' ? 'S&S order number' : 'Bundle label';
+    input.value = ''; input.required = !field.hidden; input.disabled = field.hidden;
+    const errorNode = dialog.querySelector('[data-review-error]'); errorNode.textContent = '';
+    dialog.showModal();
+    const confirmed = await new Promise(resolve => {
+      const finish = value => { form.removeEventListener('submit', onSubmit); dialog.removeEventListener('close', onClose); resolve(value); };
+      const onClose = () => finish(false);
+      const onSubmit = event => {
+        event.preventDefault();
+        if (event.submitter?.value === 'cancel') { dialog.close(); return; }
+        if (!field.hidden && !input.value.trim()) { errorNode.textContent = 'Enter a value before continuing.'; input.focus(); return; }
+        if (reviewed?.action === 'bundle' && cachedOrders().some(order => order.bundle === input.value.trim())) { errorNode.textContent = 'That active bundle label is already in use. Choose a new label.'; input.focus(); return; }
+        dialog.removeEventListener('close', onClose); dialog.close(); finish(true);
+      };
+      form.addEventListener('submit', onSubmit); dialog.addEventListener('close', onClose);
+    });
+    if (!confirmed) { source.focus({ preventScroll: true }); return; }
+    if (!retry) {
+      if (reviewed.action === 'bundle') reviewed.args.label = input.value.trim();
+      if (reviewed.action === 'ordered') reviewed.args.supplierOrderNumber = input.value.trim();
+    }
+    busy = true; renderBusy(); elements.selectionNotice.textContent = 'Saving selected orders…';
+    try { showResults(retry ? await workflows.retryRemaining(jobs.map(job => job.key)) : await workflows.execute(reviewed)); }
+    catch (error) { elements.selectionNotice.textContent = `${error.message} Review the current orders and try again.`; }
+    finally {
+      busy = false; render(); renderBusy(); restoreAnchor(savedAnchor);
+      if (elements.selectionNotice.textContent === 'Saving selected orders…') elements.selectionNotice.textContent = elements.resultSummary.textContent;
+      workflowReturn = savedAnchor || { scrollTop: elements.scroll.scrollTop };
+      restoreWorkflowOrigin();
+    }
+  }
+
+  function restoreWorkflowOrigin() {
+    if (!workflowReturn || busy) return;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!workflowReturn || busy || detailOpen() || elements.list.hidden || document.querySelector('dialog[open], #ss-submission-overlay:not(.hidden), .batch-correction-overlay:not(.hidden), #blanks-receive-overlay:not(.hidden)')) return;
+      const saved = workflowReturn; workflowReturn = null;
+      restoreAnchor(saved);
+      const target = !elements.selection.hidden ? elements.action : rowNodes.get(saved.key)?.check || rowNodes.get(visibleKeys[0])?.check || elements.search;
+      target.focus({ preventScroll: true });
+    }));
+  }
+
   function setup() {
     const byId = id => document.getElementById(id);
     elements = { controls: byId('order-layout-controls'), list: byId('order-list-foundation'), rows: byId('order-list-foundation-rows'),
@@ -232,8 +380,46 @@
       search: byId('order-list-search'), sort: byId('order-list-sort'), filters: byId('order-list-filters'), filterToggle: byId('order-list-filters-toggle'),
       clear: byId('order-list-clear'), empty: byId('order-list-empty'), layoutMount: byId('order-list-layout-mount'), tabsMount: byId('order-list-tabs-mount') };
     if (Object.values(elements).some(value => !value)) { elements = null; return; }
+    if (!preview) { document.body.dataset.orderLayout = 'board'; return; }
+    workflows = window.OrderListWorkflows.create({ getOrders: cachedOrders, api: window.api,
+      blanks: window.blanksBatchFoundation, submit: refs => window.submitOrderManagerSupplierOrders(refs),
+      showSupplierError: error => window.showOrderManagerSupplierError?.(error), onChange: schedule });
+    const selection = text('div', '', 'order-list-selection'); selection.id = 'order-list-selection'; selection.hidden = true;
+    const selectedCount = text('strong', '', 'order-list-selected-count');
+    const clearSelection = text('button', 'Clear selection'); clearSelection.type = 'button';
+    const action = document.createElement('select'); action.id = 'order-list-action'; action.setAttribute('aria-label', 'Action for selected orders');
+    const placeholder = text('option', 'Choose action…'); placeholder.value = ''; action.append(placeholder);
+    for (const [value, label] of actionChoices) { const option = text('option', label); option.value = value; action.append(option); }
+    const review = text('button', 'Review action', 'order-list-primary'); review.type = 'button';
+    const selectionControls = text('div', '', 'order-list-selection-controls'); selectionControls.append(selectedCount, clearSelection, action, review);
+    const availability = document.createElement('details'), reasons = document.createElement('ul');
+    availability.append(text('summary', 'Action availability'), reasons); selection.append(selectionControls, availability);
+    const selectAll = [];
+    function selectMatching(className) {
+      const label = text('label', '', className), input = document.createElement('input'); input.type = 'checkbox'; input.setAttribute('aria-label', 'Select all matching orders');
+      label.append(input, text('span', className === 'order-list-select-mobile' ? 'Select matching orders' : 'Order / Customer'));
+      selectAll.push(input); input.addEventListener('change', () => { if (busy) return; selected = input.checked ? [...visibleKeys] : []; elements.selectionNotice.textContent = ''; render(); }); return label;
+    }
+    const heading = elements.list.querySelector('th'); heading.replaceChildren(selectMatching('order-list-select-heading'));
+    const globalActions = text('div', '', 'order-list-global-actions'), receive = text('button', 'Receive Batches'); receive.type = 'button';
+    globalActions.append(selectMatching('order-list-select-mobile'), receive);
+    const selectionNotice = text('p', '', 'order-list-selection-notice'); selectionNotice.setAttribute('role', 'status'); selectionNotice.setAttribute('aria-live', 'polite');
+    const results = document.createElement('details'); results.className = 'order-list-action-results'; results.hidden = true;
+    const resultSummary = text('summary', ''), resultItems = document.createElement('ul'), retry = text('button', 'Retry remaining steps'); retry.type = 'button'; retry.hidden = true;
+    results.append(resultSummary, resultItems, retry);
+    elements.scroll.before(globalActions, selection, selectionNotice, results);
+    const dialog = document.createElement('dialog'); dialog.className = 'order-list-review'; dialog.setAttribute('aria-labelledby', 'order-list-review-title');
+    dialog.innerHTML = '<form><h2 id="order-list-review-title" tabindex="-1" autofocus></h2><p data-review-description></p><ul data-review-orders></ul><label data-review-field><span></span><input maxlength="120" autocomplete="off"></label><p data-review-error role="alert"></p><div class="order-list-review-buttons"><button type="submit" value="cancel" formnovalidate>Cancel</button><button type="submit" value="confirm" class="order-list-primary">Confirm action</button></div></form>';
+    document.body.append(dialog);
+    Object.assign(elements, { selection, selectedCount, action, review, availability, reasons, selectionNotice, selectAll, results, resultSummary, resultItems, retry, dialog });
+    clearSelection.addEventListener('click', () => { if (busy) return; selected = []; elements.selectionNotice.textContent = ''; render(); });
+    action.addEventListener('change', renderSelection);
+    review.addEventListener('click', () => reviewAction()); retry.addEventListener('click', () => reviewAction(true));
+    receive.addEventListener('click', async () => { workflowReturn = anchor() || { scrollTop: elements.scroll.scrollTop }; await window.blanksBatchFoundation.openReceiveOverlay(); });
+    elements.rows.addEventListener('change', event => { const key = event.target.dataset.selectOrder; if (!key || busy) return; selected = event.target.checked ? [...selected, key] : selected.filter(value => value !== key); elements.selectionNotice.textContent = ''; render(); });
+    document.addEventListener('click', event => { if (event.target.closest('[data-view="previous"], [data-tab="history"]')) { selected = []; renderSelection(); } });
     document.body.dataset.orderLayout = 'board';
-    if (!preview) return; // Ordinary loads leave every existing DOM node in place.
+    if (!preview) return; // Explicit opt-out leaves every existing Board node in place.
     controlsHome = document.createComment('Board layout controls'); elements.controls.before(controlsHome);
     const tabs = byId('pipeline-view-tabs');
     if (tabs) { tabsHome = document.createComment('Board draft tabs'); tabs.before(tabsHome); }
@@ -257,9 +443,11 @@
     });
     elements.clear.addEventListener('click', () => { state.resetFilters(); render({ preserve: false }); });
     elements.rows.addEventListener('click', event => {
-      if (event.target.closest('a, input, select, textarea, button:not(.order-list-open)')) return;
+      if (event.target.closest('.order-list-row-select, a, input, select, textarea, button:not(.order-list-open)')) return;
       const row = event.target.closest('tr[data-order-key]'); if (row) openRow(row.dataset.orderKey);
     });
+    new MutationObserver(restoreWorkflowOrigin).observe(document.body, { attributes: true, subtree: true, attributeFilter: ['class', 'aria-hidden'] });
+    window.matchMedia('(min-width: 1200px)').addEventListener('change', schedule);
     document.addEventListener('printmo:board-updated', schedule);
     document.addEventListener('printmo:blanks-accounting-updated', schedule);
     document.addEventListener('printmo:detail-closed', restoreDetailOrigin);

@@ -174,6 +174,12 @@ window.api = window.api || {};
 window.api.transport = "http";
 
 const candidateOrdersByName = new Map();
+const candidateOrdersByIdentity = new Map();
+const candidateIdentity = order => JSON.stringify([order._provider, String(order._orderKey || order._gid)]);
+function registerCandidate(order) {
+  candidateOrdersByName.set(order.name, order);
+  candidateOrdersByIdentity.set(candidateIdentity(order), order);
+}
 const candidateAssetObjectUrls = new Map();
 const candidateAssetObjectUrlLoads = new Map();
 const candidateCatalogPreviewLoads = new Map();
@@ -432,7 +438,7 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
     canonical: order,
     assets: production.assets || [],
   };
-  if (register) candidateOrdersByName.set(name, mapped);
+  if (register) registerCandidate(mapped);
   return mapped;
 }
 
@@ -697,7 +703,8 @@ async function loadCandidateQueue({ refresh = false, onPage } = {}) {
     applyCandidateCachedAssetUrls(pageRecords);
     const mapped = records.map(record => candidateOrderToBoard(record, { register: false }));
     candidateOrdersByName.clear();
-    mapped.forEach(order => candidateOrdersByName.set(order.name, order));
+    candidateOrdersByIdentity.clear();
+    mapped.forEach(registerCandidate);
 
     const hasMore = Boolean(cursor && records.length < 500);
     candidatePerfLog("queue-page-ready", {
@@ -756,7 +763,10 @@ document.addEventListener?.("click", (event) => {
 });
 
 function candidateByName(name) {
-  const order = candidateOrdersByName.get(name);
+  const descriptor = name && typeof name === 'object';
+  const order = descriptor
+    ? candidateOrdersByIdentity.get(JSON.stringify([name.provider, String(name.orderKey)]))
+    : candidateOrdersByName.get(name);
   if (!order) throw new Error("The order is no longer in the current board view. Refresh and try again.");
   return order;
 }
@@ -807,6 +817,17 @@ function candidateProductionMatchesPatch(production = {}, patch = {}) {
 async function performCandidateOrderUpdate(name, patch, options = {}) {
   const order = candidateByName(name);
   if (!patch || Object.keys(patch).length === 0) return true;
+  const checkWorkflowBaseline = () => {
+    if (!options.workflowBaseline) return;
+    const baseline = options.workflowBaseline;
+    if ((baseline.stage !== undefined && order.productionStage !== baseline.stage)
+        || (baseline.bundle !== undefined && (order.bundle || '') !== baseline.bundle)
+        || order._historyReadOnly || order.displayFulfillmentStatus === 'FULFILLED'
+        || order._capabilities?.productionWrite === false) {
+      throw Object.assign(new Error('This order changed. Review its current stage and bundle before trying again.'), { code: 'WORKFLOW_CHANGED' });
+    }
+  };
+  checkWorkflowBaseline();
   const checkTargetDateConflict = () => {
     if ('target_date' in patch && Object.hasOwn(options, 'targetDateBaseline')
         && (order.targetDate || null) !== options.targetDateBaseline
@@ -837,6 +858,7 @@ async function performCandidateOrderUpdate(name, patch, options = {}) {
     applyCandidateProduction(order, current);
     if (candidateProductionMatchesPatch(current, patch)) return { ok: true, production: current };
     checkTargetDateConflict();
+    checkWorkflowBaseline();
     const retry = await send();
     applyCandidateProduction(order, retry?.production || {});
     return retry;
@@ -844,12 +866,13 @@ async function performCandidateOrderUpdate(name, patch, options = {}) {
 }
 
 function updateCandidateOrder(name, patch, options = {}) {
-  const previous = candidateMutationChains.get(name) || Promise.resolve();
+  const chainKey = candidateIdentity(candidateByName(name));
+  const previous = candidateMutationChains.get(chainKey) || Promise.resolve();
   const next = previous.catch(() => {}).then(() => performCandidateOrderUpdate(name, patch, options));
   const settled = next.catch(() => {}).finally(() => {
-    if (candidateMutationChains.get(name) === settled) candidateMutationChains.delete(name);
+    if (candidateMutationChains.get(chainKey) === settled) candidateMutationChains.delete(chainKey);
   });
-  candidateMutationChains.set(name, settled);
+  candidateMutationChains.set(chainKey, settled);
   return next;
 }
 
@@ -1039,13 +1062,15 @@ window.api.updateNotes = async (a, b) => {
   });
 };
 
-window.api.setBundle = async (a, b) => {
+window.api.setBundle = async (a, b, options = {}) => {
   const payload = Array.isArray(a)
     ? { names: a, bundle: b }
     : ((a && typeof a === "object") ? a : { name: a, bundle: b });
+  if (!isShopifyCandidateView() && (payload.names || [payload.name]).some(value => value && typeof value === 'object'))
+    throw new Error('The order source changed. Return to the Shopify board and review the selection.');
   if (isShopifyCandidateView()) {
     return Promise.all((payload.names || [payload.name]).map((name) =>
-      updateCandidateOrder(name, { bundle_id: payload.bundle || null })
+      updateCandidateOrder(name, { bundle_id: payload.bundle || null }, options)
     ));
   }
   return apiFetch("/order-manager/v1/legacy/queue/mutate", {
@@ -1090,7 +1115,7 @@ window.api.updateReady = async (...args) => {
         metadataPatch.stage = Number(patch.blanksOrdered) ? "blanks_ordered" : "blanks_cart";
       }
     }
-    return updateCandidateOrder(name, metadataPatch);
+    return updateCandidateOrder(name, metadataPatch, options);
   }
   return apiFetch("/order-manager/v1/legacy/queue/mutate", {
     method: "POST",
@@ -1167,6 +1192,8 @@ window.api.updateBundleStatus = async (bundleName, status) => {
 
 window.api.processBatch = async (orderIds) => {
   const names = Array.isArray(orderIds) ? orderIds : [];
+  if (!isShopifyCandidateView() && names.some(value => value && typeof value === 'object'))
+    throw new Error('The order source changed. Review the selection before submitting.');
   if (isShopifyCandidateView()) {
     const orders = names.map(candidateByName);
     const providers = new Set(orders.map(order => order._provider));
@@ -1184,7 +1211,7 @@ window.api.processBatch = async (orderIds) => {
     const resultByOrderId = new Map((result?.orderResults || []).map(order => [order.orderId, order]));
     const acceptedOrders = resultByOrderId.size
       ? orders.filter(order => resultByOrderId.get(order._gid || order._orderKey)?.outcome === "confirmed")
-      : orders;
+      : result?.outcome === "confirmed" ? orders : [];
     const now = Date.now();
     acceptedOrders.forEach((order) => {
       // The shared renderer owns the visible toOrder -> blanks transition so it
@@ -1195,6 +1222,7 @@ window.api.processBatch = async (orderIds) => {
       if (result?.poNumber) order.blanksPo = [result.poNumber];
     });
     result.acceptedOrderNames = acceptedOrders.map(order => order.name);
+    result.acceptedOrderKeys = acceptedOrders.map(candidateIdentity);
     result.canonicalStageUpdated = true;
     return result;
   }
@@ -1321,7 +1349,9 @@ window.api.getStorageObjectUrl = async (key) => {
   return load;
 };
 
-window.api.updateBoardMove = async (name, patch = {}) => {
+window.api.updateBoardMove = async (name, patch = {}, options = {}) => {
+  if (!isShopifyCandidateView() && name && typeof name === 'object')
+    throw new Error('The order source changed. Review the selection before moving.');
   if (!isShopifyCandidateView()) {
     await window.api.updateStatus(name, patch.status);
     if (Object.prototype.hasOwnProperty.call(patch, "blanksOrdered")) {
@@ -1343,7 +1373,7 @@ window.api.updateBoardMove = async (name, patch = {}) => {
   // renderer still reads this readiness field. Persist both in the same CAS
   // mutation so a board reload cannot observe a contradictory state.
   if (status === "blanks") metadataPatch.blanks_ordered = currentBlanksOrdered ? 1 : 0;
-  return updateCandidateOrder(name, metadataPatch);
+  return updateCandidateOrder(name, metadataPatch, options);
 };
 
 async function hydrateAssetUrls(result, { onManifest } = {}) {

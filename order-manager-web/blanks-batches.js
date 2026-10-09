@@ -448,7 +448,12 @@
         }
       }
     }
+    options.beforeSave?.();
     const payload = { ...buildBlanksBatchPayload(orders, shelfByOrder), ...options };
+    delete payload.beforeSave;
+    if (options.requireAllOrders && payload.orders.length !== orders.length)
+      throw new Error('Every selected order must have supplier garments remaining after shelf claims. Review shelf-covered orders in detail.');
+    delete payload.requireAllOrders;
     if (!payload.orders.length || !payload.expectedGarments) return null;
 
     const result = await window.api.createBlanksBatch(payload);
@@ -2449,6 +2454,49 @@
     return !dirty && !receivingSavePromise ? true : saveReceiving();
   }
 
+  // Selection callers provide exact orders; never expand a bundle or a column.
+  function assertReceivingNames(orders) {
+    for (const order of orders) {
+      if (currentOrders().filter(value => value._provider === order._provider && value.name === order.name).length !== 1)
+        throw new Error('Receiving names are ambiguous. Use detail to review these orders before changing batch membership.');
+    }
+  }
+
+  async function prepareExplicitMove(orders, status, options = {}) {
+    const patch = movePatchForDropTarget(status, options);
+    const shopifyOrders = orders.filter(order => order._provider === 'shopify');
+    assertReceivingNames(shopifyOrders);
+    const batchRefs = shopifyOrders.length ? await batchRefsForOrders(shopifyOrders.map(order => order.name)) : [];
+    const batchChoice = moveTouchesBatchMembership(status, patch, batchRefs)
+      ? await resolveBatchCorrection({ orderNames: orders.map(order => order.name), batchRefs, targetLabel: statusLabel(status, patch.blanksOrdered) }) : 'keep';
+    return { patch, batchRefs, batchChoice };
+  }
+
+  async function moveExplicitOrder(reference, patch, baseline) {
+    await window.api.updateBoardMove(reference, patch, { workflowBaseline: baseline });
+    const touched = patchLocalOrders([reference], patch);
+    touched.add(patch.status);
+    await renderBoardFromLocalState(touched);
+  }
+
+  async function correctExplicitBatch(order, batchRefs) {
+    assertReceivingNames([order]);
+    // Update one manifest at a time so a confirmed correction is not discarded
+    // when another manifest fails. A retry only revisits remaining memberships.
+    for (const ref of batchRefs) {
+      const current = batchDetailsById.get(ref.id);
+      if (current && !(current.orderNames || []).includes(order.name)) continue;
+      await removeOrderNamesFromBatchRefs([order.name], [ref]);
+    }
+  }
+
+  async function recordExplicitOrdered(orders, supplierOrderNumber, beforeSave) {
+    assertReceivingNames(orders);
+    const saved = await saveBatchForOrders(orders, { supplierOrderNumber, requireAllOrders: true, beforeSave });
+    if (!saved?.batch) throw new Error('These orders have no supplier garments to receive. Review shelf claims and items in detail.');
+    return saved;
+  }
+
   function setupMarkInCartOrdered() {
     const button = document.getElementById('blanks-mark-ordered-btn');
     if (!button || button.dataset.markInCartOrderedReady === '1') return;
@@ -2500,6 +2548,7 @@
   window.blanksBatchFoundation = {
     buildPayload: buildBlanksBatchPayload,
     saveBatchForOrders,
+    prepareExplicitMove, moveExplicitOrder, correctExplicitBatch, recordExplicitOrdered,
     openReceiveOverlay,
     hydrateAccounting: hydrateAccountingForCurrentOrders,
     accountingForOrder,

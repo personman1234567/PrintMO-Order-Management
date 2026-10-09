@@ -64,6 +64,14 @@ For Pages publishing, `npm run prepare:cloudflare` only creates a local artifact
 
 The normal header and mobile surface expose only the **Shopify board**. Both adapters remain in the codebase, but Legacy Redis is available only through the explicit `?printmo_debug_legacy=1` operational-debug URL; `web-shim.js` selects the data adapter and mutation endpoints.
 
+The Orders workspace exposes **Board / List preview** on normal Shopify app
+launches. Board is the reload default; List uses the same cached orders and
+shared detail screen. No special URL is needed. The explicit query parameter
+`printmo_list_preview=0` hides the optional layout for rollback/debugging;
+older `=1` preview links remain compatible. Later mobile/preferences and
+representative workflow acceptance remain tracked in the staged list plan.
+
+
 - Legacy mode retains the existing queue URLs and payloads.
 - Shopify mode pages `GET /order-manager/v1/orders`, maps the stable DTO into the existing card contract, and routes drag/drop, notes, readiness, bundle, progress, archive, and batch actions to canonical endpoints.
 - Operational customer names use shipping name, then billing name, then customer first/last name. This keeps email-derived customer fields from replacing the fulfillment recipient; `Name unavailable` is reserved for orders where Shopify returns none of those approved fields.
