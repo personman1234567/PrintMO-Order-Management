@@ -53,6 +53,17 @@ export function unavailableEstimate(id, name = '') {
 }
 
 export function createGarmentCostService({ readOrder, graphql, isPrint, shopKey }) {
+    let active = 0;
+    const waiting = [];
+    async function limited(task) {
+        if (active >= 4) await new Promise(resolve => waiting.push(resolve));
+        else active++;
+        try { return await task(); }
+        finally {
+            if (waiting.length) waiting.shift()();
+            else active--;
+        }
+    }
     async function resolve(key) {
         const cacheKey = `${shopKey}|${key}`;
         const cached = catalogCache.get(cacheKey);
@@ -66,7 +77,7 @@ export function createGarmentCostService({ readOrder, graphql, isPrint, shopKey 
                 const query = `query PrintMOGarmentVariantCost($id: ID!) {
                     productVariant(id: $id) { id sku inventoryItem { unitCost { amount currencyCode } } }
                 }`;
-                const response = await graphql(query, { id }, 'PrintMOGarmentVariantCost');
+                const response = await limited(() => graphql(query, { id }, 'PrintMOGarmentVariantCost'));
                 if (response.errors?.length) throw new Error('Catalog cost unavailable');
                 const variant = response.data?.productVariant;
                 result = variant ? { ...variant.inventoryItem?.unitCost, sku: variant.sku } : { reason: 'Catalog variant unavailable' };
@@ -78,7 +89,7 @@ export function createGarmentCostService({ readOrder, graphql, isPrint, shopKey 
                         pageInfo { hasNextPage }
                     }
                 }`;
-                const response = await graphql(query, { query: `sku:${JSON.stringify(sku)}` }, 'PrintMOGarmentSkuCost');
+                const response = await limited(() => graphql(query, { query: `sku:${JSON.stringify(sku)}` }, 'PrintMOGarmentSkuCost'));
                 if (response.errors?.length) throw new Error('Catalog cost unavailable');
                 const connection = response.data?.productVariants;
                 const matches = (connection?.nodes || []).filter(variant => variant.sku === sku);
@@ -103,12 +114,19 @@ export function createGarmentCostService({ readOrder, graphql, isPrint, shopKey 
     }
     async function estimate(id, deadline) {
         try {
-            const order = await bounded(readOrder(id), deadline);
-            const keys = [...new Set((order.items || []).filter(item => !isPrint(item)).map(item => {
+            const order = await bounded(limited(() => readOrder(id)), deadline);
+            const costs = new Map();
+            // Native orders return current catalog costs with their lines, avoiding
+            // a separate Shopify round trip for every garment variant.
+            if (order.provider !== 'etsy') for (const item of order.items || []) {
+                if (!isPrint(item) && Object.hasOwn(item, 'catalogCost'))
+                    costs.set(`variant:${item.variantId || ''}`, item.catalogCost);
+            }
+            const keys = [...new Set((order.items || []).filter(item => !isPrint(item)
+                && Number(item.currentQuantity ?? item.quantity ?? item.qty ?? 0) > 0).map(item => {
                 const sku = String(order.provider === 'etsy' ? item.supplierSku || '' : item.sku || '').trim();
                 return !sku ? null : order.provider === 'etsy' ? `sku:${sku}` : `variant:${item.variantId || ''}`;
-            }).filter(Boolean))];
-            const costs = new Map();
+            }).filter(key => key && !costs.has(key)))];
             let lookupFailed = false;
             // Bound upstream concurrency, including orders with many distinct variants.
             for (let start = 0; start < keys.length; start += 4) {
@@ -128,10 +146,19 @@ export function createGarmentCostService({ readOrder, graphql, isPrint, shopKey 
     }
 
     async function estimates(ids) {
-        const results = [];
-        // Sequential orders keep the request's Shopify concurrency at four.
+        const unique = [...new Set(ids)];
+        const results = new Array(unique.length);
+        let next = 0;
+        // Four workers share the same upstream limit and preserve input order.
+        // A slow order no longer blocks every subsequent cart order.
         const deadline = Date.now() + 20000;
-        for (const id of [...new Set(ids)]) results.push(Date.now() >= deadline ? unavailableEstimate(id) : await estimate(id, deadline));
+        await Promise.all(Array.from({ length: Math.min(4, unique.length) }, async () => {
+            while (next < unique.length) {
+                const index = next++;
+                const id = unique[index];
+                results[index] = Date.now() >= deadline ? unavailableEstimate(id) : await estimate(id, deadline);
+            }
+        }));
         return results;
     }
     return { estimates };

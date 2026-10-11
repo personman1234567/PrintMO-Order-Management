@@ -701,7 +701,14 @@ async function loadCandidateQueue({ refresh = false, onPage } = {}) {
     const pageNumber = pageIndex;
 
     applyCandidateCachedAssetUrls(pageRecords);
-    const mapped = records.map(record => candidateOrderToBoard(record, { register: false }));
+    const mapped = records.map(record => {
+      const next = candidateOrderToBoard(record, { register: false });
+      const current = candidateOrdersByIdentity.get(candidateIdentity(next));
+      if (current && current._version > next._version) {
+        applyCandidateProduction(next, current.canonical.production, { publish: false });
+      }
+      return next;
+    });
     candidateOrdersByName.clear();
     candidateOrdersByIdentity.clear();
     mapped.forEach(registerCandidate);
@@ -741,7 +748,9 @@ async function loadCandidateQueue({ refresh = false, onPage } = {}) {
     }).catch(error => console.warn("Unable to hydrate Shopify board previews", error));
   } while (cursor && records.length < 500);
 
-  const mapped = records.map(record => candidateOrderToBoard(record, { register: false }));
+  // Return the objects registered on the last page, including acknowledged
+  // mutations made while enumeration or detached hydration was in flight.
+  const mapped = records.map(record => candidateOrdersByIdentity.get(candidateIdentity(candidateOrderToBoard(record, { register: false }))));
   candidatePerfLog("queue-load-complete", {
     generation: loadGeneration,
     pages: pageIndex,
@@ -771,8 +780,11 @@ function candidateByName(name) {
   return order;
 }
 
-function applyCandidateProduction(order, production = {}) {
-  order._version = Number(production.version ?? production.revision ?? order._version + 1);
+function applyCandidateProduction(order, production = {}, { publish = true } = {}) {
+  const version = Number(production.version ?? production.revision ?? order._version + 1);
+  if (version < order._version) return;
+  const previousStatus = order.status;
+  order._version = version;
   if (production.stage) {
     order.productionStage = production.stage;
     order.status = candidateStageToBoard(production.stage);
@@ -785,7 +797,9 @@ function applyCandidateProduction(order, production = {}) {
   if ("blanksStatus" in production) order.blanksStatus = Number(production.blanksStatus || 0);
   if ("printsStatus" in production) order.printsStatus = Number(production.printsStatus || 0);
   if ("printsOrdered" in production) order.printsOrdered = Number(production.printsOrdered || 0);
-  order.blanksOrdered = Number(production.blanksOrdered ?? (production.stage === "blanks_ordered" ? 1 : 0));
+  if ("blanksOrdered" in production || production.stage) order.blanksOrdered = Number(production.blanksOrdered ?? (production.stage === "blanks_ordered" ? 1 : 0));
+  order.canonical.production = { ...order.canonical.production, ...production, version };
+  if (publish) window.mergeOrderManagerProduction?.(order, previousStatus);
 }
 
 function candidateProductionMatchesPatch(production = {}, patch = {}) {
@@ -815,7 +829,8 @@ function candidateProductionMatchesPatch(production = {}, patch = {}) {
 }
 
 async function performCandidateOrderUpdate(name, patch, options = {}) {
-  const order = candidateByName(name);
+  let order = candidateByName(name);
+  const identity = { provider: order._provider, orderKey: order._orderKey || order._gid };
   if (!patch || Object.keys(patch).length === 0) return true;
   const checkWorkflowBaseline = () => {
     if (!options.workflowBaseline) return;
@@ -845,21 +860,25 @@ async function performCandidateOrderUpdate(name, patch, options = {}) {
   });
   try {
     const result = await send();
+    order = candidateByName(identity);
     applyCandidateProduction(order, result?.production || {});
     return result;
   } catch (error) {
     if (error?.status !== 409 || error?.code !== "VERSION_CONFLICT") throw error;
+    order = candidateByName(identity);
     const conflictProduction = error.details?.current;
-    if (conflictProduction) applyCandidateProduction(order, conflictProduction);
     const currentResult = conflictProduction
       ? { production: conflictProduction }
       : await window.api.getProductionMetadata(order._gid);
     const current = currentResult?.production || currentResult || {};
+    order = candidateByName(identity);
     applyCandidateProduction(order, current);
-    if (candidateProductionMatchesPatch(current, patch)) return { ok: true, production: current };
+    const reconciled = order.canonical.production;
+    if (candidateProductionMatchesPatch(reconciled, patch)) return { ok: true, production: reconciled };
     checkTargetDateConflict();
     checkWorkflowBaseline();
     const retry = await send();
+    order = candidateByName(identity);
     applyCandidateProduction(order, retry?.production || {});
     return retry;
   }
@@ -868,7 +887,9 @@ async function performCandidateOrderUpdate(name, patch, options = {}) {
 function updateCandidateOrder(name, patch, options = {}) {
   const chainKey = candidateIdentity(candidateByName(name));
   const previous = candidateMutationChains.get(chainKey) || Promise.resolve();
-  const next = previous.catch(() => {}).then(() => performCandidateOrderUpdate(name, patch, options));
+  const task = () => previous.catch(() => {}).then(() => performCandidateOrderUpdate(name, patch, options));
+  const next = window.dashboardMotion?.trackSave && patch && Object.keys(patch).length
+    ? window.dashboardMotion.trackSave(task) : task();
   const settled = next.catch(() => {}).finally(() => {
     if (candidateMutationChains.get(chainKey) === settled) candidateMutationChains.delete(chainKey);
   });

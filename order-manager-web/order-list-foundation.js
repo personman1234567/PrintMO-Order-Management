@@ -4,11 +4,16 @@
   const model = window.OrderBoardModel;
   if (!model) return;
   const state = model.createViewState();
+  let storage;
+  try { storage = window.localStorage; } catch { /* Optional device preferences. */ }
+  const preferences = model.readPreferences(storage);
+  state.setLayout(preferences.layout); state.setSort(preferences.sort);
   // Normal Shopify launches expose the optional layout; an explicit 0 keeps the rollback escape hatch.
   const preview = new URLSearchParams(window.location.search).get('printmo_list_preview') !== '0';
   const rowNodes = new Map(), stageNodes = new Map();
+  let rowSequence = 0;
   const headings = ['Order / Customer', 'Stage', 'Target / Age', 'Quantities', 'Blanks', 'Print materials / Progress', 'Payment / Total', 'Attention'];
-  let pending = false, elements, latest, opener, controlsHome, tabsHome, workflows, busy = false;
+  let pending = false, elements, latest, opener, tabsHome, workflows, busy = false;
   let selected = [], visibleKeys = [], workspace = '', lastResults = [], workflowReturn;
   const actionChoices = [
     ['supplier', 'Add to S&S cart'], ['ordered', 'Mark Ordered'],
@@ -96,7 +101,16 @@
     customerLine.append(customer, bundle); cells[0].append(identity, customerLine);
     const check = document.createElement('input'); check.type = 'checkbox'; check.dataset.selectOrder = key;
     const checkLabel = text('label', '', 'order-list-row-select'); checkLabel.append(check); identity.prepend(checkLabel);
-    const record = { node, cells, button, customer, badges, bundle, check, signature: '' };
+    const extras = text('div', '', 'order-list-row-extras'); extras.id = `order-list-extras-${++rowSequence}`;
+    const expand = text('button', 'More details', 'order-list-expand'); expand.type = 'button';
+    expand.setAttribute('aria-controls', extras.id); expand.setAttribute('aria-expanded', 'false');
+    cells[0].append(expand, extras);
+    const record = { node, cells, button, customer, badges, bundle, check, extras, expand, expanded: false, signature: '' };
+    expand.addEventListener('click', () => {
+      record.expanded = !record.expanded; node.classList.toggle('is-expanded', record.expanded);
+      expand.setAttribute('aria-expanded', String(record.expanded)); expand.textContent = record.expanded ? 'Less details' : 'More details';
+      expand.setAttribute('aria-label', `${record.expanded ? 'Less' : 'More'} details for ${button.textContent}`);
+    });
     rowNodes.set(key, record); return record;
   }
 
@@ -119,18 +133,18 @@
     if (row.target) target.setAttribute('aria-label', row.target.accessible);
     let age = 'Age unavailable';
     if (Number.isFinite(Date.parse(row.receivedAt)) && typeof timeAgo === 'function') age = timeAgo(row.receivedAt);
-    cells[2].replaceChildren(target, text('small', age, 'order-list-muted'));
+    cells[2].replaceChildren(target, text('small', age, 'order-list-muted order-list-extra-fact'));
     cells[3].replaceChildren(text('strong', `${row.quantities.garments} garments`), text('span', `${row.quantities.prints} print items`, 'order-list-muted'));
     if (row.quantities.other) cells[3].append(text('span', `${row.quantities.other} other items`, 'order-list-muted'));
     if (row.partial) cells[3].append(text('small', 'Counts may be incomplete', 'order-list-warning-text'));
     cells[4].replaceChildren(pill(row.materials.blanks.label, row.materials.blanks.ready ? 'ready' : row.materials.blanks.ordered ? 'warning' : 'neutral'));
     if (row.accounting) {
       const allocation = row.accounting.lines?.some(line => line.allocationPending);
-      cells[4].append(text('small', `${row.accounting.accountedGarments}/${row.accounting.expectedGarments} supplier garments received`, 'order-list-muted'));
+      cells[4].append(text('small', `${row.accounting.accountedGarments}/${row.accounting.expectedGarments} supplier garments received`, 'order-list-muted order-list-extra-fact'));
       if (allocation) cells[4].append(pill('Allocation needs review', 'warning'));
-    } else cells[4].append(text('small', 'Receiving not available', 'order-list-muted'));
+    } else cells[4].append(text('small', 'Receiving not available', 'order-list-muted order-list-extra-fact'));
     if (row.supplier?.label) {
-      const supplier = text('small', `${row.supplier.multiple ? row.supplier.label : `S&S: ${row.supplier.label}`}${row.supplier.stale ? ' · check overdue' : ''}`, 'order-list-muted');
+      const supplier = text('small', `${row.supplier.multiple ? row.supplier.label : `S&S: ${row.supplier.label}`}${row.supplier.stale ? ' · check overdue' : ''}`, 'order-list-muted order-list-extra-fact');
       supplier.title = `${row.supplier.observedAt ? `Checked ${new Date(row.supplier.observedAt).toLocaleString()}. ` : ''}Carrier delivery does not confirm garment check-in.`;
       cells[4].append(supplier);
     }
@@ -147,6 +161,10 @@
       try { total = new Intl.NumberFormat('en-US', { style: 'currency', currency: row.money.currency }).format(row.money.amount); } catch { /* Preserve unknown rather than invent currency. */ }
     }
     cells[6].append(text('strong', total));
+    record.extras.replaceChildren(text('span', `Payment: ${humanStatus(row.financialStatus)} · ${total}`), text('span', `Age: ${age}`));
+    if (row.bundle) record.extras.append(text('span', `Bundle: ${row.bundle}`));
+    for (const fact of cells[4].querySelectorAll('.order-list-extra-fact')) record.extras.append(fact.cloneNode(true));
+    record.expand.setAttribute('aria-label', `${record.expanded ? 'Less' : 'More'} details for order ${row.number}`);
     const indicators = model.indicators(row);
     cells[7].replaceChildren(...(indicators.length ? indicators.map(item => pill(item.label, item.tone)) : [text('span', '—', 'order-list-muted')]));
   }
@@ -168,10 +186,8 @@
   function moveNavigation(layout) {
     const tabs = document.getElementById('pipeline-view-tabs');
     if (layout === 'list') {
-      if (elements.controls.parentNode !== elements.layoutMount) elements.layoutMount.append(elements.controls);
       if (tabs && tabs.parentNode !== elements.tabsMount) elements.tabsMount.append(tabs);
     } else {
-      if (controlsHome.nextSibling !== elements.controls) controlsHome.after(elements.controls);
       if (tabs && tabsHome && tabsHome.nextSibling !== tabs) tabsHome.after(tabs);
     }
   }
@@ -185,8 +201,14 @@
     elements.list.hidden = layout !== 'list';
     elements.controls.querySelectorAll('button').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.orderLayout === state.get().layout)));
     moveNavigation(layout);
-    const nextWorkspace = `${document.body.dataset.orderSource}|${document.body.dataset.pipelineView || 'orders'}|${document.querySelector('.app-nav-tab[aria-pressed="true"]')?.dataset.view || 'orders'}`;
-    if (workspace && workspace !== nextWorkspace) { selected = []; workflowReturn = null; }
+    const nextWorkspace = `${document.body.dataset.orderSource}|${document.body.dataset.pipelineView || 'orders'}|${document.body.dataset.activeView || document.querySelector('.app-nav-tab[aria-pressed="true"]')?.dataset.view || 'orders'}`;
+    if (workspace && workspace !== nextWorkspace) {
+      selected = []; workflowReturn = null;
+      for (const record of rowNodes.values()) {
+        record.expanded = false; record.node.classList.remove('is-expanded');
+        record.expand.setAttribute('aria-expanded', 'false'); record.expand.textContent = 'More details'; record.signature = '';
+      }
+    }
     workspace = nextWorkspace;
     if (!candidate || layout !== 'list') return;
     latest = readSnapshot();
@@ -210,6 +232,7 @@
       : loadState === 'loading' ? 'Loading orders…' : loadState === 'error' ? 'Orders could not be loaded. Use Refresh to try again.' : 'No active orders.';
     reconcileRows(result, preserve);
     renderBusy();
+    updateFeedback();
     if (!preserve) elements.notice.setAttribute('aria-live', 'polite');
   }
 
@@ -297,14 +320,20 @@
   }
 
   function showResults(result) {
-    if (result.cancelled) return;
+    if (result.cancelled) { delete elements.feedback.dataset.saveState; return; }
     lastResults = result.results;
     for (const item of lastResults) if (item.outcome === 'saved') selected = selected.filter(key => key !== item.key);
     elements.results.hidden = !lastResults.length;
     const saved = lastResults.filter(item => item.outcome === 'saved').length;
+    elements.feedback.dataset.saveState = saved === lastResults.length && saved > 0 ? 'saved' : 'review';
     elements.resultSummary.textContent = `${saved} of ${lastResults.length} orders saved${saved !== lastResults.length ? ' · Review remaining orders' : ''}`;
     elements.resultItems.replaceChildren(...lastResults.map(item => text('li', `${item.number}: ${item.message}`, `result-${item.outcome}`)));
     elements.results.open = saved !== lastResults.length || workflows.remaining().length > 0;
+    updateFeedback();
+  }
+
+  function updateFeedback() {
+    elements.feedback.hidden = !elements.selectionNotice.textContent && elements.results.hidden;
   }
 
   async function reviewAction(retry = false) {
@@ -351,12 +380,16 @@
       if (reviewed.action === 'bundle') reviewed.args.label = input.value.trim();
       if (reviewed.action === 'ordered') reviewed.args.supplierOrderNumber = input.value.trim();
     }
-    busy = true; renderBusy(); elements.selectionNotice.textContent = 'Saving selected orders…';
+    busy = true; document.body.dataset.orderWorkflowSaving = 'true';
+    elements.feedback.dataset.saveState = 'saving';
+    renderBusy(); elements.selectionNotice.textContent = 'Saving selected orders…'; updateFeedback();
     try { showResults(retry ? await workflows.retryRemaining(jobs.map(job => job.key)) : await workflows.execute(reviewed)); }
-    catch (error) { elements.selectionNotice.textContent = `${error.message} Review the current orders and try again.`; }
+    catch (error) { elements.feedback.dataset.saveState = 'review'; elements.selectionNotice.textContent = `${error.message} Review the current orders and try again.`; }
     finally {
-      busy = false; render(); renderBusy(); restoreAnchor(savedAnchor);
-      if (elements.selectionNotice.textContent === 'Saving selected orders…') elements.selectionNotice.textContent = elements.resultSummary.textContent;
+      busy = false;
+      delete document.body.dataset.orderWorkflowSaving;
+      if (elements.selectionNotice.textContent === 'Saving selected orders…') elements.selectionNotice.textContent = '';
+      render(); renderBusy(); restoreAnchor(savedAnchor);
       workflowReturn = savedAnchor || { scrollTop: elements.scroll.scrollTop };
       restoreWorkflowOrigin();
     }
@@ -378,7 +411,7 @@
     elements = { controls: byId('order-layout-controls'), list: byId('order-list-foundation'), rows: byId('order-list-foundation-rows'),
       count: byId('order-list-foundation-count'), notice: byId('order-list-foundation-notice'), scroll: byId('order-list-scroll'), stages: byId('order-list-stages'),
       search: byId('order-list-search'), sort: byId('order-list-sort'), filters: byId('order-list-filters'), filterToggle: byId('order-list-filters-toggle'),
-      clear: byId('order-list-clear'), empty: byId('order-list-empty'), layoutMount: byId('order-list-layout-mount'), tabsMount: byId('order-list-tabs-mount') };
+      clear: byId('order-list-clear'), empty: byId('order-list-empty'), tabsMount: byId('order-list-tabs-mount') };
     if (Object.values(elements).some(value => !value)) { elements = null; return; }
     if (!preview) { document.body.dataset.orderLayout = 'board'; return; }
     workflows = window.OrderListWorkflows.create({ getOrders: cachedOrders, api: window.api,
@@ -402,16 +435,19 @@
     }
     const heading = elements.list.querySelector('th'); heading.replaceChildren(selectMatching('order-list-select-heading'));
     const globalActions = text('div', '', 'order-list-global-actions'), receive = text('button', 'Receive Batches'); receive.type = 'button';
-    globalActions.append(selectMatching('order-list-select-mobile'), receive);
+    globalActions.append(selectMatching('order-list-select-mobile'));
+    elements.list.querySelector('.order-list-toolbar').append(elements.clear, receive);
     const selectionNotice = text('p', '', 'order-list-selection-notice'); selectionNotice.setAttribute('role', 'status'); selectionNotice.setAttribute('aria-live', 'polite');
     const results = document.createElement('details'); results.className = 'order-list-action-results'; results.hidden = true;
     const resultSummary = text('summary', ''), resultItems = document.createElement('ul'), retry = text('button', 'Retry remaining steps'); retry.type = 'button'; retry.hidden = true;
     results.append(resultSummary, resultItems, retry);
-    elements.scroll.before(globalActions, selection, selectionNotice, results);
+    const feedback = text('div', '', 'order-list-feedback'); feedback.hidden = true; feedback.append(selectionNotice, results);
+    elements.list.querySelector('.order-list-result-line').append(globalActions);
+    elements.scroll.before(selection, feedback);
     const dialog = document.createElement('dialog'); dialog.className = 'order-list-review'; dialog.setAttribute('aria-labelledby', 'order-list-review-title');
     dialog.innerHTML = '<form><h2 id="order-list-review-title" tabindex="-1" autofocus></h2><p data-review-description></p><ul data-review-orders></ul><label data-review-field><span></span><input maxlength="120" autocomplete="off"></label><p data-review-error role="alert"></p><div class="order-list-review-buttons"><button type="submit" value="cancel" formnovalidate>Cancel</button><button type="submit" value="confirm" class="order-list-primary">Confirm action</button></div></form>';
     document.body.append(dialog);
-    Object.assign(elements, { selection, selectedCount, action, review, availability, reasons, selectionNotice, selectAll, results, resultSummary, resultItems, retry, dialog });
+    Object.assign(elements, { selection, selectedCount, action, review, availability, reasons, selectionNotice, selectAll, results, resultSummary, resultItems, retry, dialog, feedback });
     clearSelection.addEventListener('click', () => { if (busy) return; selected = []; elements.selectionNotice.textContent = ''; render(); });
     action.addEventListener('change', renderSelection);
     review.addEventListener('click', () => reviewAction()); retry.addEventListener('click', () => reviewAction(true));
@@ -420,19 +456,18 @@
     document.addEventListener('click', event => { if (event.target.closest('[data-view="previous"], [data-tab="history"]')) { selected = []; renderSelection(); } });
     document.body.dataset.orderLayout = 'board';
     if (!preview) return; // Explicit opt-out leaves every existing Board node in place.
-    controlsHome = document.createComment('Board layout controls'); elements.controls.before(controlsHome);
     const tabs = byId('pipeline-view-tabs');
     if (tabs) { tabsHome = document.createComment('Board draft tabs'); tabs.before(tabsHome); }
     elements.controls.addEventListener('click', event => {
       const button = event.target.closest('[data-order-layout]'); if (!button || !isCandidate()) return;
-      state.setLayout(button.dataset.orderLayout); render();
+      state.setLayout(button.dataset.orderLayout); model.savePreferences(storage, state.get()); render();
     });
     elements.stages.addEventListener('click', event => {
       const button = event.target.closest('[data-list-stage]'); if (!button) return;
       state.setStage(button.dataset.listStage); render({ preserve: false });
     });
     elements.search.addEventListener('input', () => { state.setQuery(elements.search.value); render({ preserve: false }); });
-    elements.sort.addEventListener('change', () => { state.setSort(elements.sort.value); render({ preserve: false }); });
+    elements.sort.addEventListener('change', () => { state.setSort(elements.sort.value); model.savePreferences(storage, state.get()); render({ preserve: false }); });
     elements.filterToggle.addEventListener('click', () => {
       elements.filters.hidden = !elements.filters.hidden;
       elements.filterToggle.setAttribute('aria-expanded', String(!elements.filters.hidden));
@@ -452,7 +487,7 @@
     document.addEventListener('printmo:blanks-accounting-updated', schedule);
     document.addEventListener('printmo:detail-closed', restoreDetailOrigin);
     new MutationObserver(schedule).observe(document.body, { attributes: true,
-      attributeFilter: ['data-order-source', 'data-board-load-state', 'data-pipeline-view'] });
+      attributeFilter: ['data-order-source', 'data-board-load-state', 'data-pipeline-view', 'data-active-view'] });
     // Also covers existing close paths that hide the overlay directly.
     const overlay = byId('detail-overlay');
     if (overlay) new MutationObserver(restoreDetailOrigin).observe(overlay, { attributes: true, attributeFilter: ['class', 'aria-hidden'] });

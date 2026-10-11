@@ -727,7 +727,9 @@ function makeBlanksBatchLabel(now) {
 
 const GARMENT_COST_ORDER_QUERY = `query PrintMOGarmentCostOrder($id: ID!, $after: String) {
   order(id: $id) { id name lineItems(first: 100, after: $after) {
-    nodes { id title variantTitle sku currentQuantity variant { id } }
+    nodes { id title variantTitle sku currentQuantity
+      variant { id sku inventoryItem { unitCost { amount currencyCode } } }
+    }
     pageInfo { hasNextPage endCursor }
   } }
 }`;
@@ -765,7 +767,9 @@ function garmentCostService(env) {
                     if (claim && (claim.variant_gid !== item.variant?.id || claim.sku !== item.sku || claim.qty > item.currentQuantity))
                         throw new Error('Shelf allocation needs review');
                     held.delete(item.id);
-                    items.push({ ...item, variantId: item.variant?.id || null, shelfQuantity: claim?.qty || 0 });
+                    items.push({ ...item, variantId: item.variant?.id || null, shelfQuantity: claim?.qty || 0,
+                        ...(item.variant && Object.hasOwn(item.variant, 'inventoryItem')
+                            ? { catalogCost: { ...item.variant.inventoryItem?.unitCost, sku: item.variant.sku } } : {}) });
                 }
                 if (!order.lineItems.pageInfo.hasNextPage) {
                     if (held.size) throw new Error('Shelf allocation needs review');

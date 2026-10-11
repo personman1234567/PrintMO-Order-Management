@@ -64,12 +64,49 @@ For Pages publishing, `npm run prepare:cloudflare` only creates a local artifact
 
 The normal header and mobile surface expose only the **Shopify board**. Both adapters remain in the codebase, but Legacy Redis is available only through the explicit `?printmo_debug_legacy=1` operational-debug URL; `web-shim.js` selects the data adapter and mutation endpoints.
 
-The Orders workspace exposes **Board / List preview** on normal Shopify app
-launches. Board is the reload default; List uses the same cached orders and
+The Orders workspace exposes **Board / List** on normal Shopify app
+launches. First visits default to Board; device storage restores the last layout
+and sort only. Search, stage, filters, selection and phone expansion reset on
+reopen. List uses the same cached orders and
 shared detail screen. No special URL is needed. The explicit query parameter
 `printmo_list_preview=0` hides the optional layout for rollback/debugging;
-older `=1` preview links remain compatible. Later mobile/preferences and
-representative workflow acceptance remain tracked in the staged list plan.
+older `=1` preview links remain compatible. Phone rows expose operational facts
+with expandable extras. Acknowledged production saves and conflict reconciliation
+merge by provider/order identity into the displayed snapshot immediately; older
+queue revisions cannot rewind them. Representative workflow acceptance remains
+tracked in the staged list plan.
+
+The candidate dashboard keeps Board/List in the workspace drawer
+across both layouts. Pipeline retains only its local order/draft tabs and
+Filter & sort controls. Dashboard navigation uses consistent rectangular/text
+controls and restrained blue selection surfaces. In S&S Cart consolidates its
+existing buttons into Cart actions, with Mark cart ordered first; Ordered keeps
+Receive Batches directly accessible. The contextual popover preserves the
+original receiving and production-save handlers and returns Legacy controls to
+their original homes. Pale Pipeline footers render garment/print counts in dark
+ink. Status colors and source badges retain their existing meanings.
+
+The Shopify shell removes the redundant app toolbar and destination label. Its
+right-edge native modal Menu contains the original navigation, Board/List and
+Refresh controls, overlays the board, and restores focus on close. Menu occupies
+the existing Production header on desktop Board, List heading on desktop List,
+and destination headers elsewhere. Phone Menu replaces the existing Sync slot;
+Refresh is available inside the drawer. Candidate content fills the iframe with
+8px vertical gutters and suppresses App Bridge's bottom pseudo-element spacer so
+Sidekick can overlap the independently scrollable queues. Board sections share
+title typography and header tracks; desktop Supplies actions occupy its header
+instead of a separate Blanks row. The compact garment estimate exposes source
+details on demand while keeping incomplete/unavailable states and retry visible.
+Source switching restores the original Legacy controls and titles.
+
+Dashboard motion connects tab selections through a persistent travelling underline,
+slides the workspace drawer, and provides brief explicit view/disclosure transitions
+alongside pointer press feedback and trigger-origin popovers. Keyboard activation
+and reduced-motion interactions remain immediate. Animations do not delay handlers,
+run during polling, or animate financial values. Production save feedback wraps the
+existing serialized update promise and waits for canonical acknowledgment or
+conflict reconciliation; mixed failures show review feedback. List workflows
+keep their detailed partial/uncertain results and suppress generic save notices.
 
 
 - Legacy mode retains the existing queue URLs and payloads.

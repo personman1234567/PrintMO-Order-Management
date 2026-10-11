@@ -85,6 +85,9 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./production-artwork-workspace.css" />
   <link rel="stylesheet" href="./garment-costs.css">
   <link rel="stylesheet" href="./order-list-foundation.css" />
+  <link rel="stylesheet" href="./dashboard-controls.css" />
+  <link rel="stylesheet" href="./dashboard-motion.css" />
+  <link rel="stylesheet" href="./dashboard-shell.css" />
 </head>
 <body data-active-tab="pipeline" data-active-view="orders" data-order-source="shopify" data-board-load-state="loading">
   <header class="app-header">
@@ -96,6 +99,13 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       <button class="app-nav-tab" type="button" data-view="storage" aria-pressed="false">Storage Browser</button>
       <button id="order-manager-refresh-btn" class="order-manager-refresh-btn" type="button" aria-label="Refresh orders and mockups">Refresh</button>
     </nav>
+    <div class="order-workspace-tools">
+      <span class="order-workspace-label">Orders</span>
+      <div id="order-layout-controls" class="order-layout-controls" role="group" aria-label="Order layout" hidden>
+        <button type="button" data-order-layout="board" aria-pressed="true">Board</button>
+        <button type="button" data-order-layout="list" aria-pressed="false">List</button>
+      </div>
+    </div>
   </header>
   <div id="mobile-command-surface" class="mobile-command-surface">
     <nav id="mobile-tab-bar" class="mobile-tab-bar" aria-label="Shop workflow stages">
@@ -193,15 +203,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     </dialog>
   </section>
   <div id="orders-view" class="app-view">
-    <div id="order-layout-controls" class="order-layout-controls" role="group" aria-label="Order layout" hidden>
-      <button type="button" data-order-layout="board" aria-pressed="true">Board</button>
-      <button type="button" data-order-layout="list" aria-pressed="false">List preview</button>
-    </div>
     <section id="order-list-foundation" class="order-list-foundation" aria-labelledby="order-list-foundation-title" hidden>
       <header class="order-list-heading">
         <div class="order-list-heading-title"><h2 id="order-list-foundation-title">Orders</h2><span id="order-list-foundation-count"></span></div>
         <div id="order-list-tabs-mount"></div>
-        <div id="order-list-layout-mount"></div>
       </header>
       <div id="order-list-stages" class="order-list-stages" role="group" aria-label="Filter orders by stage"></div>
       <div class="order-list-toolbar">
@@ -246,7 +251,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         <span id="pipeline-count">0</span>
         <button id="mobile-selection-toggle" class="mobile-select-toggle" type="button" aria-pressed="false" title="Toggle selection mode">Select</button>
         <button id="pipeline-view-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="pipeline-view-popover" title="All orders · Newest first">
-          View <span class="pipeline-view-indicator" aria-hidden="true"></span>
+          <span class="dashboard-filter-label">Filter &amp; sort</span><span class="dashboard-filter-label-short" aria-hidden="true">Filter</span> <span class="pipeline-view-indicator" aria-hidden="true"></span>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
         </button>
       </div>
@@ -311,7 +316,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       </div>
       <div id="pipeline-view-popover" popover="auto" role="dialog" aria-labelledby="pipeline-view-popover-title">
         <div class="pipeline-view-popover-header">
-          <h3 id="pipeline-view-popover-title">Pipeline view</h3>
+          <h3 id="pipeline-view-popover-title">Pipeline filters &amp; sort</h3>
           <button id="pipeline-view-close" type="button" aria-label="Close pipeline view options"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></button>
         </div>
         <button id="pipeline-view-reset" type="button">Reset view</button>
@@ -390,7 +395,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
               </div>
             </div>
             <div class="section-actions">
-              <button id="blanks-mark-ordered-btn" class="fullscreen-btn blanks-mark-ordered" type="button">Mark In Cart Ordered</button>
+              <button id="blanks-mark-ordered-btn" class="fullscreen-btn blanks-mark-ordered" type="button">Mark cart ordered</button>
             </div>
           </div>
           <div class="cards workflow-card-grid" id="col-blanks"></div>
@@ -1187,6 +1192,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <!-- List foundation inherits the Precision Workbench; Board stays the default.
        The opt-in preview renders cached order facts without workflow mutations. -->
   <!-- existing renderer logic -->
+  <script src="./dashboard-motion.js"></script>
   <script src="./web-shim.js"></script>
   <script src="./storage-browser.js"></script>
   <script src="./order-detail-state.js"></script>
@@ -1208,5 +1214,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./shopify-embedded-mobile.js"></script>
   <script src="./order-list-workflows.js"></script>
   <script src="./order-list-foundation.js"></script>
+  <script src="./dashboard-controls.js"></script>
+  <script src="./dashboard-shell.js"></script>
 </body>
 </html>

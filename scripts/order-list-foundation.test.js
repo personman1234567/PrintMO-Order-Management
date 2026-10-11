@@ -383,6 +383,103 @@ function adapterFixture() {
   return { context, jobs };
 }
 
+function queueRendererFixture() {
+  const { context } = adapterFixture();
+  const renderer = fs.readFileSync(path.join(__dirname, '../renderer.js'), 'utf8').replace(/\r\n/g, '\n');
+  context.published = 0; context.repaints = [];
+  context.publishOrderManagerBoardSnapshot = () => { context.published++; };
+  context.renderBoardFromLocalState = statuses => { context.repaints.push([...statuses]); };
+  vm.runInContext('let allOrders = [];', context);
+  vm.runInContext(renderer.slice(renderer.indexOf('function patchLocalOrders('), renderer.indexOf('/**\n * Remove orders', renderer.indexOf('function patchLocalOrders('))), context);
+  const start = renderer.indexOf('window.mergeOrderManagerProduction =');
+  vm.runInContext(renderer.slice(start, renderer.indexOf('\n};', start) + 3), context);
+  context.hydrateCandidateAssets = async () => {};
+  context.applyCandidateCachedAssetUrls = () => {};
+  const record = (id, stage = 'to_order', version = 1) => ({ id, displayName: '#Same', createdAt: '2026-10-01', source: { provider: 'shopify' }, commerce: { customerName: 'Same', lineItems: [] }, production: { stage, version, blanksOrdered: 1 } });
+  let records = [record('1'), record('2')];
+  context.apiFetch = async () => ({ data: records, pageInfo: {} });
+  return { context, record, setRecords: value => { records = value; },
+    async load(options) { context.loaded = await context.loadCandidateQueue(options); vm.runInContext('allOrders = loaded', context); return context.loaded; } };
+}
+
+test('real queue, adapter and renderer immediately agree on exact stage, bundle, filters and counts', async () => {
+  const fixture = queueRendererFixture(), { context } = fixture;
+  const jobs = await fixture.load();
+  assert.equal(context.candidateByName({ provider: 'shopify', orderKey: '1' }), jobs[0]);
+  context.window.api.updateProductionMetadata = async (id, payload) => ({ production: { stage: payload.patch.stage || 'print', bundleId: payload.patch.bundle_id || '', version: payload.expectedVersion + 1 } });
+  await context.window.api.updateBoardMove({ provider: 'shopify', orderKey: '1' }, { status: 'print' });
+  assert.equal(model.stageForOrder(jobs[0]), 'print'); assert.equal(model.stageForOrder(jobs[1]), 'to_order');
+  assert.equal(model.snapshot(jobs).counts.print, 1);
+  assert.equal(model.browse(model.snapshot(jobs), { stage: 'to_order' }).shown, 1);
+  assert.ok(context.repaints.some(statuses => statuses.includes('toOrder') && statuses.includes('print')));
+  await context.window.api.setBundle([{ provider: 'shopify', orderKey: '1' }], 'Immediate');
+  assert.equal(jobs[0].bundle, 'Immediate'); assert.equal(jobs[1].bundle, '');
+  assert.equal(jobs[0].blanksOrdered, 0); assert.ok(context.published >= 2);
+});
+
+test('refresh replacement and stale revisions cannot rewind an acknowledged production state', async () => {
+  const fixture = queueRendererFixture(), { context } = fixture;
+  await fixture.load(); let release;
+  context.window.api.updateProductionMetadata = async () => new Promise(resolve => { release = resolve; });
+  const save = context.window.api.updateBoardMove({ provider: 'shopify', orderKey: '1' }, { status: 'print' });
+  await new Promise(resolve => setImmediate(resolve));
+  const replacement = await fixture.load();
+  release({ production: { stage: 'print', version: 3, bundleId: 'Saved', printedCount: 2, printsStatus: 1 } });
+  await save;
+  assert.equal(replacement[0].productionStage, 'print'); assert.equal(replacement[0].progress, 2);
+  // A subsequent queue response is an independent, older server projection.
+  fixture.setRecords([fixture.record('1'), fixture.record('2')]);
+  const refreshed = await fixture.load();
+  assert.equal(refreshed[0].productionStage, 'print'); assert.equal(refreshed[0].bundle, 'Saved');
+  assert.equal(refreshed[0].printsStatus, 1);
+  context.applyCandidateProduction(refreshed[0], { stage: 'received', version: 2 });
+  assert.equal(refreshed[0].productionStage, 'print');
+});
+
+test('progressive queue pages retain a save made after the first visible page', async () => {
+  const fixture = queueRendererFixture(), { context, record } = fixture;
+  let page = 0;
+  context.apiFetch = async () => ++page === 1
+    ? { data: [record('1')], pageInfo: { nextCursor: 'next' } }
+    : { data: [record('2')], pageInfo: {} };
+  context.window.api.updateProductionMetadata = async () => ({ production: { stage: 'print', version: 2, printedCount: 4, blanksOrdered: 1 } });
+  const jobs = await fixture.load({ onPage: async mapped => {
+    if (page !== 1) return;
+    context.loaded = mapped; vm.runInContext('allOrders = loaded', context);
+    await context.window.api.updateBoardMove({ provider: 'shopify', orderKey: '1' }, { status: 'print' });
+  } });
+  assert.equal(jobs[0].productionStage, 'print'); assert.equal(jobs[0].progress, 4);
+  context.applyCandidateProduction(jobs[0], { bundleId: 'Partial metadata', version: 3 });
+  assert.equal(jobs[0].blanksOrdered, 1); assert.equal(jobs[0].progress, 4);
+  assert.equal(jobs[0].productionStage, 'print');
+});
+
+test('conflict reconciliation updates the displayed replacement and rejects changed workflow prerequisites', async () => {
+  const fixture = queueRendererFixture(), { context } = fixture;
+  await fixture.load(); let release;
+  context.window.api.updateProductionMetadata = async () => new Promise((_, reject) => { release = reject; });
+  const save = context.window.api.updateBoardMove({ provider: 'shopify', orderKey: '1' }, { status: 'print' }, { workflowBaseline: { stage: 'to_order', bundle: '' } });
+  await new Promise(resolve => setImmediate(resolve));
+  const replacement = await fixture.load();
+  release(Object.assign(new Error('Conflict'), { status: 409, code: 'VERSION_CONFLICT', details: { current: { stage: 'blanks_ordered', version: 2, bundleId: 'Other' } } }));
+  await assert.rejects(save, error => error.code === 'WORKFLOW_CHANGED');
+  assert.equal(model.stageForOrder(replacement[0]), 'blanks_ordered'); assert.equal(replacement[0].bundle, 'Other');
+});
+
+test('device preferences persist only layout and sort and validate fields independently', () => {
+  let value;
+  const storage = { getItem: () => value, setItem: (_, next) => { value = next; } };
+  const state = model.createViewState(); state.setLayout('list'); state.setSort('target'); state.setStage('print'); state.setQuery('Secret'); state.setFilters({ source: 'etsy' });
+  model.savePreferences(storage, state.get()); assert.deepEqual(JSON.parse(value), { layout: 'list', sort: 'target' });
+  const fresh = model.createViewState(), saved = model.readPreferences(storage); fresh.setLayout(saved.layout); fresh.setSort(saved.sort);
+  assert.equal(fresh.get().stage, 'all'); assert.equal(fresh.get().query, ''); assert.equal(fresh.get().filters.source, 'all');
+  value = '{"layout":"list","sort":"bad"}'; assert.deepEqual(model.readPreferences(storage), { layout: 'list', sort: 'newest' });
+  value = '{"layout":"bad","sort":"target"}'; assert.deepEqual(model.readPreferences(storage), { layout: 'board', sort: 'target' });
+  value = '{'; assert.deepEqual(model.readPreferences(storage), { layout: 'board', sort: 'newest' });
+  const blocked = { getItem() { throw Error('Blocked'); }, setItem() { throw Error('Blocked'); } };
+  assert.deepEqual(model.readPreferences(blocked), { layout: 'board', sort: 'newest' }); assert.doesNotThrow(() => model.savePreferences(blocked, state.get()));
+});
+
 test('real adapter mutations address exact order and preserve name callers', async () => {
   const { context, jobs } = adapterFixture(), calls = [];
   context.window.api.updateProductionMetadata = async (id, payload) => { calls.push(id); return { production: { stage: payload.patch.stage || 'received', bundleId: payload.patch.bundle_id, version: 2 } }; };
@@ -464,4 +561,99 @@ test('recovery remains available after a different selection finishes another ac
   await fixture.controller.execute(fixture.controller.review('ordered', [model.orderKey(jobs[0])], { supplierOrderNumber: '123456' }));
   await fixture.controller.execute(fixture.controller.review('move', [model.orderKey(jobs[1])], { destination: 'print' }));
   assert.deepEqual(fixture.controller.remainingJobs().map(job => job.key), [model.orderKey(jobs[0])]);
+});
+
+function motionFixture() {
+  class Node {
+    constructor(tag) { this.tag = tag; this.dataset = {}; this.children = []; }
+    setAttribute() {}
+    append(...nodes) { this.children.push(...nodes); }
+    querySelector(tag) { return this.children.find(node => node.tag === tag); }
+  }
+  const body = new Node('body'); body.dataset.orderSource = 'shopify';
+  const reduced = { matches: false, addEventListener() {} };
+  const document = { body, readyState: 'complete', createElement: tag => new Node(tag),
+    addEventListener() {}, querySelectorAll: () => [] };
+  const context = vm.createContext({ document, clearTimeout() {},
+    MutationObserver: class { observe() {} },
+    window: { matchMedia: () => reduced, setTimeout: () => 1 } });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../order-manager-web/dashboard-motion.js'), 'utf8'), context);
+  return { motion: context.window.dashboardMotion, body, reduced, feedback: body.children[0] };
+}
+
+test('save feedback waits for the original task and preserves its result', async () => {
+  const { motion, feedback } = motionFixture();
+  let resolve;
+  const response = { production: { version: 9 } };
+  const pending = motion.trackSave(() => new Promise(done => { resolve = done; }));
+  assert.equal(feedback.dataset.saveState, 'saving');
+  assert.equal(feedback.querySelector('span').textContent, 'Saving changes…');
+  resolve(response);
+  assert.equal(await pending, response);
+  assert.equal(feedback.dataset.saveState, 'saved');
+});
+
+test('mixed saves retain review feedback until every pending save settles', async () => {
+  const { motion, feedback } = motionFixture();
+  let reject, resolve;
+  const error = new Error('Acknowledgment unavailable');
+  const failure = motion.trackSave(() => new Promise((_done, fail) => { reject = fail; }));
+  const success = motion.trackSave(() => new Promise(done => { resolve = done; }));
+  reject(error);
+  await assert.rejects(failure, value => value === error);
+  assert.equal(feedback.dataset.saveState, 'saving');
+  resolve(true); await success;
+  assert.equal(feedback.dataset.saveState, 'review');
+  await motion.trackSave(async () => true);
+  assert.equal(feedback.dataset.saveState, 'saved');
+});
+
+test('list workflows keep their own detailed result feedback without generic success notices', async () => {
+  const { motion, body, feedback } = motionFixture();
+  body.dataset.orderWorkflowSaving = 'true';
+  await motion.trackSave(async () => true);
+  assert.equal(feedback.hidden, true);
+  delete body.dataset.orderWorkflowSaving;
+  await motion.trackSave(async () => true);
+  assert.equal(feedback.hidden, false);
+});
+
+test('keyboard and reduced-motion menu opens are immediate; pointer entries cancel on interruption', () => {
+  const { motion, reduced } = motionFixture();
+  const calls = [];
+  const panel = { style: {}, getBoundingClientRect: () => ({ left: 100, top: 80, width: 200, height: 180 }),
+    animate: (_frames, options) => { const animation = { options, cancelled: false, cancel() { this.cancelled = true; } }; calls.push(animation); return animation; } };
+  const trigger = { getBoundingClientRect: () => ({ left: 220, width: 80, bottom: 74 }) };
+  motion.enterPopover(panel, trigger, { detail: 0 });
+  reduced.matches = true; motion.enterPopover(panel, trigger, { detail: 1 });
+  assert.equal(calls.length, 0);
+  reduced.matches = false; motion.enterPopover(panel, trigger, { detail: 1 });
+  assert.equal(calls[0].options.duration, 150);
+  assert.equal(panel.style.transformOrigin, '160px 0px');
+  motion.enterPopover(panel, trigger, { detail: 1 });
+  assert.equal(calls[0].cancelled, true);
+  motion.cancelPopover(panel);
+  assert.equal(calls[1].cancelled, true);
+});
+
+test('motion feedback preserves real adapter serialization and stays pending through queued saves', async () => {
+  const { context, jobs } = adapterFixture();
+  const { motion, feedback } = motionFixture();
+  context.window.dashboardMotion = motion;
+  const releases = [];
+  let active = 0, peak = 0;
+  context.window.api.updateProductionMetadata = async () => {
+    active++; peak = Math.max(peak, active);
+    await new Promise(resolve => releases.push(resolve));
+    active--; return { production: { version: 2 } };
+  };
+  const first = context.window.api.updateBoardMove({ provider: 'shopify', orderKey: '2' }, { status: 'print' });
+  const second = context.window.api.setBundle([jobs[1].name], 'Name path');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(releases.length, 1); releases[0](); await first;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(feedback.dataset.saveState, 'saving');
+  assert.equal(releases.length, 2); releases[1](); await second;
+  assert.equal(peak, 1);
+  assert.equal(feedback.dataset.saveState, 'saved');
 });

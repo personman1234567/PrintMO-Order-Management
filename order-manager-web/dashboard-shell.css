@@ -1,0 +1,113 @@
+/* One compact app shell and one section anatomy in both order layouts. */
+#dashboard-menu-toggle, .dashboard-section-identity { display: none; }
+.dashboard-filter-label-short { display: none; }
+body[data-order-source="shopify"] .app-header { display: none !important; }
+/* App Bridge adds a body spacer for floating Sidekick. The order workspace uses
+   the full iframe viewport and its own inner scroll owners instead. */
+body[data-order-source="shopify"]::after { content: none !important; display: none !important; }
+body[data-order-source="shopify"] .app-header .app-brand { display: none; }
+body[data-order-source="shopify"] .order-workspace-label { display: none; }
+body[data-order-source="shopify"] #dashboard-menu .order-workspace-tools { display: flex; flex-direction: column; align-items: stretch; gap: 12px; flex: initial; }
+body[data-order-source="shopify"] #order-layout-controls { padding: 0; }
+body[data-order-source="shopify"] #dashboard-menu #order-layout-controls button { flex: 1; }
+body[data-order-source="shopify"] #dashboard-menu .order-manager-refresh-btn { display: block; min-height: 44px; }
+body[data-order-source="shopify"] #dashboard-menu .legacy-debug-source-switch { margin-top: 16px; }
+body[data-order-source="shopify"] .container { padding-top: 8px; padding-bottom: 8px; }
+body[data-order-source="shopify"] .order-list-foundation { margin-bottom: 8px; }
+body[data-order-source="shopify"] .order-list-heading h2 { display: block; }
+body[data-order-source="shopify"] #dashboard-menu-toggle {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 44px; padding: 8px 12px; border: 0; border-radius: 6px;
+  background: transparent; color: #334155; font: 600 14px/1.2 system-ui, sans-serif; cursor: pointer;
+}
+body[data-order-source="shopify"] .dashboard-menu-host > #dashboard-menu-toggle { flex: 0 0 auto; margin-left: auto; }
+body[data-order-source="shopify"] .production-panel-header > #dashboard-menu-toggle { grid-column: 2; grid-row: 1 / 3; justify-self: end; }
+body[data-order-source="shopify"] .order-list-heading > #dashboard-menu-toggle { order: 2; }
+#dashboard-menu {
+  position: fixed; inset: 0 0 0 auto; box-sizing: border-box;
+  width: min(320px, calc(100vw - 24px)); max-width: none;
+  height: 100dvh; max-height: 100dvh; margin: 0; padding: 16px;
+  border: 0; border-left: 1px solid #CBD5E1; border-radius: 0;
+  background: #FFF; color: #334155; box-shadow: -8px 0 24px rgb(15 23 42 / .12);
+  overflow: auto; overscroll-behavior: contain;
+}
+#dashboard-menu::backdrop { background: rgb(15 23 42 / .16); }
+.dashboard-menu-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dashboard-menu-header h2 { margin: 0; font: 600 16px/1.4 system-ui, sans-serif; }
+.dashboard-menu-header button { width: 44px; height: 44px; border: 0; border-radius: 6px; background: transparent; color: #334155; font-size: 24px; cursor: pointer; }
+.dashboard-menu-caption { margin: 16px 8px 8px; color: #64748B; font: 500 12px/1.4 system-ui, sans-serif; }
+body[data-order-source="shopify"] #dashboard-menu .app-nav { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+body[data-order-source="shopify"] #dashboard-menu .app-nav-tab { display: block; text-align: left; border: 0; border-radius: 6px; min-height: 44px; }
+body[data-order-source="shopify"] #dashboard-menu .app-nav-tab[aria-current="page"] { background: #EFF6FF; color: #1765C1; box-shadow: inset 3px 0 #1765C1; }
+#dashboard-menu button:hover { background: #EFF6FF; }
+#dashboard-menu :focus-visible { outline: 2px solid #1765C1; outline-offset: 2px; }
+
+body[data-order-source="shopify"] .container > .panel:is(.pipeline, .create.supplies-desktop-active, .fulfillment) > .dashboard-section-header {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 20px 44px; align-items: center;
+  min-height: 72px; padding: 4px 12px; gap: 0 8px;
+  box-sizing: border-box; flex: 0 0 auto; border-bottom: 1px solid #E2E8F0;
+}
+body[data-order-source="shopify"] .dashboard-section-identity {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0; grid-column: 1; grid-row: 1;
+}
+body[data-order-source="shopify"] .dashboard-section-identity .panel-title {
+  display: block; margin: 0; min-height: 0; min-width: 0; white-space: normal;
+  font: 600 16px/20px system-ui, sans-serif; letter-spacing: 0; color: #0F172A;
+}
+body[data-order-source="shopify"] .dashboard-section-identity #pipeline-count { position: static; margin: 0; padding: 0; font: 500 12px/20px system-ui, sans-serif; }
+body[data-order-source="shopify"] .container > .panel:is(.pipeline, .create.supplies-desktop-active, .fulfillment) > .dashboard-section-header :is(#pipeline-view-tabs, #supplies-tabs, .print-workflow-controls) {
+  grid-column: 1; grid-row: 2; margin: 0; min-width: 0; max-width: 100%; justify-self: start;
+}
+body[data-order-source="shopify"] .container > .panel:is(.pipeline, .create.supplies-desktop-active, .fulfillment) > .dashboard-section-header :is(#pipeline-view-toggle, .section-actions) {
+  grid-column: 2; grid-row: 1 / 3; margin: 0; justify-self: end;
+}
+body[data-order-source="shopify"] .container > .panel:is(.pipeline, .create.supplies-desktop-active, .fulfillment) > .dashboard-section-header #mobile-selection-toggle { grid-column: 2; grid-row: 1; }
+body[data-order-source="shopify"] .dashboard-section-header .section-actions { display: flex; }
+body[data-order-source="shopify"] .dashboard-section-header .section-actions[hidden] { display: none; }
+body[data-order-source="shopify"] .dashboard-section-header #blanks-receive-batches-btn { min-height: 44px; padding: 8px 12px; border: 1px solid #CBD5E1; border-radius: 6px; background: #FFF; color: #334155; font: 600 14px/1.2 system-ui, sans-serif; }
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active #blanks-section > .section-header { display: none; }
+body[data-order-source="shopify"] .production-panel-header .dashboard-section-identity,
+body[data-order-source="shopify"] .production-panel-header .print-workflow-controls { grid-column: 1 !important; }
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active #supplies-tabs { width: 100%; }
+body[data-order-source="shopify"] .panel.create.supplies-desktop-active .supplies-tab { min-width: 0; white-space: normal; }
+
+body[data-order-source="shopify"] .garment-cart-cost { margin: 0; padding: 0 12px; border: 0; border-bottom: 1px solid #E2E8F0; border-radius: 0; background: #FFF; }
+.garment-cart-explanation > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; cursor: pointer; list-style: none; font: 500 13px/1.4 system-ui, sans-serif; }
+.garment-cart-explanation > summary::-webkit-details-marker { display: none; }
+.garment-cart-explanation > summary::after { content: '⌄'; flex: 0 0 auto; color: #64748B; }
+.garment-cart-explanation > summary strong { margin-left: auto; font-variant-numeric: tabular-nums; text-align: right; }
+.garment-cart-explanation[open] > summary::after { content: '⌃'; }
+.garment-cart-explanation > p { padding-bottom: 12px; margin-top: 0; }
+.garment-cart-explanation > summary:focus-visible { outline: 2px solid #1765C1; outline-offset: -2px; }
+body[data-order-source="shopify"] .garment-cart-cost .garment-cost-exclusions > summary { font-size: 13px; padding: 8px 0; }
+body[data-order-source="shopify"] .garment-cart-cost > :is(.garment-cost-exclusions, .garment-cost-retry) { margin-bottom: 8px; }
+
+body[data-order-source="shopify"] .dashboard-connected-tabs { position: relative; }
+.dashboard-tab-indicator { display: none; }
+body[data-order-source="shopify"] .dashboard-tab-indicator { display: block; position: absolute; left: 0; bottom: 0; width: 1px; height: 2px; background: #1765C1; transform-origin: left center; pointer-events: none; }
+body[data-order-source="shopify"] .dashboard-tab-indicator[hidden] { display: none; }
+body[data-order-source="shopify"] .dashboard-connected-tabs button { border-bottom-color: transparent !important; box-shadow: none !important; }
+body[data-order-source="shopify"] #order-list-stages .order-list-stage-filter[aria-pressed="true"] { color: #1765C1; background: #EFF6FF; }
+body[data-order-source="shopify"] #order-list-stages .order-list-stage-filter[aria-pressed="true"] .order-list-stage-count { color: inherit; }
+
+@media (min-width: 901px) and (max-width: 1350px) {
+  body[data-order-source="shopify"] .production-panel-header #dashboard-menu-toggle { width: 44px; padding: 0; }
+  body[data-order-source="shopify"] .production-panel-header #dashboard-menu-toggle span { display: none; }
+  body[data-order-source="shopify"] .container > .panel:is(.pipeline, .create.supplies-desktop-active, .fulfillment) > .dashboard-section-header { grid-template-rows: 44px 44px; min-height: 96px; }
+  body[data-order-source="shopify"] .container > .panel:is(.pipeline, .create.supplies-desktop-active, .fulfillment) > .dashboard-section-header :is(#pipeline-view-toggle, .section-actions) { grid-row: 1; }
+  body[data-order-source="shopify"] .container > .panel:is(.pipeline, .create.supplies-desktop-active, .fulfillment) > .dashboard-section-header :is(#pipeline-view-tabs, #supplies-tabs) { grid-column: 1 / -1; }
+}
+@media (max-width: 900px) {
+  body[data-order-source="shopify"] #mobile-refresh-btn { display: none; }
+  body[data-order-source="shopify"] #mobile-tab-bar > #dashboard-menu-toggle { margin: 0; height: 46px; }
+  body[data-order-source="shopify"][data-order-layout="list"] .order-list-heading h2 { display: block; }
+  body[data-order-source="shopify"] #dashboard-menu-toggle { width: 44px; padding: 0; }
+  #dashboard-menu-toggle span { display: none; }
+  body[data-order-source="shopify"] .container > .panel:is(.pipeline, .create.supplies-desktop-active, .fulfillment) > .dashboard-section-header { grid-template-rows: 44px 44px; min-height: 96px; }
+  body[data-order-source="shopify"] .container > .panel:is(.pipeline, .create.supplies-desktop-active, .fulfillment) > .dashboard-section-header #pipeline-view-tabs { grid-column: 1; }
+  body[data-order-source="shopify"] .container > .panel:is(.pipeline, .create.supplies-desktop-active, .fulfillment) > .dashboard-section-header #pipeline-view-toggle { grid-row: 2; }
+  body[data-order-source="shopify"] .dashboard-filter-label { display: none; }
+  body[data-order-source="shopify"] .dashboard-filter-label-short { display: inline; }
+}
+@media (prefers-reduced-motion: reduce) { .dashboard-tab-indicator { transition: none !important; } }

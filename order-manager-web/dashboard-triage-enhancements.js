@@ -373,7 +373,7 @@
     const summary = `${filterLabel === 'All' ? 'All orders' : filterLabel} · ${sortLabel}`;
     toggle.dataset.modified = String(state.filter !== 'all' || state.sort !== defaultSort());
     toggle.title = summary;
-    toggle.setAttribute('aria-label', `Pipeline view options: ${summary}`);
+    toggle.setAttribute('aria-label', `Pipeline filters and sort: ${summary}`);
   }
 
   function setupViewPopover() {
@@ -406,6 +406,7 @@
 
     function close(restoreFocus = false) {
       if (!open) return;
+      window.dashboardMotion?.cancelPopover(popover);
       open = false;
       if (nativePopover) popover.hidePopover();
       popover.classList.remove('is-open');
@@ -413,7 +414,7 @@
       if (restoreFocus && toggle.getClientRects().length) toggle.focus({ preventScroll: true });
     }
 
-    toggle.addEventListener('click', () => {
+    toggle.addEventListener('click', event => {
       if (open) return close(true);
       if (!isShopify() || document.body.dataset.pipelineView === 'drafts') return;
       open = true;
@@ -421,6 +422,7 @@
       else popover.classList.add('is-open');
       toggle.setAttribute('aria-expanded', 'true');
       position();
+      window.dashboardMotion?.enterPopover(popover, toggle, event);
       popover.querySelector('[data-dashboard-filter][aria-pressed="true"]')?.focus({ preventScroll: true });
     });
     popover.addEventListener('toggle', event => {

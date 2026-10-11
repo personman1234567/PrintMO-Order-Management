@@ -46,6 +46,72 @@ test('catalog resolution deduplicates variant requests and caches for subsequent
   assert.equal(values.length, 2); assert.equal(requests, 1);
   assert.equal(values[0].supplierMinor, 1137); assert.equal(values[1].supplierMinor, 1516);
 });
+
+test('native order costs use the current inline catalog values without variant lookups', async () => {
+  const service = createGarmentCostService({ shopKey: 'inline-cost-test', isPrint,
+    readOrder: async id => ({ id, provider: 'shopify', items: [
+      shirt('known', 5, { shelfQuantity: 2, catalogCost: { amount: '3.79', currencyCode: 'USD', sku: 'B001' } })
+    ] }), graphql: async () => { assert.fail('Inline costs must not trigger another Shopify request'); }
+  });
+  const [value] = await service.estimates(['one']);
+  assert.equal(value.status, 'complete');
+  assert.equal(value.garmentMinor, 1895);
+  assert.equal(value.supplierMinor, 1137);
+});
+
+test('inline missing costs, valid zero and changed SKUs retain exclusions without price fallback', async () => {
+  const service = createGarmentCostService({ shopKey: 'inline-exclusions-test', isPrint,
+    readOrder: async id => ({ id, items: [
+      shirt('missing', 1, { catalogCost: { sku: 'B001' } }),
+      shirt('zero', 2, { variantId: `${variantId}0`, catalogCost: { amount: '0.00', currencyCode: 'USD', sku: 'B001' } }),
+      shirt('changed', 3, { variantId: `${variantId}1`, catalogCost: { amount: '4.00', currencyCode: 'USD', sku: 'OTHER' } })
+    ] }), graphql: async () => { assert.fail('Missing inline costs must remain explicit'); }
+  });
+  const [value] = await service.estimates(['one']);
+  assert.equal(value.garmentMinor, 0);
+  assert.equal(value.lines[1].unitCostMinor, 0);
+  assert.deepEqual(value.exclusions.map(line => line.exclusionReason), ['Missing cost', 'Catalog SKU changed']);
+});
+
+test('multiple orders load together with no more than four total upstream operations', async () => {
+  let active = 0;
+  let peak = 0;
+  const observe = async value => {
+    active++; peak = Math.max(peak, active);
+    await new Promise(resolve => setImmediate(resolve));
+    active--;
+    return value;
+  };
+  const service = createGarmentCostService({ shopKey: 'bounded-orders-test', isPrint,
+    readOrder: id => observe({ id, items: [shirt('line', 2, { variantId: `gid://shopify/ProductVariant/${id}` })] }),
+    graphql: (_query, { id }) => observe({ data: { productVariant: {
+      id, sku: 'B001', inventoryItem: { unitCost: { amount: '3.79', currencyCode: 'USD' } }
+    } } })
+  });
+  const ids = Array.from({ length: 12 }, (_, index) => String(1000 + index));
+  const values = await service.estimates(ids);
+  assert.equal(peak, 4);
+  assert.deepEqual(values.map(value => value.orderId), ids);
+  assert(values.every(value => value.status === 'complete' && value.garmentMinor === 758));
+});
+
+test('a blocked first order does not prevent other orders from loading', async () => {
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const read = [];
+  const service = createGarmentCostService({ shopKey: 'slow-first-test', isPrint,
+    readOrder: async id => {
+      if (id === 'slow') await blocked;
+      read.push(id);
+      return { id, items: [shirt('line', 1, { catalogCost: { amount: '3.79', currencyCode: 'USD', sku: 'B001' } })] };
+    }, graphql: async () => { assert.fail('Unexpected catalog lookup'); }
+  });
+  const pending = service.estimates(['slow', 'two', 'three', 'four', 'five']);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(read, ['two', 'three', 'four', 'five']);
+  release();
+  assert.equal((await pending).length, 5);
+});
 test('Etsy uses supplier SKU only and requires a unique exact catalog match', async () => {
   const make = (shopKey, nodes, hasNextPage = false) => createGarmentCostService({ shopKey, isPrint,
     readOrder: async id => ({ id, provider: 'etsy', items: [shirt('a', 2, { sku: 'ETSY-SOURCE', supplierSku: 'B001' }), shirt('b', 1, { sku: 'ETSY-SOURCE' })] }),

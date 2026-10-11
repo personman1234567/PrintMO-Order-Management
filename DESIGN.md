@@ -48,7 +48,7 @@ typography:
     letterSpacing: "0em"
 rounded:
   card: "8px"
-  control: "10px"
+  control: "6px"
   section: "12px"
   panel: "22px"
   full: "999px"
@@ -64,7 +64,7 @@ components:
     backgroundColor: "{colors.action-blue}"
     textColor: "{colors.surface}"
     typography: "{typography.label}"
-    rounded: "{rounded.full}"
+    rounded: "{rounded.control}"
     padding: "8px 14px"
     height: "44px"
   button-primary-hover:
@@ -81,7 +81,7 @@ components:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.text}"
     typography: "{typography.label}"
-    rounded: "{rounded.full}"
+    rounded: "{rounded.control}"
     padding: "6px 10px"
   filter-chip-active:
     backgroundColor: "{colors.action-blue}"
@@ -198,14 +198,14 @@ Depth is light and structural. Borders and tonal layers separate most content; s
 
 ### Buttons
 
-- **Shape:** Compact and tactile with 10px corners for ordinary controls or full-pill treatment for view switching; mobile targets are at least 44px high.
+- **Shape:** Dashboard actions use compact rectangular controls with 6px corners and explicit 14px type. Layout selection uses an 8px enclosing segment with 6px options. Targets are at least 44px high.
 - **Primary:** Action Blue with white text, used once per decision cluster.
 - **Hover / Focus:** Darken on hover, compress subtly on press, and show a visible 2px focus outline with offset. Disable decorative motion under reduced-motion preferences.
 - **Secondary:** White or Cool Canvas with Working Slate text and a Structural Line border; never compete with the primary action.
 
 ### Chips
 
-- **Style:** Full-pill filters with compact counts, white at rest and Action Blue when selected.
+- **Style:** Dashboard filters use modest rectangular corners. Counts are plain metadata. Source and production-status labels retain their semantic identity.
 - **State:** Selected state changes background, text, and `aria-pressed` or `aria-selected`; count badges inherit the state rather than introducing another color.
 
 ### Cards / Containers
@@ -224,7 +224,20 @@ Depth is light and structural. Borders and tonal layers separate most content; s
 
 ### Navigation
 
-Desktop navigation uses quiet pill controls with one Action Blue active state. Mobile uses a five-destination bottom dock because the constrained Shopify Admin viewport cannot present the three-column desktop topology. Labels remain available to assistive technology even when compact icon presentation is required.
+Desktop navigation uses quiet text tabs with pale-blue selection and an Action Blue underline. Board/List and Refresh live beside navigation in the workspace drawer; other workspaces and Draft Orders hide the layout control. Labels remain available to assistive technology.
+
+### Shopify Dashboard Controls
+
+`dashboard-controls.js/.css` owns the candidate dashboard composition. Legacy controls return to their original DOM homes; order-detail styles and mutation handlers remain independent.
+
+- **Navigation:** Pipeline, Supplies, and Production tabs share 14px labels, 44px targets, blue selected text/underline and a pale-blue wash. Counts stay plain, tabular metadata. Subtle blue panel-header surfaces give the dashboard structure without changing green, amber or provider meanings.
+- **Supplies actions:** In S&S Cart exposes one Cart actions popover, with Mark cart ordered first, the eligible Manual Add checklist, and Receive Batches for linking separate shipments. Ordered exposes Receive Batches directly. The original buttons and supplier/receiving handlers are retained, including the required supplier order number, partial-save feedback and busy guard.
+- **Popover:** Cart actions is a named nonmodal dialog in the native top layer, with a fixed-position fallback and 12px viewport margins. Opening focuses the first enabled action; arrows/Home/End navigate actions; Escape restores the trigger. A view/source change dismisses it, and action activation restores a visible opener before the existing prompt or dialog opens.
+- **Card metadata:** Pale Pipeline footers use dark garment/print quantities and dark icons; age labels are quiet rectangular metadata. Production and source color meanings remain unchanged.
+- **Workspace shell:** `dashboard-shell.js/.css` removes the candidate toolbar and redundant destination label entirely. The original Board/List and Refresh controls join navigation in the right-edge native modal drawer. Menu occupies the existing Production header on desktop Board, List heading on desktop List, and destination headers elsewhere. On phone it replaces Sync within the existing workflow navigation; Refresh remains in the drawer. The drawer overlays the app without resizing columns, confines keyboard focus, closes on Escape or outside click, and returns focus to its launcher. Legacy controls return to their original header.
+- **Viewport:** Candidate content fills the iframe with 8px vertical outer gutters. The App Bridge bottom pseudo-element spacer is suppressed for this workspace, allowing content behind floating Sidekick. Board queues retain independent scroll owners; List retains its own result scroller. No card sizing or information hierarchy is compressed.
+- **Shared section anatomy:** Shopify Board uses equal header tracks, 16px sentence-case titles, plain counts and aligned local tabs. Wide headers measure 73px including the divider; narrower desktop and phone headers use 97px to preserve 44px targets. Supplies actions move into its header on desktop and return to Blanks on phone or Legacy. The redundant desktop Blanks header is removed. The 44px garment summary reveals its source explanation on demand; incomplete costs and retry remain visible, and open/focus state survives hydration.
+- **Motion and save feedback:** `dashboard-motion.js/.css` retains 120ms, 2% pointer-press feedback, 150ms trigger-origin menu entrances and acknowledgment-based save feedback. `dashboard-shell.js` adds a persistent 180ms travelling tab indicator, a 200ms drawer entrance with a 140ms exit, 120ms explicit view reveals and 150ms positional continuity for disclosures. Motion is interruptible; keyboard actions stay immediate and reduced motion removes movement. Polling and financial values do not animate. List workflows retain their detailed partial/uncertain results; mixed outcomes never receive an all-saved check.
 
 ### Order Workflow Card
 
@@ -232,10 +245,10 @@ The order card is the signature component. It prioritizes order identity, custom
 
 ### Shopify Order Pipeline
 
-The Shopify Pipeline keeps the order workspace visible and moves filtering and sorting into a compact View overlay. This is a local component adaptation of the Precision Workbench.
+The Shopify Pipeline keeps local filtering and sorting in the compact Filter & sort overlay.
 
-- **Header:** A single row (64px minimum height, 8px by 12px padding) places the heading, plain count, Orders / Draft Orders tabs, and View trigger together at desktop column widths such as 544px. The count uses tabular numerals and shows visible/total when filtered. The text-led active tab uses blue text and a 2px underline; it does not inherit the filled-pill navigation treatment.
-- **Responsive arrangement:** At Pipeline column widths of 490px or less, or mobile viewport widths of 900px or less, the header uses two rows: heading/count and selection above tabs/View. Tabs and controls retain at least 44px targets. Preserve the Pipeline's existing inner scroll ownership.
+- **Header:** Pipeline uses the shared section anatomy above: heading and plain count above Orders / Draft Orders, with Filter & sort alongside. Board/List stays in the app shell. The count uses tabular numerals and shows visible/total when filtered.
+- **Responsive arrangement:** Narrower desktop headers put contextual actions beside the title and tabs on the next track. Phone uses heading/count/selection above tabs and a compact Filter label; the accessible label still describes sorting and current settings. Controls retain at least 44px targets and the Pipeline keeps its inner scroll owner.
 - **View overlay:** The named, nonmodal Pipeline view dialog is portaled to the document body and uses the native popover top layer when available, with a fixed-position fallback. It is at most 300px wide, fits within 12px viewport margins, and scrolls internally when height is constrained. Checkmarked filter rows with aligned counts offer All, Attention, Stale, No Mockup, and Ready. A labeled sort select offers Newest first, Needs attention, Oldest first, and Highest total; Reset view restores the defaults.
 - **State and accessibility:** Each fresh page load starts Shopify at All / Newest first. Manual filter and sort choices remain during the visit, including source/view switching. A blue indicator marks a nondefault view, and the trigger's accessible label and tooltip summarize the current filter and sort. Opening focuses the selected filter; Escape or Close restores trigger focus. Clicking outside or moving focus outside dismisses the overlay, as does leaving the Orders workspace. Draft Orders hides the order count, selection controls, and View trigger.
 - **Scoped visual details:** The compact heading (1rem), overlay body (.875rem/1.4), hover corners (6px), quiet divider (#E2E8F0), trigger hover wash (#F1F5F9), and selected-filter wash (#EFF6FF) belong to this Pipeline component. The white overlay uses 12px corners and a structural shadow (`0 8px 24px rgba(15, 23, 42, .18)`); keyboard focus uses the existing 2px Action Blue outline. These adaptations do not extend the global type, color, radius, or elevation scales.
@@ -243,12 +256,13 @@ The Shopify Pipeline keeps the order workspace visible and moves filtering and s
 
 ### Shopify Order List Selection / Review
 
-The candidate List preview extends the Precision Workbench with exact-order selection and reviewed actions. Board remains the default; these conventions are local to `order-list-foundation.js/.css` and `order-list-workflows.js`.
+The candidate List extends the Precision Workbench with exact-order selection and reviewed actions. First visits default to Board; subsequent visits restore only layout and sort from device storage. These conventions are local to `order-list-foundation.js/.css` and `order-list-workflows.js`.
 
 - **Selection and hierarchy:** Keep the existing eight table columns; place a 44px checkbox target beside order identity rather than adding an action column. Selected rows use the existing pale-blue wash (#EFF6FF). A compact shared strip shows the selected count, Clear selection, one action dropdown, and the blue Review action button. Explain unavailable actions in a quiet Action availability disclosure. Selection covers only matching orders currently shown and is reconciled when the view changes; bundle membership never silently expands the selected set.
 - **Review:** Use a named native modal with an explicit order list, action consequence, optional required field, Cancel, and Confirm action. The white dialog is at most 560px wide with 16px viewport margins, 12px corners, 24px padding, and internal scrolling; reduce padding to 16px at 600px or less. Keep confirmation separate from choosing an action and return focus to the available source control.
 - **Results and recovery:** Present saved and unresolved outcomes as text in a compact disclosure above the order scroller. Expand partial results, identify each order, and retain unresolved selection. Offer reviewed retry only for known remaining steps; uncertain supplier outcomes require inspection. The result region is bounded to 25vh and the selection strip to 28vh so order browsing retains space.
-- **Responsive arrangement:** Below 1200px, preserve all eight fields in labeled two-column cards with identity and stage spanning the card. At 600px or less, contain stage filters in one horizontal scroller and arrange selection controls in two columns with the dropdown spanning both. Keep the order list as the inner vertical scroll owner, 44px control targets, readable wrapping, and a visible 2px dark-blue focus outline with 3px offset. Announce selection and save feedback through a polite status region.
+- **Browse composition:** Mount Board/List in the active Orders header. Use the established 1.2rem heading, 8–12px spacing, a single stage strip with inline counts and 6px corners, and a shared search/filter/sort/clear/receiving toolbar. Flatten outer framing and result feedback; keep partial results open and successful results collapsed. Empty feedback consumes no space. Retain the eight desktop columns, existing 14px working text and 12px metadata, white/slate surfaces and meaningful status tones.
+- **Responsive arrangement:** From 601–1199px, preserve all eight fields in labeled two-column rows. At 600px or less, keep identity/customer/source, stage, target, quantities, materials/progress and attention visible. A separate 44px More details control reveals payment/total, age, bundle, physical receiving and supplier observations within the keyed row. Expansion survives sort, same-order updates and detail return, but resets when the row leaves results or the workspace changes. Keep stage filters in a horizontal scroller, selection controls in two columns, the list as the inner vertical scroll owner, readable wrapping, and a visible 2px Action Blue focus outline with 3px offset. Announce selection and save feedback through a polite status region.
 - **Visual boundary:** Reuse system sans, white surfaces, slate text, restrained borders, 8px control corners, and the incumbent dark Action Blue (#1765C1). The dialog's dim backdrop (`rgb(15 23 42 / .4)`) establishes its temporary layer. These are component adaptations, not new global tokens or a new visual world.
 
 ### Shopify Draft Browse / Tiles

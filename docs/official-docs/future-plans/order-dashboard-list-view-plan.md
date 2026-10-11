@@ -8,37 +8,75 @@
 Add a full-width order list alongside the existing Board, using the approved
 desktop and mobile concepts. Operators should see stage, material status,
 quantities, progress, attention and target dates without opening detail. Board
-remains available and opens by default; the shared order detail remains unchanged.
+remains available and opens on first visit; subsequent visits restore the last
+layout and sort. The shared order detail remains unchanged.
 The list targets the embedded Shopify/provider data plane, not Legacy Redis.
 
 ## Current Continuation State
 
-- **Current state**: Stages 1 through 3 are deployed. The normal Shopify app
-  launch now exposes **Board / List preview** without a special URL, release
-  `1791584493560` (Pages deployment `95b1c131`). Board remains the reload default;
+- **Current state**: Stages 1 through 4 are deployed. The normal Shopify app
+  launch exposes **Board / List** without a special URL, release
+  `1791755400448` (Pages deployment `3d8dfe4a`). Device storage restores layout
+  and sort only; search, stage, filters, selection and phone expansion reset.
   `?printmo_list_preview=0` explicitly hides the optional layout as a rollback
   escape hatch. Existing `=1` links continue to work.
-- **Next safe action**: Resume Stage 4 from the owner decisions below. Inspect the
-  committed Stage 3 baseline, then prepare its bounded implementation plan when
-  requested. This handoff records scope; Stage 4 implementation has not started.
+- **Dashboard control correction**: The owner-authorized October 11 follow-up
+  places Board/List in the workspace header, groups Cart actions with Mark cart
+  ordered first, exposes Receive Batches directly in Ordered, and standardizes
+  rectangular controls, restrained blue accents and readable card quantities.
+  Production markers and authenticated desktop Board/List were verified;
+  synthetic 1696/1050/393/320px checks covered layout, keyboard and action placement.
+- **Motion polish**: The October 11 follow-up adds pointer press feedback,
+  trigger-origin menu entrances, and acknowledgment-based save feedback. Keyboard
+  and reduced-motion interactions remain immediate; List partial/unknown results
+  retain their detailed review messages. Focused tests and four-width synthetic
+  browser checks passed; authenticated Shopify verified both menus and preserved
+  garment estimates on release `1791751973222`. No live production save was tested.
+- **Workspace refinement**: The owner-approved October 11 follow-up adds a compact
+  workspace toolbar, right-side navigation drawer, aligned Board headers, compact
+  cost disclosure, travelling tab indicators and explicit view/disclosure motion.
+  Synthetic 1696/1050/393/320px checks covered geometry, navigation, drawer focus,
+  Board/List, action placement, cost disclosures/errors, keyboard, reduced motion,
+  and Legacy restoration. The 49 List tests, Phase 2 (including Phase 1), syntax,
+  documentation and bundle checks passed. Release `1791753911363` (Pages `1423a04c`)
+  was verified on the canonical host and authenticated Shopify desktop, including
+  Board/List, Menu, Cart actions and preserved estimates. Supplies orders began
+  about 99px higher in the identical wide synthetic comparison. No live supplier
+  or production mutation was submitted; actual phone-app acceptance remains pending.
+- **Viewport correction**: The next owner-requested October 11 correction removes
+  the candidate toolbar and redundant destination label. Board/List and Refresh
+  now live in the existing drawer; Menu uses the Board Production header, List
+  heading or destination header, and replaces phone Sync in the existing stage bar.
+  Shopify's injected 66px bottom pseudo-element spacer is suppressed; both layouts
+  fill the iframe with 8px vertical gutters and retain their inner scroll owners.
+  Live desktop panels gained 134px at the same 1856 × 801 iframe: 60px above and
+  74px below. Cards, information hierarchy and garment estimates remain intact.
+  Five-size synthetic checks (1856/1050/901/393/320px, including short windows),
+  navigation, drawer controls, Escape/focus, scrolling and Legacy restoration passed.
+  All 49 List tests, Phase 1/2, syntax, docs and bundle checks passed. Release
+  `1791755400448` (Pages `3d8dfe4a`) was verified on the canonical host and
+  authenticated Shopify Board/List. No live workflow mutation was submitted;
+  actual Shopify phone-app acceptance remains pending.
+- **Next safe action**: Complete Stage 5 representative shop acceptance,
+  prioritizing the actual Shopify phone app, software keyboard, scroll/detail
+  return and reviewed workflow outcomes. Implementation and deployment are done.
 - **Remaining acceptance**: Representative authenticated shop orders and real
   detail/workflow changes still need owner acceptance. Browser fixtures establish
   frontend behavior only; no live supplier submission was used for verification.
-- **Owner / external actions**: Owner authorized Stage 3 implementation on
-  2026-10-09, including visible-only selection, one toolbar, all-selected eligibility
-  and existing manual moves. Owner then requested Stage 3 production deployment
-  with the preview flag retained. After the normal app launch hid the toggle,
-  the owner reported the discoverability problem; the follow-up exposes the
-  optional layout on normal launches and retains an explicit opt-out.
-- **Last verified evidence**: All 39 focused tests, Phase 2 including Phase 1,
+- **Owner / external actions**: On 2026-10-11 the owner approved the bounded
+  List/header correction plan and explicitly requested implementation and deployment.
+- **Last verified evidence**: All 44 focused tests, Phase 2 including Phase 1,
   applicable syntax checks, documentation validation and bundle preparation passed.
   Stage 3 focused tests cover immutable identities,
   selection reconciliation, source authority, partial saves, supplier uncertainty,
   shelf coverage and recovery without repeating saved steps. Synthetic browser
   checks cover 1600/1050/393/320px, keyboard selection and detail return. Native
-  list, review and result captures accompany the preview; the 320px native-dialog
-  capture is limited by the browser capture path, while DOM bounds, 44px controls
-  and Escape/focus behavior were verified.
+  save feedback, compact phone expansion, keyboard activation, preference reload
+  and opt-out preservation were checked. At 1600 × 800 with identical synthetic
+  data, browsing gained 116px without selection and 126px with selection/results
+  visible. The canonical release marker and authenticated desktop List with 25
+  active orders were verified. Impeccable's manual detector reviewed incumbent
+  token advisories and existing warnings outside this bounded List/header scope.
 
 ## Open Questions & Brainstorming
 
@@ -59,7 +97,7 @@ The list targets the embedded Shopify/provider data plane, not Legacy Redis.
   sorting, detail opening and return behavior.
 - [x] Stage 3: deployed preview selections and existing workflow actions; purchasing, receiving,
   bundles, and stage moves must retain provider-specific authority and guardrails.
-- [ ] Stage 4: mobile list, accessibility/usability polish and preferences.
+- [x] Stage 4: mobile list, accessibility/usability polish and preferences.
 - [ ] Stage 5: regression, representative shop acceptance and authorized release.
 
 Foundation code:
@@ -81,6 +119,9 @@ the progress denominator; progress alone never changes stage in the model.
 Carrier delivery does not mean physically received or allocated stock.
 
 ## Stage 4 Owner Decisions and Session Handoff
+
+The October 9 intake below is historical. Its choices were implemented and
+released October 11; the current continuation state above takes precedence.
 
 **Captured 2026-10-09.** The owner answered the Stage 4 scope questions and asked
 for a durable handoff to a new session. These are approved design choices, not
@@ -230,3 +271,5 @@ transport, detail prefetch or polling.
   upper sections and a wasteful standalone toggle row; reclaiming list height is
   now an explicit Stage 4 desktop requirement. No Stage 4 implementation or
   deployment performed.
+
+- **2026-10-11 Stage 4 corrections and release**: Fixed adapter/displayed snapshot divergence by immutable identity and canonical revision, including conflicts and refresh replacement. Consolidated Board/List into the active header, combined browse/receiving controls, flattened feedback, added compact phone rows with separate extras, and persisted layout/sort only. All 44 focused tests, Phase 1/2, syntax, docs and fresh bundle checks passed. Same-data browser checks at 1600/1050/393/320px verified containment, unknown/zero values, reviewed save feedback, keyboard expansion and preference reset/opt-out. Deployed production release `1791744078280` (`e39b816f`) through the authorized repository command; canonical marker and authenticated desktop List with 25 orders verified. No live supplier or workflow mutation was used for acceptance. Stage 5 actual Shopify phone-app and representative operational acceptance remain pending.

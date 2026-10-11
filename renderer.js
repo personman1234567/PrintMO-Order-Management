@@ -697,6 +697,23 @@ async function renderBoardFromLocalState(statuses, { invalidateQueueLoads = true
   await renderBoard({ useLocalOrders: true, statuses, invalidateQueueLoads });
 }
 
+// Adapter acknowledgments and conflict reconciliation share the displayed
+// snapshot by immutable identity, including when a refresh replaced its objects.
+window.mergeOrderManagerProduction = (saved, previousStatus) => {
+  if (document.body.dataset.orderSource !== 'shopify') return;
+  const fields = ['_version', 'productionStage', 'status', 'bundle', 'notes', 'targetDate',
+    'progress', 'printEligibility', 'blanksStatus', 'printsStatus', 'blanksOrdered', 'printsOrdered'];
+  const touched = patchLocalOrders([{ provider: saved._provider, orderKey: saved._orderKey || saved._gid }], order => {
+    if (order._version > saved._version) return null;
+    const patch = Object.fromEntries(fields.map(field => [field, saved[field]]));
+    order.canonical.production = { ...saved.canonical.production };
+    return patch;
+  });
+  touched.add(previousStatus); touched.add(saved.status);
+  publishOrderManagerBoardSnapshot();
+  void renderBoardFromLocalState(touched);
+};
+
 /**
  * Capture enough pointer and layout data to animate an invalid desktop drop
  * back to the original card slot after the browser's native drag image vanishes.

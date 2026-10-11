@@ -107,14 +107,20 @@
     const total = known.reduce((sum, value) => sum + value.supplierMinor, 0);
     const exclusions = values.flatMap(value => (value?.exclusions || []).filter(line => line.supplierQuantity > 0).map(line => ({ ...line, quantity: line.supplierQuantity, orderName: value.orderName })));
     const incomplete = pending || unavailable.length || exclusions.length;
-    const header = element('div', null, 'garment-cost-heading');
-    header.append(element('h4', 'Estimated S&S garment cost'), element('strong', known.length || !selected.length ? `${money(total)}${incomplete ? ' known subtotal' : ''}` : pending ? 'Loading costs…' : 'Cost unavailable'));
-    const open = summary.querySelector('details')?.open;
-    summary.replaceChildren(header, element('p', sourceCopy, 'garment-cost-source'));
+    const focusInside = summary.contains(document.activeElement);
+    const focusedExclusions = Boolean(document.activeElement?.closest('.garment-cost-exclusions'));
+    const header = element('summary');
+    header.append(element('span', 'Estimated S&S garments'), element('strong', known.length || !selected.length ? `${money(total)}${incomplete ? ' known subtotal' : ''}` : pending ? 'Loading costs…' : 'Cost unavailable'));
+    const open = summary.querySelector('.garment-cost-exclusions')?.open;
+    const explanation = element('details', null, 'garment-cart-explanation');
+    explanation.open = summary.querySelector('.garment-cart-explanation')?.open || false;
+    explanation.append(header, element('p', sourceCopy, 'garment-cost-source'));
+    summary.replaceChildren(explanation);
     addExclusions(summary, exclusions, unavailable, pending);
-    if (open && summary.querySelector('details')) summary.querySelector('details').open = true;
+    if (open && summary.querySelector('.garment-cost-exclusions')) summary.querySelector('.garment-cost-exclusions').open = true;
     if (!selected.length) summary.append(element('p', 'No orders in S&S Cart.', 'garment-cost-source'));
     if (unavailable.length || values.some(value => value?.lookupFailed)) summary.append(retryButton(() => load(selected, true)));
+    if (focusInside) (summary.querySelector(focusedExclusions ? '.garment-cost-exclusions > summary' : '.garment-cart-explanation > summary') || header).focus({ preventScroll: true });
     const byName = new Map(selected.map(order => [order.name, order]));
     cards.querySelectorAll('.card[data-order-id]').forEach(card => {
       let row = card.querySelector('.garment-card-cost');

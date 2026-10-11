@@ -97,8 +97,12 @@ The Shopify board hydrates catalog-derived garment costs after rendering through
 `POST /order-manager/v1/garment-costs` with up to 50 Shopify GIDs or Etsy order keys.
 Native Shopify lines use their current variant identity; Etsy lines require one exact
 Shopify catalog match for the resolved supplier SKU. Customer sale prices are never used.
-Catalog `inventoryItem.unitCost` values are cached for five minutes. Lookup requests have
-a 20-second budget and fail independently of board rendering and ordering.
+Native order reads include current catalog `inventoryItem.unitCost` alongside the
+garment variants, avoiding one extra request per distinct variant. Up to four
+orders load together under a shared limit of four upstream operations; a slow
+first order does not prevent the others from starting. Etsy exact-SKU and fallback
+variant lookups retain their five-minute cache. Requests have a 20-second budget
+and fail independently of board rendering and ordering.
 
 **In S&S Cart** shows the estimated supplier purchase total and expandable manual/missing-cost
 exclusions. **Items & financials** separates total garment cost, shelf cost, and the amount
@@ -119,6 +123,12 @@ not S&S checkout/invoice totals, and no supplier price sync or retail-price muta
 
 Focused checks: `node --test order-manager-proxy/garment-costs.test.mjs`; Phase 2 covers
 endpoint authorization, server-derived amounts, and receiving/transfer preservation.
+
+The bounded parallel/inline-cost correction was deployed on 2026-10-11 as Worker
+version `60de7432-921b-4e7c-9aa8-6065eab407dc`. All 12 cost tests, the proxy
+test/build, Phase 1/2 and documentation checks passed. An authenticated dashboard
+reload resolved the three current cart estimates; intermittent upstream latency
+is not represented as a measured performance guarantee.
 
 ## Safe Local Feedback Simulation
 

@@ -221,6 +221,15 @@
     return { rows, counts, total: data.total, matched: filtered.length, shown: rows.length };
   }
 
+  const PREFERENCE_KEY = 'printmo:order-manager:list-preferences:v1';
+  function readPreferences(storage) {
+    let saved;
+    try { saved = JSON.parse(storage?.getItem(PREFERENCE_KEY) || 'null'); } catch { /* Storage is optional. */ }
+    return { layout: ['board', 'list'].includes(saved?.layout) ? saved.layout : 'board', sort: SORTS.has(saved?.sort) ? saved.sort : 'newest' };
+  }
+  function savePreferences(storage, value) {
+    try { storage?.setItem(PREFERENCE_KEY, JSON.stringify({ layout: value.layout, sort: value.sort })); } catch { /* Browsing still works without storage. */ }
+  }
   function createViewState() {
     let layout = 'board', stage = 'all', query = '', sort = 'newest';
     let filters = { ...FILTER_DEFAULTS };
@@ -283,5 +292,5 @@
   }
 
   return Object.freeze({ STAGES, orderKey, stageForOrder, materialState, quantities,
-    printableTotal, progress, evaluateTriage, summarize, snapshot, indicators, browse, FILTER_DEFAULTS, createViewState, reconcileSelection, actionEligibility });
+    printableTotal, progress, evaluateTriage, summarize, snapshot, indicators, browse, FILTER_DEFAULTS, createViewState, readPreferences, savePreferences, reconcileSelection, actionEligibility });
 });

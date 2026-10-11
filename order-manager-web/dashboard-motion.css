@@ -1,0 +1,52 @@
+/* Pointer presses stay small; keyboard actions and content changes stay instant. */
+body[data-order-source="shopify"] :is(.app-header button, .panel-header button,
+  #supplies-actions-toggle, #supplies-actions-popover button, #pipeline-view-popover button,
+  #blanks-section .section-actions button, .summary button, .order-list-selection button,
+  .order-list-toolbar button, #mobile-command-surface button) {
+  transition: transform 120ms cubic-bezier(.23, 1, .32, 1);
+}
+body[data-order-source="shopify"][data-dashboard-input="pointer"] :is(.app-header button,
+  .panel-header button, #supplies-actions-toggle, #supplies-actions-popover button,
+  #pipeline-view-popover button, #blanks-section .section-actions button, .summary button,
+  .order-list-selection button, .order-list-toolbar button, #mobile-command-surface button):active:not(:disabled) {
+  transform: scale(.98);
+}
+body[data-order-source="shopify"][data-dashboard-input="keyboard"] :is(.app-header button,
+  .panel-header button, #supplies-actions-toggle, #supplies-actions-popover button,
+  #pipeline-view-popover button, #blanks-section .section-actions button, .summary button,
+  .order-list-selection button, .order-list-toolbar button, #mobile-command-surface button) {
+  transition: none;
+}
+#dashboard-save-feedback {
+  position: fixed; right: 16px; bottom: 16px; z-index: 1500;
+  display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 32px);
+  padding: 10px 12px; border: 1px solid #CBD5E1; border-radius: 6px;
+  background: #FFF; color: #334155; box-shadow: 0 4px 12px rgb(15 23 42 / .1);
+  font: 500 14px/1.4 system-ui, sans-serif; pointer-events: none;
+}
+#dashboard-save-feedback[hidden], body:not([data-order-source="shopify"]) #dashboard-save-feedback { display: none; }
+#dashboard-save-feedback i, .order-list-feedback[data-save-state="saving"] .order-list-selection-notice::before {
+  display: inline-block; flex: 0 0 auto; width: 14px; height: 14px; box-sizing: border-box;
+  border: 2px solid #CBD5E1; border-top-color: #1765C1; border-radius: 50%;
+}
+#dashboard-save-feedback[data-save-state="saving"] i,
+.order-list-feedback[data-save-state="saving"] .order-list-selection-notice::before {
+  animation: dashboard-saving-spin 650ms linear infinite;
+}
+.order-list-feedback[data-save-state="saving"] .order-list-selection-notice::before { content: ''; margin-right: 8px; vertical-align: -2px; }
+#dashboard-save-feedback[data-save-state="saved"] i,
+.order-list-feedback[data-save-state="saved"] .order-list-action-results > summary::before {
+  display: inline-block; width: 14px; height: 14px; border: 0; border-radius: 0;
+  background: #1765C1; clip-path: polygon(0 48%, 15% 34%, 38% 60%, 85% 8%, 100% 22%, 38% 92%);
+}
+.order-list-feedback[data-save-state="saved"] .order-list-action-results > summary::before { content: ''; margin-right: 8px; }
+#dashboard-save-feedback[data-save-state="review"] i { border: 0; border-radius: 0; width: auto; height: auto; }
+#dashboard-save-feedback[data-save-state="review"] i::before { content: '!'; font-style: normal; font-weight: 700; color: #92400E; }
+@keyframes dashboard-saving-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  body[data-order-source="shopify"] :is(.app-header button, .panel-header button,
+    #supplies-actions-toggle, #supplies-actions-popover button, #pipeline-view-popover button,
+    #blanks-section .section-actions button, .summary button, .order-list-selection button,
+    .order-list-toolbar button, #mobile-command-surface button) { transition: none; transform: none !important; }
+  #dashboard-save-feedback i, .order-list-feedback .order-list-selection-notice::before { animation: none !important; }
+}

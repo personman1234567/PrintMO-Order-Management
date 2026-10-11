@@ -641,7 +641,8 @@ async function run() {
         const custom = /\/200[12]$/.test(id);
         return Response.json({ data: { order: { ...node, id, lineItems: custom ? {
           nodes: [{ id: `cost-line-${id}`, title: 'Fixture Shirt', sku: 'FIXTURE-A',
-            currentQuantity: id.endsWith('2001') ? 2 : 1, variant: { id: 'gid://shopify/ProductVariant/201' } }],
+            currentQuantity: id.endsWith('2001') ? 2 : 1, variant: { id: 'gid://shopify/ProductVariant/201',
+              sku: 'FIXTURE-A', inventoryItem: { unitCost: { amount: '3.79', currencyCode: 'USD' } } } }],
           pageInfo: { hasNextPage: false }
         } : node.lineItems } } });
       }
@@ -3189,7 +3190,8 @@ async function run() {
   const targetMutationSource = webShim.slice(webShim.indexOf('function applyCandidateProduction('), webShim.indexOf('// 1) Populate dashboard'));
   const runTargetConflict = async (remoteDate, baseline, desired) => {
     let calls = 0;
-    const cached = { _gid: 'fixture', _version: 1, targetDate: baseline };
+    const cached = { _gid: 'fixture', _orderKey: 'fixture', _provider: 'shopify', _version: 1,
+      targetDate: baseline, canonical: { production: { targetDate: baseline, version: 1 } } };
     const sandbox = {
       candidateByName: () => cached,
       candidateIdentity: order => JSON.stringify([order._provider, order._gid]),
