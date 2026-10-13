@@ -3,10 +3,23 @@ const assert = require('node:assert/strict');
 const model = require('../order-manager-web/order-board-model');
 const detail = require('../order-manager-web/order-detail-state');
 
+test('search is bounded plain text and treats query metacharacters literally', () => {
+  const state = model.createViewState();
+  assert.equal(state.setQuery('x'.repeat(1000)).query.length, 120);
+  assert.equal(state.setQuery('Amanda\u0000\nCaffrey').query, 'Amanda  Caffrey');
+  const query = '<script> OR .* [a-z]';
+  state.setQuery(query);
+  const data = model.snapshot([order('literal', 'received', { customerName: query, name: query })], classifiers);
+  assert.equal(state.browse(data).shown, 1);
+  state.setQuery('.*');
+  assert.equal(state.browse(model.snapshot([order('ordinary')], classifiers)).shown, 0);
+});
+
 const classifiers = {
   isPrintItem: item => item.title === 'T-shirt Chest Print',
   isGarmentItem: item => item.title !== 'T-shirt Chest Print' && Boolean(item.sku),
-  targetDatePresentation: detail.targetDatePresentation
+  targetDatePresentation: detail.targetDatePresentation,
+  isRushOrder: detail.isRushOrder
 };
 function order(id, stage = 'received', extra = {}) {
   return { _candidate: true, _gid: id, _provider: 'shopify', name: '#1812 – Fixture Customer',
@@ -110,9 +123,41 @@ test('confirmed snapshot updates replace derived progress and stage without anot
 
 test('target urgency uses the existing Chicago date contract and keeps completed dates neutral', () => {
   const options = { ...classifiers, now: Date.parse('2026-10-09T16:00:00Z') };
-  assert.equal(model.summarize(order('today', 'print', { targetDate: '2026-10-09' }), options).target.label, 'Today');
+  assert.equal(model.summarize(order('today', 'print', { targetDate: '2026-10-09' }), options).target.label, 'Due today · Oct 9');
   assert.equal(model.summarize(order('done', 'completed', { targetDate: '2026-10-08' }), options).target.tone, 'neutral');
   assert.equal(model.summarize(order('none'), options).target, null);
+});
+
+test('rush comes from positive-quantity service lines, independently of date urgency', () => {
+  const fee = (extra = {}) => ({ title: 'Rush order fee', qty: 1, ...extra });
+  for (const sku of ['PM-RUSH-20', 'PM-RUSH-25', 'PM-RUSH-30']) {
+    assert.equal(detail.isRushOrder(order(sku, 'received', { items: [fee({ sku, title: 'Renamed service' })] })), true);
+  }
+  assert.equal(detail.isRushOrder(order('new-variant', 'received', { items: [fee({ sku: 'PM-RUSH-40' })] })), true);
+  for (const title of ['Rush fee', 'Rush production fee', 'Rush order']) {
+    assert.equal(detail.isRushOrder(order('custom', 'received', { items: [fee({ title })] })), true);
+  }
+  for (const title of ['Rush band T-shirt', 'Rush shipping', 'Rush delivery fee', 'Rush print design', 'Setup fee']) {
+    assert.equal(detail.isRushOrder(order('ordinary', 'received', { items: [fee({ title })] })), false);
+  }
+  assert.equal(detail.isRushOrder(order('removed', 'received', { items: [fee({ qty: 0 })] })), false);
+  assert.equal(detail.isRushOrder(order('refunded', 'received', { items: [fee({ qty: 0, quantity: 1 })] })), false);
+  assert.equal(detail.isRushOrder(order('legacy', 'received', { _candidate: false, items: [fee()] })), false);
+  assert.equal(detail.isRushOrder(order('overdue', 'print', { targetDate: '2026-01-01' })), false);
+  assert.equal(model.summarize(order('rush', 'print', { items: [fee()] }), classifiers).rush, true);
+});
+
+test('Rush only and Rush first use the shared signal and retain normal date sorting', () => {
+  const orders = [order('normal', 'print', { targetDate: '2026-10-10' }),
+    order('rush-later', 'print', { targetDate: '2026-10-15', items: [{ title: 'Rush order fee', qty: 1 }] }),
+    order('rush-sooner', 'print', { targetDate: '2026-10-13', items: [{ title: 'Rush fee', qty: 1 }] })];
+  const data = model.snapshot(orders, classifiers), state = model.createViewState();
+  state.setFilters({ priority: 'rush' });
+  assert.deepEqual(model.browse(data, state.get()).rows.map(row => JSON.parse(row.key)[1]).sort(), ['rush-later', 'rush-sooner']);
+  state.resetFilters(); state.setSort('rush');
+  assert.deepEqual(model.browse(data, state.get()).rows.map(row => JSON.parse(row.key)[1]), ['rush-sooner', 'rush-later', 'normal']);
+  state.setSort('target');
+  assert.deepEqual(model.browse(data, state.get()).rows.map(row => JSON.parse(row.key)[1]), ['normal', 'rush-sooner', 'rush-later']);
 });
 
 test('Pipeline triage retains its existing age and material heuristic', () => {

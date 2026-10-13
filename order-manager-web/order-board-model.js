@@ -150,6 +150,7 @@
       quantities: quantities(order, options), materials,
       progress: progress(order, printableTotal(order, options)),
       target, targetDate: target ? order.targetDate : null, targetFilter,
+      rush: Boolean(options.isRushOrder?.(order)),
       triage: options.evaluateTriage?.(order) || null,
       attention: { required: Boolean(attention?.required), reasons: (Array.isArray(attention?.reasons) ? attention.reasons : []).filter(value => typeof value === 'string' && value.trim()) },
       accounting: options.accountingForOrder?.(order.name) || null,
@@ -181,8 +182,12 @@
     return { rows, counts, total: rows.length, identityErrors };
   }
 
-  const FILTER_DEFAULTS = Object.freeze({ source: 'all', blanks: 'all', prints: 'all', payment: 'all', attention: 'all', target: 'all' });
-  const SORTS = new Set(['newest', 'oldest', 'target', 'customer']);
+  const FILTER_DEFAULTS = Object.freeze({ source: 'all', blanks: 'all', prints: 'all', payment: 'all', attention: 'all', target: 'all', priority: 'all' });
+  const SORTS = new Set(['newest', 'oldest', 'target', 'customer', 'rush']);
+  const SEARCH_MAX_LENGTH = 120;
+  // Literal local matching only: no regular-expression or query-language evaluation.
+  const normalizeSearchQuery = value => String(value ?? '').slice(0, SEARCH_MAX_LENGTH)
+    .replace(/[\x00-\x1f\x7f]/g, ' ');
   const normalized = value => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
   function filteredRows(data, state) {
@@ -198,8 +203,9 @@
       if (filters.attention === 'handoff' && row.stage !== 'completed') return false;
       if (filters.target === 'none' && row.targetDate) return false;
       if (filters.target === 'late' && row.targetFilter?.tone !== 'late') return false;
-      if (filters.target === 'today' && row.targetFilter?.label !== 'Today') return false;
-      if (filters.target === 'tomorrow' && row.targetFilter?.label !== 'Tomorrow') return false;
+      if (filters.target === 'today' && row.targetFilter?.state !== 'today') return false;
+      if (filters.target === 'tomorrow' && row.targetFilter?.state !== 'tomorrow') return false;
+      if (filters.priority === 'rush' && !row.rush) return false;
       return true;
     });
   }
@@ -213,6 +219,8 @@
     const date = row => Number.isFinite(Date.parse(row.receivedAt)) ? Date.parse(row.receivedAt) : null;
     const newest = (a, b) => (date(b) ?? -Infinity) - (date(a) ?? -Infinity) || a.key.localeCompare(b.key);
     rows.sort((a, b) => {
+      if (state.sort === 'rush') return Number(b.rush) - Number(a.rush)
+        || (a.targetDate || '9999-99-99').localeCompare(b.targetDate || '9999-99-99') || newest(a, b);
       if (state.sort === 'oldest') return (date(a) ?? Infinity) - (date(b) ?? Infinity) || newest(a, b);
       if (state.sort === 'target') return (a.targetDate || '9999-99-99').localeCompare(b.targetDate || '9999-99-99') || newest(a, b);
       if (state.sort === 'customer') return a.customer.localeCompare(b.customer, 'en', { sensitivity: 'base', numeric: true }) || newest(a, b);
@@ -237,11 +245,11 @@
       get: () => Object.freeze({ layout, stage, query, sort, filters: Object.freeze({ ...filters }) }),
       setLayout(value) { if (value === 'board' || value === 'list') layout = value; return this.get(); },
       setStage(value) { if (value === 'all' || value === 'unknown' || STAGES.some(item => item.id === value)) stage = value; return this.get(); },
-      setQuery(value) { query = String(value || ''); return this.get(); },
+      setQuery(value) { query = normalizeSearchQuery(value); return this.get(); },
       setSort(value) { if (SORTS.has(value)) sort = value; return this.get(); },
       setFilters(value = {}) {
         const allowed = { source: ['all', 'shopify', 'etsy'], blanks: ['all', 'ready', 'not-ready'], prints: ['all', 'ready', 'not-ready'],
-          attention: ['all', 'needed', 'handoff'], target: ['all', 'late', 'today', 'tomorrow', 'none'] };
+          attention: ['all', 'needed', 'handoff'], target: ['all', 'late', 'today', 'tomorrow', 'none'], priority: ['all', 'rush'] };
         for (const key of Object.keys(FILTER_DEFAULTS)) {
           if (key === 'payment') { if (typeof value[key] === 'string' && (value[key] === 'all' || /^[A-Z_]+$/.test(value[key]))) filters[key] = value[key]; }
           else if (allowed[key]?.includes(value[key])) filters[key] = value[key];
@@ -292,5 +300,5 @@
   }
 
   return Object.freeze({ STAGES, orderKey, stageForOrder, materialState, quantities,
-    printableTotal, progress, evaluateTriage, summarize, snapshot, indicators, browse, FILTER_DEFAULTS, createViewState, readPreferences, savePreferences, reconcileSelection, actionEligibility });
+    printableTotal, progress, evaluateTriage, summarize, snapshot, indicators, browse, FILTER_DEFAULTS, SEARCH_MAX_LENGTH, normalizeSearchQuery, createViewState, readPreferences, savePreferences, reconcileSelection, actionEligibility });
 });

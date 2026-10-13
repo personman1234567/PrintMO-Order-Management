@@ -380,13 +380,9 @@
     const toggle = document.getElementById('pipeline-view-toggle');
     const popover = document.getElementById('pipeline-view-popover');
     const toolbar = document.getElementById('dashboard-triage-toolbar');
-    const tabs = document.getElementById('pipeline-view-tabs');
-    if (!toggle || !popover || !toolbar || !tabs) return;
-    const header = toggle.parentElement;
+    if (!toggle || !popover || !toolbar) return;
     const toolbarHome = document.createComment('Pipeline toolbar home');
-    const tabsHome = document.createComment('Pipeline tabs home');
     toolbar.before(toolbarHome);
-    tabs.before(tabsHome);
     document.body.appendChild(popover);
     const nativePopover = typeof popover.showPopover === 'function';
     let open = false;
@@ -455,10 +451,8 @@
       close();
       state = sourceStates[isShopify() ? 'shopify' : 'legacy'];
       if (isShopify()) {
-        header.insertBefore(tabs, toggle);
         popover.insertBefore(toolbar, document.getElementById('pipeline-view-reset'));
       } else {
-        tabsHome.after(tabs);
         toolbarHome.after(toolbar);
       }
       applyDashboardTriage();

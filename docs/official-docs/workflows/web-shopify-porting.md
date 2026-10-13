@@ -77,8 +77,21 @@ queue revisions cannot rewind them. Representative workflow acceptance remains
 tracked in the staged list plan.
 
 The candidate dashboard keeps Board/List in the workspace drawer
-across both layouts. Pipeline retains only its local order/draft tabs and
-Filter & sort controls. Dashboard navigation uses consistent rectangular/text
+across both layouts. Draft Orders is a peer destination in that drawer, with its
+own scrollable workspace and lazy loading. `workspace-navigation.js` owns active
+workspace state, desktop/phone transitions, visibility, focus, and registered
+destination lifecycle guards. Draft saves and interrupted edits retain their
+existing leave protection. Pipeline retains Filter & sort controls; List never
+reparents board tabs or changes its stored layout to show drafts.
+The List heading combines Orders, stage filters and Menu in one row; the second
+row holds a bounded search field, result count, filters, sorting and receiving.
+Column headings remain sticky at approximately 45px including the usable checkbox
+target. Selection and detailed save feedback appear only when relevant. Search
+uses cached literal matching, is limited to 120 characters and strips control
+characters; it never evaluates query text as markup, code or regular expressions.
+Draft search also caps the field at 120 characters and preserves the existing
+server-side quoted query escaping.
+Dashboard navigation uses consistent rectangular/text
 controls and restrained blue selection surfaces. In S&S Cart consolidates its
 existing buttons into Cart actions, with Mark cart ordered first; Ordered keeps
 Receive Batches directly accessible. The contextual popover preserves the

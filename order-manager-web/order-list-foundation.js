@@ -12,8 +12,8 @@
   const preview = new URLSearchParams(window.location.search).get('printmo_list_preview') !== '0';
   const rowNodes = new Map(), stageNodes = new Map();
   let rowSequence = 0;
-  const headings = ['Order / Customer', 'Stage', 'Target / Age', 'Quantities', 'Blanks', 'Print materials / Progress', 'Payment / Total', 'Attention'];
-  let pending = false, elements, latest, opener, tabsHome, workflows, busy = false;
+  const headings = ['Order / Customer', 'Stage', 'Due / Age', 'Quantities', 'Blanks', 'Print materials / Progress', 'Payment / Total', 'Attention'];
+  let pending = false, elements, latest, opener, workflows, busy = false;
   let selected = [], visibleKeys = [], workspace = '', lastResults = [], workflowReturn;
   const actionChoices = [
     ['supplier', 'Add to S&S cart'], ['ordered', 'Mark Ordered'],
@@ -33,6 +33,7 @@
       isPrintItem: item => typeof isPrintItem === 'function' && isPrintItem(item),
       isGarmentItem: item => typeof isGarmentItem === 'function' && isGarmentItem(item),
       targetDatePresentation: window.OrderDetailState?.targetDatePresentation,
+      isRushOrder: window.OrderDetailState?.isRushOrder,
       accountingForOrder: window.blanksBatchFoundation?.accountingForOrder,
       supplierSummaryForOrder: window.blanksBatchFoundation?.supplierSummaryForOrder,
       evaluateTriage: window.OrderManagerTriage?.evaluateOrder,
@@ -126,10 +127,11 @@
     customer.textContent = row.customer;
     badges.replaceChildren(pill(row.provider === 'etsy' ? 'Etsy' : 'PrintMO', row.provider === 'etsy' ? 'etsy' : 'source'));
     if (row.synthetic) badges.append(pill('TEST', 'warning'));
+    if (row.rush) badges.prepend(text('span', 'Rush', 'order-rush-marker'));
     bundle.textContent = row.bundle ? `Bundle: ${row.bundle}` : '';
     const tones = { received: 'neutral', to_order: 'neutral', blanks_cart: 'warning', blanks_ordered: 'warning', print: 'blue', completed: 'ready' };
     cells[1].replaceChildren(pill(row.stageLabel, tones[row.stage] || 'danger'));
-    const target = text('span', row.target?.label || 'No target date', `order-list-target ${row.target?.tone || ''}`);
+    const target = text('span', row.target?.label || 'No date set', `order-list-target ${row.target?.tone || ''}`);
     if (row.target) target.setAttribute('aria-label', row.target.accessible);
     let age = 'Age unavailable';
     if (Number.isFinite(Date.parse(row.receivedAt)) && typeof timeAgo === 'function') age = timeAgo(row.receivedAt);
@@ -183,24 +185,14 @@
     if (preserve) restoreAnchor(saved); else elements.scroll.scrollTop = 0;
   }
 
-  function moveNavigation(layout) {
-    const tabs = document.getElementById('pipeline-view-tabs');
-    if (layout === 'list') {
-      if (tabs && tabs.parentNode !== elements.tabsMount) elements.tabsMount.append(tabs);
-    } else {
-      if (tabs && tabsHome && tabsHome.nextSibling !== tabs) tabsHome.after(tabs);
-    }
-  }
-
   function render({ preserve = true } = {}) {
     if (!elements) return;
     const candidate = preview && isCandidate();
-    const layout = candidate && document.body.dataset.pipelineView !== 'drafts' ? state.get().layout : 'board';
-    elements.controls.hidden = !candidate || document.body.dataset.pipelineView === 'drafts';
+    const layout = candidate ? state.get().layout : 'board';
+    elements.controls.hidden = !candidate || document.body.dataset.activeView !== 'orders';
     document.body.dataset.orderLayout = layout;
     elements.list.hidden = layout !== 'list';
     elements.controls.querySelectorAll('button').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.orderLayout === state.get().layout)));
-    moveNavigation(layout);
     const nextWorkspace = `${document.body.dataset.orderSource}|${document.body.dataset.pipelineView || 'orders'}|${document.body.dataset.activeView || document.querySelector('.app-nav-tab[aria-pressed="true"]')?.dataset.view || 'orders'}`;
     if (workspace && workspace !== nextWorkspace) {
       selected = []; workflowReturn = null;
@@ -225,7 +217,7 @@
     elements.clear.hidden = !activeFilters();
     const extra = latest.identityErrors ? ' · Some orders could not be shown; refresh or use Board.' : '';
     const loadState = document.body.dataset.boardLoadState;
-    elements.notice.textContent = `Showing ${result.shown} of ${latest.total} active orders${extra}${loadState === 'error' && latest.total ? ' · Refresh failed; showing cached orders.' : ''}`;
+    elements.notice.textContent = `${result.shown} of ${latest.total} shown${extra}${loadState === 'error' && latest.total ? ' · Refresh failed; showing cached orders.' : ''}`;
     const empty = !result.shown;
     elements.empty.hidden = !empty;
     elements.empty.textContent = latest.total ? 'No matching orders. Clear filters to see all active orders.'
@@ -411,7 +403,7 @@
     elements = { controls: byId('order-layout-controls'), list: byId('order-list-foundation'), rows: byId('order-list-foundation-rows'),
       count: byId('order-list-foundation-count'), notice: byId('order-list-foundation-notice'), scroll: byId('order-list-scroll'), stages: byId('order-list-stages'),
       search: byId('order-list-search'), sort: byId('order-list-sort'), filters: byId('order-list-filters'), filterToggle: byId('order-list-filters-toggle'),
-      clear: byId('order-list-clear'), empty: byId('order-list-empty'), tabsMount: byId('order-list-tabs-mount') };
+      clear: byId('order-list-clear'), empty: byId('order-list-empty') };
     if (Object.values(elements).some(value => !value)) { elements = null; return; }
     if (!preview) { document.body.dataset.orderLayout = 'board'; return; }
     workflows = window.OrderListWorkflows.create({ getOrders: cachedOrders, api: window.api,
@@ -456,8 +448,7 @@
     document.addEventListener('click', event => { if (event.target.closest('[data-view="previous"], [data-tab="history"]')) { selected = []; renderSelection(); } });
     document.body.dataset.orderLayout = 'board';
     if (!preview) return; // Explicit opt-out leaves every existing Board node in place.
-    const tabs = byId('pipeline-view-tabs');
-    if (tabs) { tabsHome = document.createComment('Board draft tabs'); tabs.before(tabsHome); }
+    elements.search.maxLength = model.SEARCH_MAX_LENGTH;
     elements.controls.addEventListener('click', event => {
       const button = event.target.closest('[data-order-layout]'); if (!button || !isCandidate()) return;
       state.setLayout(button.dataset.orderLayout); model.savePreferences(storage, state.get()); render();

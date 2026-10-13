@@ -49,14 +49,31 @@
     }).format(date);
     const neutral = order.productionStage === 'completed' || order._historyReadOnly
       || String(order.displayFulfillmentStatus || '').toUpperCase() === 'FULFILLED';
-    let label = `Target ${short}`;
+    let label = `${neutral ? 'Target' : 'Due'} ${short}`;
     let tone = 'neutral';
+    let state = 'scheduled';
     if (!neutral) {
-      if (dayDifference < 0) { label = `Late · ${short}`; tone = 'late'; }
-      else if (dayDifference === 0) { label = 'Today'; tone = 'soon'; }
-      else if (dayDifference === 1) { label = 'Tomorrow'; tone = 'soon'; }
+      if (dayDifference < 0) { label = `Overdue · ${short}`; tone = 'late'; state = 'late'; }
+      else if (dayDifference === 0) { label = `Due today · ${short}`; tone = 'soon'; state = 'today'; }
+      else if (dayDifference === 1) { label = `Due tomorrow · ${short}`; tone = 'soon'; state = 'tomorrow'; }
     }
-    return { label, tone, full, accessible: `Target date: ${full}${tone === 'late' ? ', overdue' : ''}` };
+    return { label, tone, state, complete: Boolean(neutral), full, accessible: `Internal finish-by date: ${full}${tone === 'late' ? ', overdue' : ''}` };
+  }
+
+  // Verified Print-MO rush-service catalog, 2026-10-12. Read the existing
+  // commerce lines; never infer priority from dates, price, notes or shipping.
+  const rushSkus = new Set(['PM-RUSH-20', 'PM-RUSH-25', 'PM-RUSH-30']);
+  function isRushOrder(order) {
+    if (!order?._candidate) return false;
+    return (order.items || []).some(item => {
+      if (!(Number(item.qty ?? item.currentQuantity ?? item.quantity ?? 0) > 0)) return false;
+      const sku = String(item.sourceSku || item.sku || '').trim().toUpperCase();
+      const title = String(item.title || '').trim().replace(/\s+/g, ' ').toLowerCase();
+      // The official title also covers a new price variant or renamed SKU.
+      // Legacy custom charges must explicitly name a rush production/order fee.
+      return rushSkus.has(sku) || title === 'rush order fee'
+        || (!sku && /^(?:rush fee|rush production fee|rush order)$/.test(title));
+    });
   }
 
   function mergeCanonicalProductionState(order, production) {
@@ -239,6 +256,7 @@
 
   return {
     targetDatePresentation,
+    isRushOrder,
     createProgressSaveCoordinator,
     createNoteDraftStore,
     mergeCanonicalProductionState,

@@ -140,6 +140,7 @@ The palette is a restrained operational system: crisp neutral surfaces, dark sla
 - **Completion Wash:** A low-chroma success surface that supports green text and icons without flooding the interface.
 - **Attention Umber:** Warnings and work that needs review, never decorative warmth.
 - **Failure Red:** Errors, destructive consequences, and failed operations only.
+- **Rush priority:** A scoped plum marker (`#68326C` on `#F3E8F4`) identifies an explicit rush-service line. It does not replace existing source, readiness, or deadline colors.
 
 ### Neutral
 
@@ -243,6 +244,8 @@ Desktop navigation uses quiet text tabs with pale-blue selection and an Action B
 
 The order card is the signature component. It prioritizes order identity, customer, mockup availability, stage, urgency, and production state while keeping secondary detail behind the detail view. Drag feedback must preserve spatial continuity; selection and drag state must never be visually confused.
 
+Shopify/provider cards with a finish-by date or recorded rush fee use one compact `.order-schedule` line immediately beneath the header, ahead of artwork. Dates use neutral Due, amber Due today/tomorrow with the actual date retained, or red Overdue; complete/history stays neutral Target. The plum Rush marker has 4px corners and no button affordance or animation. Undated ordinary cards receive no row. Narrow cards wrap readable labels rather than truncate them. Bundles show Includes rush and the earliest active member date, falling back to neutral dates only when no active dated member exists. List places Rush beside order identity and dates in its existing Due / Age area, visible before phone expansion. Rush only stays in collapsed filters, and Rush first is an opt-in sort.
+
 ### Shopify Order Pipeline
 
 The Shopify Pipeline keeps local filtering and sorting in the compact Filter & sort overlay.
@@ -310,6 +313,11 @@ The item breakdown is the primary content of Items & financials. Preserve the ar
 - **Visual finish:** Concentrate the existing pale-blue wash (#EFF6FF) in the shared financial header, table headings, and expanded cost body. Use 18px semibold header amounts, dark action blue (#1765C1) for the cost navigation amount, 14px commercial rows, and quieter 12px SKUs. Desktop columns allocate 7/43/14/24/12 percent to quantity/description/SKU/variant/price; long descriptions remain readable rather than clamped. Commerce totals occupy at most 420px, aligned right, with a stronger divider and 18px final total. Supporting disclosures share a 48px row and drawn chevron; tax counts are plain text. The cost body has 16px padding and subtle column separators that disappear when its values stack on mobile. Keep white rows, quiet hover/focus feedback, and rectangular receiving controls; do not introduce decorative animation or new status colors. Candidate header composition spans the full detail width at intermediate desktop sizes as well as mobile.
 
 ## Do's and Don'ts
+
+List composition keeps Orders, stage filters and Menu in one desktop row, with
+search, result count and tools below. Draft Orders belongs in the workspace drawer.
+Sticky column headings include the full checkbox target within about 44px; do not
+add another layer of vertical padding around it or reserve empty feedback rows.
 
 ### Do:
 

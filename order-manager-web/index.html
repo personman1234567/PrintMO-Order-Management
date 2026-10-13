@@ -94,6 +94,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     <div class="app-brand">PrintMO Order Manager</div>
     <nav class="app-nav" aria-label="Primary navigation">
       <button class="app-nav-tab" type="button" data-view="orders" aria-pressed="true">Orders</button>
+      <button class="app-nav-tab" type="button" data-view="drafts" aria-pressed="false">Draft Orders</button>
       <button class="app-nav-tab" type="button" data-view="inventory" aria-pressed="false">Inventory</button>
       <button class="app-nav-tab" type="button" data-view="previous" aria-pressed="false">Previous Orders</button>
       <button class="app-nav-tab" type="button" data-view="storage" aria-pressed="false">Storage Browser</button>
@@ -202,17 +203,44 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       </div>
     </dialog>
   </section>
+  <div id="drafts-view" class="app-view" aria-hidden="true">
+    <header class="draft-workspace-heading"><h2>Draft Orders</h2></header>
+      <section id="draft-orders-workspace" aria-label="Draft Orders">
+          <div class="draft-browse-controls">
+            <form id="draft-orders-search" role="search">
+              <input id="draft-orders-search-input" type="search" aria-label="Search draft orders" placeholder="Draft number or customer email" maxlength="120" />
+              <button type="submit" aria-label="Search drafts" title="Search drafts"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg></button>
+            </form>
+            <div class="draft-browse-meta">
+              <select id="draft-orders-filter" aria-label="Draft order status">
+              <option value="active">All active drafts</option>
+              <option value="open">Saved drafts</option>
+              <option value="invoice">Invoice sent</option>
+              <option value="converted">Converted to orders</option>
+              </select>
+              <span id="draft-orders-count" aria-live="polite"></span>
+              <button id="draft-orders-refresh" type="button" aria-label="Refresh drafts" title="Refresh drafts"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.5-1L20 12M4 12l2.4 6A7 7 0 0 0 17.9 17"/></svg></button>
+            </div>
+          </div>
+        <p id="draft-orders-status" role="status" aria-live="polite">Select Draft Orders to load Shopify drafts.</p>
+        <div id="draft-orders-browse">
+          <div id="draft-orders-list" aria-label="Draft order tiles"></div>
+          <button id="draft-orders-load-more" type="button" hidden>Load more drafts</button>
+        </div>
+        <div id="draft-orders-detail" hidden></div>
+      </section>
+  </div>
   <div id="orders-view" class="app-view">
     <section id="order-list-foundation" class="order-list-foundation" aria-labelledby="order-list-foundation-title" hidden>
       <header class="order-list-heading">
         <div class="order-list-heading-title"><h2 id="order-list-foundation-title">Orders</h2><span id="order-list-foundation-count"></span></div>
-        <div id="order-list-tabs-mount"></div>
+        <div id="order-list-stages" class="order-list-stages" role="group" aria-label="Filter orders by stage"></div>
       </header>
-      <div id="order-list-stages" class="order-list-stages" role="group" aria-label="Filter orders by stage"></div>
       <div class="order-list-toolbar">
-        <label class="order-list-search"><span class="visually-hidden">Search orders, customers or bundles</span><input id="order-list-search" type="search" placeholder="Search orders, customers or bundles" autocomplete="off"></label>
+        <label class="order-list-search"><span class="visually-hidden">Search orders, customers or bundles</span><input id="order-list-search" type="search" placeholder="Search orders, customers or bundles" maxlength="120" autocomplete="off"></label>
+        <p id="order-list-foundation-notice" role="status" aria-live="polite"></p>
         <button id="order-list-filters-toggle" type="button" aria-expanded="false" aria-controls="order-list-filters">Filters</button>
-        <label class="order-list-sort"><span class="visually-hidden">Sort orders</span><select id="order-list-sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="target">Target date</option><option value="customer">Customer</option></select></label>
+        <label class="order-list-sort"><span class="visually-hidden">Sort orders</span><select id="order-list-sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="target">Earliest due</option><option value="rush">Rush first</option><option value="customer">Customer</option></select></label>
       </div>
       <div id="order-list-filters" class="order-list-filters" hidden>
         <label>Source<select data-list-filter="source"><option value="all">All sources</option><option value="shopify">PrintMO</option><option value="etsy">Etsy</option></select></label>
@@ -220,18 +248,18 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         <label>Print materials<select data-list-filter="prints"><option value="all">All states</option><option value="ready">Marked ready</option><option value="not-ready">Not marked ready</option></select></label>
         <label>Payment<select data-list-filter="payment"><option value="all">All statuses</option></select></label>
         <label>Attention<select data-list-filter="attention"><option value="all">All orders</option><option value="needed">Needs attention</option><option value="handoff">Awaiting handoff</option></select></label>
-        <label>Target date<select data-list-filter="target"><option value="all">All dates</option><option value="late">Late</option><option value="today">Today</option><option value="tomorrow">Tomorrow</option><option value="none">No date</option></select></label>
+        <label>Due date<select data-list-filter="target"><option value="all">All dates</option><option value="late">Overdue</option><option value="today">Today</option><option value="tomorrow">Tomorrow</option><option value="none">No date</option></select></label>
+        <label>Priority<select data-list-filter="priority"><option value="all">All orders</option><option value="rush">Rush only</option></select></label>
       </div>
-      <div class="order-list-result-line"><p id="order-list-foundation-notice" role="status" aria-live="polite"></p><button id="order-list-clear" type="button" hidden>Clear filters</button></div>
+      <div class="order-list-result-line"><button id="order-list-clear" type="button" hidden>Clear filters</button></div>
       <div id="order-list-scroll" class="order-list-scroll">
         <table class="order-list-table" aria-label="Active production orders">
           <colgroup><col class="list-col-identity"><col class="list-col-stage"><col class="list-col-target"><col class="list-col-quantity"><col class="list-col-blanks"><col class="list-col-progress"><col class="list-col-payment"><col class="list-col-attention"></colgroup>
-          <thead><tr><th scope="col">Order / Customer</th><th scope="col">Stage</th><th scope="col">Target / Age</th><th scope="col">Quantities</th><th scope="col">Blanks</th><th scope="col">Print materials / Progress</th><th scope="col">Payment / Total</th><th scope="col">Attention</th></tr></thead>
+          <thead><tr><th scope="col">Order / Customer</th><th scope="col">Stage</th><th scope="col">Due / Age</th><th scope="col">Quantities</th><th scope="col">Blanks</th><th scope="col">Print materials / Progress</th><th scope="col">Payment / Total</th><th scope="col">Attention</th></tr></thead>
           <tbody id="order-list-foundation-rows"></tbody>
         </table>
         <p id="order-list-empty" class="order-list-empty" hidden></p>
       </div>
-      <p class="order-list-preview-note">List preview · Select orders to review workflow actions.</p>
     </section>
     <section id="board-load-state" class="board-load-state" data-state="loading" role="status" aria-live="polite" aria-atomic="true">
       <div class="board-load-state-copy">
@@ -255,34 +283,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
         </button>
       </div>
-      <div id="pipeline-view-tabs" role="tablist" aria-label="Order pipeline views">
-        <button type="button" role="tab" data-pipeline-view="orders" aria-selected="true" aria-controls="col-received">Orders</button>
-        <button type="button" role="tab" data-pipeline-view="drafts" aria-selected="false" aria-controls="draft-orders-workspace" tabindex="-1">Draft Orders</button>
-      </div>
-      <section id="draft-orders-workspace" role="tabpanel" aria-label="Draft Orders" hidden>
-          <div class="draft-browse-controls">
-            <form id="draft-orders-search" role="search">
-              <input id="draft-orders-search-input" type="search" aria-label="Search draft orders" placeholder="Draft number or customer email" />
-              <button type="submit" aria-label="Search drafts" title="Search drafts"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg></button>
-            </form>
-            <div class="draft-browse-meta">
-              <select id="draft-orders-filter" aria-label="Draft order status">
-              <option value="active">All active drafts</option>
-              <option value="open">Saved drafts</option>
-              <option value="invoice">Invoice sent</option>
-              <option value="converted">Converted to orders</option>
-              </select>
-              <span id="draft-orders-count" aria-live="polite"></span>
-              <button id="draft-orders-refresh" type="button" aria-label="Refresh drafts" title="Refresh drafts"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.5-1L20 12M4 12l2.4 6A7 7 0 0 0 17.9 17"/></svg></button>
-            </div>
-          </div>
-        <p id="draft-orders-status" role="status" aria-live="polite">Select Draft Orders to load Shopify drafts.</p>
-        <div id="draft-orders-browse">
-          <div id="draft-orders-list" aria-label="Draft order tiles"></div>
-          <button id="draft-orders-load-more" type="button" hidden>Load more drafts</button>
-        </div>
-        <div id="draft-orders-detail" hidden></div>
-      </section>
+
       <div id="pipeline-selection-shell" class="mobile-selection-shell" aria-hidden="true">
         <div class="selection-toolbar-placeholder" aria-hidden="true">Selection actions will appear here when selection mode is enabled.</div>
       </div>
@@ -1194,6 +1195,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <!-- existing renderer logic -->
   <script src="./dashboard-motion.js"></script>
   <script src="./web-shim.js"></script>
+  <script src="./workspace-navigation.js"></script>
   <script src="./storage-browser.js"></script>
   <script src="./order-detail-state.js"></script>
   <script src="./order-board-model.js"></script>

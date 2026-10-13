@@ -477,38 +477,11 @@
     return state.prompts.items.length > 0;
   }
 
-  function setActiveView(view) {
-    const nextView = ['storage', 'previous', 'inventory'].includes(view) ? view : 'orders';
-    if (nextView !== 'orders') {
-      const currentTab = document.body.dataset.activeTab || 'pipeline';
-      if (currentTab && !['storage', 'history'].includes(currentTab)) state.lastOrdersTab = currentTab;
-    }
-
-    document.body.dataset.activeView = nextView;
-    document.querySelectorAll('.app-nav-tab').forEach((btn) => {
-      const isActive = btn.dataset.view === nextView;
-      btn.classList.toggle('active', isActive);
-      btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-    });
-
-    if (elements.storageView) {
-      elements.storageView.setAttribute('aria-hidden', nextView !== 'storage');
-    }
-    if (elements.ordersView) {
-      elements.ordersView.setAttribute('aria-hidden', nextView !== 'orders');
-    }
-    if (elements.previousView) {
-      elements.previousView.setAttribute('aria-hidden', nextView !== 'previous');
-    }
-    document.getElementById('inventory-view')?.setAttribute('aria-hidden', nextView !== 'inventory');
-
+  function enterWorkspace(nextView) {
     if (nextView === 'inventory') {
       if (document.body.classList.contains('detail-open')) document.getElementById('detail-close')?.click();
       window.loadShelfInventory?.();
     } else if (nextView === 'storage') {
-      if (typeof window.setActiveMobileTab === 'function' && window.matchMedia('(max-width: 900px)').matches) {
-        window.setActiveMobileTab('storage', { scrollTop: false });
-      }
       if (state.needsInitialLoad || !hasActiveStorageData()) {
         state.needsInitialLoad = false;
         loadActiveTab({ reset: true });
@@ -516,12 +489,7 @@
         renderStorageResults();
       }
     } else if (nextView === 'previous') {
-      if (typeof window.setActiveMobileTab === 'function' && window.matchMedia('(max-width: 900px)').matches) {
-        window.setActiveMobileTab('history', { scrollTop: false });
-      }
       if (typeof window.loadPreviousOrders === 'function') window.loadPreviousOrders();
-    } else if (typeof window.setActiveMobileTab === 'function' && window.matchMedia('(max-width: 900px)').matches) {
-      window.setActiveMobileTab(state.lastOrdersTab || 'pipeline', { scrollTop: false });
     }
   }
 
@@ -1864,36 +1832,6 @@
       });
     });
 
-    document.querySelectorAll('.app-nav-tab').forEach((btn) => {
-      btn.addEventListener('click', () => setActiveView(btn.dataset.view));
-    });
-
-    // Mobile workflow navigation must use the same view controller as the
-    // desktop header so data loading, ARIA state, and the selected tab stay in sync.
-    document.querySelectorAll('.mobile-tab').forEach((btn) => {
-      btn.addEventListener('click', (event) => {
-        if (!window.matchMedia('(max-width: 900px)').matches) return;
-        const nextTab = btn.dataset.tab || 'pipeline';
-
-        if (nextTab === 'storage' || nextTab === 'history') {
-          event.stopImmediatePropagation();
-          const detailWasOpen = document.body.classList.contains('detail-open');
-          if (detailWasOpen) document.getElementById('detail-close')?.click();
-          setActiveView(nextTab === 'history' ? 'previous' : 'storage');
-          if (detailWasOpen) window.setTimeout(() => btn.focus({ preventScroll: true }), 0);
-          return;
-        }
-
-        if (document.body.dataset.activeView !== 'orders') {
-          event.stopImmediatePropagation();
-          setActiveView('orders');
-          if (typeof window.setActiveMobileTab === 'function') {
-            window.setActiveMobileTab(nextTab);
-          }
-        }
-      }, true);
-    });
-
     elements.loadMoreBtn.addEventListener('click', renderNextGroupChunk);
 
     elements.detailClose.addEventListener('click', closeDetail);
@@ -1906,7 +1844,9 @@
     });
 
     setActiveTab('previews');
-    setActiveView(document.body.dataset.activeView || 'orders');
+    for (const name of ['storage', 'previous', 'inventory']) {
+      window.OrderManagerNavigation.register(name, { onEnter: () => enterWorkspace(name) });
+    }
   }
 
   document.addEventListener('DOMContentLoaded', initStorageBrowser);

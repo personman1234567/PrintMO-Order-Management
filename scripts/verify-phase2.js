@@ -2868,14 +2868,14 @@ async function run() {
   );
   assert.equal(targetAt(null, '2026-09-15T05:00:00Z'), null);
   assert.equal(targetAt('2026-02-30', '2026-09-15T05:00:00Z'), null);
-  assert.equal(targetAt('2026-09-15', '2026-09-15T04:59:59Z').label, 'Tomorrow');
-  assert.equal(targetAt('2026-09-15', '2026-09-15T05:00:00Z').label, 'Today');
+  assert.equal(targetAt('2026-09-15', '2026-09-15T04:59:59Z').label, 'Due tomorrow · Sep 15');
+  assert.equal(targetAt('2026-09-15', '2026-09-15T05:00:00Z').label, 'Due today · Sep 15');
   assert.equal(targetAt('2026-09-14', '2026-09-15T05:00:00Z').tone, 'late');
   assert.equal(targetAt('2026-09-14', '2026-09-15T05:00:00Z', { productionStage: 'completed' }).tone, 'neutral');
   assert.equal(targetAt('2026-09-14', '2026-09-15T05:00:00Z', { _historyReadOnly: true }).tone, 'neutral');
-  assert.equal(targetAt('2026-03-09', '2026-03-08T07:30:00Z').label, 'Tomorrow', 'spring DST must use calendar days');
-  assert.equal(targetAt('2026-11-02', '2026-11-01T06:30:00Z').label, 'Tomorrow', 'fall DST must use calendar days');
-  assert.equal(targetAt('2027-01-01', '2027-01-01T05:00:00Z').label, 'Tomorrow');
+  assert.equal(targetAt('2026-03-09', '2026-03-08T07:30:00Z').label, 'Due tomorrow · Mar 9', 'spring DST must use calendar days');
+  assert.equal(targetAt('2026-11-02', '2026-11-01T06:30:00Z').label, 'Due tomorrow · Nov 2', 'fall DST must use calendar days');
+  assert.equal(targetAt('2027-01-01', '2027-01-01T05:00:00Z').label, 'Due tomorrow · Jan 1, 2027');
   const targetOrder = { _version: 3, targetDate: '2026-09-16' };
   detailState.mergeCanonicalProductionState(targetOrder, { version: 2, targetDate: '2026-09-15' });
   assert.equal(targetOrder.targetDate, '2026-09-16', 'late hydration must not replace a newer target');
@@ -3188,6 +3188,49 @@ async function run() {
   );
   const webShim = fs.readFileSync(path.join(root, 'order-manager-web', 'web-shim.js'), 'utf8');
   const targetMutationSource = webShim.slice(webShim.indexOf('function applyCandidateProduction('), webShim.indexOf('// 1) Populate dashboard'));
+  const readinessSource = webShim.slice(webShim.indexOf('window.api.updateReady ='), webShim.indexOf('window.api.updateProgress ='));
+  const readinessOrder = { _gid: 'readiness-fixture', _orderKey: 'readiness-fixture', _provider: 'shopify',
+    _version: 1, status: 'received', canonical: { production: {} } };
+  const readinessWrites = [];
+  const legacyReadinessWrites = [];
+  const readinessSandbox = {
+    candidateByName: () => readinessOrder,
+    candidateIdentity: order => JSON.stringify([order._provider, order._gid]),
+    candidateStageToBoard: stage => stage,
+    candidateMutationChains: new Map(),
+    newIdempotencyKey: () => 'readiness-fixture-key',
+    isShopifyCandidateView: () => true,
+    apiFetch: async (url, request) => { legacyReadinessWrites.push({ url, body: JSON.parse(request.body) }); },
+    window: { api: { updateProductionMetadata: async (id, request) => {
+      readinessWrites.push({ id, ...request });
+      const production = { version: request.expectedVersion + 1 };
+      for (const [key, value] of Object.entries(request.patch)) {
+        production[key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())] = value;
+      }
+      return { production };
+    } } }
+  };
+  vm.runInNewContext(targetMutationSource + '\n' + readinessSource, readinessSandbox);
+  for (const [field, metadataField] of Object.entries({ blanksStatus: 'blanks_status',
+    printsStatus: 'prints_status', blanksOrdered: 'blanks_ordered', printsOrdered: 'prints_ordered' })) {
+    await readinessSandbox.window.api.updateReady({ name: 'fixture', [field]: 1 });
+    assert.equal(readinessWrites.at(-1).patch[metadataField], 1, `${field} checkbox must reach canonical persistence`);
+    assert.equal(readinessOrder[field], 1, `${field} must adopt the acknowledged state`);
+    await readinessSandbox.window.api.updateReady('fixture', { [field]: 0 });
+    assert.equal(readinessOrder[field], 0, `${field} checkbox must also clear`);
+  }
+  await readinessSandbox.window.api.updateReady('fixture', 1, 1, 1, 1);
+  assert.equal(JSON.stringify(readinessWrites.at(-1).patch), JSON.stringify({
+    blanks_status: 1, blanks_ordered: 1, prints_status: 1, prints_ordered: 1
+  }), 'detail positional call must persist all four flags together');
+  assert.equal(legacyReadinessWrites.length, 0, 'candidate readiness must never enter Legacy Redis');
+  readinessSandbox.isShopifyCandidateView = () => false;
+  await readinessSandbox.window.api.updateReady('legacy-fixture', 0, 1, 0, 1);
+  assert.equal(readinessWrites.length, 9, 'legacy readiness must never enter candidate persistence');
+  assert.equal(legacyReadinessWrites[0].url, '/order-manager/v1/legacy/queue/mutate');
+  assert.equal(JSON.stringify(legacyReadinessWrites[0].body), JSON.stringify({
+    orderName: 'legacy-fixture', patch: { blanksStatus: 0, printsStatus: 1, blanksOrdered: 0, printsOrdered: 1 }
+  }));
   const runTargetConflict = async (remoteDate, baseline, desired) => {
     let calls = 0;
     const cached = { _gid: 'fixture', _orderKey: 'fixture', _provider: 'shopify', _version: 1,
@@ -3328,8 +3371,9 @@ async function run() {
   const previousOrdersSource = fs.readFileSync(path.join(root, 'order-manager-web', 'previous-orders.js'), 'utf8');
   const detailOverlaySource = fs.readFileSync(path.join(root, 'order-manager-web', 'detail-overlay-enhancements.js'), 'utf8');
   const dashboardTriageSource = fs.readFileSync(path.join(root, 'order-manager-web', 'dashboard-triage-enhancements.js'), 'utf8');
+  const workspaceNavigationSource = fs.readFileSync(path.join(root, 'order-manager-web', 'workspace-navigation.js'), 'utf8');
   const setActiveViewSource = storageBrowserSource.slice(
-    storageBrowserSource.indexOf('function setActiveView'),
+    storageBrowserSource.indexOf('function enterWorkspace'),
     storageBrowserSource.indexOf('async function fetchList')
   );
   const loadPreviewsSource = storageBrowserSource.slice(
@@ -3390,8 +3434,8 @@ async function run() {
       && webHtml.includes('<span class="detail-close-label">Back</span>')
       && sharedRenderer.includes("const detailWasOpen = isMobileViewport && document.body?.classList.contains('detail-open')")
       && sharedRenderer.includes("if (detailWasOpen) document.getElementById('detail-close')?.click();")
-      && storageBrowserSource.includes("const detailWasOpen = document.body.classList.contains('detail-open')")
-      && storageBrowserSource.includes("if (detailWasOpen) document.getElementById('detail-close')?.click()"),
+      && workspaceNavigationSource.includes("(previous !== next || mobileTab) && document.body.classList.contains('detail-open')")
+      && workspaceNavigationSource.includes("document.getElementById('detail-close')?.click()"),
     'mobile Order Detail must provide Back and close before any global Orders, Blanks, Print, or Storage navigation'
   );
   assert(

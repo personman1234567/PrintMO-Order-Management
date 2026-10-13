@@ -110,4 +110,35 @@ body[data-order-source="shopify"] #order-list-stages .order-list-stage-filter[ar
   body[data-order-source="shopify"] .dashboard-filter-label { display: none; }
   body[data-order-source="shopify"] .dashboard-filter-label-short { display: inline; }
 }
+
+/* Workspace identity and controls are composed once, rather than borrowing board tabs. */
+.app-view[aria-hidden="true"] { display: none !important; }
+#drafts-view { display: flex; flex-direction: column; min-height: 0; overflow: hidden; margin: 8px 16px; }
+#drafts-view[aria-hidden="true"], .app-nav-tab[data-view="drafts"][hidden] { display: none !important; }
+.draft-workspace-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; flex-shrink: 0; border-bottom: 1px solid #E2E8F0; }
+.draft-workspace-heading h2 { margin: 0; color: #0F172A; font: 600 16px/1.25 system-ui, sans-serif; }
+body[data-order-source="shopify"] .container > .panel.pipeline > .dashboard-section-header { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-rows: 44px; min-height: 52px; }
+body[data-order-source="shopify"] .panel.pipeline .dashboard-section-identity { align-items: center; }
+body[data-order-source="shopify"] .panel.pipeline .dashboard-section-header #pipeline-view-toggle { grid-column: 3; grid-row: 1; }
+body[data-order-source="shopify"] .panel.pipeline .dashboard-section-header #mobile-selection-toggle { grid-row: 1; }
+@media (max-width: 600px) { #drafts-view { margin: 8px 12px; } }
 @media (prefers-reduced-motion: reduce) { .dashboard-tab-indicator { transition: none !important; } }
+
+/* A single quiet deadline line; no placeholder row on undated orders. */
+body[data-order-source="shopify"] .order-schedule {
+  display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center;
+  gap: 4px 8px; min-width: 0; padding: 4px 10px; text-align: left;
+  color: #334155; background: #FFF; font: 600 12px/18px system-ui, sans-serif;
+}
+body[data-order-source="shopify"] .order-schedule .target-date-badge {
+  margin: 0 0 0 auto; padding: 0; min-width: 0; max-width: 100%;
+  background: transparent; border: 0; border-radius: 0;
+  color: #334155; font: inherit; white-space: normal; overflow-wrap: anywhere;
+}
+body[data-order-source="shopify"] .order-schedule .target-date-soon { color: #92400E; }
+body[data-order-source="shopify"] .order-schedule .target-date-late { color: #991B1B; }
+body[data-order-source="shopify"] .order-rush-marker {
+  display: inline-block; flex: 0 0 auto; padding: 1px 6px; border-radius: 4px;
+  color: #68326C; background: #F3E8F4; font: 700 11px/18px system-ui, sans-serif;
+  text-transform: uppercase; white-space: nowrap; vertical-align: middle;
+}

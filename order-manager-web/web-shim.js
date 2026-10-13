@@ -1136,7 +1136,7 @@ window.api.updateReady = async (...args) => {
         metadataPatch.stage = Number(patch.blanksOrdered) ? "blanks_ordered" : "blanks_cart";
       }
     }
-    return updateCandidateOrder(name, metadataPatch, options);
+    return updateCandidateOrder(name, metadataPatch);
   }
   return apiFetch("/order-manager/v1/legacy/queue/mutate", {
     method: "POST",

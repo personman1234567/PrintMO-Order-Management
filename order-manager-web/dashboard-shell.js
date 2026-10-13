@@ -67,8 +67,7 @@
     });
     drawer.addEventListener('close', () => launcher.setAttribute('aria-expanded', 'false'));
 
-    // Keep headings independent of tab widths, and keep the original nodes for
-    // source switching and List's existing Pipeline-tab relocation.
+    // Keep headings independent of control widths; workspace navigation owns destinations.
     const headings = [...document.querySelectorAll('.container > .panel > .panel-header')].map(panelHeader => {
       const identity = document.createElement('div'); identity.className = 'dashboard-section-identity';
       const nodes = [...panelHeader.querySelectorAll(':scope > .panel-title, :scope > #pipeline-count')];
@@ -97,7 +96,7 @@
           : view === 'orders' ? document.querySelector(document.body.dataset.orderLayout === 'list'
             ? '.order-list-heading' : '.production-panel-header')
           : document.querySelector({ inventory: '.shelf-inventory-header', previous: '.previous-orders-header',
-            storage: '.storage-header' }[view] || '.production-panel-header');
+            storage: '.storage-header', drafts: '.draft-workspace-heading' }[view] || '.production-panel-header');
         if (target && launcher.parentNode !== target) {
           const restoreFocus = document.activeElement === launcher;
           launcher.parentElement?.classList.remove('dashboard-menu-host');
@@ -144,7 +143,7 @@
     reduced.addEventListener('change', () => { if (closing) finishClose(); else drawerAnimation?.cancel(); });
     sync();
 
-    const groups = [...document.querySelectorAll('#pipeline-view-tabs, #supplies-tabs, .print-view-tabs, .blanks-segmented, #order-layout-controls, #order-list-stages, #mobile-tab-bar')];
+    const groups = [...document.querySelectorAll('#supplies-tabs, .print-view-tabs, .blanks-segmented, #order-layout-controls, #order-list-stages, #mobile-tab-bar')];
     const refreshIndicators = [];
     for (const group of groups) {
       group.classList.add('dashboard-connected-tabs');

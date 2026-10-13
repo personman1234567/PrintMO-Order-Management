@@ -135,20 +135,37 @@ Legacy status values remain compatibility data for the Legacy Redis view only.
 
 ### Manual Target Dates
 
-Implementation status: available in local code; requires the updated Worker followed
-by a Pages release before production use.
+Implementation status: target-date editing and dashboard presentation are deployed.
+The compact Rush/date presentation was verified in release `1791818752348`
+(Pages `c124dd33`) on 2026-10-12; that presentation update required no Worker change.
 
 The Overview **Target date** section lets an active production-board operator set,
 edit, cancel an edit, or clear an internal finish-by day with a native date picker.
 The day ends in `America/Chicago`; no time-of-day or customer promise is inferred.
 No date is assigned by default. History displays the saved date without editing.
 
-Cards display one read-only badge in their existing status region: a neutral
-`Target Sep 16`, amber `Today`/`Tomorrow`, or red `Late · Sep 12`. Completed and
-history orders keep a neutral date, and orders without dates have no badge.
+Cards display a compact read-only schedule line beneath the header, ahead of
+artwork: neutral `Due Sep 16`, amber `Due today · Sep 15` / `Due tomorrow · Sep 16`,
+or red `Overdue · Sep 12`. Completed and history orders keep a neutral Target date.
+List uses its existing Due / Age area, including collapsed phone rows. Ordinary
+orders without dates have no Board schedule line; Rush without a date shows
+`No date set`. Bundle cards show the earliest active member's date, falling back
+to neutral dates when no active dated member exists.
 Dates in a different year include that year. Text and accessible full-date labels
 carry the meaning independently of color. Normal board refreshes update urgency
 even when the order itself did not change.
+
+Rush is a separate read-only commerce signal, not inferred from date, order age,
+shipping method, price or free-form notes. The official Shopify `Rush order fee`
+product was verified on 2026-10-12 (product 10345936519416, variants with SKUs
+PM-RUSH-20 / PM-RUSH-25 / PM-RUSH-30). The existing queue carries SKU and title,
+so recognition requires no extra fetch or Worker change. A positive-quantity
+line with a verified SKU or exact official title qualifies. Historical custom
+lines without a SKU qualify only for exact normalized titles `Rush fee`,
+`Rush production fee`, or `Rush order`. Other ad hoc names are not guessed.
+Removed/refunded zero-quantity lines do not qualify. The shared classifier feeds
+Board and List; List offers Rush only within its collapsed filters and an
+optional Rush first sort. Bundle cards show Includes rush when any member qualifies.
 
 Saving uses the canonical production update chain. The card changes after the
 server confirms the save; failures retain the old badge and the chosen editor

@@ -14,9 +14,25 @@ The list targets the embedded Shopify/provider data plane, not Legacy Redis.
 
 ## Current Continuation State
 
+- **Compact List and workspace restructuring, 2026-10-12**: Owner approved moving
+  occasional Orders/Draft Orders switching into the drawer and replacing borrowed
+  board navigation with one workspace controller. Implementation gives drafts their
+  own destination and guarded lifecycle, preserves List preferences across switching,
+  combines identity and stages, moves the result count into search controls, removes
+  the permanent preview instruction, and reduces sticky table headings to 45px.
+  Both search fields cap text at 120 characters; active-order matching remains
+  literal and cached, and existing draft query escaping remains authoritative.
+  Synthetic navigation/geometry checks pass at 1856/1050/393/320px; at identical
+  1856px viewport and fixture data, the first order row moves from 271px to 167px
+  (104px recovered), with additional room from removing the preview footer.
+  All 52 List tests, Phase 1/2, syntax and docs checks pass. Production Pages
+  `020650c8` serves release `1791835737974`; the registered deployment command
+  verified its canonical marker, and all 11 changed runtime assets match by SHA-256.
+  Authenticated shop interaction and actual phone-app acceptance remain distinct.
+
 - **Current state**: Stages 1 through 4 are deployed. The normal Shopify app
   launch exposes **Board / List** without a special URL, release
-  `1791755400448` (Pages deployment `3d8dfe4a`). Device storage restores layout
+  `1791818752348` (Pages deployment `c124dd33`). Device storage restores layout
   and sort only; search, stage, filters, selection and phone expansion reset.
   `?printmo_list_preview=0` explicitly hides the optional layout as a rollback
   escape hatch. Existing `=1` links continue to work.
@@ -57,6 +73,20 @@ The list targets the embedded Shopify/provider data plane, not Legacy Redis.
   `1791755400448` (Pages `3d8dfe4a`) was verified on the canonical host and
   authenticated Shopify Board/List. No live workflow mutation was submitted;
   actual Shopify phone-app acceptance remains pending.
+- **Rush and finish-by visibility**: The owner-approved October 12 refinement adds
+  one compact Board schedule line only when a date or rush fee is present, plus
+  a modest plum Rush marker beside List identity and dates in the existing Due / Age
+  area. Today/tomorrow retain actual dates; complete/history dates remain neutral.
+  Bundles show Includes rush and the earliest active date for members represented
+  by that card. Recognition reads positive-quantity commerce lines using the live
+  verified official Rush order fee SKUs/title, plus exact explicit custom rush-fee
+  names without SKUs. Date proximity, shipping and notes never imply rush. Rush only
+  lives inside collapsed filters; Rush first is opt-in. All 51 List tests, Phase 1/2,
+  syntax, docs and bundle checks passed. Four-size synthetic checks covered date/rush
+  removal, undated cards, bundle labels, wrapping, collapsed phone visibility and
+  sorting/filtering. Release `1791818752348` (Pages `c124dd33`) was verified on the
+  canonical host and authenticated Shopify Board/List, including one real Rush order
+  and Rush-only filtering. No order, catalog or production state was changed.
 - **Next safe action**: Complete Stage 5 representative shop acceptance,
   prioritizing the actual Shopify phone app, software keyboard, scroll/detail
   return and reviewed workflow outcomes. Implementation and deployment are done.

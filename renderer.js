@@ -187,12 +187,15 @@ let mobileMediaQuery = null;
 function setActiveMobileTab(tab, opts = {}) {
   const { scrollTop = true } = opts;
   const nextTab = MOBILE_TABS.includes(tab) ? tab : MOBILE_TABS[0];
+  if (window.OrderManagerNavigation && !opts.workspaceReady) {
+    return window.OrderManagerNavigation.navigate(nextTab === 'storage' ? 'storage'
+      : nextTab === 'history' ? 'previous' : 'orders', { mobileTab: nextTab, scrollTop });
+  }
   activeMobileTab = nextTab;
   if (document.body) {
     document.body.dataset.activeTab = nextTab;
-    document.body.dataset.activeView = nextTab === 'storage'
-      ? 'storage'
-      : nextTab === 'history' ? 'previous' : 'orders';
+    if (!window.OrderManagerNavigation) document.body.dataset.activeView = nextTab === 'storage'
+      ? 'storage' : nextTab === 'history' ? 'previous' : 'orders';
   }
   document.querySelectorAll('.mobile-tab').forEach(btn => {
     const isActive = btn.dataset.tab === nextTab;
@@ -550,20 +553,42 @@ function refreshVisibleRelativeTimes() {
     const order = ordersByName.get(card.dataset.orderId);
     if (order) renderCardTargetDate(card, order);
   });
+  document.querySelectorAll('.bundle-card[data-bundle-name]').forEach(card => {
+    renderCardTargetDate(card, allOrders.filter(order => order.bundle === card.dataset.bundleName
+      && order.status === card.dataset.bundleStatus && orderIsVisibleOnOperationalBoard(order)));
+  });
 }
 
 function renderCardTargetDate(card, order) {
-  const date = order?._candidate ? window.OrderDetailState?.targetDatePresentation(order) : null;
-  const existing = card.querySelector('.target-date-badge');
-  if (!date) { existing?.remove(); return; }
-  const region = card.querySelector('.production-card-statuses');
-  if (!region) return;
-  const badge = existing || document.createElement('span');
-  badge.className = `card-status-badge target-date-badge target-date-${date.tone}`;
-  badge.textContent = date.label;
-  badge.title = date.accessible;
-  badge.setAttribute('aria-label', date.accessible);
-  if (!existing) region.prepend(badge);
+  const orders = Array.isArray(order) ? order : [order];
+  const dated = orders.filter(item => item?._candidate).map(item => ({
+    order: item, date: window.OrderDetailState?.targetDatePresentation(item)
+  })).filter(item => item.date);
+  // Finished members must not obscure a still-active bundle's next deadline.
+  const active = dated.filter(item => !item.date.complete);
+  const earliest = (active.length ? active : dated).sort((a, b) => a.order.targetDate.localeCompare(b.order.targetDate))[0];
+  const rush = orders.some(item => window.OrderDetailState?.isRushOrder(item));
+  let region = card.querySelector('.order-schedule');
+  if (!earliest && !rush) { region?.remove(); card.querySelector('.target-date-badge')?.remove(); return; }
+  if (!region) {
+    region = document.createElement('div'); region.className = 'order-schedule';
+    card.querySelector('.card-header')?.after(region);
+    if (!region.parentNode) card.prepend(region);
+  }
+  let priority = region.querySelector('.order-rush-marker');
+  if (rush) {
+    if (!priority) { priority = document.createElement('span'); priority.className = 'order-rush-marker'; region.prepend(priority); }
+    priority.textContent = Array.isArray(order) ? 'Includes rush' : 'Rush';
+  } else priority?.remove();
+  const date = earliest?.date;
+  let badge = card.querySelector('.target-date-badge');
+  if (!badge) badge = document.createElement('span');
+  badge.className = `target-date-badge target-date-${date?.tone || 'neutral'}`;
+  badge.textContent = !date ? 'No date set' : Array.isArray(order)
+    ? `Earliest ${date.label.replace(/^(Due|Target|Overdue)/, word => word.toLowerCase())}` : date.label;
+  badge.title = date?.accessible || 'No internal finish-by date set';
+  badge.setAttribute('aria-label', `${Array.isArray(order) ? 'Earliest bundle ' : ''}${badge.title}`);
+  if (badge.parentNode !== region) region.append(badge);
 }
 
 /**
@@ -1069,6 +1094,7 @@ function makeBundleCard(name, orders, style = 'pipeline') {
   const card = document.createElement('div');
   card.className = 'card bundle-card pipeline-card';
   card.dataset.bundleName = name;
+  card.dataset.bundleStatus = orders[0]?.status || '';
   card.draggable = true;
 
   let allReady = true,
@@ -1090,6 +1116,7 @@ function makeBundleCard(name, orders, style = 'pipeline') {
     <div class="card-header"><span class="cust-name">${name}</span></div>
     <div class="card-body">${bodyHtml}</div>
   `;
+  renderCardTargetDate(card, orders);
 
   if (allReady) card.classList.add('status-green');
   else if (anyReady) card.classList.add('status-yellow');

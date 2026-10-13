@@ -1,4 +1,4 @@
-// Extend the existing pipeline workbench; drafts are preparation, never production stages.
+// Draft preparation is an independent workspace; it never enrolls drafts into production stages.
 (() => {
   const state = { records: [], cursor: null, query: '', filter: 'active', loaded: false,
     loading: false, generation: 0, detail: null, editing: null, opener: null, busy: false, scrollTop: 0, pending: [], adding: false, selectedAssetId: null,
@@ -12,7 +12,7 @@
   function button(label, action, className = '') {
     const el = text('button', label, className); el.type = 'button'; el.addEventListener('click', action); return el;
   }
-  function active() { return document.body.dataset.pipelineView === 'drafts' && document.body.dataset.orderSource === 'shopify'; }
+  function active() { return document.body.dataset.activeView === 'drafts' && document.body.dataset.orderSource === 'shopify'; }
   function message(value, error = false) {
     const el = state.detail && $('draft-detail-status') ? $('draft-detail-status') : $('draft-orders-status'); el.textContent = value; el.classList.toggle('draft-error', error);
     el.setAttribute('role', error ? 'alert' : 'status');
@@ -550,22 +550,18 @@
     });
     return form;
   }
-  function switchView(view) {
-    if (state.busy || document.body.dataset.orderSource !== 'shopify') return;
-    if (view !== 'drafts' && state.detail) { back(); if (state.detail) return; }
-    if (active() && !state.detail) state.scrollTop = $('draft-orders-workspace').scrollTop;
+  function canLeave() {
+    if (state.busy) return false;
+    if (state.detail) { back(); if (state.detail) return false; }
+    return true;
+  }
+  function leaveWorkspace() {
+    if (!state.detail) state.scrollTop = $('draft-orders-workspace').scrollTop;
     ++state.generation; state.loading = false; pausePreviews(); loadingControls();
-    document.body.dataset.pipelineView = view;
-    $('draft-orders-workspace').hidden = view !== 'drafts';
-    $('col-received').setAttribute('aria-hidden', String(view === 'drafts'));
-    $('pipeline-view-tabs').querySelectorAll('[role="tab"]').forEach(tab => {
-      const selected = tab.dataset.pipelineView === view; tab.setAttribute('aria-selected', String(selected)); tab.tabIndex = selected ? 0 : -1;
-    });
-    if (view === 'drafts') {
-      if (state.detail) renderDetail();
-      else if (!state.loaded) load({ reset: true });
-      else { renderList(); $('draft-orders-workspace').scrollTop = state.scrollTop; }
-    }
+  }
+  function enterWorkspace() {
+    if (!state.loaded) load({ reset: true });
+    else { renderList(); $('draft-orders-workspace').scrollTop = state.scrollTop; }
   }
   function init() {
     if (!$('draft-orders-workspace') || !window.api?.getDraftOrders) return;
@@ -582,17 +578,9 @@
         addFiles(files);
       }
     });
-    $('col-received').setAttribute('role', 'tabpanel');
-    $('col-received').setAttribute('aria-label', 'Orders');
-    $('pipeline-view-tabs').querySelectorAll('button').forEach(tab => tab.addEventListener('click', () => switchView(tab.dataset.pipelineView)));
-    $('pipeline-view-tabs').addEventListener('keydown', event => {
-      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-      event.preventDefault(); const tabs = [...$('pipeline-view-tabs').querySelectorAll('button')];
-      const index = event.key === 'Home' ? 0 : event.key === 'End' ? 1 : (tabs.indexOf(document.activeElement) + 1) % tabs.length;
-      tabs[index].focus(); switchView(tabs[index].dataset.pipelineView);
-    });
+    window.OrderManagerNavigation.register('drafts', { canLeave, onLeave: leaveWorkspace, onEnter: enterWorkspace });
     $('draft-orders-search').addEventListener('submit', event => {
-      event.preventDefault(); state.query = $('draft-orders-search-input').value.trim(); load({ reset: true });
+      event.preventDefault(); state.query = window.OrderBoardModel.normalizeSearchQuery($('draft-orders-search-input').value).trim(); $('draft-orders-search-input').value = state.query; load({ reset: true });
     });
     $('draft-orders-filter').addEventListener('change', event => { state.filter = event.target.value; load({ reset: true }); });
     $('draft-orders-load-more').addEventListener('click', () => load());
@@ -602,11 +590,7 @@
     });
     new MutationObserver(() => { if (document.body.dataset.orderSource !== 'shopify') {
       ++state.generation; state.loading = false; clearPending(); state.detail = null; state.editing = null; dialog.close(); $('draft-orders-detail').hidden = true;
-      $('draft-orders-workspace').dataset.detail = 'false'; pausePreviews(); loadingControls(); document.body.dataset.pipelineView = 'orders'; $('draft-orders-workspace').hidden = true;
-      $('col-received').setAttribute('aria-hidden', 'false');
-      $('pipeline-view-tabs').querySelectorAll('[role="tab"]').forEach(tab => {
-        const selected = tab.dataset.pipelineView === 'orders'; tab.setAttribute('aria-selected', String(selected)); tab.tabIndex = selected ? 0 : -1;
-      });
+      $('draft-orders-workspace').dataset.detail = 'false'; pausePreviews(); loadingControls();
     } }).observe(document.body, { attributes: true, attributeFilter: ['data-order-source'] });
     document.addEventListener('click', event => {
       if (!active() || !event.target.closest('#order-manager-refresh-btn, #mobile-refresh-btn')) return;
@@ -614,9 +598,7 @@
     }, true);
   }
   window.openDraftArtworkReview = id => {
-    document.querySelector('.app-nav-tab[data-view="orders"]')?.click();
-    if (window.matchMedia('(max-width: 900px)').matches) document.querySelector('.mobile-tab[data-tab="pipeline"]')?.click();
-    switchView('drafts'); if (active()) open({ id, displayName: 'draft artwork' }, null);
+    if (window.OrderManagerNavigation.navigate('drafts')) open({ id, displayName: 'draft artwork' }, null);
   };
   document.addEventListener('DOMContentLoaded', init);
 })();
