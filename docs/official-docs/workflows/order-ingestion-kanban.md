@@ -64,7 +64,7 @@ flowchart LR
 - Cards and detail headers carry an always-visible source text badge. Etsy also uses an orange rail; synthetic fixtures add a separate `TEST` badge, so color is never the only source signal.
 - Supplier batching remains Shopify-only. The adapter rejects an S&S submission containing an Etsy order, and Etsy pilot artwork upload remains disabled until a provider-safe asset contract exists.
 - Source selection is a view/adapter choice, not a copy or dual-write operation.
-- Candidate queue loads are generation-guarded and repaint only changed columns.
+- Candidate queue loads are generation-guarded. Within affected columns, unchanged cards retain their DOM and loaded previews; version-only acknowledgments do not recreate cards. Reused cards open the latest DTO by provider and immutable order identity.
 - Slow private assets hydrate after commerce/production cards are usable.
 
 The Stage 2 list is an opt-in embedded candidate extension
@@ -98,6 +98,36 @@ Candidate moves are optimistic and atomic:
 4. Send one canonical production patch with expected revision and idempotency.
 5. On one `VERSION_CONFLICT`, adopt current state and retry at most once when still needed.
 6. On terminal failure, restore the snapshot and show a non-blocking error.
+
+Overlapping moves layer the latest local intent over server-confirmed production
+state. Older acknowledgments cannot pull a card out of its newer destination;
+failure restores the latest confirmed state. Bundle persistence settles every
+member before reporting failure, retaining acknowledged member changes. Existing
+canonical version checks, serialization and conflict reconciliation remain in use.
+
+Production and Ordered drops skip supplier-accounting lookups because those
+destinations cannot require batch-membership correction. Moves back to Pipeline,
+Build Order or In S&S Cart retain the accounting lookup and correction choice.
+Local visual updates reuse cached accounting; queue refreshes and explicit
+receiving/batch operations remain responsible for hydrating supplier records.
+
+Background queue paints defer while dragging, checking a batch or saving a move,
+then refresh once the interaction settles. Local moves still paint immediately.
+Loading feedback appears only after a short delay, without changing card size or
+material-status colors. Desktop drops use one interruptible 180ms translation;
+save acknowledgment does not replay an entrance. Reduced motion is immediate.
+
+Accepted desktop drops retain the drag copy and temporary target slot until the
+optimistic board paint, including while a required batch lookup/review is pending.
+The original card stays visually hidden in that interval. Only the explicit move
+paint completes the handoff and runs the layout adjustment; loading/status DOM
+mutations cannot trigger it early. Cancellation or a pre-paint error clears the
+handoff through the drop completion event. This avoids revealing the origin and
+then replaying a second move when accounting finishes.
+
+Resting candidate cards use `will-change: auto`. Landing animations cancel their
+finished transform effects so text returns to normal rendering instead of staying
+on a retained movement layer; the temporary drag copy keeps its own transform hint.
 
 ## Stage and View Semantics
 

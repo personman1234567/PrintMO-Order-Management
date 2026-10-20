@@ -314,6 +314,49 @@ The item breakdown is the primary content of Items & financials. Preserve the ar
 
 ## Do's and Don'ts
 
+### Board recognition cards
+
+Board movement preserves neighboring card elements and healthy preview pixels.
+Open a space sized to the destination's card type, then settle the dropped card
+once with an interruptible 180ms translation. Do not hide and reintroduce it on
+save acknowledgment. Keep the drag copy and target space through required batch
+checks, hiding the origin until the real destination card paints. Only that paint
+triggers the landing; pending-status updates must not trigger layout motion.
+Pending moves use a delayed, static 2px Action Blue line at
+the card's bottom edge with an accessible save/check label; material-status green
+keeps its existing meaning. Background queue paints wait for the interaction to
+settle. Fast saves produce no flashing toast; failures retain explicit feedback.
+
+Individual embedded-board cards lead with a full, two-line customer name and a
+quiet order/source/age row. Reserve a 138px media frame on desktop and 152px on
+phone, with 6px corners and uncropped foreground imagery. Extend the outermost
+pixel strips into unused space and soften the backing with a 12px blur, keeping
+the original edge colors at full opacity and the foreground sharp. Repaint only
+when the image or frame dimensions change. Unavailable previews use the garment/print icon
+vocabulary with real item context; quantities stay explicitly labeled below.
+Garment and print counts retain their status icons: green for Ordered or Ready,
+neutral for Not ordered. Show the explicit state beneath each quantity, using
+the separate ordered/ready flags so ordering never implies readiness.
+Blockers and printed-garment progress remain visible without coloring the entire
+header/footer. Preserve source text badges and the thin Etsy source marker.
+
+Local card adaptations use 15px/16px customer names, 12px facts and progress,
+11px metadata, and a 10px additional-preview label. Working Slate #475569,
+surface #F1F5F9 and dividers #E2E8F0 extend the incumbent slate vocabulary here.
+Use the owner's `Assets/order-preview-mark.svg` for the shirt/list mark. Loading
+shows it in color with a separate scan bar confined to the list rows. Confirmed
+absence uses a smaller muted static mark and `No preview available`; failed
+lookups use `Preview could not load`. Neither terminal state has a scan bar.
+The Order Detail selected preview reuses this same mark and loading motion at
+92px by 80px, with smaller static marks for absent or failed previews. Stop the
+scan bar when the selected image loads, fails, or leaves view; block full-size
+opening until the real image is available.
+Loading motion belongs only to the visible print-sheet mark; stop it offscreen
+and in hidden documents. Preview reveal is a single 180ms opacity transition.
+Use existing acknowledged-save feedback and drag continuity; no polling entrance
+sequence. The inline native-paste fallback uses a 16px text field, 44px controls,
+visible focus and explicit status feedback.
+
 List composition keeps Orders, stage filters and Menu in one desktop row, with
 search, result count and tools below. Draft Orders belongs in the workspace drawer.
 Sticky column headings include the full checkbox target within about 44px; do not
@@ -337,3 +380,7 @@ add another layer of vertical padding around it or reserve empty feedback rows.
 - **Don't** use gradient text, decorative side-stripe borders, repeating stripe or grid backgrounds, or decorative glass panels.
 - **Don't** combine one-pixel borders with wide soft shadows, use card radii above 25px, or animate layout properties for decoration.
 - **Don't** use color as the only status cue or hide secondary text with low contrast.
+
+Garment summaries replace unavailable mockups within the existing media frame. Use a bounded color-family palette, front/back garment geometry, and only recorded placement associations. Keep the original product/color name; acknowledge additional combinations without adding card rows. Source labels and receiving status use plain text. Remove candidate card deletion buttons and the redundant prints-pending warning; retain confirmed removal in detail Order actions.
+
+The garment-summary palette is intentionally illustrative: black #34383E, white #FAF9F5, gray #A3A8AE, navy #304665, blue #477DB5, red #B94C4D, pink #D68AA5, purple #806398, green #567C62, teal #4C8E91, yellow #E2C76B, orange #CF8856, brown #896B58, tan #C9B99B, unknown #CBD0D5. These colors identify families, not print-proof fabric swatches. Diagram seams switch between light and dark for legibility.

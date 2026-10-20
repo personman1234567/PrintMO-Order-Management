@@ -88,6 +88,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./dashboard-controls.css" />
   <link rel="stylesheet" href="./dashboard-motion.css" />
   <link rel="stylesheet" href="./dashboard-shell.css" />
+  <link rel="stylesheet" href="./order-card-presentation.css" />
 </head>
 <body data-active-tab="pipeline" data-active-view="orders" data-order-source="shopify" data-board-load-state="loading">
   <header class="app-header">
@@ -473,6 +474,12 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                       <button id="manual-mockup-paste-btn" class="fullscreen-btn" type="button">Paste</button>
                     </div>
                   </div>
+                  <div id="manual-mockup-paste-area" class="manual-mockup-paste-area" hidden>
+                    <label for="manual-mockup-paste-target">Paste a mockup</label>
+                    <textarea id="manual-mockup-paste-target" rows="2" placeholder="Touch and hold here, then choose Paste" aria-describedby="manual-mockup-status" spellcheck="false" autocapitalize="off"></textarea>
+                    <button id="manual-mockup-paste-cancel" class="fullscreen-btn" type="button">Cancel paste</button>
+                  </div>
+                  <p id="manual-mockup-status" class="manual-mockup-status" role="status" aria-live="polite" hidden></p>
                   <div id="detail-mockups-browser" class="detail-mockups-browser">
                     <div id="detail-mockup-feature" class="detail-mockup-feature hidden">
                       <button id="detail-mockup-main" class="detail-mockup-main" type="button" aria-label="Open selected mockup preview">
@@ -486,7 +493,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                     <div id="detail-mockup-dots" class="detail-mockup-dots" role="group" aria-label="Choose mockup preview"></div>
                     <div id="detail-mockups-track" aria-label="Mockup thumbnails"></div>
                   </div>
-                  <p id="detail-mockups-placeholder" class="detail-assets-empty">No mockup previews available</p>
+                  <div id="detail-mockups-placeholder" class="detail-assets-empty">No mockup previews available</div>
                 </section>
 
                 <section id="detail-notes-wrapper" class="detail-section detail-instructions-card">
@@ -522,6 +529,11 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                     </div>
                   </div>
                 </section>
+
+                <details id="detail-order-actions" hidden>
+                  <summary>Order actions</summary>
+                  <button type="button">Remove from board</button>
+                </details>
 
                 <section id="detail-production-card" class="detail-section print-station-card">
                   <div class="production-section-header">
@@ -1199,6 +1211,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./storage-browser.js"></script>
   <script src="./order-detail-state.js"></script>
   <script src="./order-board-model.js"></script>
+  <script src="./order-garment-summary.js"></script>
+  <script src="./order-card-presentation.js"></script>
   <script src="./renderer.js"></script>
   <script src="./previous-orders.js"></script>
   <script src="./draft-orders.js"></script>

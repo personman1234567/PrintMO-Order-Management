@@ -382,6 +382,7 @@
     copy.textContent = message;
     retry.classList.toggle('hidden', !options.retry);
     retry.disabled = Boolean(options.loading);
+    if (!mockupThumbs().length) syncSelectedMockup();
   }
 
   function renderCanonicalItems(order, result) {
@@ -1843,9 +1844,16 @@
     return Array.from(document.querySelectorAll('#detail-mockups-track .mockup-thumb'));
   }
 
-  function setMainMockupMessage(message) {
+  function setMainMockupMessage(message, state = 'unavailable') {
     const content = document.getElementById('detail-mockup-main-content');
     if (!content) return;
+    if (document.body?.dataset.orderSource === 'shopify' && window.OrderCardPresentation?.renderStatus) {
+      window.OrderCardPresentation.renderStatus(content, state);
+      const hint = document.getElementById('detail-mockup-hint');
+      if (hint) hint.textContent = state === 'loading' ? 'Loading selected preview'
+        : state === 'failed' ? 'Preview could not load' : 'No preview available';
+      return;
+    }
     content.innerHTML = '';
     const text = document.createElement('span');
     text.textContent = message;
@@ -2225,7 +2233,15 @@
       feature.classList.add('hidden');
       count.textContent = '0 mockups';
       resetMockupFrame(mainButton);
-      setMainMockupMessage('No mockup previews available');
+      const lookup = document.getElementById('detail-data-status');
+      const state = lookup?.classList.contains('is-loading') ? 'loading'
+        : lookup?.classList.contains('is-error') ? 'failed' : 'unavailable';
+      setMainMockupMessage('No mockup previews available', state);
+      const placeholder = document.getElementById('detail-mockups-placeholder');
+      if (document.body?.dataset.orderSource === 'shopify' && placeholder && window.OrderCardPresentation?.renderStatus) {
+        window.OrderCardPresentation.renderStatus(placeholder, state);
+      }
+      mainButton.setAttribute('aria-disabled', 'true');
       return;
     }
 
@@ -2249,27 +2265,56 @@
     const activeImg = activeThumb.querySelector('img');
     const activeStatus = activeThumb.querySelector('.detail-asset-status');
     content.innerHTML = '';
+    content.setAttribute('aria-busy', 'false');
+    mainButton.setAttribute('aria-disabled', 'false');
 
     if (activeImg?.src) {
       const img = activeImg.cloneNode(false);
+      img.classList.add('detail-selected-preview');
+      // The featured image must load even while hidden behind its status mark.
+      img.loading = 'eager';
       img.alt = activeImg.alt || `Mockup ${selectedMockupIndex + 1}`;
-      img.addEventListener('load', () => sizeMockupFrame(img, mainButton), { once: true });
+      const usesStatus = document.body?.dataset.orderSource === 'shopify' && window.OrderCardPresentation?.renderStatus;
+      if (usesStatus) {
+        setMainMockupMessage('Loading preview...', 'loading');
+        mainButton.setAttribute('aria-disabled', 'true');
+        img.hidden = true;
+      }
+      const reveal = () => {
+        if (!content.contains(img) || !img.naturalWidth) return;
+        img.hidden = false;
+        content.querySelector('.preview-summary')?.remove();
+        content.setAttribute('aria-busy', 'false');
+        mainButton.setAttribute('aria-disabled', 'false');
+        if (hint) hint.textContent = 'Open full-size preview';
+        sizeMockupFrame(img, mainButton);
+      };
+      img.addEventListener('load', reveal, { once: true });
+      img.addEventListener('error', () => {
+        if (!content.contains(img) || !usesStatus) return;
+        setMainMockupMessage('Preview could not load', 'failed');
+        mainButton.setAttribute('aria-disabled', 'true');
+      }, { once: true });
       content.appendChild(img);
+      if (img.complete && img.naturalWidth) reveal();
       sizeMockupFrame(activeImg, mainButton);
       requestAnimationFrame(() => sizeMockupFrame(activeImg, mainButton));
     } else if (activeStatus) {
       resetMockupFrame(mainButton);
-      setMainMockupMessage(activeStatus.textContent || 'Preview unavailable');
+      setMainMockupMessage(activeStatus.textContent || 'Preview unavailable', 'failed');
+      mainButton.setAttribute('aria-disabled', 'true');
     } else {
       resetMockupFrame(mainButton);
-      setMainMockupMessage('Loading preview...');
+      setMainMockupMessage('Loading preview...', 'loading');
+      mainButton.setAttribute('aria-disabled', 'true');
     }
     renderSelectedMockupContext(activeThumb);
 
     mainButton.onclick = () => {
       const currentThumb = mockupThumbs()[selectedMockupIndex];
       const currentImage = currentThumb?.querySelector('img');
-      if (currentThumb && currentImage?.src) {
+      const preview = content.querySelector('.detail-selected-preview');
+      if (currentThumb && currentImage?.src && preview?.complete && preview.naturalWidth) {
         setAssetViewerCaption(assetLabelFromTarget(currentThumb));
         if (typeof openAssetViewer === 'function') openAssetViewer(currentImage.src);
       }

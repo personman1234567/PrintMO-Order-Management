@@ -24,6 +24,10 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Main Electron Process | `node --check main.js` | Silent exit code 0 |
 | Preload Script | `node --check preload.js` | Silent exit code 0 |
 | Desktop Renderer | `node --check renderer.js` | Silent exit code 0 |
+| Board move responsiveness | `node --test scripts/board-interactions.test.js` | Rapid move acknowledgments and failures preserve the latest intent, partial bundles retain confirmed members, current DTOs reconcile by identity, deferred refresh runs once, membership-affecting drops retain batch review, and delayed drop handoffs cannot be consumed by status mutations |
+| Manual mockup clipboard recovery | `node --test scripts/manual-mockup-clipboard.test.js` | Unsupported/denied direct reads, native file/item-list paste, supported MIME preference, order-switch races, text rejection, upload failures and history/provider restrictions pass |
+| Garment recognition summary | `node --test scripts/garment-summary.test.js` | Color aliases, size grouping, placement association, neutral fallbacks and safe SVG generation pass |
+| Preview state settlement | `node --test scripts/mockup-preview-state.test.js` | Confirmed empty and failed lookups, overlapping queue pages, detail refresh races, current DTO reconciliation, Etsy without a mapping, pending private/catalog assets, and the 250-order bulk cap pass |
 | Optional Order List Browsing | `npm run verify:order-list` | Stable provider identities, six canonical stages, individual bundle counts, active/history exclusion, material milestones, printable eligibility, target dates, combined search/filter counts, deterministic sorts, unknown money, and separate attention/accounting/cached supplier summaries pass |
 | Cloudflare Worker Proxy | `node --check order-manager-proxy/worker.js` | Silent exit code 0 |
 | Phase 1 Auth/Transport Contract | `npm run verify:phase1` | `Phase 1 contract verification passed.` |
@@ -38,6 +42,19 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 ---
 
 ## Subsystem Manual Verification Matrix
+
+Board recognition cards and mockup paste (2026-10-19): Pages production release
+`1792465149457` was verified by its served release marker. Synthetic browser
+checks at 1600px, 393px and 320px covered the shared preview heights, two-line
+customer alignment, labeled quantities, printed-garment progress, unavailable
+and failed states, delayed-image arrival without resizing, reduced motion and
+horizontal containment. Existing receiving, cost, drag, accessibility, mobile
+and artwork controllers loaded without runtime errors in the fixture. A denied
+clipboard read recovered through native image-file paste, including with the
+production artwork controller present. Seven focused clipboard regressions and
+Phase 2 passed. These checks do not establish physical iOS/Android clipboard
+behavior inside an authenticated Shopify Admin session; use native Paste in the
+inline field or Upload when that host does not supply image bytes.
 
 List browsing (local, 2026-10-09): twenty-one focused tests pass. Normal loads
 retain Board with preview controls hidden. Candidate preview uses

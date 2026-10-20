@@ -64,6 +64,59 @@ On the **Shopify board at desktop widths above 900px**, the middle panel becomes
 
 ## Collapsed Order Card Tile Specification
 
+The embedded Shopify/provider board uses `order-card-presentation.js` and
+`order-card-presentation.css` for recognition-first individual cards: a full
+customer name (up to two lines), order/source/age, then a reserved media frame.
+Desktop frames are 138px high and phone frames are 152px high, independent of
+loading, available, unavailable or failed image state. Images remain uncropped;
+outermost pixel strips extend into unused edges for mismatched image proportions,
+softened with a 12px blur behind the sharp image. The canvas backing reuses the
+loaded image without pixel readback, encoding or additional asset requests, and
+repaints when the image or frame dimensions change.
+When the preview is unavailable or failed, `order-garment-summary.js` groups the
+existing line items by garment/style/color (combining sizes). A known garment
+uses front/back schematic SVG views in a fixed color-family palette, with the
+original product/color label and a plain additional-combinations count. It does
+not fetch product swatches or require new Shopify scopes. Unknown products keep
+the approved generic mark; unknown colors use neutral gray. Print-location marks
+require an explicit group link or a single unambiguous garment group. No missing
+assignment is inferred across mixed products. Garment, print and other counts
+remain labeled below the frame. This presentation does
+not infer artwork approval or production readiness. Known additional mockup
+manifests expose a preview-count label; opening the card retains the existing
+detail gallery. Bundles, Build Order tiles and Legacy Redis retain their layouts.
+
+Garment and print counts retain the original material icons, green when marked
+ordered or ready, with explicit `Not ordered`, `Ordered`, or `Ready` text beneath
+each quantity. The garment state uses `blanksOrdered`/`blanksStatus`; prints use
+`printsOrdered`/`printsStatus`. The two material states update independently,
+including reversal to a neutral icon, and ordering alone never implies readiness.
+
+Loading uses the full-color approved mark with a separate SVG scan bar clipped
+over the list rows. An unclassified order with no preview uses a smaller muted
+static mark and `No preview available`. Failed lookups or image reads use
+`Preview could not load`, with no scan bar; failure is never evidence of absent
+artwork. Manual lookup results settle per order, including overlapping queue
+pages and detail refreshes, and do not reset a confirmed empty state on polling.
+Bulk requests respect the Worker's 250-order cap; omitted results are failures.
+Late manual responses reconcile against the current order snapshot so they
+cannot replace newer Designer previews with an old empty DTO. The real preview
+selectors exclude the decorative SVG image when attaching signed image URLs.
+
+Production cards retain receiving status and show the
+printed-garment fraction plus a progress track. Preview arrival fades once;
+only visible loading frames animate their small print-sheet mark, pausing in a
+hidden document and respecting reduced motion. Polling does not animate card
+entrances or financial values. The shared renderer's per-asset updater calls
+`refreshPreview` after private-ticket hydration, preserving the reserved frame.
+
+Source labels and supplier/receiving statuses are plain metadata, without pill
+backgrounds. The production header stays white as part of the single card.
+The redundant prints-pending warning is omitted on the candidate board; material
+readiness remains visible beside its quantities. Candidate cards have no removal
+button. The existing archive operation remains available in order detail under
+**Order actions → Remove from board**, with confirmation and no history mutation.
+
 An **Order Card** (`.pipeline-card`, `.card`) is the fundamental visual unit displayed in Kanban columns *before* a user clicks to open the Order Detail overlay.
 
 ```
@@ -105,6 +158,13 @@ The **Receive Batches** dialog (`#blanks-receive-overlay`) has shipment search b
 Below is the complete inventory of all 10 modal overlays and secondary screens embedded in `index.html`.
 
 ### 1. Order Detail Workbench (`#detail-overlay`, `#detail-card`)
+
+The Shopify/provider selected mockup reuses the board's approved shirt/list mark
+and clipped scan-bar animation while fetching detail or loading the image.
+Confirmed absence and failed previews use distinct static states. Loading motion
+pauses offscreen, in hidden documents, and for reduced motion. Full-size opening
+is available only after the selected real image has loaded; late events from a
+previous selection cannot replace the current preview.
 
 For Shopify details, selected-file item instructions appear in the design inspector and the complete grouped instructions remain available in the All item instructions disclosure below artwork; they also appear once beneath their associated garment group in Items & financials. Legacy presentation retains the existing section placement. Empty instructions create no section or placeholder. Each entry uses the optional customer item name, product/color, and size quantities; multiline text wraps naturally without an internal scroller. These instructions are distinct from the whole-order customer checkout note and editable internal production notes.
 

@@ -2,7 +2,7 @@
 (() => {
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
   const animations = new WeakMap();
-  let pending = 0, failed = false, suppressed = false, feedback, dismissTimer;
+  let pending = 0, failed = false, suppressed = false, feedback, dismissTimer, showTimer, feedbackShown = false;
   const enabled = () => document.body?.dataset.orderSource === 'shopify';
 
   function cancelPopover(panel) {
@@ -30,23 +30,30 @@
   }
   async function trackSave(task) {
     clearTimeout(dismissTimer);
-    if (!pending) { failed = false; suppressed = false; }
+    if (!pending) {
+      failed = false; suppressed = false; feedbackShown = false;
+      if (feedback) feedback.hidden = true;
+      clearTimeout(showTimer);
+      showTimer = window.setTimeout(() => {
+        if (pending) { feedbackShown = true; showFeedback('saving', 'Saving changes…'); }
+      }, 250);
+    }
     // List workflows retain their detailed partial/unknown result region and
     // its existing live announcement instead of a second generic success toast.
     suppressed ||= document.body?.dataset.orderWorkflowSaving === 'true';
     pending++;
-    showFeedback('saving', 'Saving changes…');
     try { return await task(); }
     catch (error) { failed = true; throw error; }
     finally {
       pending--;
       if (!pending) {
-        showFeedback(failed ? 'review' : 'saved', failed ? 'Changes need review' : 'Production changes saved');
-        dismissTimer = window.setTimeout(() => { if (feedback) feedback.hidden = true; }, failed ? 6000 : 2500);
+        clearTimeout(showTimer);
+        if (failed || feedbackShown) showFeedback(failed ? 'review' : 'saved', failed ? 'Changes need review' : 'Production changes saved');
+        dismissTimer = window.setTimeout(() => { if (feedback) feedback.hidden = true; }, failed ? 6000 : 1200);
       }
     }
   }
-  window.dashboardMotion = { enterPopover, cancelPopover, trackSave };
+  window.dashboardMotion = { enterPopover, cancelPopover, trackSave, get saving() { return pending > 0; } };
 
   function setup() {
     feedback = document.createElement('div');

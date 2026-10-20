@@ -1,4 +1,15 @@
 /* Pointer presses stay small; keyboard actions and content changes stay instant. */
+/* Let finished moves return to normal text rendering instead of retaining a GPU layer. */
+body[data-order-source="shopify"] :is(.card, .pipeline-card):not(.desktop-drag-ghost) { will-change: auto; }
+body[data-order-source="shopify"] .card.drag-handoff-source { visibility: hidden !important; }
+body[data-order-source="shopify"] .card[data-move-state]::after {
+  content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
+  background: #1765C1; pointer-events: none;
+}
+.order-move-state {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
 body[data-order-source="shopify"] :is(.app-header button, .panel-header button,
   #supplies-actions-toggle, #supplies-actions-popover button, #pipeline-view-popover button,
   #blanks-section .section-actions button, .summary button, .order-list-selection button,

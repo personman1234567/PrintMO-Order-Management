@@ -204,6 +204,10 @@
     card.classList.toggle('dashboard-missing-mockup', triage.missingMockup);
     card.classList.toggle('dashboard-missing-files', triage.missingFiles);
 
+    // Recognition cards own the same anatomy on desktop and phone. Preserve
+    // filter/sort metadata without moving their facts or duplicating warnings.
+    if (shopifyBoard && card.classList.contains('recognition-card')) return card;
+
     // Keep filtering and sorting data available everywhere. The denser card
     // decoration remains desktop-only so mobile cards retain their compact anatomy.
     if (!desktopQuery.matches || style !== 'pipeline' || (shopifyBoard && status !== 'received')) return card;

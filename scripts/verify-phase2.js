@@ -3521,7 +3521,7 @@ async function run() {
   );
   assert(
     sharedRenderer.includes('function reconcileManualMockupCard(order, changed, wasHydrated)')
-      && sharedRenderer.includes("window.updateBoardMockupPreview(order, { resolvePlaceholder: true })")
+      && sharedRenderer.includes("window.updateBoardMockupPreview(current, { resolvePlaceholder: true })")
       && !sharedRenderer.includes('scheduleManualMockupRepaint')
       && !sharedRenderer.includes('pendingManualMockupStatuses'),
     'manual mockup hydration must reconcile one card without rebuilding status columns over Designer previews'
@@ -3614,7 +3614,8 @@ async function run() {
       && printCardSource.includes('print-card-details')
       && printCardSource.includes('print-card-statuses')
       && sharedRenderer.includes("toUpperCase() !== 'FULFILLED'")
-      && sharedRenderer.includes("return pendingDesignerMockup || !manualHydrated ? 'loading' : 'unavailable'")
+      && sharedRenderer.includes('manualMockupHydrationFailures.has(orderNumber)')
+      && sharedRenderer.includes("card.classList.contains('recognition-card')")
       && sharedRenderer.includes("touchedStatuses.add('toOrder')")
       && sharedRenderer.includes("window.setActiveBlanksView('cart', { render: false })"),
     'supplier submit repaint, fulfillment filtering, and stable Ready to Print preview states must retain their shared renderer contract'
@@ -3774,7 +3775,7 @@ async function run() {
   assert(
     sharedRenderer.includes("const showBoardPreview = hasMockup || Boolean(o._candidate);")
       && sharedRenderer.includes('class="production-card-statuses"')
-      && sharedRenderer.includes("label.textContent = loading ? 'Loading preview' : 'No preview';")
+      && sharedRenderer.includes("label.textContent = loading ? 'Loading preview' : state === 'failed' ? 'Preview could not load' : 'No preview';")
       && sharedRenderer.includes('if (container) container.scrollTop = 0;'),
     'candidate cards must keep stable preview/status anatomy and explicit print-view scroll reset behavior'
   );

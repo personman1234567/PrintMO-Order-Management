@@ -1,0 +1,202 @@
+/* One media frame and one reading order across the Shopify/provider board. */
+body[data-order-source="shopify"] .card.recognition-card:not(.bundle-card) {
+  --preview-height: 138px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  aspect-ratio: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(15 23 42 / .12);
+  transform: none;
+  transition: box-shadow 140ms ease-out;
+}
+body[data-order-source="shopify"] .recognition-card .recognition-identity {
+  padding: 12px 12px 3px;
+}
+body[data-order-source="shopify"] .recognition-card .recognition-identity .cust-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  min-height: 0;
+  margin: 0;
+  color: #0f172a;
+  font: 650 15px/1.3 system-ui, sans-serif;
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+body[data-order-source="shopify"] .recognition-card:not(.bundle-card) .card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px 8px;
+  min-height: 28px;
+  padding: 0 12px 8px;
+  border: 0;
+  background: #fff !important;
+  border-radius: 0;
+  color: #475569 !important;
+  font-size: 11px;
+}
+body[data-order-source="shopify"] .recognition-card .card-header .order-number { margin: 0; font-weight: 600; }
+body[data-order-source="shopify"] .recognition-card .time-ago-pill { margin-left: auto; padding: 0; background: transparent; font-size: 11px; }
+body[data-order-source="shopify"] .recognition-card .order-schedule { margin: 0 12px 8px; }
+body[data-order-source="shopify"] .recognition-card .card-body.has-mockup {
+  position: relative;
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 0 12px 12px;
+  min-height: 0;
+  overflow: visible;
+}
+body[data-order-source="shopify"] .recognition-card .card-body .mockup-slot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 var(--preview-height);
+  width: 100%;
+  height: var(--preview-height);
+  min-height: var(--preview-height);
+  max-height: var(--preview-height);
+  max-width: none;
+  aspect-ratio: auto;
+  margin: 0;
+  overflow: hidden;
+  border: 0 !important;
+  border-radius: 6px;
+  background: #f1f5f9 !important;
+  isolation: isolate;
+}
+body[data-order-source="shopify"] .recognition-card .mockup-slot img.preview-image {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: var(--preview-height);
+  object-fit: contain;
+}
+.recognition-card .preview-backing {
+  position: absolute;
+  z-index: 0;
+  inset: -36px;
+  width: calc(100% + 72px);
+  height: calc(100% + 72px);
+  filter: blur(12px);
+  pointer-events: none;
+}
+.recognition-card .preview-backing[hidden], .recognition-card .preview-image[hidden] { display: none; }
+:is(.recognition-card, .preview-status-host) .preview-summary { display: flex; align-items: center; flex-direction: column; gap: 4px; padding: 8px 10px; min-width: 0; width: 100%; box-sizing: border-box; text-align: center; }
+:is(.recognition-card, .preview-status-host) .preview-print-mark { position: relative; display: block; flex: 0 0 auto; width: 74px; height: 64px; }
+:is(.recognition-card .mockup-slot, .preview-status-host) img.preview-approved-icon { position: static; display: block; width: 100%; height: 100%; max-height: none; object-fit: contain; }
+:is(.recognition-card, .preview-status-host) .preview-list-scan { position: absolute; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; }
+:is(.recognition-card, .preview-status-host) .preview-summary-label { color: #475569; font-size: 12px; font-weight: 600; line-height: 1.3; }
+:is(.recognition-card, .preview-status-host) .preview-summary-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-width: 100%; color: #475569; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+:is(.recognition-card, .preview-status-host) .preview-summary[data-state="loading"] .preview-summary-description { -webkit-line-clamp: 1; }
+:is(.recognition-card, .preview-status-host) .preview-summary[data-state="unavailable"] .preview-print-mark { width: 54px; height: 47px; filter: grayscale(1); opacity: .75; }
+:is(.recognition-card, .preview-status-host) .preview-summary[data-state="unavailable"] .preview-summary-label { color: #334155; font-size: 13px; }
+:is(.recognition-card, .preview-status-host) .preview-summary[data-state="failed"] .preview-print-mark { width: 54px; height: 47px; filter: grayscale(.7); }
+:is(.recognition-card, .preview-status-host) .preview-print-pass { opacity: 0; }
+.recognition-card .mockup-slot-loading.preview-in-view .preview-print-pass,
+.preview-status-host.preview-in-view .preview-summary[data-state="loading"] .preview-print-pass { opacity: 1; animation: preview-print-pass 1.6s ease-in-out infinite; }
+@keyframes preview-print-pass { 0% { transform: translateY(0); opacity: 0; } 12% { opacity: .95; } 82% { transform: translateY(208px); opacity: .95; } 100% { transform: translateY(208px); opacity: 0; } }
+body[data-order-source="shopify"] .recognition-card .counts.recognition-facts {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  width: auto;
+  margin: 0;
+  color: #475569;
+  font: 400 12px/1.4 system-ui, sans-serif;
+  white-space: normal;
+  overflow: visible;
+}
+.recognition-card .recognition-facts > span { margin: 0 !important; }
+.recognition-card .recognition-facts .quantity-material { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 6px; flex: 1 0 86px; min-width: 0; }
+.recognition-card .recognition-facts .quantity-status-icon { display: block; width: 18px; height: 18px; margin: 1px 0 0; object-fit: contain; }
+.recognition-card .recognition-facts .quantity-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+.recognition-card .recognition-facts .quantity-label { display: block; white-space: normal; }
+.recognition-card .recognition-facts .quantity-state { display: block; color: #64748b; font-size: 11px; line-height: 1.3; white-space: normal; }
+.recognition-card .recognition-facts [data-material-state="ordered"] .quantity-state,
+.recognition-card .recognition-facts [data-material-state="ready"] :is(.quantity-state, strong) { color: #166534; }
+.recognition-card .recognition-facts [data-material-state="ready"] .quantity-state { font-weight: 650; }
+.recognition-card .recognition-facts .quantity-other { display: block; flex-basis: 100%; }
+.recognition-card .recognition-facts strong { color: #0f172a; font-weight: 650; font-variant-numeric: tabular-nums; }
+body[data-order-source="shopify"] .recognition-card .print-card-details { display: flex; flex-direction: column; gap: 8px; overflow: visible; }
+body[data-order-source="shopify"] .recognition-card .progress-view { position: static; inset: auto; padding: 0; opacity: 1; }
+body[data-order-source="shopify"] .recognition-card .normal-view { display: none; }
+body[data-order-source="shopify"] .recognition-card .progress-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+body[data-order-source="shopify"] .recognition-card .progress-pct { margin: 0; font-size: 12px; color: #475569; font-weight: 500; }
+body[data-order-source="shopify"] .recognition-card .progress-count { font-size: 12px; color: #0f172a; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+body[data-order-source="shopify"] .recognition-card .card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding: 8px 12px;
+  border: 0;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc !important;
+  color: #475569 !important;
+  font-size: 12px;
+}
+body[data-order-source="shopify"] .recognition-card:not(.bundle-card) .card-footer:is(.status-yellow, .status-green) { background: #f8fafc !important; color: #475569 !important; }
+.recognition-card .footer-value { color: #0f172a; font-weight: 650; font-variant-numeric: tabular-nums; }
+.recognition-card .preview-count { position: absolute; top: 8px; right: 20px; z-index: 2; padding: 4px 6px; border-radius: 4px; background: #fff; color: #334155; box-shadow: 0 1px 3px rgb(15 23 42 / .12); font-size: 10px; font-weight: 600; pointer-events: none; }
+body[data-order-source="shopify"] .recognition-card .delete-btn { top: 7px; right: 6px; width: 28px; height: 28px; padding: 0; background: #f1f5f9; color: #64748b; }
+body[data-order-source="shopify"] .card.recognition-card.source-etsy:not(.bundle-card) { border-left: 0; }
+/* Source is metadata, not an action or a state badge. */
+body[data-order-source="shopify"] .card .order-source-badge {
+  padding: 0 !important; border: 0 !important; border-radius: 0 !important;
+  background: transparent !important; box-shadow: none !important;
+  font: 600 11px/1.4 system-ui, sans-serif; color: #475569;
+}
+body[data-order-source="shopify"] .card .order-source-badge.source-etsy { color: #a64413; }
+body[data-order-source="shopify"] .card .order-source-badge.source-shopify { color: #17634f; }
+body[data-order-source="shopify"] .card :is(.blanks-accounting-chip, .blanks-supplier-delivery, .production-complete) {
+  border: 0; border-radius: 0; background: transparent; padding: 0;
+  font-size: 11px; line-height: 1.4; font-weight: 500;
+}
+body[data-order-source="shopify"] .recognition-card .production-card-statuses:empty { display: none; }
+body[data-order-source="shopify"] .recognition-card .garment-summary {
+  height: 100%; padding: 6px 8px; gap: 2px; justify-content: center;
+}
+.garment-summary-diagrams { display: flex; justify-content: center; gap: 8px; width: 152px; max-width: 100%; min-width: 0; height: 90px; flex: 0 0 90px; }
+.garment-summary-diagrams svg { display: block; flex: 1 1 0; min-width: 0; max-width: 72px; width: 72px; height: 90px; }
+.garment-summary-label, .garment-summary-caption { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.garment-summary-label { color: #334155; font: 600 12px/1.35 system-ui, sans-serif; }
+.garment-summary-caption { color: #64748b; font: 400 11px/1.35 system-ui, sans-serif; }
+#detail-order-actions { padding: 0 4px; font: 400 12px/1.5 system-ui, sans-serif; color: #64748b; }
+#detail-order-actions[hidden] { display: none; }
+#detail-order-actions summary { cursor: pointer; }
+#detail-order-actions button { margin-top: 8px; padding: 6px 0; border: 0; background: transparent; color: #b42318; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+#detail-order-actions :is(summary, button):focus-visible { outline: 2px solid #1765c1; outline-offset: 3px; }
+.recognition-card .recognition-progress { height: 4px; margin-top: 8px; overflow: hidden; border-radius: 2px; background: #e2e8f0; }
+.recognition-card .recognition-progress span { display: block; width: 100%; height: 100%; background: #1765c1; transform-origin: left; }
+.preview-page-hidden :is(.recognition-card, .preview-status-host) .preview-print-pass { animation-play-state: paused !important; }
+body[data-order-source="shopify"] .recognition-card.dragging { opacity: .65; box-shadow: 0 8px 20px rgb(15 23 42 / .18); }
+body[data-order-source="shopify"] .recognition-card:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
+@media (max-width: 900px) {
+  body.mobile-mode[data-order-source="shopify"] .card.recognition-card { --preview-height: 152px; min-height: 0 !important; max-height: none; height: auto; }
+  body.mobile-mode[data-order-source="shopify"] .recognition-card .card-body.has-mockup { display: flex; grid-template-columns: none; padding: 0 12px 12px; gap: 10px; }
+  body.mobile-mode[data-order-source="shopify"] .recognition-card .recognition-identity .cust-name { font-size: 16px; }
+  body.mobile-mode[data-order-source="shopify"] .recognition-card .delete-btn { top: 0; right: 0; width: 44px; height: 44px; background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(.recognition-card, .preview-status-host) .preview-print-pass { animation: none !important; transform: none !important; }
+  body[data-order-source="shopify"] .card.recognition-card { transition: none; }
+}

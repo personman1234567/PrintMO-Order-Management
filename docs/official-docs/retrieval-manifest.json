@@ -287,8 +287,8 @@
       "id": "kanban-ui",
       "description": "Shared Kanban rendering, cards, drag-and-drop, board columns, and detail opening",
       "taskTypes": ["change", "diagnosis", "design"],
-      "keywords": ["kanban", "card", "drag", "drop", "column", "detail modal", "renderer", "board", "target date", "targetDate", "finish by", "due date"],
-      "paths": ["renderer.js", "index.html", "order-manager-web/renderer.js"],
+      "keywords": ["kanban", "card", "drag", "drop", "column", "detail modal", "renderer", "board", "target date", "targetDate", "finish by", "due date", "preview frame", "recognition card"],
+      "paths": ["renderer.js", "index.html", "order-manager-web/renderer.js", "order-manager-web/order-card-presentation.js", "order-manager-web/order-card-presentation.css"],
       "symbols": ["renderBoard", "openDetail", "updateBoardMove"],
       "errors": ["card reverts", "detail overlay does not open", "board is blank"],
       "read": [
@@ -307,7 +307,8 @@
       ],
       "inspect": [
         {"path": "renderer.js", "symbols": ["renderBoard", "openDetail"]},
-        {"path": "order-manager-web/web-shim.js", "symbols": ["updateBoardMove"]}
+        {"path": "order-manager-web/web-shim.js", "symbols": ["updateBoardMove"]},
+        {"path": "order-manager-web/order-card-presentation.js", "symbols": ["decorate", "refreshPreview"]}
       ],
       "tools": ["verify-phase2"],
       "verify": ["node --check renderer.js", "npm run verify:phase2"],
@@ -426,10 +427,10 @@
       "id": "web-shopify-port",
       "description": "Embedded web client, source adapter, Shopify Admin iframe, browser storage, responsive behavior, and Pages bundle",
       "taskTypes": ["change", "diagnosis", "build"],
-      "keywords": ["web", "shopify admin", "iframe", "web shim", "storage browser", "mobile", "pages", "cors"],
+      "keywords": ["web", "shopify admin", "iframe", "web shim", "storage browser", "mobile", "pages", "cors", "clipboard", "paste mockup"],
       "paths": ["order-manager-web", "scripts/prepare-cloudflare-pages-upload.sh"],
       "symbols": ["window.api", "setPreviewActive", "installEmbeddedTouchContainment"],
-      "errors": ["window.api is undefined", "mobile detail cannot scroll", "CORS"],
+      "errors": ["window.api is undefined", "mobile detail cannot scroll", "CORS", "Could not read an image from the clipboard"],
       "read": [
         {
           "path": "docs/official-docs/workflows/web-shopify-porting.md",
@@ -438,7 +439,8 @@
       ],
       "inspect": [
         {"path": "order-manager-web/web-shim.js", "symbols": ["window.api"]},
-        {"path": "order-manager-web/shopify-preview.js", "symbols": ["setPreviewActive"]}
+        {"path": "order-manager-web/shopify-preview.js", "symbols": ["setPreviewActive"]},
+        {"path": "renderer.js", "symbols": ["pasteManualMockupFromClipboard", "setupManualMockupControls", "uploadManualMockupFiles"]}
       ],
       "tools": ["verify-phase2", "cloudflare-bundle", "cloudflare-deploy"],
       "verify": ["npm run verify:phase2", "npm run prepare:cloudflare", "npm run repo -- deploy cloudflare -- --production"],

@@ -311,20 +311,31 @@
         printsStatus: order.printsStatus,
         printsOrdered: order.printsOrdered
       }]));
+    const intent = window.beginOrderManagerMove?.(orderNames, patch);
     const touched = typeof patchLocalOrders === 'function'
-      ? patchLocalOrders(orderNames, patch)
+      ? patchLocalOrders(orderNames, order => {
+        if (intent) applyPendingBoardMove(order);
+        return patch;
+      })
       : new Set(['received', 'toOrder', 'blanks', 'print']);
     if (typeof renderBoardFromLocalState === 'function') {
       await renderBoardFromLocalState(touched);
     } else if (typeof renderBoard === 'function') {
       await renderBoard();
     }
+    document.dispatchEvent(new CustomEvent('printmo:order-move-painted', { detail: { orderNames } }));
     try {
       await persist(orderNames);
-      showMoveNotice('Order updated', 'success');
+      if (intent) {
+        const settled = window.finishOrderManagerMove(intent, true);
+        await renderBoardFromLocalState(settled);
+      }
       return true;
     } catch (error) {
-      if (typeof patchLocalOrders === 'function') {
+      if (intent) {
+        const settled = window.finishOrderManagerMove(intent, false);
+        settled.forEach(status => touched.add(status));
+      } else if (typeof patchLocalOrders === 'function') {
         patchLocalOrders(orderNames, order => snapshots.get(order.name) || {});
       }
       if (typeof renderBoardFromLocalState === 'function') {
@@ -332,7 +343,7 @@
       } else if (typeof renderBoard === 'function') {
         await renderBoard();
       }
-      showMoveNotice(`${failureLabel}. The card was restored. ${error?.message || error}`);
+      showMoveNotice(`${failureLabel}. The latest saved state is shown. ${error?.message || error}`);
       throw error;
     }
   };
@@ -655,7 +666,7 @@
       renderBoard = async function patchedRenderBoard(...args) {
         const result = await originalRenderBoard.apply(this, args);
         window.garmentCosts?.refreshBoard();
-        hydrateAccountingForCurrentOrders().catch(error => {
+        if (!args[0]?.useLocalOrders && !result?.deferred) hydrateAccountingForCurrentOrders().catch(error => {
           console.warn('Unable to update blanks accounting after board render', error);
         });
         return result;
@@ -775,6 +786,7 @@
 
   function upsertPrintsPendingBadge(card, pending) {
     let badge = card.querySelector('.blanks-prints-pending');
+    if (isShopifyBoard()) { badge?.remove(); return; }
     if (pending && !badge) {
       badge = document.createElement('span');
       badge.className = 'blanks-prints-pending';
@@ -1146,31 +1158,47 @@
     const orderNames = orderNamesFromDragId(dragId);
     if (!orderNames.length) {
       console.warn('Drop ignored: no order ID present');
+      document.dispatchEvent(new CustomEvent('printmo:drop-finished', { detail: { orderNames, dragId } }));
       return;
     }
 
-    if (options.activateBlanksView && typeof setActiveBlanksView === 'function') {
-      setActiveBlanksView(options.activateBlanksView, { render: false });
-    }
+    if (typeof markActiveDragDropAccepted === 'function') markActiveDragDropAccepted();
 
-    const patch = movePatchForDropTarget(status, options);
-    const batchRefs = await batchRefsForOrders(orderNames);
-    let batchChoice = 'keep';
+    try {
+      if (options.activateBlanksView && typeof setActiveBlanksView === 'function') {
+        setActiveBlanksView(options.activateBlanksView, { render: false });
+      }
 
-    if (moveTouchesBatchMembership(status, patch, batchRefs)) {
-      batchChoice = await resolveBatchCorrection({
-        orderNames,
-        batchRefs,
-        targetLabel: statusLabel(status, patch.blanksOrdered)
-      });
-      if (batchChoice === 'cancel') return;
-    }
+      const patch = movePatchForDropTarget(status, options);
+      // Only these destinations can require changing an existing membership.
+      // Production/Ordered moves must not await unrelated supplier accounting.
+      const mayCorrectBatch = status === 'received' || status === 'toOrder'
+        || (status === 'blanks' && Number(patch.blanksOrdered) === 0);
+      let batchRefs = [];
+      if (mayCorrectBatch) {
+        window.setOrderManagerMoveChecking?.(orderNames, true);
+        try { batchRefs = await batchRefsForOrders(orderNames); }
+        finally { window.setOrderManagerMoveChecking?.(orderNames, false); }
+      }
+      let batchChoice = 'keep';
 
-    const moved = await applyBatchAwareOrderMove(orderNames, status, patch);
-    if (!moved) return;
+      if (moveTouchesBatchMembership(status, patch, batchRefs)) {
+        batchChoice = await resolveBatchCorrection({
+          orderNames,
+          batchRefs,
+          targetLabel: statusLabel(status, patch.blanksOrdered)
+        });
+        if (batchChoice === 'cancel') return;
+      }
 
-    if (batchChoice === 'remove') {
-      await removeOrderNamesFromBatchRefs(orderNames, batchRefs);
+      const moved = await applyBatchAwareOrderMove(orderNames, status, patch);
+      if (!moved) return;
+
+      if (batchChoice === 'remove') {
+        await removeOrderNamesFromBatchRefs(orderNames, batchRefs);
+      }
+    } finally {
+      document.dispatchEvent(new CustomEvent('printmo:drop-finished', { detail: { orderNames, dragId } }));
     }
   }
 
@@ -1191,9 +1219,11 @@
 
   async function persistOrderMove(orderNames, status, patch) {
     if (isShopifyBoard() && typeof window.api.updateBoardMove === 'function') {
-      await Promise.all(orderNames.map(orderName => {
+      const results = await Promise.allSettled(orderNames.map(orderName => {
         return window.api.updateBoardMove(orderName, { ...patch, status });
       }));
+      const failed = results.find(result => result.status === 'rejected');
+      if (failed) throw failed.reason;
       return;
     }
     await Promise.all(orderNames.map(orderName => window.api.updateStatus(orderName, status)));

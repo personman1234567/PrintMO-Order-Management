@@ -4,6 +4,126 @@ let allOrders = [];
 let renderTimer = null;
 let boardFetchGeneration = 0;
 let boardHasRendered = false;
+const candidateBoardCards = new Map();
+const pendingBoardMoves = new Map();
+const pendingBoardChecks = new Map();
+let boardMoveSequence = 0;
+let boardRefreshDeferred = false;
+let boardRefreshFrame = 0;
+
+function boardOrderIdentity(order) {
+  return JSON.stringify([order._provider || 'shopify', order._orderKey || order._gid || order.name]);
+}
+
+function boardMoveSnapshot(order) {
+  return Object.fromEntries(['status', 'productionStage', 'blanksOrdered', 'blanksStatus', 'printsOrdered', 'printsStatus']
+    .map(field => [field, order[field]]));
+}
+
+function pruneCandidateBoardCards() {
+  const activeKeys = new Set(allOrders.flatMap(order => [boardOrderIdentity(order), `bundle:${order.status}:${order.bundle}`]));
+  for (const key of candidateBoardCards.keys()) if (!activeKeys.has(key)) candidateBoardCards.delete(key);
+}
+
+function applyPendingBoardMove(order) {
+  const state = pendingBoardMoves.get(boardOrderIdentity(order));
+  const intent = state?.intents.at(-1);
+  if (intent) Object.assign(order, intent.patch);
+}
+
+function boardInteractionBusy() {
+  return pendingBoardMoves.size > 0 || pendingBoardChecks.size > 0 || document.body.classList.contains('desktop-drag-active')
+    || document.body.classList.contains('dragging-cursor') || Boolean(document.querySelector('.drag-handoff-ghost'));
+}
+
+function syncBoardMoveFeedback() {
+  document.querySelectorAll('.card[data-order-key]').forEach(card => {
+    const key = JSON.stringify([card.dataset.provider || 'shopify', card.dataset.orderKey]);
+    const move = pendingBoardMoves.get(key);
+    const check = pendingBoardChecks.get(key);
+    const pending = Boolean(move || check);
+    const visible = pending && Date.now() - (move?.started || check?.started) >= 180;
+    card.setAttribute('aria-busy', String(pending));
+    if (visible) card.dataset.moveState = move ? 'saving' : 'checking';
+    else delete card.dataset.moveState;
+    let label = card.querySelector('.order-move-state');
+    if (visible && !label) {
+      label = document.createElement('span'); label.className = 'order-move-state';
+      label.setAttribute('role', 'status'); card.append(label);
+    }
+    if (visible) label.textContent = move ? 'Saving move' : 'Checking supplier batch';
+    else label?.remove();
+  });
+}
+
+window.setOrderManagerMoveChecking = (names, checking) => {
+  for (const order of allOrders.filter(order => names.includes(order.name))) {
+    const key = boardOrderIdentity(order);
+    if (checking) pendingBoardChecks.set(key, { count: (pendingBoardChecks.get(key)?.count || 0) + 1, started: Date.now() });
+    else {
+      const state = pendingBoardChecks.get(key);
+      if (state?.count > 1) state.count--;
+      else pendingBoardChecks.delete(key);
+    }
+  }
+  syncBoardMoveFeedback();
+  if (checking) setTimeout(syncBoardMoveFeedback, 190);
+  else flushDeferredBoardRefresh();
+};
+
+function flushDeferredBoardRefresh() {
+  if (!boardRefreshDeferred || boardInteractionBusy() || boardRefreshFrame) return;
+  boardRefreshFrame = requestAnimationFrame(() => {
+    boardRefreshFrame = 0;
+    if (boardInteractionBusy()) return;
+    boardRefreshDeferred = false;
+    void renderBoard().catch(error => console.warn('Deferred board refresh failed', error));
+  });
+}
+
+// Each outstanding move is an intent layered over the latest server-confirmed
+// state. An older acknowledgment/failure must not undo a newer drag.
+window.beginOrderManagerMove = (names, patch) => {
+  const token = { id: ++boardMoveSequence, orders: [] };
+  for (const order of allOrders.filter(order => names.includes(order.name))) {
+    const key = boardOrderIdentity(order);
+    let state = pendingBoardMoves.get(key);
+    if (!state) {
+      state = { confirmed: boardMoveSnapshot(order), version: order._version || 0, intents: [], started: Date.now() };
+      pendingBoardMoves.set(key, state);
+    }
+    const applied = { ...patch };
+    if (patch.status) applied.productionStage = patch.status === 'blanks'
+      ? (Number(patch.blanksOrdered ?? order.blanksOrdered) ? 'blanks_ordered' : 'blanks_cart')
+      : ({ toOrder: 'to_order' }[patch.status] || patch.status);
+    state.intents.push({ id: token.id, patch: applied });
+    token.orders.push({ key, version: state.version, patch: applied });
+  }
+  setTimeout(syncBoardMoveFeedback, 190);
+  return token;
+};
+
+window.finishOrderManagerMove = (token, success) => {
+  const touched = new Set();
+  for (const entry of token.orders) {
+    const state = pendingBoardMoves.get(entry.key);
+    if (!state) continue;
+    // Compatibility with hosts that acknowledge without a canonical DTO.
+    if (success && state.version <= entry.version) Object.assign(state.confirmed, entry.patch);
+    state.intents = state.intents.filter(intent => intent.id !== token.id);
+    for (const order of allOrders.filter(order => boardOrderIdentity(order) === entry.key)) {
+      touched.add(order.status);
+      Object.assign(order, state.confirmed);
+      applyPendingBoardMove(order);
+      touched.add(order.status);
+    }
+    if (!state.intents.length) pendingBoardMoves.delete(entry.key);
+  }
+  syncBoardMoveFeedback();
+  flushDeferredBoardRefresh();
+  return touched;
+};
+document.addEventListener('printmo:drag-settled', flushDeferredBoardRefresh);
 function publishOrderManagerBoardSnapshot() {
   if (typeof window.CustomEvent === 'function' && typeof document.dispatchEvent === 'function') {
     document.dispatchEvent(new window.CustomEvent('printmo:board-updated'));
@@ -33,6 +153,8 @@ const detailAssetBlobUrls = new Set();
 const manualMockupsByOrderNumber = new Map();
 const manualMockupsHydratedOrderNumbers = new Set();
 const manualMockupsHydratingOrderNumbers = new Set();
+const manualMockupHydrationFailures = new Set();
+const manualMockupHydrationVersions = new Map();
 let manualMockupHydrationRun = 0;
 let activeCardDrag = null;
 
@@ -471,7 +593,8 @@ function candidateAssetRenderFingerprint(asset) {
     assignmentStatus: asset.assignmentStatus || '',
     assignmentLabel: asset.assignmentLabel || '',
     originDraftId: asset.originDraftId || '',
-    state: asset.state || ''
+    state: asset.state || '',
+    previewState: asset._previewState || ''
   };
 }
 
@@ -493,6 +616,8 @@ function candidateOrderRenderFingerprint(order) {
       qty: Number(item.qty || 0),
       price: Number(item.unitPrice ?? item.price ?? 0),
       properties: item.properties || {},
+      customAttributes: item.customAttributes || [],
+      catalogPreview: item.catalogPreview ? { previewId: item.catalogPreview.previewId, state: item.catalogPreview._previewState } : null,
       assets: (item.assets || []).map(candidateAssetRenderFingerprint)
     })),
     subtotal: Number(order.subtotal || 0),
@@ -501,6 +626,7 @@ function candidateOrderRenderFingerprint(order) {
     notes: order.notes || '',
     bundle: order.bundle || '',
     progress: Number(order.progress || 0),
+    printEligibility: order.printEligibility || {},
     blanksStatus: Number(order.blanksStatus || 0),
     printsStatus: Number(order.printsStatus || 0),
     blanksOrdered: Number(order.blanksOrdered || 0),
@@ -627,15 +753,46 @@ function renderStatusColumn(status) {
     }
   });
 
-  const fragment = document.createDocumentFragment();
+  const incremental = isShopifyBoardView() && orders.every(order => order._candidate);
+  if (!incremental) candidateBoardCards.clear();
+  const cards = [];
+  const retain = (key, signature, factory) => {
+    const previous = incremental && candidateBoardCards.get(key);
+    if (previous && previous.signature === signature) return previous.card;
+    const card = factory();
+    if (previous) {
+      const oldSlot = previous.card.querySelector('.mockup-slot');
+      const newSlot = card.querySelector('.mockup-slot');
+      const image = oldSlot?.querySelector('img.preview-image');
+      if (oldSlot?.dataset.assetId && oldSlot.dataset.assetId === newSlot?.dataset.assetId
+        && image?.complete && image.naturalWidth && image.dataset.previewLoadFailed !== 'true') {
+        newSlot.replaceWith(oldSlot);
+        window.OrderCardPresentation?.refreshPreview(oldSlot, allOrders.find(order => boardOrderIdentity(order) === key));
+      }
+    }
+    if (incremental) candidateBoardCards.set(key, { card, signature });
+    return card;
+  };
   sortBundlesByOldest(Object.entries(groups))
     .forEach(([name, bundleOrders]) => {
-      fragment.appendChild(makeBundleCard(name, bundleOrders, config.bundleStyle));
+      cards.push(retain(`bundle:${status}:${name}`, JSON.stringify([config.bundleStyle, ...bundleOrders.map(candidateOrderRenderFingerprint)]),
+        () => makeBundleCard(name, bundleOrders, config.bundleStyle)));
     });
   singles.forEach(order => {
-    fragment.appendChild(makeCard(order, config.cardStyle));
+    cards.push(retain(boardOrderIdentity(order), JSON.stringify([config.cardStyle, candidateOrderRenderFingerprint(order)]),
+      () => makeCard(order, config.cardStyle)));
   });
-  container.replaceChildren(fragment);
+  if (incremental) {
+    const wanted = new Set(cards);
+    for (const child of Array.from(container.children)) {
+      if (child.classList.contains('card') && !wanted.has(child)) child.remove();
+    }
+    let anchor = container.firstElementChild;
+    for (const card of cards) {
+      if (card === anchor) anchor = anchor.nextElementSibling;
+      else container.insertBefore(card, anchor);
+    }
+  } else container.replaceChildren(...cards);
 
   if (config.countId) {
     document.getElementById(config.countId).textContent = orders.length;
@@ -646,6 +803,7 @@ function renderStatusColumn(status) {
   if (status === 'print') {
     syncPrintViewUi();
   }
+  syncBoardMoveFeedback();
   publishOrderManagerBoardSnapshot();
 }
 
@@ -728,10 +886,17 @@ window.mergeOrderManagerProduction = (saved, previousStatus) => {
   if (document.body.dataset.orderSource !== 'shopify') return;
   const fields = ['_version', 'productionStage', 'status', 'bundle', 'notes', 'targetDate',
     'progress', 'printEligibility', 'blanksStatus', 'printsStatus', 'blanksOrdered', 'printsOrdered'];
+  const move = pendingBoardMoves.get(boardOrderIdentity(saved));
+  if (move && (saved._version || 0) >= move.version) {
+    move.confirmed = boardMoveSnapshot(saved);
+    move.version = saved._version || 0;
+  }
   const touched = patchLocalOrders([{ provider: saved._provider, orderKey: saved._orderKey || saved._gid }], order => {
     if (order._version > saved._version) return null;
     const patch = Object.fromEntries(fields.map(field => [field, saved[field]]));
     order.canonical.production = { ...saved.canonical.production };
+    const intent = move?.intents.at(-1);
+    if (intent) Object.assign(patch, intent.patch);
     return patch;
   });
   touched.add(previousStatus); touched.add(saved.status);
@@ -796,6 +961,7 @@ function markActiveDragDropAccepted() {
  */
 function animateInvalidDropReturn() {
   if (!activeCardDrag?.card?.isConnected) return;
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
 
   const { card, startRect, offsetX, offsetY, currentX, currentY } = activeCardDrag;
   const ghost = card.cloneNode(true);
@@ -837,6 +1003,7 @@ function finishCardDrag(card = null) {
   }
 
   activeCardDrag = null;
+  document.dispatchEvent(new CustomEvent('printmo:drag-settled'));
 }
 
 // shrink the font size of `el` until its text fits on one line
@@ -852,6 +1019,7 @@ function shrinkTextToFit(el, min = 8) {
 // shorten name to first name + last initial if it wraps
 function shortenNameIfWrapped(el) {
   if (!el) return;
+  if (el.closest('.recognition-card')) return;
   const lineHeight = parseFloat(getComputedStyle(el).lineHeight);
   if (el.scrollHeight > lineHeight * 1.1) {
     const txt = el.textContent.trim();
@@ -1060,12 +1228,7 @@ function makeCard(o, style = 'default') {
   del.title       = 'Delete this order';
   del.addEventListener('click', async e => {
     e.stopPropagation();
-    if (confirm(`Delete ${o.name}?`)) {
-      await window.api.deleteOrder(o.name);
-      const touchedStatuses = removeLocalOrders([o.name]);
-      if (detailOrder?.name === o.name) closeDetail();
-      await renderBoardFromLocalState(touchedStatuses);
-    }
+    await removeOrderFromBoard(o);
   });
   card.appendChild(del);
 
@@ -1085,9 +1248,22 @@ function makeCard(o, style = 'default') {
     card.style.setProperty('--shimmer-delay', delay);
   }
 
-  card.addEventListener('click', () => openDetail(o));
+  card.addEventListener('click', () => {
+    const current = o._candidate ? allOrders.find(order => boardOrderIdentity(order) === boardOrderIdentity(o)) : o;
+    if (current) openDetail(current);
+  });
 
+  window.OrderCardPresentation?.decorate(card, o, { apparel, prints, other, style });
   return card;
+}
+
+async function removeOrderFromBoard(order) {
+  if (!order || order._historyReadOnly) return;
+  if (!confirm(order._candidate ? `Remove ${order.name} from the board?` : `Delete ${order.name}?`)) return;
+  await window.api.deleteOrder(order.name);
+  const touchedStatuses = removeLocalOrders([order.name]);
+  if (detailOrder?.name === order.name) closeDetail();
+  await renderBoardFromLocalState(touchedStatuses);
 }
 
 function makeBundleCard(name, orders, style = 'pipeline') {
@@ -1121,7 +1297,9 @@ function makeBundleCard(name, orders, style = 'pipeline') {
   if (allReady) card.classList.add('status-green');
   else if (anyReady) card.classList.add('status-yellow');
 
-  card.addEventListener('click', () => openBundleModal(name, orders));
+  card.addEventListener('click', () => openBundleModal(name, orders[0]?._candidate
+    ? allOrders.filter(order => order.bundle === name && order.status === card.dataset.bundleStatus && orderIsVisibleOnOperationalBoard(order))
+    : orders));
 
   card.addEventListener('dragstart', e => {
     document.body.classList.add('dragging-cursor');
@@ -1289,63 +1467,101 @@ function canReadManualMockupsForOrder(order) {
 async function refreshManualMockupsForOrder(order) {
   const orderNumber = orderNumberFromOrder(order);
   if (!orderNumber || typeof window.api?.listManualMockups !== 'function') return false;
-  manualMockupHydrationRun += 1;
-  const manifest = await window.api.listManualMockups(orderNumber);
-  manualMockupsHydratedOrderNumbers.add(orderNumber);
-  return setManualMockups(orderNumber, manifest?.assets || []);
+  const run = ++manualMockupHydrationRun;
+  manualMockupHydrationVersions.set(orderNumber, run);
+  manualMockupsHydratingOrderNumbers.add(orderNumber);
+  manualMockupHydrationFailures.delete(orderNumber);
+  try {
+    const manifest = await window.api.listManualMockups(orderNumber);
+    if (manualMockupHydrationVersions.get(orderNumber) !== run) return false;
+    const wasHydrated = manualMockupsHydratedOrderNumbers.has(orderNumber);
+    const changed = setManualMockups(orderNumber, manifest?.assets || []);
+    manualMockupsHydratedOrderNumbers.add(orderNumber);
+    reconcileManualMockupCard(order, changed, wasHydrated);
+    return changed;
+  } catch (error) {
+    if (manualMockupHydrationVersions.get(orderNumber) === run) {
+      manualMockupHydrationFailures.add(orderNumber);
+      reconcileManualMockupCard(order, true, false);
+    }
+    throw error;
+  } finally {
+    if (manualMockupHydrationVersions.get(orderNumber) === run) {
+      manualMockupsHydratingOrderNumbers.delete(orderNumber);
+    }
+  }
 }
 
 function reconcileManualMockupCard(order, changed, wasHydrated) {
   if (!order || (!changed && wasHydrated)) return;
+  // A queue refresh may have replaced this DTO while its manual lookup was
+  // pending. Reconcile the manifest with today's artwork, not the older DTO.
+  const identity = order._orderKey || order._gid;
+  const current = allOrders.find(candidate => identity
+    ? (candidate._orderKey || candidate._gid) === identity && candidate._provider === order._provider
+    : candidate.name === order.name) || order;
   if (typeof window.updateBoardMockupPreview === 'function') {
-    window.updateBoardMockupPreview(order, { resolvePlaceholder: true });
+    window.updateBoardMockupPreview(current, { resolvePlaceholder: true });
     return;
   }
   // Compatibility fallback for hosts that have not loaded the shared card
   // updater. Only actual asset changes warrant rebuilding a status column.
-  if (changed) void renderBoardFromLocalState([order.status || 'received'], { invalidateQueueLoads: false });
+  if (changed) void renderBoardFromLocalState([current.status || 'received'], { invalidateQueueLoads: false });
 }
 
 async function hydrateManualMockupsForOrders(orders, { refresh = false } = {}) {
   if (typeof window.api?.bulkListManualMockups !== 'function') return;
-  const knownOrderNumbers = Array.from(new Set((orders || []).map(orderNumberFromOrder).filter(Boolean)));
-  if (refresh) {
-    knownOrderNumbers.forEach(orderNumber => manualMockupsHydratedOrderNumbers.delete(orderNumber));
-  }
+  const eligibleOrders = (orders || []).filter(order =>
+    String(order?._provider || order?.source?.provider || '').toLowerCase() !== 'etsy'
+  );
+  const knownOrderNumbers = Array.from(new Set(eligibleOrders.map(orderNumberFromOrder).filter(Boolean)));
   const orderNumbers = knownOrderNumbers
     .filter(orderNumber =>
-      !manualMockupsHydratedOrderNumbers.has(orderNumber)
+      (refresh || !manualMockupsHydratedOrderNumbers.has(orderNumber))
       && !manualMockupsHydratingOrderNumbers.has(orderNumber)
     );
   if (!orderNumbers.length) return;
-  orderNumbers.forEach(orderNumber => manualMockupsHydratingOrderNumbers.add(orderNumber));
-  const ordersByNumber = new Map((orders || []).map(order => [orderNumberFromOrder(order), order]));
+  const ordersByNumber = new Map(eligibleOrders.map(order => [orderNumberFromOrder(order), order]));
   const run = ++manualMockupHydrationRun;
-  try {
-    const result = await window.api.bulkListManualMockups(orderNumbers, {
-      onOrder: (orderNumber, manifest) => {
-        if (run !== manualMockupHydrationRun || !orderNumber) return;
-        const wasHydrated = manualMockupsHydratedOrderNumbers.has(orderNumber);
-        const changed = setManualMockups(orderNumber, manifest?.assets || []);
-        manualMockupsHydratedOrderNumbers.add(orderNumber);
-        manualMockupsHydratingOrderNumbers.delete(orderNumber);
-        const order = ordersByNumber.get(orderNumber);
-        reconcileManualMockupCard(order, changed, wasHydrated);
-      }
-    });
-    if (run !== manualMockupHydrationRun) return;
-    (orders || []).forEach(order => {
-      const orderNumber = orderNumberFromOrder(order);
-      const wasHydrated = manualMockupsHydratedOrderNumbers.has(orderNumber);
-      const changed = setManualMockups(orderNumber, result?.orders?.[orderNumber]?.assets || []);
-      manualMockupsHydratedOrderNumbers.add(orderNumber);
-      manualMockupsHydratingOrderNumbers.delete(orderNumber);
-      reconcileManualMockupCard(order, changed, wasHydrated);
-    });
-  } catch (err) {
-    console.warn('Unable to load manual mockups', err);
-  } finally {
-    orderNumbers.forEach(orderNumber => manualMockupsHydratingOrderNumbers.delete(orderNumber));
+  const requested = new Set(orderNumbers);
+  const completed = new Set();
+  orderNumbers.forEach(orderNumber => {
+    manualMockupsHydratingOrderNumbers.add(orderNumber);
+    manualMockupHydrationVersions.set(orderNumber, run);
+    manualMockupHydrationFailures.delete(orderNumber);
+  });
+  const acceptManifest = (orderNumber, manifest) => {
+    if (!requested.has(orderNumber) || manualMockupHydrationVersions.get(orderNumber) !== run) return;
+    const wasHydrated = manualMockupsHydratedOrderNumbers.has(orderNumber);
+    const changed = setManualMockups(orderNumber, manifest?.assets || []);
+    manualMockupsHydratedOrderNumbers.add(orderNumber);
+    manualMockupHydrationFailures.delete(orderNumber);
+    completed.add(orderNumber);
+    reconcileManualMockupCard(ordersByNumber.get(orderNumber), changed, wasHydrated);
+  };
+  const failManifest = orderNumber => {
+    if (completed.has(orderNumber) || manualMockupHydrationVersions.get(orderNumber) !== run) return;
+    manualMockupHydrationFailures.add(orderNumber);
+    reconcileManualMockupCard(ordersByNumber.get(orderNumber), true, false);
+  };
+  // The Worker accepts at most 250 order numbers per request. A missing result
+  // is an unsuccessful lookup, never evidence that the order has no artwork.
+  for (let offset = 0; offset < orderNumbers.length; offset += 250) {
+    const batch = orderNumbers.slice(offset, offset + 250);
+    try {
+      const result = await window.api.bulkListManualMockups(batch, { onOrder: acceptManifest });
+      batch.forEach(orderNumber => {
+        if (Object.hasOwn(result?.orders || {}, orderNumber)) acceptManifest(orderNumber, result.orders[orderNumber]);
+        else failManifest(orderNumber);
+      });
+    } catch (error) {
+      console.warn('Unable to load manual mockups', error);
+      batch.forEach(failManifest);
+    } finally {
+      batch.forEach(orderNumber => {
+        if (manualMockupHydrationVersions.get(orderNumber) === run) manualMockupsHydratingOrderNumbers.delete(orderNumber);
+      });
+    }
   }
 }
 
@@ -1462,13 +1678,17 @@ function getProductionMockupState(order, hasMockup) {
   if (hasMockup) return 'ready';
   if (!order?._candidate) return 'unavailable';
   const catalogPreviews = (order?.items || []).map(item => item?.catalogPreview).filter(Boolean);
-  if (catalogPreviews.length) {
-    return catalogPreviews.some(preview => preview._previewState !== 'failed') ? 'loading' : 'unavailable';
-  }
-  const pendingDesignerMockup = candidateMockupManifests(order)
-    .some(asset => asset._previewState !== 'failed');
-  const manualHydrated = manualMockupsHydratedOrderNumbers.has(orderNumberFromOrder(order));
-  return pendingDesignerMockup || !manualHydrated ? 'loading' : 'unavailable';
+  const sources = [...catalogPreviews, ...candidateMockupManifests(order)];
+  const orderNumber = orderNumberFromOrder(order);
+  const provider = String(order._provider || order.source?.provider || 'shopify').toLowerCase();
+  const canCheckManual = provider !== 'etsy' && Boolean(orderNumber)
+    && (typeof window.api?.bulkListManualMockups === 'function' || typeof window.api?.listManualMockups === 'function');
+  const manualHydrated = manualMockupsHydratedOrderNumbers.has(orderNumber);
+  const manualFailed = manualMockupHydrationFailures.has(orderNumber) && !manualHydrated;
+  if (sources.some(asset => asset._previewState !== 'failed')
+    || (canCheckManual && !manualHydrated && !manualFailed)) return 'loading';
+  if (sources.some(asset => asset._previewState === 'failed') || manualFailed) return 'failed';
+  return 'unavailable';
 }
 
 function productionMockupSlotMarkup(url, state, orderNumber) {
@@ -1479,9 +1699,10 @@ function productionMockupSlotMarkup(url, state, orderNumber) {
       </div>
     `;
   }
-  const label = state === 'loading' ? 'Loading preview' : 'No preview';
+  const label = state === 'loading' ? 'Loading preview' : state === 'failed' ? 'Preview could not load' : 'No preview';
   const ariaLabel = state === 'loading'
     ? `Preview image for order ${orderNumber} is loading`
+    : state === 'failed' ? `Preview image for order ${orderNumber} could not be loaded`
     : `No preview image is available for order ${orderNumber}`;
   return `
     <div class="mockup-slot mockup-slot-${state}" aria-label="${ariaLabel}">
@@ -1504,7 +1725,7 @@ function updateBoardMockupPreview(order, { resolvePlaceholder = false } = {}) {
     if (card.dataset.orderId !== order.name) return;
     const body = card.querySelector('.card-body');
     if (!body) return;
-    if (!url && !card.classList.contains('print-card')) return;
+    if (!url && !card.classList.contains('print-card') && !card.classList.contains('recognition-card')) return;
 
     let slot = body.querySelector('.mockup-slot');
     if (!slot) {
@@ -1512,7 +1733,7 @@ function updateBoardMockupPreview(order, { resolvePlaceholder = false } = {}) {
       body.insertBefore(slot, body.firstChild);
       updated = true;
     }
-    const existingImage = slot.querySelector('img');
+    const existingImage = slot.querySelector('img:not(.preview-approved-icon)');
     const existingSource = existingImage?.getAttribute('src') || '';
     const existingIdentity = slot.dataset.assetId || '';
     const preserveExistingSource = Boolean(
@@ -1553,18 +1774,20 @@ function updateBoardMockupPreview(order, { resolvePlaceholder = false } = {}) {
       const loading = state === 'loading';
       slot.setAttribute('aria-label', loading
         ? `Preview image for order ${orderNumber} is loading`
+        : state === 'failed' ? `Preview image for order ${orderNumber} could not be loaded`
         : `No preview image is available for order ${orderNumber}`);
       const label = document.createElement('span');
       label.className = 'mockup-placeholder-label';
       label.setAttribute('aria-hidden', 'true');
-      label.textContent = loading ? 'Loading preview' : 'No preview';
+      label.textContent = loading ? 'Loading preview' : state === 'failed' ? 'Preview could not load' : 'No preview';
       slot.replaceChildren(label);
       updated = true;
     }
 
-    body.classList.remove('no-mockup', 'production-preview-ready', 'production-preview-loading', 'production-preview-unavailable');
+    body.classList.remove('no-mockup', 'production-preview-ready', 'production-preview-loading', 'production-preview-unavailable', 'production-preview-failed');
     body.classList.add('has-mockup');
     if (card.classList.contains('print-card')) body.classList.add(`production-preview-${renderedState}`);
+    window.OrderCardPresentation?.refreshPreview(slot, order);
   });
 
   if (preservedSources) {
@@ -2035,8 +2258,39 @@ function renderOrderAssets(order) {
   renderDesignGroup(lists.extras, groups.extras, assets.extras);
 }
 
-async function uploadManualMockupFiles(files) {
-  const order = detailOrder;
+let manualMockupUploadPending = false;
+let manualMockupClipboardReadPending = false;
+
+function setManualMockupStatus(message, state = '') {
+  const status = document.getElementById('manual-mockup-status');
+  if (!status) return;
+  status.textContent = message;
+  status.dataset.state = state;
+  status.hidden = !message;
+}
+
+function resetManualMockupPaste() {
+  const area = document.getElementById('manual-mockup-paste-area');
+  if (area) area.hidden = true;
+  const target = document.getElementById('manual-mockup-paste-target');
+  if (target) target.value = '';
+  setManualMockupStatus('');
+}
+
+function showManualMockupPasteTarget() {
+  const area = document.getElementById('manual-mockup-paste-area');
+  const target = document.getElementById('manual-mockup-paste-target');
+  if (!area || !target) {
+    alert('Clipboard access is unavailable here. Use Upload mockup instead.');
+    return;
+  }
+  area.hidden = false;
+  target.focus({ preventScroll: true });
+  setManualMockupStatus('Touch and hold in the paste field, then choose Paste. On a keyboard, use Ctrl+V or Command+V.');
+}
+
+async function uploadManualMockupFiles(files, order = detailOrder) {
+  if (manualMockupUploadPending || !order || order !== detailOrder || order._historyReadOnly) return;
   if (order?._capabilities?.artworkUpload === false) {
     alert('Artwork uploads are unavailable for this Etsy test order.');
     return;
@@ -2050,37 +2304,67 @@ async function uploadManualMockupFiles(files) {
     return;
   }
   const upload = document.getElementById('manual-mockup-upload-btn');
+  const paste = document.getElementById('manual-mockup-paste-btn');
+  const input = document.getElementById('manual-mockup-file-input');
   const original = upload?.textContent || 'Upload mockup';
+  manualMockupUploadPending = true;
+  if (paste) paste.disabled = true;
+  if (input) input.disabled = true;
   if (upload) upload.textContent = 'Uploading...';
+  setManualMockupStatus('Uploading mockup…', 'uploading');
   try {
     for (const file of accepted) await window.api.uploadManualMockup(orderNumber, file);
     await refreshManualMockupsForOrder(order);
-    renderOrderAssets(order);
+    if (detailOrder === order) {
+      renderOrderAssets(order);
+      resetManualMockupPaste();
+      setManualMockupStatus('Mockup uploaded.', 'success');
+    }
     await renderBoardFromLocalState([order.status || 'received']);
   } catch (err) {
-    alert(`Upload failed: ${err?.message || err}`);
+    if (detailOrder === order) setManualMockupStatus(`Upload failed: ${err?.message || err}. Try again or use Upload.`, 'error');
   } finally {
+    manualMockupUploadPending = false;
+    if (paste) paste.disabled = false;
+    if (input) input.disabled = false;
     if (upload) upload.textContent = original;
-    const input = document.getElementById('manual-mockup-file-input');
     if (input) input.value = '';
   }
 }
 
 async function pasteManualMockupFromClipboard() {
+  const order = detailOrder;
+  if (!order || order._historyReadOnly || order?._capabilities?.artworkUpload === false
+    || manualMockupUploadPending || manualMockupClipboardReadPending) return;
+  if (typeof navigator.clipboard?.read !== 'function') {
+    showManualMockupPasteTarget();
+    return;
+  }
+  manualMockupClipboardReadPending = true;
   try {
+    // Invoke directly in the click's user activation. No permission-query await:
+    // Safari and embedded mobile browsers do not share Chromium's permission API.
     const clipboardItems = await navigator.clipboard.read();
+    if (detailOrder !== order) return;
     const files = [];
     for (const item of clipboardItems) {
-      const imageType = item.types.find(type => type.startsWith('image/'));
+      const imageType = ['image/png', 'image/jpeg', 'image/webp'].find(type => item.types.includes(type));
       if (imageType) {
         const blob = await item.getType(imageType);
-        files.push(new File([blob], `pasted-mockup.${imageType.split('/')[1] || 'png'}`, { type: imageType }));
+        files.push(new File([blob], `pasted-mockup.${imageType === 'image/jpeg' ? 'jpg' : imageType.split('/')[1]}`, { type: imageType }));
       }
     }
-    if (!files.length) return alert('No image was found in the clipboard.');
-    await uploadManualMockupFiles(files);
+    if (detailOrder !== order) return;
+    if (!files.length) {
+      showManualMockupPasteTarget();
+      setManualMockupStatus('Copy an image first, then paste it here. PNG, JPG, and WebP are supported.', 'error');
+      return;
+    }
+    await uploadManualMockupFiles(files, order);
   } catch (err) {
-    alert('Could not read an image from the clipboard. Use Upload mockup instead.');
+    if (detailOrder === order) showManualMockupPasteTarget();
+  } finally {
+    manualMockupClipboardReadPending = false;
   }
 }
 
@@ -2089,6 +2373,32 @@ function setupManualMockupControls() {
   const paste = document.getElementById('manual-mockup-paste-btn');
   if (input) input.addEventListener('change', () => uploadManualMockupFiles(input.files));
   if (paste) paste.addEventListener('click', pasteManualMockupFromClipboard);
+  const target = document.getElementById('manual-mockup-paste-target');
+  const cancel = document.getElementById('manual-mockup-paste-cancel');
+  if (cancel) cancel.addEventListener('click', () => {
+    resetManualMockupPaste();
+    paste?.focus();
+  });
+  if (target) target.addEventListener('paste', event => {
+    event.preventDefault();
+    const order = detailOrder;
+    if (!order || order._historyReadOnly || order?._capabilities?.artworkUpload === false || manualMockupUploadPending) return;
+    const data = event.clipboardData;
+    const files = Array.from(data?.files || []);
+    if (!files.length) {
+      for (const item of Array.from(data?.items || [])) {
+        if (item.kind !== 'file') continue;
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    target.value = '';
+    if (!files.length) {
+      setManualMockupStatus('No image was pasted. Copy the image itself, or use Upload to choose it from Photos or Files.', 'error');
+      return;
+    }
+    void uploadManualMockupFiles(files, order);
+  });
 }
 
 function canUploadManualDesign(order) {
@@ -2343,8 +2653,21 @@ function consolidateLineItemsForDisplay(items = []) {
 
 function openDetail(o) {
   if (window.ProductionArtworkWorkspace?.canLeave(o) === false) return false;
+  resetManualMockupPaste();
   const historyReadOnly = Boolean(o?._historyReadOnly);
   detailOrder = o;
+  const orderActions = document.getElementById('detail-order-actions');
+  if (orderActions) {
+    orderActions.hidden = !o._candidate || historyReadOnly;
+    orderActions.open = false;
+    const removeButton = orderActions.querySelector('button');
+    removeButton.onclick = async () => {
+      removeButton.disabled = true;
+      try { await removeOrderFromBoard(o); }
+      catch (error) { alert(`Could not remove order: ${error?.message || error}`); }
+      finally { removeButton.disabled = false; }
+    };
+  }
   renderOrderAssets(o);
   // Reading existing manual mockups is independent of permission to upload or
   // remove artwork. Fulfilled history is intentionally view-only, but it must
@@ -2599,6 +2922,7 @@ function openDetail(o) {
 
 function closeDetail() {
   if (window.ProductionArtworkWorkspace?.canLeave(null) === false) return false;
+  resetManualMockupPaste();
   window.ProductionArtworkWorkspace?.close();
   const overlay = document.getElementById('detail-overlay');
   overlay.classList.replace('visible', 'hidden');
@@ -3063,6 +3387,10 @@ window.addEventListener('blur', () => finishCardDrag());
  */
 async function renderBoard(options = {}) {
   const { useLocalOrders = false, statuses = null, invalidateQueueLoads = true } = options;
+  if (!useLocalOrders && boardHasRendered && boardInteractionBusy()) {
+    boardRefreshDeferred = true;
+    return { rendered: false, deferred: true, statuses: [] };
+  }
   let statusesToRender = normalizeBoardStatuses(statuses);
   let renderedAnySnapshot = false;
   const renderedStatuses = new Set();
@@ -3084,6 +3412,10 @@ async function renderBoard(options = {}) {
     }
     const applyQueueSnapshot = (nextOrders, { page = null, hasMore = false } = {}) => {
       if (fetchGeneration !== boardFetchGeneration) return false;
+      if (boardHasRendered && boardInteractionBusy()) {
+        boardRefreshDeferred = true;
+        return false;
+      }
       const changedStatuses = changedCandidateBoardStatuses(allOrders, nextOrders);
       allOrders = nextOrders;
       const snapshotStatuses = statuses
@@ -3098,6 +3430,7 @@ async function renderBoard(options = {}) {
         renderStatusColumn(status);
         renderedStatuses.add(status);
       });
+      pruneCandidateBoardCards();
       boardHasRendered = true;
       renderedAnySnapshot = true;
       refreshOpenBundleModal();
@@ -3142,6 +3475,7 @@ async function renderBoard(options = {}) {
   }
 
   statusesToRender.forEach(renderStatusColumn);
+  pruneCandidateBoardCards();
   boardHasRendered = true;
   refreshOpenBundleModal();
   setBoardLoadState('ready');

@@ -1,5 +1,8 @@
 (() => {
   const desktopQuery = window.matchMedia('(min-width: 901px)');
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const layoutAnimations = new WeakMap();
+  const dropHandoffs = new Set();
   const cardSelector = '.card[data-order-id], .bundle-card[data-bundle-name]';
   const dropZoneSelector = '#col-received, #col-toOrder, #col-blanks, #col-print, #blanks-view-cart, #blanks-view-ordered, #supplies-view-cart, #supplies-view-ordered';
   const boardSelector = '#col-received, #picked-cards, #col-blanks, #col-print';
@@ -89,27 +92,29 @@
     const orders = window.getOrderManagerBoardSnapshot();
     const next = new Map();
     const bundleTimes = new Map();
-    (orders || []).forEach(order => {
+    (orders || []).forEach((order, position) => {
       if (!order?.name) return;
       const sortTime = parseSortTime(order.receivedAt);
       next.set(`order:${order.name}`, {
         group: 1,
         sortTime,
+        position,
         status: order.status || '',
         bundle: order.bundle || ''
       });
 
       if (order.bundle) {
         const bundleKey = String(order.bundle);
-        const current = bundleTimes.get(bundleKey) ?? Number.POSITIVE_INFINITY;
-        bundleTimes.set(bundleKey, Math.min(current, sortTime));
+      const current = bundleTimes.get(bundleKey);
+      bundleTimes.set(bundleKey, { sortTime: Math.min(current?.sortTime ?? Infinity, sortTime), position: current?.position ?? position });
       }
     });
 
-    bundleTimes.forEach((sortTime, name) => {
+    bundleTimes.forEach(({ sortTime, position }, name) => {
       next.set(`bundle:${name}`, {
         group: 0,
         sortTime,
+        position,
         status: '',
         bundle: name
       });
@@ -127,9 +132,10 @@
     return Promise.resolve(orderMetaByKey);
   }
 
-  function captureLayout() {
+  function captureLayout(containers = null) {
     const positions = new Map();
-    allBoardCards().forEach(card => {
+    const cards = containers ? [...new Set(containers.filter(Boolean).flatMap(childCards))] : allBoardCards();
+    cards.forEach(card => {
       const key = cardKey(card);
       if (key) positions.set(key, card.getBoundingClientRect());
     });
@@ -161,62 +167,53 @@
   }
 
   function animateLayoutShift(card, from, to) {
+    if (reducedMotion.matches) return;
     const dx = from.left - to.left;
     const dy = from.top - to.top;
     if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-    card.classList.add('layout-shifting');
-    card.style.transition = 'none';
-    card.style.transform = `translate(${dx}px, ${dy}px)`;
-    card.getBoundingClientRect();
-    requestAnimationFrame(() => {
-      card.style.transition = '';
-      card.style.transform = '';
-      window.setTimeout(() => {
-        card.classList.remove('layout-shifting');
-      }, 360);
-    });
+    const animation = card.animate([
+      { transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }
+    ], { duration: 180, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+    layoutAnimations.set(card, animation);
+    const forgetAnimation = () => {
+      if (layoutAnimations.get(card) === animation) layoutAnimations.delete(card);
+    };
+    animation.oncancel = forgetAnimation;
+    animation.onfinish = () => {
+      forgetAnimation();
+      // Release the transform effect so the resting card is rasterized normally.
+      animation.cancel();
+    };
+  }
+
+  function animateSnapshot(snapshot) {
+    if (reducedMotion.matches) return;
+    const cards = allBoardCards().filter(card => snapshot.has(cardKey(card)));
+    // Finish reads for the whole batch before starting any animations.
+    cards.forEach(card => layoutAnimations.get(card)?.cancel());
+    const targets = cards.map(card => ({ card, rect: card.getBoundingClientRect() }));
+    targets.forEach(({ card, rect }) => animateLayoutShift(card, snapshot.get(cardKey(card)), rect));
   }
 
   function animateFromSnapshot(snapshot) {
     if (!isDesktop() || !snapshot?.size) return;
     if (layoutAnimationFrame) cancelAnimationFrame(layoutAnimationFrame);
     layoutAnimationFrame = requestAnimationFrame(() => {
-      layoutAnimationFrame = requestAnimationFrame(() => {
-        layoutAnimationFrame = 0;
-        allBoardCards().forEach(card => {
-          const key = cardKey(card);
-          const before = snapshot.get(key);
-          if (before) animateLayoutShift(card, before, card.getBoundingClientRect());
-        });
-      });
-    });
-  }
-
-  function animateNewDrop(card) {
-    card.classList.add('drop-entering');
-    requestAnimationFrame(() => {
-      card.classList.add('drop-entering-active');
-      window.setTimeout(() => {
-        card.classList.remove('drop-entering', 'drop-entering-active');
-      }, 380);
+      layoutAnimationFrame = 0;
+      animateSnapshot(snapshot);
     });
   }
 
   function animateAfterRender() {
     if (!isDesktop()) return;
+    // Hover/status mutations are not a completed drop. The explicit handoff
+    // event owns its one layout animation after the real card has been painted.
+    if (activeDragCard || dropHandoffs.size) return;
     const previous = layoutBeforeDrop;
-    const cards = allBoardCards();
     if (!previous.size && !recentDropKeys.size) return;
 
-    cards.forEach(card => {
-      const key = cardKey(card);
-      if (!key) return;
-      const current = card.getBoundingClientRect();
-      const before = previous.get(key);
-      if (before) animateLayoutShift(card, before, current);
-      if (recentDropKeys.has(key)) animateNewDrop(card);
-    });
-
+    animateSnapshot(previous);
+    recentDropKeys.clear();
     layoutBeforeDrop = new Map();
   }
 
@@ -224,10 +221,8 @@
     if (!isDesktop()) return;
     if (mutationFrame) cancelAnimationFrame(mutationFrame);
     mutationFrame = requestAnimationFrame(() => {
-      mutationFrame = requestAnimationFrame(() => {
-        mutationFrame = 0;
-        animateAfterRender();
-      });
+      mutationFrame = 0;
+      animateAfterRender();
     });
   }
 
@@ -283,20 +278,33 @@
     const isBundle = key.startsWith('bundle:');
     const group = isBundle ? 0 : 1;
     const sortTime = Number.isFinite(meta?.sortTime) ? meta.sortTime : index;
-    return { key, group, sortTime };
+    return { key, group, sortTime, position: meta?.position ?? index,
+      score: Number(card.dataset.dashboardAttentionScore || 0),
+      received: Number(card.dataset.dashboardReceivedTime || 0),
+      value: Number(card.dataset.dashboardValue || 0) };
   }
 
   function sortMetaForActiveCard() {
     if (!activeDragCard) return null;
     const key = cardKey(activeDragCard);
     if (!key) return null;
-    const meta = orderMetaByKey.get(key);
-    const isBundle = key.startsWith('bundle:');
-    return {
-      key,
-      group: isBundle ? 0 : 1,
-      sortTime: Number.isFinite(meta?.sortTime) ? meta.sortTime : Number.POSITIVE_INFINITY
-    };
+    return sortMetaForCard(activeDragCard, Number.POSITIVE_INFINITY);
+  }
+
+  function placeholderOrder(left, right, container) {
+    const base = left.group - right.group
+      || (left.group === 0 ? left.sortTime - right.sortTime : 0)
+      || left.position - right.position;
+    if (container.id === 'col-received' && document.body.dataset.orderSource === 'shopify') {
+      const sort = document.getElementById('dashboard-sort-select')?.value;
+      if (sort === 'oldest') return left.received - right.received || base;
+      if (sort === 'newest') return right.received - left.received || base;
+      if (sort === 'value') return right.value - left.value || left.received - right.received || base;
+      return right.score - left.score || left.received - right.received || base;
+    }
+    // Shared columns render bundles first, then individual orders in snapshot
+    // order. The preview must use that same order, including equal timestamps.
+    return base;
   }
 
   function findPlaceholderAnchor(container) {
@@ -308,10 +316,7 @@
       const card = cards[index];
       const candidate = sortMetaForCard(card, index);
       if (!candidate.key || candidate.key === activeMeta.key) continue;
-      if (candidate.group > activeMeta.group) return card;
-      if (candidate.group === activeMeta.group && candidate.sortTime > activeMeta.sortTime) {
-        return card;
-      }
+      if (placeholderOrder(activeMeta, candidate, container) < 0) return card;
     }
 
     return null;
@@ -319,7 +324,7 @@
 
   function removeHoverPlaceholder({ animate = true, deferRemove = false } = {}) {
     if (!hoverPlaceholder) return;
-    const snapshot = animate ? captureLayout() : null;
+    const snapshot = animate ? captureLayout([placeholderZone]) : null;
     const placeholder = hoverPlaceholder;
     hoverPlaceholder = null;
     placeholderZone = null;
@@ -347,7 +352,7 @@
       return;
     }
 
-    const snapshot = captureLayout();
+    const snapshot = captureLayout([container, placeholderZone]);
     if (!hoverPlaceholder) {
       hoverPlaceholder = createHoverPlaceholder(kind);
       requestAnimationFrame(() => hoverPlaceholder?.classList.add('desktop-drop-placeholder-active'));
@@ -356,6 +361,12 @@
     }
     placeholderZone = container;
     placeholderAnchor = anchor;
+    const exemplar = childCards(container).find(card => card !== activeDragCard
+      && card.classList.contains('bundle-card') === activeDragCard.classList.contains('bundle-card'));
+    const height = kind === 'picked' ? Math.min(124, container.clientWidth)
+      : (exemplar || activeDragCard).getBoundingClientRect().height;
+    hoverPlaceholder.style.height = `${height}px`;
+    hoverPlaceholder.style.minHeight = `${height}px`;
     container.insertBefore(hoverPlaceholder, anchor);
     animateFromSnapshot(snapshot);
   }
@@ -397,7 +408,7 @@
     ghost.draggable = false;
     ghost.setAttribute('aria-hidden', 'true');
     disableImageDragging(ghost);
-    ghost.classList.remove('dragging', 'drag-polish-dragging', 'layout-shifting', 'drop-entering', 'drop-entering-active');
+    ghost.classList.remove('dragging', 'drag-polish-dragging');
     ghost.classList.add('desktop-drag-ghost');
     if (isEmbeddedFrame()) simplifyDragGhostForEmbeddedFrame(ghost);
     ghost.style.width = `${rect.width}px`;
@@ -439,11 +450,11 @@
     if (ghostFrame) cancelAnimationFrame(ghostFrame);
     ghostFrame = 0;
     const ghosts = dragGhost
-      ? [dragGhost, ...document.querySelectorAll('.desktop-drag-ghost')]
-      : Array.from(document.querySelectorAll('.desktop-drag-ghost'));
+      ? [dragGhost, ...document.querySelectorAll('.desktop-drag-ghost:not(.drag-handoff-ghost)')]
+      : Array.from(document.querySelectorAll('.desktop-drag-ghost:not(.drag-handoff-ghost)'));
     dragGhost = null;
     Array.from(new Set(ghosts)).forEach(ghost => {
-      if (returnToOrigin && activeDragCard?.isConnected) {
+      if (returnToOrigin && activeDragCard?.isConnected && !reducedMotion.matches) {
         const rect = activeDragCard.getBoundingClientRect();
         ghost.classList.add('desktop-drag-ghost-release');
         ghost.style.transition = 'transform 230ms cubic-bezier(0.2, 0.8, 0.25, 1), opacity 230ms ease';
@@ -452,12 +463,66 @@
           ghost.style.opacity = '0';
         });
         window.setTimeout(() => ghost.remove(), 260);
+      } else if (activeDropAccepted || reducedMotion.matches) {
+        ghost.remove();
       } else {
         ghost.classList.add('desktop-drag-ghost-release');
         window.setTimeout(() => ghost.remove(), 140);
       }
     });
   }
+
+  function beginDropHandoff(card, zone) {
+    if (document.body.dataset.orderSource !== 'shopify' || !dragGhost
+      || card.classList.contains('drag-handoff-source')) return false;
+    if (ghostFrame) cancelAnimationFrame(ghostFrame);
+    ghostFrame = 0;
+    updateDragGhost(0);
+    const names = card.dataset.orderId ? [card.dataset.orderId]
+      : [...orderMetaByKey].filter(([key, value]) => key.startsWith('order:')
+        && value.bundle === card.dataset.bundleName && value.status === card.dataset.bundleStatus)
+        .map(([key]) => key.slice(6));
+    const handoff = {
+      key: cardKey(card), names: new Set(names), source: card,
+      ghost: dragGhost, placeholder: hoverPlaceholder,
+      containers: [card.parentElement, placeholderContainerForZone(zone)],
+      snapshot: captureLayout([card.parentElement, placeholderContainerForZone(zone)])
+    };
+    card.classList.add('drag-handoff-source');
+    dragGhost.classList.add('drag-handoff-ghost');
+    dropHandoffs.add(handoff);
+    // If the batch check outlasts the hover animation, use its settled geometry
+    // rather than replaying a partially completed hover shift at handoff.
+    Promise.all(allBoardCards().map(node => layoutAnimations.get(node)?.finished?.catch(() => {}))).then(() => {
+      if (dropHandoffs.has(handoff)) handoff.snapshot = captureLayout(handoff.containers);
+    });
+    dragGhost = null;
+    hoverPlaceholder = null;
+    placeholderZone = null;
+    placeholderAnchor = null;
+    layoutBeforeDrop = new Map();
+    recentDropKeys.clear();
+    return true;
+  }
+
+  function finishDropHandoffs(names, payload = '') {
+    for (const handoff of [...dropHandoffs]) {
+      const key = payload.startsWith('bundle:') ? payload : `order:${payload}`;
+      if (!names.some(name => handoff.names.has(name)) && (!payload || key !== handoff.key)) continue;
+      // Remove the temporary slot and reveal the actual card in the same turn.
+      // Start FLIP synchronously so there is no painted frame at its old slot.
+      handoff.snapshot.set(handoff.key, handoff.ghost.getBoundingClientRect());
+      handoff.placeholder?.remove();
+      handoff.source.classList.remove('drag-handoff-source');
+      handoff.ghost.remove();
+      dropHandoffs.delete(handoff);
+      animateSnapshot(handoff.snapshot);
+    }
+    document.dispatchEvent(new CustomEvent('printmo:drag-settled'));
+  }
+
+  document.addEventListener('printmo:order-move-painted', event => finishDropHandoffs(event.detail?.orderNames || []));
+  document.addEventListener('printmo:drop-finished', event => finishDropHandoffs(event.detail?.orderNames || [], event.detail?.dragId));
 
   function resetDragState() {
     if (dropZoneFrame) cancelAnimationFrame(dropZoneFrame);
@@ -485,6 +550,7 @@
     document.body.classList.remove('desktop-drag-active');
     document.body.classList.remove('desktop-drag-embedded');
     document.body.classList.remove('desktop-pointer-drag-active');
+    document.dispatchEvent(new CustomEvent('printmo:drag-settled'));
   }
 
   function finishDragSoon() {
@@ -499,7 +565,7 @@
     lastDragX = event.clientX || 0;
     lastDragY = event.clientY || 0;
     layoutBeforeDrop = captureLayout();
-    refreshOrderMetadata();
+    refreshOrderMetadata({ force: true });
     document.body.classList.add('desktop-drag-active', 'desktop-drag-embedded', 'desktop-pointer-drag-active');
     card.classList.add('drag-polish-dragging');
     card.style.setProperty('--drag-tilt', '0deg');
@@ -598,10 +664,16 @@
     const zone = cancelled ? null : dropZoneFromPoint(event.clientX, event.clientY);
     if (zone) {
       activeDropAccepted = true;
-      layoutBeforeDrop = captureLayout();
-      markDroppedKeys([cardKey(sourceCard)]);
-      removeHoverPlaceholder({ animate: false, deferRemove: true });
-      if (!dispatchPointerDrop(zone, sourceCard, event)) finishDragSoon();
+      if (!beginDropHandoff(sourceCard, zone)) {
+        layoutBeforeDrop = captureLayout();
+        if (dragGhost) layoutBeforeDrop.set(cardKey(sourceCard), dragGhost.getBoundingClientRect());
+        markDroppedKeys([cardKey(sourceCard)]);
+        removeHoverPlaceholder({ animate: false, deferRemove: true });
+      }
+      if (!dispatchPointerDrop(zone, sourceCard, event)) {
+        finishDropHandoffs([], dragPayloadForCard(sourceCard));
+        finishDragSoon();
+      }
     } else {
       layoutBeforeDrop = new Map();
       removeHoverPlaceholder({ animate: false });
@@ -609,6 +681,9 @@
     }
 
     clearPointerDrag();
+    // The synthetic click caused by this release is suppressed in this turn;
+    // a later intentional click must never inherit the drag's suppression flag.
+    window.setTimeout(() => { suppressNextClick = false; }, 0);
   }
 
   document.addEventListener('pointerup', event => {
@@ -642,7 +717,7 @@
     activeDropAccepted = false;
     lastDragX = event.clientX || 0;
     layoutBeforeDrop = captureLayout();
-    refreshOrderMetadata();
+    refreshOrderMetadata({ force: true });
     document.body.classList.add('desktop-drag-active');
     document.body.classList.toggle('desktop-drag-embedded', isEmbeddedFrame());
     card.classList.add('drag-polish-dragging');
@@ -685,9 +760,12 @@
     const zone = closestFrom(event.target, dropZoneSelector);
     if (zone) {
       activeDropAccepted = true;
-      layoutBeforeDrop = captureLayout();
-      markDroppedKeys(parseDragKeys(event));
-      removeHoverPlaceholder({ animate: false, deferRemove: true });
+      if (!activeDragCard.classList.contains('drag-handoff-source') && !beginDropHandoff(activeDragCard, zone)) {
+        layoutBeforeDrop = captureLayout();
+        if (dragGhost) layoutBeforeDrop.set(cardKey(activeDragCard), dragGhost.getBoundingClientRect());
+        markDroppedKeys(parseDragKeys(event));
+        removeHoverPlaceholder({ animate: false, deferRemove: true });
+      }
     } else {
       layoutBeforeDrop = new Map();
       removeHoverPlaceholder({ animate: false });
