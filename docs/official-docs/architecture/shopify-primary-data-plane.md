@@ -78,6 +78,7 @@ The JSON metafield contains:
 - `stage`;
 - `readiness.blanksOrdered`, `readiness.blanksReady`, `readiness.printsOrdered`, and `readiness.printsReady`;
 - `printedCount`, `bundleId`, `batchRefs`, and `internalNotes`;
+- optional `printPlacements`, a bounded map of manual print-to-garment/location assignments;
 - optional `targetDate` (a valid calendar date in `YYYY-MM-DD` format, or `null`);
 - attention/archive fields and actor/timestamps.
 
@@ -94,6 +95,8 @@ Shopify; provider-owned D1 state for enrolled Etsy orders).
 
 The Admin order block presents five operator-facing stages by grouping
 `blanks_cart` and `blanks_ordered` under **Blanks** with a required substage.
+Manual `printPlacements` are additive schema-v1 metadata: each assignment has an optional `printItemId` (null for included/custom printing), exact `garmentLineIds`, and a supported `placement`. A patch merges assignment IDs; null removes an assignment and restores automatic recognition. IDs are validated against every current order line, with compare-digest/revision and idempotency protection. The field does not change commerce, print counts, readiness, or purchasing. Stored maps are bounded to 250 assignments and 2,000 garment references. Older Worker versions that discard unknown production fields are not a safe rollback after placements have been saved; a rollback must retain this field.
+
 Its production DTO retains the compatibility field `garmentCount`, now the printable-piece cap. It sums current line-item quantities using per-item `printEligibility` overrides, defaulting to supplier-SKU garments excluding print-service lines. Overrides are additive schema-v1 production metadata keyed by immutable line-item ID; patch values true/false include/exclude, and null restores automatic detection. They never alter commerce or S&S purchasing. The Worker validates IDs against all paginated lines, preserves compare-digest concurrency, and rejects printed counts above the cap.
 
 `completed` means manufacturing is finished, not that Shopify fulfillment has

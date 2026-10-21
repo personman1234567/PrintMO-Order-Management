@@ -137,6 +137,38 @@
     else host.replaceChildren(content);
   }
 
+  function renderGarments(host, order) {
+    const garments = window.OrderGarmentSummary?.models(order) || [];
+    if (!garments.length) return false;
+    const key = JSON.stringify(garments.map(garment => garment.key));
+    if (host.dataset.garmentKey === key && host.querySelector('.detail-garment-summary')) return true;
+    host.dataset.garmentKey = key;
+    host.classList.add('preview-status-host');
+    host.setAttribute('aria-busy', 'false');
+    const list = document.createElement('div');
+    list.className = 'detail-garment-summary';
+    for (const garment of garments) {
+      const figure = document.createElement('figure');
+      const diagrams = document.createElement('div');
+      diagrams.className = 'garment-summary-diagrams';
+      diagrams.innerHTML = window.OrderGarmentSummary.diagram(garment) + window.OrderGarmentSummary.diagram(garment, true);
+      const caption = document.createElement('figcaption');
+      const name = document.createElement('strong');
+      name.textContent = `${garment.label} · ${garment.qty}`;
+      const placements = document.createElement('span');
+      placements.textContent = garment.placementText || 'Print locations not assigned';
+      caption.append(name, placements);
+      figure.append(diagrams, caption);
+      list.append(figure);
+    }
+    const note = document.createElement('p');
+    note.className = 'garment-preview-note';
+    note.textContent = 'Garment summary · no mockup. Outlined areas indicate print locations, not artwork size.';
+    list.append(note);
+    host.replaceChildren(list);
+    return true;
+  }
+
   function placeholder(slot, order, { preserveImage = false } = {}) {
     const state = slot.classList.contains('mockup-slot-loading') ? 'loading'
       : slot.classList.contains('mockup-slot-failed') ? 'failed' : 'unavailable';
@@ -157,8 +189,8 @@
       label.textContent = garment.label;
       const caption = document.createElement('span');
       caption.className = 'garment-summary-caption';
-      caption.textContent = state === 'failed' ? `Preview failed${garment.extra ? ` · +${garment.extra} combinations` : ''}` : garment.extra ? `+${garment.extra} other ${garment.extra === 1 ? 'combination' : 'combinations'}` : '';
-      content.title = `${garment.label}. ${garment.caption}.${garment.locations.length ? ` Print locations: ${garment.locations.join(', ')}.` : ''}`;
+      caption.textContent = state === 'failed' ? `Preview failed${garment.extra ? ` · +${garment.extra} combinations` : ''}` : garment.extra ? `+${garment.extra} other ${garment.extra === 1 ? 'combination' : 'combinations'}` : garment.placementText;
+      content.title = `${garment.label}. ${garment.caption}.${garment.locations.length ? ` Print locations: ${garment.placementText}. Areas are schematic, not artwork dimensions.` : ''}`;
       content.setAttribute('aria-label', content.title);
       content.append(diagrams, label);
       if (caption.textContent) content.append(caption);
@@ -316,5 +348,5 @@
     refreshPreview(slot, order);
   }
 
-  window.OrderCardPresentation = { decorate, refreshPreview, renderStatus };
+  window.OrderCardPresentation = { decorate, refreshPreview, renderStatus, renderGarments };
 })();

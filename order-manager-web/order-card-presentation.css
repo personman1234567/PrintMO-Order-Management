@@ -180,6 +180,33 @@ body[data-order-source="shopify"] .recognition-card .garment-summary {
 .garment-summary-label, .garment-summary-caption { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .garment-summary-label { color: #334155; font: 600 12px/1.35 system-ui, sans-serif; }
 .garment-summary-caption { color: #64748b; font: 400 11px/1.35 system-ui, sans-serif; }
+
+/* Detail summaries reuse the card vectors, with room for every garment/color. */
+body[data-order-source="shopify"] #detail-mockups-placeholder:not(.hidden):has(.detail-garment-summary) {
+  display: block; padding: 16px; min-height: 0; height: auto; aspect-ratio: auto; text-align: left;
+}
+.detail-garment-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 20px 16px; width: 100%; }
+.detail-garment-summary figure { margin: 0; min-width: 0; text-align: center; }
+.detail-garment-summary .garment-summary-diagrams { width: 100%; height: 150px; max-width: 280px; margin: 0 auto 8px; }
+.detail-garment-summary .garment-summary-diagrams svg { width: 120px; max-width: 120px; height: 150px; }
+.detail-garment-summary figcaption { display: grid; gap: 4px; font: 400 12px/1.4 system-ui, sans-serif; color: #334155; overflow-wrap: anywhere; }
+.detail-garment-summary figcaption strong { font-weight: 600; }
+.garment-preview-note { grid-column: 1 / -1; margin: 0; color: #475569; font: 400 12px/1.4 system-ui, sans-serif; }
+.detail-print-placements { margin-top: 12px; color: #334155; text-align: left; }
+.detail-print-placements[hidden] { display: none; }
+.detail-print-placements > summary { min-height: 44px; align-content: center; cursor: pointer; font-weight: 600; }
+.detail-print-placements form { display: grid; gap: 12px; font: 400 13px/1.4 system-ui, sans-serif; }
+.detail-print-placements p { margin: 0; }
+.detail-print-placements fieldset { min-width: 0; margin: 12px 0; padding: 12px 0; border: 0; border-top: 1px solid #cbd5e1; display: grid; gap: 8px; }
+.detail-print-placements legend { max-width: 100%; padding-right: 8px; font-weight: 600; overflow-wrap: anywhere; }
+.detail-print-placements label:not(.placement-garment-choice) { display: grid; gap: 4px; }
+.detail-print-placements select { width: 100%; min-width: 0; min-height: 44px; padding: 8px; color: #334155; background: #fff; border: 1px solid #94a3b8; border-radius: 6px; font: inherit; }
+.placement-garment-choice { display: flex; align-items: center; gap: 10px; min-height: 44px; overflow-wrap: anywhere; }
+.placement-garment-choice input { flex: 0 0 auto; width: 18px; height: 18px; accent-color: #1765c1; }
+.placement-applies-label { font-weight: 600; }
+.placement-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.detail-print-placements :is(button, summary, select, input):focus-visible { outline: 2px solid #1765c1; outline-offset: 3px; }
+.placement-save-status { color: #334155; min-height: 20px; }
 #detail-order-actions { padding: 0 4px; font: 400 12px/1.5 system-ui, sans-serif; color: #64748b; }
 #detail-order-actions[hidden] { display: none; }
 #detail-order-actions summary { cursor: pointer; }

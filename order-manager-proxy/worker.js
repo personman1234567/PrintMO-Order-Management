@@ -5479,6 +5479,7 @@ function defaultProductionState(actor = 'system') {
         readiness: { blanksOrdered: false, blanksReady: false, printsOrdered: false, printsReady: false },
         printedCount: 0,
         printEligibility: {},
+        printPlacements: {},
         targetDate: null,
         bundleId: null,
         batchRefs: [],
@@ -5513,6 +5514,7 @@ function normalizeProductionState(value, actor = 'system') {
         printedCount: Math.min(Math.max(Number(input.printedCount) || 0, 0), 1000000),
         printEligibility: Object.fromEntries(Object.entries(input.printEligibility || {})
             .filter(([id, value]) => validPrintItemId(id) && typeof value === 'boolean').slice(0, 1000)),
+        printPlacements: normalizePrintPlacements(input.printPlacements),
         bundleId: input.bundleId ? String(input.bundleId).slice(0, 160) : null,
         targetDate: validTargetDate(input.targetDate) ? input.targetDate : null,
         batchRefs: Array.isArray(input.batchRefs) ? [...new Set(input.batchRefs.map(String))].slice(0, 100) : [],
@@ -5557,6 +5559,7 @@ function productionForClient(gid, state, compareDigest, assets = [], garmentCoun
         garmentCount: Number.isInteger(garmentCount) && garmentCount >= 0 ? garmentCount : null,
         printedCount: state.printedCount,
         printEligibility: state.printEligibility || {},
+        printPlacements: state.printPlacements || {},
         targetDate: state.targetDate || null,
         blanksOrdered: state.readiness.blanksOrdered ? 1 : 0,
         blanksStatus: state.readiness.blanksReady ? 1 : 0,
@@ -5594,6 +5597,8 @@ function normalizeProductionPatch(patch) {
         printed_count: 'printedCount',
         printEligibility: 'printEligibility',
         print_eligibility: 'printEligibility',
+        print_placements: 'printPlacements',
+        printPlacements: 'printPlacements',
         targetDate: 'targetDate',
         target_date: 'targetDate',
         blanksStatus: 'blanksStatus',
@@ -5614,6 +5619,7 @@ function normalizeProductionPatch(patch) {
         if (!target) throw Object.assign(new Error(`Production field "${key}" is not mutable.`), { code: 'INVALID_PATCH_FIELD', status: 400 });
         normalized[target] = value;
     }
+    if ('printPlacements' in normalized) normalizePrintPlacements(normalized.printPlacements, true);
     if ('targetDate' in normalized && normalized.targetDate !== null && !validTargetDate(normalized.targetDate)) {
         throw Object.assign(new Error('Choose a valid target date, or clear the date.'), {
             code: 'INVALID_TARGET_DATE', status: 400
@@ -5667,6 +5673,12 @@ function applyProductionPatch(current, patch, actor, mutationId) {
     if ('bundleId' in patch) next.bundleId = patch.bundleId ? String(patch.bundleId) : null;
     if ('internalNotes' in patch) next.internalNotes = String(patch.internalNotes || '');
     if ('targetDate' in patch) next.targetDate = patch.targetDate;
+    if ('printPlacements' in patch) {
+        for (const [id, entry] of Object.entries(patch.printPlacements)) {
+            if (entry === null) delete next.printPlacements[id];
+            else next.printPlacements[id] = normalizePrintPlacements({ [id]: entry })[id];
+        }
+    }
     if ('printedCount' in patch) next.printedCount = Number(patch.printedCount);
     if ('printEligibility' in patch) {
         for (const [id, value] of Object.entries(patch.printEligibility)) {
@@ -6092,6 +6104,33 @@ function validPrintItemId(id) {
         && !['__proto__', 'prototype', 'constructor'].includes(id);
 }
 
+const PRINT_PLACEMENTS = new Set(['breast', 'chest', 'front', 'full-front', 'back', 'back-tag',
+    'half-back', 'full-back', 'sleeve', 'full-sleeve', 'half-sleeve', 'left-sleeve', 'right-sleeve', 'hood', 'hat-side']);
+function normalizePrintPlacements(value, strict = false) {
+    const invalid = () => { throw Object.assign(new Error('Choose a valid print location and the garments it applies to.'), {
+        code: 'INVALID_PRINT_PLACEMENTS', status: 400
+    }); };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) { if (strict) invalid(); return {}; }
+    const result = {};
+    if (Object.keys(value).length > 250) { if (strict) invalid(); return {}; }
+    let references = 0;
+    for (const [id, entry] of Object.entries(value)) {
+        if (entry === null && strict && validPrintItemId(id)) continue;
+        if (!validPrintItemId(id) || !entry || typeof entry !== 'object' || Array.isArray(entry)
+            || !PRINT_PLACEMENTS.has(entry.placement)
+            || !(entry.printItemId === null || validPrintItemId(entry.printItemId))
+            || !Array.isArray(entry.garmentLineIds) || !entry.garmentLineIds.length
+            || entry.garmentLineIds.length > 100 || entry.garmentLineIds.some(id => !validPrintItemId(id))) {
+            if (strict) invalid(); continue;
+        }
+        references += entry.garmentLineIds.length;
+        if (references > 2000) { if (strict) invalid(); return {}; }
+        result[id] = { printItemId: entry.printItemId, placement: entry.placement,
+            garmentLineIds: [...new Set(entry.garmentLineIds)] };
+    }
+    return result;
+}
+
 function garmentCountFromLineItems(items = [], eligibility = {}) {
     return items.reduce((total, item) => {
         const included = Object.hasOwn(eligibility, item?.id) ? eligibility[item.id]
@@ -6127,6 +6166,18 @@ async function productionGarmentCount(env, productionRead, graphQL = coordinator
 }
 
 function validatePrintablePatch(items, current, patch, next) {
+    if ('printPlacements' in patch) {
+        const ids = new Set(items.map(item => item.id));
+        for (const entry of Object.values(patch.printPlacements).filter(Boolean)) {
+            if ((entry.printItemId && !ids.has(entry.printItemId))
+                || entry.garmentLineIds.some(id => !ids.has(id) || id === entry.printItemId)) {
+                throw Object.assign(new Error('An assigned item is no longer in this order. Refresh and review the print placements.'), {
+                    code: 'INVALID_PRINT_PLACEMENTS', status: 400
+                });
+            }
+        }
+        normalizePrintPlacements(next.printPlacements, true);
+    }
     if ('printedCount' in patch && next.printedCount > current.printedCount && !next.readiness.printsReady) {
         throw Object.assign(new Error('Prints must be marked ready before recording printed pieces.'), {
             code: 'PRINTS_NOT_READY', status: 409

@@ -406,13 +406,17 @@
       "description": "Candidate and legacy blank-apparel batching, SKU aggregation, S&S submission, and ordered state",
       "taskTypes": ["change", "diagnosis", "operations"],
       "keywords": ["blanks", "batch", "s&s", "sku", "supplier", "in s&s cart", "ordered", "purchase order"],
-      "paths": ["order-manager-web/blanks-batches.js", "order-manager-proxy/worker.js"],
+      "paths": ["order-manager-web/blanks-batches.js", "order-manager-web/cart-garment-model.js", "order-manager-web/cart-garment-view.js", "order-manager-web/cart-garment-view.css", "order-manager-proxy/worker.js"],
       "symbols": ["batches/commit", "process-batch"],
       "errors": ["unknown supplier result", "invalid sku", "batch submit"],
       "read": [
         {
           "path": "docs/official-docs/workflows/blanks-batching.md",
           "anchor": "batch-submission--state-update"
+        },
+        {
+          "path": "docs/official-docs/future-plans/in-cart-garment-view-plan.md",
+          "anchor": "current-continuation-state"
         }
       ],
       "inspect": [

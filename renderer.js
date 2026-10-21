@@ -627,6 +627,7 @@ function candidateOrderRenderFingerprint(order) {
     bundle: order.bundle || '',
     progress: Number(order.progress || 0),
     printEligibility: order.printEligibility || {},
+    printPlacements: order.printPlacements || {},
     blanksStatus: Number(order.blanksStatus || 0),
     printsStatus: Number(order.printsStatus || 0),
     blanksOrdered: Number(order.blanksOrdered || 0),
@@ -885,7 +886,7 @@ async function renderBoardFromLocalState(statuses, { invalidateQueueLoads = true
 window.mergeOrderManagerProduction = (saved, previousStatus) => {
   if (document.body.dataset.orderSource !== 'shopify') return;
   const fields = ['_version', 'productionStage', 'status', 'bundle', 'notes', 'targetDate',
-    'progress', 'printEligibility', 'blanksStatus', 'printsStatus', 'blanksOrdered', 'printsOrdered'];
+    'progress', 'printEligibility', 'printPlacements', 'blanksStatus', 'printsStatus', 'blanksOrdered', 'printsOrdered'];
   const move = pendingBoardMoves.get(boardOrderIdentity(saved));
   if (move && (saved._version || 0) >= move.version) {
     move.confirmed = boardMoveSnapshot(saved);

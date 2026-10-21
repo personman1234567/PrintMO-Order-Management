@@ -2736,6 +2736,33 @@ async function run() {
     assert(JSON.parse(targetEvent.changed_fields_json).includes('targetDate'));
     assert.equal((await (await patchProduction({ target_date: null }, 'target-date-clear')).json()).production.targetDate, null);
 
+    // Manual invoice placements are canonical, idempotent and order-scoped.
+    const previousPlacementLines = fixtureProductionLines;
+    fixtureProductionLines = [
+      { id: 'placement-tee', title: 'Cotton T-shirt', quantity: 4, currentQuantity: 4, sku: 'TEE' },
+      { id: 'placement-print', title: 'T-shirt Breast Print', quantity: 4, currentQuantity: 4, sku: '' }
+    ];
+    const placementEntry = { printItemId: 'placement-print', placement: 'breast', garmentLineIds: ['placement-tee'] };
+    const placementVersion = productionState.revision;
+    const placed = await patchProduction({ print_placements: { one: placementEntry } }, 'placement-set');
+    assert.equal(placed.status, 200);
+    const placedJson = await placed.json();
+    assert.deepEqual(placedJson.production.printPlacements.one, placementEntry);
+    const placedReplay = await patchProduction({ print_placements: { one: placementEntry } }, 'placement-set', placementVersion);
+    assert.equal((await placedReplay.json()).production.version, placedJson.production.version);
+    const placementConflict = await patchProduction({ print_placements: { one: null } }, 'placement-conflict', placementVersion);
+    assert.equal(placementConflict.status, 409);
+    assert.deepEqual((await placementConflict.json()).error.details.current.printPlacements.one, placementEntry);
+    assert.equal((await patchProduction({ print_placements: { two: { ...placementEntry, garmentLineIds: ['another-order-line'] } } }, 'placement-other-order')).status, 400);
+    assert.equal((await patchProduction({ print_placements: { two: { ...placementEntry, placement: 'arbitrary' } } }, 'placement-invalid')).status, 400);
+    const placementPreserved = await patchProduction({ internal_notes: 'Preserve the shop target' }, 'placement-unrelated-save');
+    assert.deepEqual((await placementPreserved.json()).production.printPlacements.one, placementEntry);
+    await coordinator.refresh([shopifyNode().id]);
+    const placementBoard = await worker.fetch(new Request('https://worker.test/order-manager/v1/orders', { headers }), env);
+    assert.deepEqual((await placementBoard.json()).data.find(order => order.id === shopifyNode().id)?.production.printPlacements.one, placementEntry);
+    assert.deepEqual((await (await patchProduction({ print_placements: { one: null } }, 'placement-clear')).json()).production.printPlacements, {});
+    fixtureProductionLines = previousPlacementLines;
+
     // Customer-supplied shirts and koozies have no supplier SKU; transfers count separately.
     fixtureProductionLines = [{ id: 'custom-shirt', title: 'Customer Supplied Shirt', quantity: 75, currentQuantity: 75, sku: '' }];
     assert.equal((await patchProduction({ stage: 'print', printed_count: 0 }, 'custom-reset-progress')).status, 200);

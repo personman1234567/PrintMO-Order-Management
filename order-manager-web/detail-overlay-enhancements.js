@@ -40,6 +40,134 @@
   let detailHydrationController = null;
   let overviewProgressObserver = null;
   let targetDateContext = null;
+  let placementContext = null;
+
+  function syncPrintPlacements(order) {
+    const placeholder = document.getElementById('detail-mockups-placeholder');
+    if (!placeholder) return;
+    let section = document.getElementById('detail-print-placements');
+    if (!section) {
+      section = document.createElement('details');
+      section.id = 'detail-print-placements';
+      section.className = 'detail-print-placements';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Print placements';
+      section.append(summary);
+      placeholder.after(section);
+      section.addEventListener('toggle', () => {
+        if (section.open && placementContext && !section.querySelector('form')) buildPlacementEditor(section, placementContext);
+      });
+    }
+    const eligible = order?._candidate && (order._provider || 'shopify') === 'shopify'
+      && !order._historyReadOnly && order._capabilities?.productionWrite !== false;
+    section.hidden = !eligible || !window.OrderGarmentSummary?.models(order).length;
+    const key = window.OrderDetailState.orderDraftKey(order);
+    if (!eligible || placementContext?.key !== key) {
+      section.open = false;
+      section.querySelector('form')?.remove();
+      placementContext = eligible ? { key, order, busy: false } : null;
+    } else {
+      placementContext.order = order;
+      if (!section.open) section.querySelector('form')?.remove();
+    }
+  }
+
+  function buildPlacementEditor(section, context) {
+    section.querySelector('summary').textContent = 'Print placements';
+    const order = context.order, api = window.OrderGarmentSummary;
+    const garments = api.models(order);
+    const baseline = JSON.parse(JSON.stringify(order.printPlacements || {}));
+    const form = document.createElement('form');
+    const make = (tag, copy, className) => {
+      const node = document.createElement(tag);
+      if (copy !== undefined) node.textContent = copy;
+      if (className) node.className = className;
+      return node;
+    };
+    form.append(make('p', 'Match each print to its garments and location. For products with printing included, add a placement. Sizes of the same garment and color are selected together.'));
+    const rows = make('div');
+    const controls = [];
+    const prints = (order.items || []).filter(item => api.isPrint(item) && Number(item.qty ?? item.quantity) > 0);
+    const addRow = (id, entry, print) => {
+      const row = make('fieldset');
+      row.append(make('legend', print ? `${print.title} · ${print.qty ?? print.quantity}` : 'Included / custom print'));
+      const locationLabel = make('label', 'Print location');
+      const location = make('select');
+      location.required = true;
+      location.append(new Option('Choose location', ''));
+      Object.entries(api.placementLabels).forEach(([key, label]) => location.append(new Option(label, key)));
+      location.value = entry?.placement || api.locationOf(print?.title) || '';
+      locationLabel.append(location);
+      row.append(locationLabel, make('span', 'Applies to', 'placement-applies-label'));
+      const choices = [];
+      for (const garment of garments) {
+        const label = make('label', undefined, 'placement-garment-choice');
+        const input = make('input'); input.type = 'checkbox';
+        const ids = garment.lines.map(line => line.id).filter(Boolean);
+        const recordedIds = ids.filter(id => entry?.garmentLineIds.includes(id));
+        input.checked = recordedIds.length === ids.length && ids.length > 0;
+        input.indeterminate = recordedIds.length > 0 && recordedIds.length < ids.length;
+        input.onchange = () => { input.indeterminate = false; };
+        label.append(input, make('span', `${garment.label} · ${garment.qty}`));
+        row.append(label);
+        choices.push({ input, ids, recordedIds });
+      }
+      const reset = make('button', 'Clear assignment', 'fullscreen-btn'); reset.type = 'button';
+      reset.onclick = () => { choices.forEach(choice => { choice.input.checked = false; choice.input.indeterminate = false; }); };
+      row.append(reset);
+      rows.append(row);
+      controls.push({ id, printItemId: print?.id || entry?.printItemId || null, location, choices });
+    };
+    Object.entries(baseline).forEach(([id, entry]) => addRow(id, entry, prints.find(item => item.id === entry.printItemId)));
+    prints.filter(print => !Object.values(baseline).some(entry => entry.printItemId === print.id))
+      .forEach(print => addRow(print.id, null, print));
+    form.append(rows);
+    const add = make('button', 'Add included / custom print', 'fullscreen-btn'); add.type = 'button';
+    add.onclick = () => { addRow(`manual:${crypto.randomUUID()}`, null, null); controls.at(-1).location.focus(); };
+    const save = make('button', 'Save placements', 'fullscreen-btn'); save.type = 'submit';
+    const cancel = make('button', 'Close', 'fullscreen-btn'); cancel.type = 'button';
+    cancel.onclick = () => { section.open = false; form.remove(); };
+    const status = make('p', '', 'placement-save-status'); status.setAttribute('role', 'status');
+    const actions = make('div', undefined, 'placement-editor-actions'); actions.append(add, save, cancel);
+    form.append(actions, status);
+    form.noValidate = true;
+    form.onsubmit = async event => {
+      event.preventDefault();
+      if (context.busy || placementContext !== context) return;
+      const changes = {};
+      for (const control of controls) {
+        const garmentLineIds = [...new Set(control.choices.flatMap(choice => choice.input.indeterminate
+          ? choice.recordedIds : choice.input.checked ? choice.ids : []))];
+        if (garmentLineIds.length && !control.location.value) {
+          status.textContent = 'Choose a print location for each selected garment.'; control.location.focus(); return;
+        }
+        const value = garmentLineIds.length ? { printItemId: control.printItemId, placement: control.location.value, garmentLineIds } : null;
+        if (JSON.stringify(value) !== JSON.stringify(baseline[control.id] || null)) changes[control.id] = value;
+      }
+      if (!Object.keys(changes).length) { status.textContent = 'No assignment changes to save.'; return; }
+      context.busy = true;
+      Array.from(form.elements).forEach(input => { input.disabled = true; });
+      status.textContent = 'Saving placements…';
+      try {
+        const result = await window.api.updatePrintPlacements(order._gid, changes, baseline);
+        if (placementContext !== context) return;
+        window.OrderDetailState.mergeCanonicalProductionState(order, result.production);
+        status.textContent = 'Print placements saved.';
+        syncSelectedMockup();
+        section.open = false;
+        form.remove();
+        section.querySelector('summary').textContent = 'Print placements · Saved';
+        section.querySelector('summary').focus({ preventScroll: true });
+        document.getElementById('detail-mockups-placeholder')?.scrollIntoView({ block: 'nearest' });
+      } catch (error) {
+        if (placementContext === context) status.textContent = error.message || 'Placements could not save. Try again.';
+      } finally {
+        context.busy = false;
+        Array.from(form.elements).forEach(input => { input.disabled = false; });
+      }
+    };
+    section.append(form);
+  }
 
   function renderTargetDate(order) {
     const section = document.getElementById('target-date-section');
@@ -1190,6 +1318,7 @@
   function syncCustomerContext(order) {
     if (!order) return;
     currentDetailOrder = order;
+    syncPrintPlacements(order);
     const parts = orderContextParts(order.name);
     const counts = itemCounts(order);
     const orderNumber = document.getElementById('detail-context-order');
@@ -2239,7 +2368,9 @@
       setMainMockupMessage('No mockup previews available', state);
       const placeholder = document.getElementById('detail-mockups-placeholder');
       if (document.body?.dataset.orderSource === 'shopify' && placeholder && window.OrderCardPresentation?.renderStatus) {
-        window.OrderCardPresentation.renderStatus(placeholder, state);
+        if (state !== 'unavailable' || !window.OrderCardPresentation.renderGarments?.(placeholder, currentDetailOrder)) {
+          window.OrderCardPresentation.renderStatus(placeholder, state);
+        }
       }
       mainButton.setAttribute('aria-disabled', 'true');
       return;

@@ -75,7 +75,8 @@ loaded image without pixel readback, encoding or additional asset requests, and
 repaints when the image or frame dimensions change.
 When the preview is unavailable or failed, `order-garment-summary.js` groups the
 existing line items by garment/style/color (combining sizes). A known garment
-uses front/back schematic SVG views in a fixed color-family palette, with the
+uses the owner's garment vectors from `Assets/garments/garment-icons.svg` in a
+fixed color-family palette, with the
 original product/color label and a plain additional-combinations count. It does
 not fetch product swatches or require new Shopify scopes. Unknown products keep
 the approved generic mark; unknown colors use neutral gray. Print-location marks
@@ -85,6 +86,21 @@ remain labeled below the frame. This presentation does
 not infer artwork approval or production readiness. Known additional mockup
 manifests expose a preview-count label; opening the card retains the existing
 detail gallery. Bundles, Build Order tiles and Legacy Redis retain their layouts.
+
+The supplied icon set covers T-shirts, pocket T-shirts, long sleeves, crewneck
+sweatshirts, hoodies, polos and hats. Hats use the supplied Front/Side pair;
+unprovided categories retain their prior fallback. The sprite preserves the
+owner's path geometry, themes its gray fills, and crops only the T-shirt back's
+export margins. Dark garments use contrasting seam colors. One cached,
+content-versioned sprite serves every card, without per-order catalog requests.
+
+Print markers distinguish breast, chest, full front, back tag, half back and full
+back. They are schematic location/type indicators, not production dimensions.
+Recorded left/right sleeves use wearer orientation. Unspecified sleeve sides are
+named in the existing caption rather than assigned to an arm. Caption labels
+also expose the placement type without relying on rectangle size or color alone.
+
+When no mockup exists, Order Detail expands the same vectors for every garment/color group; an actual mockup always takes precedence. The `Print placements` disclosure below the preview links print lines to selected garments and a location, or records included/custom printing without a separate print line. Controls stay out of collapsed cards. Assignments persist in canonical `printPlacements`; manual links override automatic links for the same print item. Unknown or removed print lines never invent a placement. Conflicting edits retain the newer saved assignment and require review rather than automatic overwrite.
 
 Garment and print counts retain the original material icons, green when marked
 ordered or ready, with explicit `Not ordered`, `Ordered`, or `Ready` text beneath

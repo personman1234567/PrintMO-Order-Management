@@ -100,6 +100,9 @@
     if (Object.prototype.hasOwnProperty.call(production, 'printEligibility')) {
       order.printEligibility = { ...production.printEligibility };
     }
+    if (Object.prototype.hasOwnProperty.call(production, 'printPlacements')) {
+      order.printPlacements = JSON.parse(JSON.stringify(production.printPlacements || {}));
+    }
     if (!progressMutationPending) {
       adoptNumber('printedCount', 'progress');
       if (production.stage) order.productionStage = production.stage;

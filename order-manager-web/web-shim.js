@@ -427,6 +427,7 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
     bundle: production.bundleId || "",
     progress: Number(production.printedCount || 0),
     printEligibility: production.printEligibility || {},
+    printPlacements: production.printPlacements || {},
     targetDate: production.targetDate || null,
     blanksStatus: Number(production.blanksStatus || 0),
     printsStatus: Number(production.printsStatus || 0),
@@ -794,6 +795,7 @@ function applyCandidateProduction(order, production = {}, { publish = true } = {
   if ("targetDate" in production) order.targetDate = production.targetDate || null;
   if ("printedCount" in production) order.progress = Number(production.printedCount || 0);
   if ("printEligibility" in production) order.printEligibility = { ...production.printEligibility };
+  if ("printPlacements" in production) order.printPlacements = structuredClone(production.printPlacements || {});
   if ("blanksStatus" in production) order.blanksStatus = Number(production.blanksStatus || 0);
   if ("printsStatus" in production) order.printsStatus = Number(production.printsStatus || 0);
   if ("printsOrdered" in production) order.printsOrdered = Number(production.printsOrdered || 0);
@@ -809,6 +811,7 @@ function candidateProductionMatchesPatch(production = {}, patch = {}) {
     internal_notes: "internalNotes",
     printed_count: "printedCount",
     print_eligibility: "printEligibility",
+    print_placements: "printPlacements",
     target_date: "targetDate",
     blanks_status: "blanksStatus",
     blanks_ordered: "blanksOrdered",
@@ -819,6 +822,10 @@ function candidateProductionMatchesPatch(production = {}, patch = {}) {
     const productionKey = fields[patchKey];
     if (!productionKey) return false;
     const actual = production[productionKey];
+    if (patchKey === 'print_placements') {
+      return Object.entries(expected).every(([id, value]) => value === null
+        ? !Object.hasOwn(actual || {}, id) : JSON.stringify(actual?.[id]) === JSON.stringify(value));
+    }
     if (patchKey === 'print_eligibility') {
       return Object.entries(expected).every(([id, value]) => value === null
         ? !Object.hasOwn(actual || {}, id) : actual?.[id] === value);
@@ -844,6 +851,17 @@ async function performCandidateOrderUpdate(name, patch, options = {}) {
   };
   checkWorkflowBaseline();
   const checkTargetDateConflict = () => {
+    if ('print_placements' in patch && options.printPlacementsBaseline) {
+      for (const [id, intended] of Object.entries(patch.print_placements)) {
+        const saved = order.printPlacements?.[id] || null;
+        if (JSON.stringify(saved) !== JSON.stringify(options.printPlacementsBaseline[id] || null)
+            && JSON.stringify(saved) !== JSON.stringify(intended)) {
+          throw Object.assign(new Error('Print placements changed on another device. Reopen the editor to review them before saving.'), {
+            code: 'PRINT_PLACEMENTS_CONFLICT'
+          });
+        }
+      }
+    }
     if ('target_date' in patch && Object.hasOwn(options, 'targetDateBaseline')
         && (order.targetDate || null) !== options.targetDateBaseline
         && (order.targetDate || null) !== patch.target_date) {
@@ -1032,6 +1050,13 @@ window.api.updateProductionMetadata = async (orderId, payload = {}) => {
       body: JSON.stringify(payload),
     }
   );
+};
+
+window.api.updatePrintPlacements = (orderId, changes, baseline) => {
+  const order = candidateByName(orderId);
+  if (!isShopifyCandidateView() || order._provider !== 'shopify' || order._historyReadOnly
+      || order._capabilities?.productionWrite === false) throw new Error('Print placements can only be edited on active Shopify orders.');
+  return updateCandidateOrder(orderId, { print_placements: changes }, { printPlacementsBaseline: baseline });
 };
 
 window.api.getShelfOrder = (orderId) => apiFetch(

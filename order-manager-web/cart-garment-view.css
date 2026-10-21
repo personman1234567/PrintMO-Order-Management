@@ -1,0 +1,52 @@
+/* In Cart extends the workbench; all other columns keep their own presentation. */
+body[data-order-source="shopify"] #blanks-section[data-cart-layout="garments"] #col-blanks { display: none !important; }
+body[data-order-source="shopify"] #blanks-section[data-cart-layout="garments"]:has(#col-blanks:empty) { flex: 1 1 auto; }
+.cart-view-toolbar[hidden], .cart-garment-content[hidden], .cart-group-label[hidden], .cart-garment-retry[hidden] { display: none !important; }
+.cart-view-toolbar { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #e2e8f0; background: #fff; }
+.cart-view-switch { display: inline-flex; padding: 3px; background: #f1f5f9; border-radius: 8px; }
+.cart-view-switch button { min-height: 44px; min-width: 72px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: #475569; font: 600 14px/1.3 system-ui, sans-serif; cursor: pointer; }
+.cart-view-switch button[aria-pressed="true"] { background: #fff; color: #1765c1; box-shadow: 0 1px 3px rgb(15 23 42 / .12); }
+.cart-view-switch button:hover { color: #1765c1; }
+.cart-group-label { display: flex; align-items: center; gap: 8px; margin: 0; color: #475569; font: 400 12px/1.4 system-ui, sans-serif; }
+.cart-group-label select { min-height: 44px; max-width: 116px; margin: 0; padding: 0 24px 0 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #334155; font: 600 13px/1.3 system-ui, sans-serif; cursor: pointer; }
+.cart-garment-content { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #94a3b8 #f8fafc; background: #fff; color: #334155; font: 400 14px/1.4 system-ui, sans-serif; }
+.cart-garment-heading { padding: 16px 16px 0; }
+body[data-order-source="shopify"] #blanks-section .cart-garment-heading h3 { margin: 0; padding: 0; border: 0; background: transparent; color: #0f172a; font: 650 15px/1.4 system-ui, sans-serif; }
+.cart-garment-caption { margin: 3px 0 0; color: #64748b; font-size: 12px; }
+.cart-garment-status { margin: 0; padding: 10px 16px 16px; color: #475569; font-size: 12px; font-variant-numeric: tabular-nums; }
+.cart-garment-table { width: 100%; margin: 0; border: 0; border-collapse: collapse; table-layout: fixed; text-align: left; }
+.cart-garment-table thead { position: sticky; top: 0; z-index: 1; background: #f1f5f9; }
+.cart-garment-table th, .cart-garment-table td { padding: 12px 8px; vertical-align: top; border: 0; border-bottom: 1px solid #e2e8f0; background: transparent; overflow-wrap: anywhere; }
+.cart-garment-table thead th { padding-top: 10px; padding-bottom: 10px; color: #475569; font-size: 12px; font-weight: 600; }
+.cart-garment-table th:first-child { width: 59%; padding-left: 16px; }
+.cart-garment-table th:nth-child(2) { width: 17%; }
+.cart-garment-table th:last-child { width: 24%; padding-right: 16px; text-align: right; }
+.cart-garment-table tbody th { font-weight: 400; }
+.cart-garment-table tbody tr:hover { background: #f8fafc; }
+.cart-garment-name { display: block; color: #0f172a; font-size: 14px; font-weight: 600; line-height: 1.45; }
+.cart-garment-color { display: block; margin-top: 3px; color: #334155; font-size: 13px; }
+.cart-garment-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; }
+.cart-garment-sku { display: block; color: #64748b; font-size: 11px; }
+.cart-garment-size { color: #334155; font-size: 13px; }
+.cart-garment-quantity { padding-right: 16px !important; text-align: right; font-variant-numeric: tabular-nums; }
+.cart-garment-quantity > strong { display: block; color: #0f172a; font-size: 18px; font-weight: 650; line-height: 1.25; }
+.cart-garment-quantity > span { display: block; margin-top: 4px; color: #64748b; font-size: 11px; }
+.cart-garment-table .cart-line-warning { display: block; margin-top: 4px; color: #92400e; font-size: 12px; font-weight: 400; }
+.cart-contributions { margin: 0; }
+.cart-contributions > summary { display: flex; align-items: center; gap: 6px; min-height: 44px; width: fit-content; color: #1765c1; font-size: 12px; cursor: pointer; list-style: none; }
+.cart-contributions > summary::-webkit-details-marker { display: none; }
+.cart-contributions > summary::before { content: ''; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 120ms ease-out; }
+.cart-contributions[open] > summary::before { transform: rotate(45deg); }
+.cart-contributions ul { margin: 0 0 4px; padding: 0; list-style: none; }
+.cart-contributions li { display: flex; flex-wrap: wrap; column-gap: 6px; row-gap: 2px; padding: 6px 0; color: #475569; font-size: 12px; }
+.cart-contribution-quantity { flex-basis: 100%; font-variant-numeric: tabular-nums; }
+body[data-order-source="shopify"] #blanks-section .cart-order-group h3 { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 0; padding: 16px; border: 0; background: #eff6ff; color: #334155; font: 400 13px/1.4 system-ui, sans-serif; overflow-wrap: anywhere; }
+.cart-order-group h3 strong { color: #0f172a; }
+.cart-garment-empty { margin: 0; padding: 24px 16px; color: #64748b; font-size: 14px; }
+.cart-garment-retry { min-height: 44px; margin: 0 16px 12px; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #1765c1; font: 600 13px/1.4 system-ui, sans-serif; cursor: pointer; }
+.cart-garment-retry:disabled { opacity: .65; cursor: wait; }
+:is(.cart-view-toolbar, .cart-garment-content) :is(button, select, summary):focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
+.cart-garment-content:focus-visible { outline: 2px solid #1a73e8; outline-offset: -2px; }
+.cart-garment-content ::selection { background: #dbeafe; color: #0f172a; }
+@media (max-width: 900px) { .cart-garment-content { flex-basis: auto; max-height: none; } }
+@media (prefers-reduced-motion: reduce) { .cart-contributions > summary::before { transition: none; } }

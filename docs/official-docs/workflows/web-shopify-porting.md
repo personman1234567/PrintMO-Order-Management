@@ -60,9 +60,13 @@ The prepared Cloudflare Pages artifact injects the public Shopify client ID, has
 
 For Pages publishing, `npm run prepare:cloudflare` only creates a local artifact. Use `npm run repo -- deploy cloudflare -- --production` for the live site or `npm run repo -- deploy cloudflare -- --preview <branch>` for a preview. The deployment command verifies the marker from its target before reporting success.
 
+Pages deployments replace the entire web artifact. Before publishing from an isolated checkout, compare its HTML loaders and runtime assets with the current production release and preserve already-shipped features, including uncommitted work from another chat. Starting from Git HEAD alone can silently remove a newer deployed feature; a valid release marker verifies delivery, not feature preservation.
+
 ### Source-switched operational board
 
 The normal header and mobile surface expose only the **Shopify board**. Both adapters remain in the codebase, but Legacy Redis is available only through the explicit `?printmo_debug_legacy=1` operational-debug URL; `web-shim.js` selects the data adapter and mutation endpoints.
+
+Within the Board's **In S&S Cart** section, **Cards / Garments** is a local view choice, separate from the overall Board/List layout. Cards remain the first-visit default and stay mounted when hidden. Garments groups exact supplier SKUs across orders or separates them by order, with visible colors, sizes, quantities, and inline contributions. This is an expected-requirements reference, not a live supplier-cart match. Shelf claims reduce matching quantities; unresolved shelf data and manual/other items retain their needed quantities explicitly. The isolated `cart-garment-model.js` and `cart-garment-view.js/.css` consume the existing board snapshot and read-only shelf endpoint. No supplier, order, or readiness writes occur. Device storage remembers the local layout/grouping, and Legacy remains unchanged. Representative shop acceptance is tracked in the [In Cart garment view plan](../future-plans/in-cart-garment-view-plan.md).
 
 The Orders workspace exposes **Board / List** on normal Shopify app
 launches. First visits default to Board; device storage restores the last layout
