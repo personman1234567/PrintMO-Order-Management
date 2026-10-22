@@ -148,6 +148,14 @@ Shopify archive, cancellation, and fulfillment are source-driven rather than ope
 
 The production panel’s **Printable pieces** editor saves per-line-item `printEligibility` overrides (Automatic, Include, Exclude). Defaults follow supplier-SKU garment detection; overrides do not affect supplier purchasing or commerce quantities. The Worker validates current line IDs and computes the cap from current quantities, including paginated lines. Selecting eligibility never marks pieces printed. Excluding already-counted pieces requires reducing progress first.
 
+The Shopify/provider production header shows **garments left** across all To Print orders, independently of the selected production tab. `renderer.js → syncProductionWorkloadUi` uses `OrderBoardModel.productionWorkload` to sum full printable quantities; progress increments do not reduce this planning total. Completing or moving an order out of To Print removes its full quantity. Bundled members, explicitly included customer-supplied garments and orders waiting on supplies contribute; completed or fulfilled orders do not. Printable eligibility remains separate from supplier-purchasing and transfer-print quantities. Initial loading, load errors or explicitly incomplete line data show an unavailable total rather than zero.
+
+Clicking the total opens `production-workload.js`'s garment-type popover. It reads `getOrderManagerProductionWorkload()` and listens for workload and board updates. Categories reuse `OrderGarmentSummary.garmentType`; sizes/colors and pocket tees combine under their garment type, while unknown eligible items remain Other / unclassified. Rows always sum to the header total. Selecting a type filters whole production cards locally; **Show all** restores the queue, while the header continues to show the whole queue's quantity. Native top-layer placement has a fixed-position fallback; both support keyboard dismissal/focus recovery, viewport containment, reduced motion and interruption of the 180ms open/110ms close transitions.
+
+**Plan production** opens the optional `production-planner.js` workbench. `production-planner-model.js` groups the same full printable quantities by garment type, style/color, size, or recorded print-placement combination. Receiving accounting supplies ready/pending/unknown blanks quantities; explicit readiness is a fallback, and print readiness stays separate. Unknown placement and material facts remain visible. Browsing uses cached board data; opening may hydrate existing receiving accounting.
+
+**Today’s run** is one shared shop-scoped set of provider/order identities, stored in D1 rather than per-order production metadata. Authenticated `GET/PATCH /order-manager/v1/production-run` uses expected revision, actor-scoped idempotency, and add/remove/clear deltas. Concurrent add/remove can rebase once; clearing requires the latest revision. Only enrolled active To Print orders can be added. Selection checkboxes and bulk controls exist only inside the planner; closing without saving changes nothing. With no active queued run members and no local filter, the board reserves no additional space. Saved members leaving To Print stop contributing without a stage write. Refresh is bounded to twenty seconds while visible and also occurs on focus. A run never gates ordering, printing, fulfillment, artwork or target dates.
+
 Saving the nonzero printable piece total as `printedCount` from a `print` order sends `printed_count` and `stage: completed` in one versioned production patch. Lowering a completed order below its printable piece total sends `stage: print` in the same patch. The selected Ready to Print tab remains stable; count badges and an accessible status notice communicate the move.
 
 Legacy status values remain compatibility data for the Legacy Redis view only.
@@ -173,6 +181,14 @@ The Overview **Target date** section lets an active production-board operator se
 edit, cancel an edit, or clear an internal finish-by day with a native date picker.
 The day ends in `America/Chicago`; no time-of-day or customer promise is inferred.
 No date is assigned by default. History displays the saved date without editing.
+
+Draft detail offers the same optional finish-by day before purchase, saved with
+an expected preparation revision through `/drafts/:id/target-date`. Dated draft
+tiles show the saved day. Conversion transfers it after normal paid-order
+enrollment; a date already set on the purchased order, including a recorded
+operator clear, takes precedence. A pending transfer is visible in draft detail
+and recovered by the existing paid-order/webhook/scheduled reconciliation.
+Artwork preparation and leaving the draft never require a target date.
 
 Cards display a compact read-only schedule line beneath the header, ahead of
 artwork: neutral `Due Sep 16`, amber `Due today · Sep 15` / `Due tomorrow · Sep 16`,

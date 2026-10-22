@@ -929,6 +929,14 @@ window.api.getQueue = async ({ onPage } = {}) => {
 // Draft preparation uses the authenticated Worker and never enters the shared queue adapter.
 window.api.getDraftOrders = ({ cursor, q, status } = {}) => apiFetch(`/order-manager/v1/drafts${buildQuery({ cursor, q, status })}`);
 window.api.getDraftOrder = id => apiFetch(`/order-manager/v1/drafts/${encodeURIComponent(id)}`);
+window.api.updateDraftTargetDate = (id, targetDate, expectedVersion) => apiFetch(
+  `/order-manager/v1/drafts/${encodeURIComponent(id)}/target-date`,
+  { method: 'PATCH', body: JSON.stringify({ targetDate, expectedVersion }) }
+);
+window.api.getProductionRun = () => apiFetch('/order-manager/v1/production-run');
+window.api.updateProductionRun = body => apiFetch('/order-manager/v1/production-run', {
+  method: 'PATCH', body: JSON.stringify(body)
+});
 window.api.getDraftArtworkUrl = assetId => candidateAssetObjectUrl({ assetId });
 window.api.uploadDraftArtwork = (id, file, metadata) => {
   const form = new FormData();

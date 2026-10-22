@@ -88,6 +88,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./dashboard-controls.css" />
   <link rel="stylesheet" href="./dashboard-motion.css" />
   <link rel="stylesheet" href="./dashboard-shell.css" />
+  <link rel="stylesheet" href="./production-planner.css" />
   <link rel="stylesheet" href="./order-card-presentation.css" />
   <link rel="stylesheet" href="./cart-garment-view.css" />
 </head>
@@ -377,6 +378,12 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
             <button id="print-view-printed" class="print-view-tab" type="button" role="tab" aria-selected="false" aria-controls="col-print" tabindex="-1">
               <span>Printed</span>
               <span id="print-printed-count" class="print-view-count">0</span>
+            </button>
+          </div>
+          <div id="production-workload" class="production-workload">
+            <button id="production-workload-toggle" type="button" aria-label="Show garment types" aria-haspopup="dialog" aria-controls="production-workload-popover" aria-expanded="false">
+              <span class="production-workload-value"><strong id="production-workload-count">—</strong><span>garments left</span></span>
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
           </div>
         </div>
@@ -1233,7 +1240,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./order-list-foundation.js"></script>
   <script src="./dashboard-controls.js"></script>
   <script src="./dashboard-shell.js"></script>
+  <script src="./production-workload.js"></script>
   <script src="./cart-garment-model.js"></script>
+  <script src="./production-planner-model.js"></script>
+  <script src="./production-planner.js"></script>
   <script src="./cart-garment-view.js"></script>
 </body>
 </html>

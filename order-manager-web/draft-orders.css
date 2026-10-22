@@ -206,6 +206,16 @@ body[data-order-source="shopify"][data-pipeline-view="drafts"] #pipeline-selecti
 .draft-context-help[open] summary::before { content: '−'; }
 .draft-context-help p { margin: 0 0 12px; max-width: 70ch; line-height: 1.5; }
 .draft-order-artwork-warning { margin: 12px 0; padding: 12px; background: #F8FAFC; border-radius: 8px; line-height: 1.5; }
+.draft-card-target { color: #334155; font-size: .8125rem; }
+.draft-target-date { margin: 0 0 20px; padding: 0 0 16px; border-bottom: 1px solid #E2E8F0; }
+.draft-target-date fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.draft-target-date legend { margin-bottom: 8px; padding: 0; color: #0F172A; font-size: .875rem; font-weight: 600; }
+.draft-target-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.draft-target-controls label { font-size: .8125rem; }
+#draft-orders-detail .draft-target-controls input { min-height: 44px; max-width: 100%; padding: 8px; border: 1px solid #CBD5E1; border-radius: 6px; color: #334155; background: #FFF; font: inherit; }
+.draft-target-hint, .draft-target-status { margin: 8px 0 0; font-size: .8125rem; line-height: 1.5; color: #475569; }
+.draft-target-status:empty { display: none; }
+.draft-target-controls [hidden] { display: none !important; }
 @media (max-width: 900px) { #draft-orders-workspace { padding-bottom: 24px; } }
 @media (max-width: 760px) {
   #draft-detail-dialog { width: 100%; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; }
@@ -216,6 +226,7 @@ body[data-order-source="shopify"][data-pipeline-view="drafts"] #pipeline-selecti
   .draft-detail-title { font-size: 1.05rem; }
   #draft-orders-detail .draft-shopify-link { grid-column: 1 / -1; grid-row: 3; justify-self: start; padding-left: 0; }
   .draft-detail-body { padding: 20px 16px; }
+  #draft-orders-detail .draft-target-controls input { font-size: 16px; }
   .draft-artwork-toolbar { gap: 8px; margin-bottom: 16px; }
   .draft-intake-actions { flex: 1 1 100%; margin: 4px 0 0; }
   .draft-artwork-layout { grid-template-columns: minmax(0, 1fr); gap: 24px; }

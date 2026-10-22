@@ -48,12 +48,36 @@
     }, { garments: 0, prints: 0, other: 0, pieces: 0, lines: 0 });
   }
 
-  function printableTotal(order, { isGarmentItem = () => false } = {}) {
+  function printableItems(order, { isGarmentItem = () => false } = {}) {
     const overrides = order?._candidate ? order.printEligibility || {} : {};
-    return (order?.items || []).reduce((total, item) => {
-      const included = Object.hasOwn(overrides, item.id) ? overrides[item.id] : isGarmentItem(item);
-      return total + (included ? quantity(item.qty) : 0);
-    }, 0);
+    return (order?.items || []).filter(item => Object.hasOwn(overrides, item.id)
+      ? overrides[item.id] : isGarmentItem(item));
+  }
+
+  function printableTotal(order, options = {}) {
+    return printableItems(order, options).reduce((total, item) => total + quantity(item.qty), 0);
+  }
+
+  // Call with the same To Print orders used by the board. Progress is deliberately
+  // ignored: these are full order quantities until an order leaves that queue.
+  function productionWorkload(orders, { garmentType = () => null, ...options } = {}) {
+    const categories = [
+      ['tee', 'T-shirts'], ['hoodie', 'Hoodies'], ['polo', 'Polos'],
+      ['sweatshirt', 'Sweatshirts'], ['longsleeve', 'Long-sleeve shirts'],
+      ['tank', 'Tanks'], ['hat', 'Hats'], ['pants', 'Pants & shorts'],
+      ['bag', 'Bags'], ['other', 'Other / unclassified']
+    ];
+    const totals = new Map(categories.map(([id]) => [id, 0]));
+    for (const order of orders || []) {
+      for (const item of printableItems(order, options)) {
+        const type = garmentType(item)?.id;
+        const id = type === 'pocket-tee' ? 'tee' : totals.has(type) ? type : 'other';
+        totals.set(id, totals.get(id) + quantity(item.qty));
+      }
+    }
+    const types = categories.filter(([id]) => totals.get(id) > 0)
+      .map(([id, label]) => Object.freeze({ id, label, quantity: totals.get(id) }));
+    return { total: types.reduce((total, type) => total + type.quantity, 0), types: Object.freeze(types) };
   }
 
   function progress(order, total) {
@@ -300,5 +324,5 @@
   }
 
   return Object.freeze({ STAGES, orderKey, stageForOrder, materialState, quantities,
-    printableTotal, progress, evaluateTriage, summarize, snapshot, indicators, browse, FILTER_DEFAULTS, SEARCH_MAX_LENGTH, normalizeSearchQuery, createViewState, readPreferences, savePreferences, reconcileSelection, actionEligibility });
+    printableTotal, productionWorkload, progress, evaluateTriage, summarize, snapshot, indicators, browse, FILTER_DEFAULTS, SEARCH_MAX_LENGTH, normalizeSearchQuery, createViewState, readPreferences, savePreferences, reconcileSelection, actionEligibility });
 });

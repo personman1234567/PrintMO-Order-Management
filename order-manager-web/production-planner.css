@@ -1,0 +1,83 @@
+/* Optional workbench: no occupied board space until a run or filter exists. */
+.production-planning-context { display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; gap: 4px 12px; padding: 0 12px; border-bottom: 1px solid #E2E8F0; color: #334155; font: 400 12px/18px system-ui, sans-serif; }
+.production-planning-context[hidden], .production-planning-context [hidden], #production-planner [hidden] { display: none !important; }
+.production-planning-context button { min-height: 44px; padding: 4px 0; border: 0; border-radius: 0; background: transparent; color: #1765C1; font: 600 12px/18px system-ui, sans-serif; cursor: pointer; }
+.production-planning-context > span { overflow-wrap: anywhere; }
+.production-workload-row dt button { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; min-height: 44px; padding: 6px 0; border: 0; border-radius: 0; background: transparent; color: #334155; font: inherit; text-align: left; cursor: pointer; }
+.production-workload-row dt button small { color: #475569; font: 400 12px/16px system-ui, sans-serif; }
+.production-workload-row dt button:hover { color: #1765C1; text-decoration: underline; text-underline-offset: 3px; }
+.production-workload-popover .production-workload-row { align-items: center; padding-block: 0; }
+.production-workload-plan { display: block; width: 100%; min-height: 44px; margin-top: 8px; padding: 8px 0 0; border: 0; border-radius: 0; background: transparent; color: #1765C1; font: 600 14px/20px system-ui, sans-serif; text-align: left; cursor: pointer; }
+#production-planner { box-sizing: border-box; width: min(1200px, calc(100vw - 40px)); height: min(90dvh, 900px); max-width: none; max-height: none; margin: auto; padding: 0; border: 0; border-radius: 16px; background: #FFF; color: #334155; box-shadow: 0 18px 44px rgb(15 23 42 / .28); overflow: hidden; font: 400 14px/20px system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+#production-planner[open] { display: flex; flex-direction: column; }
+#production-planner::backdrop { background: rgb(15 23 42 / .4); }
+#production-planner button, #production-planner select, #production-planner input { box-sizing: border-box; min-height: 44px; font: inherit; }
+#production-planner button { border: 1px solid #CBD5E1; border-radius: 6px; padding: 8px 12px; background: #FFF; color: #334155; cursor: pointer; }
+#production-planner button:hover { background: #F1F5F9; }
+#production-planner button:disabled { color: #64748B; background: #F8FAFC; cursor: default; }
+#production-planner :focus-visible, .production-planning-context :focus-visible { outline: 2px solid #1765C1; outline-offset: 2px; }
+#production-planner ::selection { background: #EFF6FF; color: #0F172A; }
+.production-planner-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; border-bottom: 1px solid #E2E8F0; }
+.production-planner-heading h2 { margin: 0; font: 700 20px/26px system-ui, sans-serif; color: #0F172A; }
+.production-planner-heading p { margin: 4px 0 0; font-size: 12px; color: #475569; }
+.production-planner-toolbar { display: flex; flex: 0 0 auto; align-items: end; flex-wrap: wrap; gap: 12px 16px; padding: 12px 24px; border-bottom: 1px solid #E2E8F0; }
+.production-planner-toolbar label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; min-width: 0; }
+.production-planner-toolbar select, .production-planner-toolbar input { max-width: 100%; padding: 8px; border: 1px solid #CBD5E1; border-radius: 6px; background: #FFF; color: #334155; }
+.production-planner-search { flex: 1 1 220px; }
+.production-planner-tabs { display: flex; flex: 0 0 auto; align-self: end; gap: 4px; }
+#production-planner .production-planner-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; white-space: nowrap; }
+#production-planner .production-planner-tabs button[aria-selected="true"] { color: #1765C1; border-bottom-color: #1765C1; }
+.production-planner-status { flex: 0 0 auto; margin: 0; padding: 0 24px; font-size: 12px; line-height: 20px; }
+.production-planner-status:not(:empty) { padding-block: 8px; border-bottom: 1px solid #E2E8F0; }
+.production-planner-status[data-error="true"], #production-planner [data-tone="late"] { color: #B42318; }
+#production-planner [data-tone="soon"] { color: #92400E; }
+.production-planner-body { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.production-planner-garments, .production-planner-orders { min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: #CBD5E1 #FFF; padding: 20px 24px; }
+.production-planner-orders { border-left: 1px solid #E2E8F0; }
+.production-planner-summary { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 16px; }
+.production-planner-summary h3, .production-planner-order-heading h3 { margin: 0; color: #0F172A; font: 600 16px/22px system-ui, sans-serif; }
+.production-planner-summary > span { font-weight: 600; color: #0F172A; }
+.production-planner-summary p { flex: 1 1 100%; margin: 0; color: #475569; font-size: 12px; line-height: 18px; }
+.production-planner-group { border-top: 1px solid #E2E8F0; }
+.production-planner-group > summary, .production-planner-style > summary { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 44px; padding: 6px 4px 6px 18px; list-style: none; cursor: pointer; }
+.production-planner-group summary::-webkit-details-marker { display: none; }
+.production-planner-group summary::before { content: ''; position: absolute; left: 2px; width: 6px; height: 6px; border-right: 1.5px solid #475569; border-bottom: 1.5px solid #475569; transform: rotate(-45deg); transition: transform 150ms ease; }
+.production-planner-group details[open] > summary::before, .production-planner-group[open] > summary::before { transform: rotate(45deg); }
+.production-planner-group summary > span { overflow-wrap: anywhere; }
+.production-planner-group > summary { font-weight: 600; color: #0F172A; }
+.production-planner-group-facts { margin: 0 4px 12px 18px; color: #475569; font-size: 12px; line-height: 18px; }
+.production-planner-style { margin-left: 18px; border-top: 1px solid #E2E8F0; }
+.production-planner-sizes { margin: 4px 0 4px 18px; color: #334155; line-height: 24px; }
+#production-planner .production-planner-text-action { border: 0; background: transparent; padding-inline: 0; color: #1765C1; }
+.production-planner-style .production-planner-text-action { margin-left: 18px; }
+.production-planner-order-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.production-planner-order-heading > span { font-size: 12px; }
+.production-planner-bulk { display: flex; gap: 12px; margin: 8px 0; }
+#production-planner .production-planner-bulk button { border: 0; padding-inline: 0; color: #1765C1; background: transparent; font-size: 12px; }
+.production-planner-order { border-top: 1px solid #E2E8F0; padding: 8px 0; }
+.production-planner-order label { display: flex; align-items: start; gap: 12px; padding: 8px 0; min-height: 44px; cursor: pointer; }
+#production-planner .production-planner-order input { flex: 0 0 20px; width: 20px; height: 20px; min-height: 20px; margin: 2px 0 0; accent-color: #1765C1; }
+.production-planner-order label > span { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.production-planner-order label strong { color: #0F172A; font-weight: 600; }
+.production-planner-order label span > span { font-size: 12px; }
+.production-planner-in-run { color: #1765C1; }
+.production-planner-selection { position: sticky; bottom: -20px; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding: 12px 0 20px; border-top: 1px solid #CBD5E1; background: #FFF; }
+.production-planner-selection p { flex: 1 1 100%; margin: 0 0 4px; font-size: 12px; }
+#production-planner [data-add]:not(:disabled) { color: #FFF; background: #1765C1; border-color: #1765C1; }
+#production-planner [data-clear-run] { border: 0; padding-inline: 0; }
+.production-planner-empty { padding: 12px 0; color: #475569; }
+@media (max-width: 760px) {
+  #production-planner { width: 100%; height: 100dvh; margin: 0; border-radius: 0; }
+  .production-planner-heading { padding: 12px 16px; }
+  .production-planner-toolbar { padding: 8px 16px 12px; gap: 8px 12px; }
+  .production-planner-tabs { flex-basis: 100%; }
+  .production-planner-toolbar label { flex: 1 1 120px; }
+  .production-planner-toolbar .production-planner-search { flex-basis: 100%; }
+  #production-planner .production-planner-search input { font-size: 16px; }
+  .production-planner-status { padding-inline: 16px; }
+  .production-planner-body { display: block; overflow: auto; overscroll-behavior: contain; }
+  .production-planner-garments, .production-planner-orders { overflow: visible; padding: 16px; }
+  .production-planner-orders { border-left: 0; border-top: 1px solid #CBD5E1; }
+  .production-planner-selection { position: static; padding-bottom: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .production-planner-group summary::before { transition: none; } }

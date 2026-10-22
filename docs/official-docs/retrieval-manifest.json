@@ -138,6 +138,7 @@
         "draft invoice",
         "prepare print files",
         "draft conversion",
+        "draft target date",
         "garment assignment",
         "read_draft_orders",
         "DRAFT_ACCESS_REQUIRED",
@@ -147,6 +148,7 @@
         "order-manager-proxy/draft-orders.mjs",
         "order-manager-proxy/draft-orders.test.mjs",
         "order-manager-proxy/migrations/0012_draft_artwork.sql",
+        "order-manager-proxy/migrations/0013_production_planning.sql",
         "order-manager-web/draft-orders.js",
         "order-manager-web/draft-orders.css"
       ],
@@ -285,16 +287,20 @@
     },
     {
       "id": "kanban-ui",
-      "description": "Shared Kanban rendering, cards, drag-and-drop, board columns, and detail opening",
+      "description": "Shared Kanban rendering, cards, drag-and-drop, board columns, production workload and optional shared-run planning",
       "taskTypes": ["change", "diagnosis", "design"],
-      "keywords": ["kanban", "card", "drag", "drop", "column", "detail modal", "renderer", "board", "target date", "targetDate", "finish by", "due date", "preview frame", "recognition card"],
-      "paths": ["renderer.js", "index.html", "order-manager-web/renderer.js", "order-manager-web/order-card-presentation.js", "order-manager-web/order-card-presentation.css"],
-      "symbols": ["renderBoard", "openDetail", "updateBoardMove"],
+      "keywords": ["kanban", "card", "drag", "drop", "column", "detail modal", "renderer", "board", "target date", "targetDate", "finish by", "due date", "preview frame", "recognition card", "garments left", "production planner", "today's run", "shared run"],
+      "paths": ["renderer.js", "index.html", "order-manager-web/renderer.js", "order-manager-web/order-card-presentation.js", "order-manager-web/order-card-presentation.css", "order-manager-web/production-workload.js", "order-manager-web/production-planner.js", "order-manager-web/production-planner-model.js", "order-manager-proxy/production-run.mjs"],
+      "symbols": ["renderBoard", "openDetail", "updateBoardMove", "ProductionPlannerModel", "createProductionRunService"],
       "errors": ["card reverts", "detail overlay does not open", "board is blank"],
       "read": [
         {
           "path": "docs/official-docs/workflows/order-ingestion-kanban.md",
           "anchor": "shared-board-render-and-mutation-flow"
+        },
+        {
+          "path": "docs/official-docs/workflows/order-ingestion-kanban.md",
+          "anchor": "stage-and-view-semantics"
         },
         {
           "path": "docs/official-docs/workflows/order-ingestion-kanban.md",

@@ -47,6 +47,12 @@
   ];
   const printNames = /^(?:t-shirt (?:breast|chest|full|full front|full back|half back|back tag|neck tag|sleeve|left sleeve|right sleeve)|(?:full|half|left|right) sleeve|hood|sweatpants (?:small logo|half leg|full leg)|hat (?:front|side|back)|drawstring bag full|tote bag (?:small|half|full)|dtf) print$/i;
   const normalize = value => String(value || '').toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  function garmentType(item) {
+    const title = String(item?.title || item?.name || '').trim();
+    if (printNames.test(title)) return null;
+    const type = types.find(([, , pattern]) => pattern.test(normalize(title)));
+    return type ? { id: type[0], label: type[1] } : null;
+  }
   const attributes = item => ({
     ...Object.fromEntries((item.customAttributes || []).filter(a => a?.key).map(a => [a.key, a.value])),
     ...(item.properties || {})
@@ -101,11 +107,11 @@
     for (const item of items) {
       const title = String(item.title || item.name || '').trim();
       if (printNames.test(title)) { prints.push(item); continue; }
-      const type = types.find(([, , pattern]) => pattern.test(normalize(title)));
+      const type = garmentType(item);
       if (!type) { unclassifiedProducts = true; continue; }
       const color = colorOf(item);
-      const key = JSON.stringify([normalize(title), type[0], normalize(color.name)]);
-      if (!groups.has(key)) groups.set(key, { type: type[0], typeLabel: type[1], title, color,
+      const key = JSON.stringify([normalize(title), type.id, normalize(color.name)]);
+      if (!groups.has(key)) groups.set(key, { type: type.id, typeLabel: type.label, title, color,
         qty: 0, groupIds: new Set(), locations: new Set(), lines: [] });
       const group = groups.get(key);
       group.qty += Number(item.qty ?? item.quantity);
@@ -227,6 +233,6 @@
     }).join('');
     return `<svg viewBox="0 0 100 125" data-garment-view="${view}" aria-hidden="true" focusable="false" style="--garment-fill:${fill};--garment-ink:${ink};--garment-shadow:${shadow}">${body}<g transform="${geometry}">${markers}</g><text x="50" y="122" text-anchor="middle" fill="#475569" font-family="system-ui,sans-serif" font-size="14">${view === 'side' ? 'Side' : back ? 'Back' : 'Front'}</text></svg>`;
   }
-  return { model, models, colorFamily, diagram, palette, colorPairs, locationOf, placementLabels, markersFor,
+  return { model, models, garmentType, colorFamily, diagram, palette, colorPairs, locationOf, placementLabels, markersFor,
     isPrint: item => printNames.test(String(item.title || '').trim()) };
 });

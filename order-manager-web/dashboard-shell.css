@@ -69,6 +69,57 @@ body[data-order-source="shopify"] .dashboard-section-header #blanks-receive-batc
 body[data-order-source="shopify"] .panel.create.supplies-desktop-active #blanks-section > .section-header { display: none; }
 body[data-order-source="shopify"] .production-panel-header .dashboard-section-identity,
 body[data-order-source="shopify"] .production-panel-header .print-workflow-controls { grid-column: 1 !important; }
+.production-workload { display: none; }
+body[data-order-source="shopify"] .production-panel-header .print-workflow-controls {
+  justify-self: stretch; align-items: center; gap: 8px;
+}
+body[data-order-source="shopify"] .production-workload {
+  display: flex; flex: 0 0 auto; align-items: center;
+  height: 38px; margin-left: auto; padding-left: 12px;
+  border-left: 1px solid #CBD5E1; color: #334155;
+  font: 400 12px/16px system-ui, sans-serif; white-space: nowrap;
+}
+body[data-order-source="shopify"] #production-workload-toggle {
+  display: flex; align-items: center; gap: 6px; min-height: 44px;
+  margin: 0; padding: 0 4px; border: 0; border-radius: 6px;
+  background: transparent; color: #334155; font: inherit; text-align: left; cursor: pointer;
+}
+body[data-order-source="shopify"] #production-workload-toggle:hover { background: #F1F5F9; }
+body[data-order-source="shopify"] #production-workload-toggle:focus-visible,
+.production-workload-popover :focus-visible { outline: 2px solid #1765C1; outline-offset: 2px; }
+.production-workload-value { display: flex; flex-direction: column; }
+#production-workload-toggle > svg { flex: 0 0 auto; transition: transform 180ms cubic-bezier(.16, 1, .3, 1); }
+#production-workload-toggle[aria-expanded="true"] > svg { transform: rotate(180deg); }
+body[data-order-source="shopify"] .production-workload strong {
+  color: #0F172A; font: 700 20px/22px system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.production-workload-popover {
+  display: none; position: fixed; inset: auto; z-index: 1200; box-sizing: border-box;
+  width: min(288px, calc(100vw - 24px)); max-width: none; margin: 0; padding: 8px 16px 16px;
+  border: 0; border-radius: 12px; background: #FFF; color: #334155;
+  box-shadow: 0 8px 24px rgb(15 23 42 / .18);
+  font: 400 14px/20px system-ui, sans-serif; font-variant-numeric: tabular-nums;
+  overflow: auto; overscroll-behavior: contain; scrollbar-color: #CBD5E1 #FFF;
+}
+.production-workload-popover.is-open { display: block; }
+.production-workload-popover [hidden] { display: none !important; }
+.production-workload-popover.is-closing { pointer-events: none; }
+.production-workload-popover::selection, .production-workload-popover ::selection { background: #EFF6FF; color: #0F172A; }
+.production-workload-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.production-workload-heading h3 { margin: 0; color: #0F172A; font: 600 15px/20px system-ui, sans-serif; }
+.production-workload-heading button {
+  display: flex; flex: 0 0 auto; align-items: center; justify-content: center;
+  width: 44px; height: 44px; margin-right: -8px; padding: 0;
+  border: 0; border-radius: 6px; background: transparent; color: #475569; cursor: pointer;
+}
+.production-workload-heading button:hover { background: #F1F5F9; }
+.production-workload-popover p { margin: 4px 0 12px; color: #475569; font: 400 12px/17px system-ui, sans-serif; }
+.production-workload-popover dl { margin: 0; }
+.production-workload-row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid #E2E8F0; }
+.production-workload-row dt { min-width: 0; overflow-wrap: anywhere; }
+.production-workload-row dd { flex: 0 0 auto; margin: 0; color: #0F172A; font-weight: 600; }
+.production-workload-total { display: flex; justify-content: space-between; gap: 16px; margin-top: 12px; color: #0F172A; font-weight: 600; }
 body[data-order-source="shopify"] .panel.create.supplies-desktop-active #supplies-tabs { width: 100%; }
 body[data-order-source="shopify"] .panel.create.supplies-desktop-active .supplies-tab { min-width: 0; white-space: normal; }
 
@@ -92,13 +143,25 @@ body[data-order-source="shopify"] #order-list-stages .order-list-stage-filter[ar
 body[data-order-source="shopify"] #order-list-stages .order-list-stage-filter[aria-pressed="true"] .order-list-stage-count { color: inherit; }
 
 @media (min-width: 901px) and (max-width: 1350px) {
+  body[data-order-source="shopify"] .production-panel-header .print-view-tab { padding-inline: 6px; gap: 4px; }
+  body[data-order-source="shopify"] .production-panel-header .print-workflow-controls { grid-column: 1 / -1 !important; }
+  body[data-order-source="shopify"] .production-panel-header > #dashboard-menu-toggle { grid-row: 1; }
   body[data-order-source="shopify"] .production-panel-header #dashboard-menu-toggle { width: 44px; padding: 0; }
   body[data-order-source="shopify"] .production-panel-header #dashboard-menu-toggle span { display: none; }
   body[data-order-source="shopify"] .container > .panel:is(.pipeline, .create.supplies-desktop-active, .fulfillment) > .dashboard-section-header { grid-template-rows: 44px 44px; min-height: 96px; }
   body[data-order-source="shopify"] .container > .panel:is(.pipeline, .create.supplies-desktop-active, .fulfillment) > .dashboard-section-header :is(#pipeline-view-toggle, .section-actions) { grid-row: 1; }
   body[data-order-source="shopify"] .container > .panel:is(.pipeline, .create.supplies-desktop-active, .fulfillment) > .dashboard-section-header :is(#pipeline-view-tabs, #supplies-tabs) { grid-column: 1 / -1; }
 }
+@media (prefers-reduced-motion: reduce) {
+  #production-workload-toggle > svg { transition: none; }
+}
 @media (max-width: 900px) {
+  body.mobile-mode[data-order-source="shopify"] .production-panel-header .print-view-tab {
+    padding-inline: 6px; gap: 4px; white-space: nowrap;
+  }
+  body.mobile-mode[data-order-source="shopify"] .production-panel-header .print-view-tabs {
+    flex: 1 1 auto; width: auto;
+  }
   body[data-order-source="shopify"] #mobile-refresh-btn { display: none; }
   body[data-order-source="shopify"] #mobile-tab-bar > #dashboard-menu-toggle { margin: 0; height: 46px; }
   body[data-order-source="shopify"][data-order-layout="list"] .order-list-heading h2 { display: block; }

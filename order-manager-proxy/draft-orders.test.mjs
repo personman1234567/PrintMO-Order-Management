@@ -4,7 +4,7 @@ import { createHmac } from 'node:crypto';
 import { runInNewContext } from 'node:vm';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
-import { createDraftOrderService, matchDraftAssignments, draftUploadMetadata } from './draft-orders.mjs';
+import { createDraftOrderService, matchDraftAssignments, draftUploadMetadata, validDraftTargetDate } from './draft-orders.mjs';
 
 const line = (id, sku = 'BLACK-M', attrs = []) => ({ id, sku, title: 'Cotton tee', variantTitle: 'Black / M', quantity: 3, customAttributes: attrs });
 function fixture() {
@@ -73,7 +73,7 @@ test('list batches 25 guarded projections, resolves one shop and reads artwork o
   };
   f.db.batch = async statements => { ++calls.batch; assert.equal(statements.length, 25); return batch(statements); };
   const page = await f.service.list({ after: 'incoming-cursor' });
-  assert.deepEqual(calls, { shop: 1, batch: 1, reads: 1, writes: 25 });
+  assert.deepEqual(calls, { shop: 1, batch: 1, reads: 2, writes: 25 });
   assert.equal(page.drafts.length, 25); assert.equal(page.nextCursor, 'unchanged-cursor');
   assert.deepEqual(page.drafts.map(d => d.id), nodes.map(d => d.id));
   assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS count FROM draft_order_projection').get().count, 25);
@@ -109,6 +109,43 @@ test('bulk projection upserts cannot overwrite a newer snapshot and empty pages 
   f.deps.graphql = async () => ({ data: { draftOrders: { nodes: [], pageInfo: { hasNextPage: false } } } });
   f.deps.shop = async () => { assert.fail('Empty pages need no shop database lookup'); };
   assert.deepEqual(await f.service.list(), { drafts: [], nextCursor: null });
+});
+test('draft dates are optional, revisioned, idempotent on retry, clearable and independent of artwork or enrollment', async () => {
+  const f = fixture();
+  assert.equal((await f.request()).targetDate, null);
+  let saved = await f.request('/target-date', 'PATCH', { targetDate: '2026-11-02', expectedVersion: 0 });
+  assert.equal(saved.targetDate, '2026-11-02'); assert.equal(saved.targetDateRevision, 1);
+  saved = await f.request('/target-date', 'PATCH', { targetDate: '2026-11-02', expectedVersion: 0 });
+  assert.equal(saved.targetDateRevision, 1);
+  assert.equal((await f.service.list()).drafts[0].targetDate, '2026-11-02');
+  await assert.rejects(f.request('/target-date', 'PATCH', { targetDate: '2026-11-03', expectedVersion: 0 }), e => e.code === 'VERSION_CONFLICT');
+  await assert.rejects(f.request('/target-date', 'PATCH', { targetDate: '2026-02-30', expectedVersion: 1 }), e => e.code === 'INVALID_TARGET_DATE');
+  saved = await f.request('/target-date', 'PATCH', { targetDate: null, expectedVersion: 1 });
+  assert.equal(saved.targetDate, null); assert.equal(saved.targetDateRevision, 2);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM order_projection').get().n, 0);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM draft_artwork').get().n, 0);
+  assert.equal(validDraftTargetDate('2028-02-29'), true); assert.equal(validDraftTargetDate('2027-02-29'), false);
+  assert.equal(validDraftTargetDate('0000-01-01'), false); assert.equal(validDraftTargetDate('2026-1-1'), false);
+});
+test('date-only drafts transfer after conversion, retry transient failures, and leave existing order dates alone', async () => {
+  const f = fixture(), calls = [];
+  await f.request('/target-date', 'PATCH', { targetDate: '2026-11-02', expectedVersion: 0 });
+  f.convert();
+  f.deps.promoteTargetDate = async (...args) => { calls.push(args); throw new Error('Temporary Shopify failure'); };
+  let detail = await f.service.detail(f.draft.id);
+  assert.equal(detail.targetDateSyncPending, true); assert.equal(detail.editable, false);
+  f.deps.promoteTargetDate = async (...args) => { calls.push(args); return 'applied'; };
+  await f.service.reconcile();
+  detail = await f.service.detail(f.draft.id);
+  assert.equal(detail.targetDateSyncPending, false); assert.equal(detail.targetDatePromotion, 'applied');
+  assert.equal(calls.length, 2); assert.equal(calls[0][0], f.draft.order.id); assert.equal(calls[0][1], '2026-11-02');
+  assert.equal(calls[0][2], calls[1][2], 'retry reuses the same canonical mutation identity');
+  await assert.rejects(f.request('/target-date', 'PATCH', { targetDate: '2026-11-03', expectedVersion: 1 }), e => e.code === 'DRAFT_CONVERTED');
+  const other = fixture();
+  await other.request('/target-date', 'PATCH', { targetDate: '2026-11-02', expectedVersion: 0 });
+  other.convert(); other.deps.promoteTargetDate = async () => 'kept-existing';
+  await other.service.reconcile({ orderId: other.draft.order.id });
+  assert.equal((await other.service.detail(other.draft.id)).targetDatePromotion, 'kept-existing');
 });
 test('matching preserves explicit garment identity and refuses duplicate or different artwork', () => {
   const saved = line('draft');
@@ -217,7 +254,8 @@ test('paid-order-first reconciliation finds a prepared recent conversion', async
 test('Worker authenticates draft routes, verifies draft webhooks, retries failures and keeps private SVG tickets isolated', async () => {
   const source = readFileSync(new URL('./worker.js', import.meta.url), 'utf8')
     .replace("'./draft-orders.mjs'", JSON.stringify(new URL('./draft-orders.mjs', import.meta.url).href))
-    .replace("'./garment-costs.mjs'", JSON.stringify(new URL('./garment-costs.mjs', import.meta.url).href));
+    .replace("'./garment-costs.mjs'", JSON.stringify(new URL('./garment-costs.mjs', import.meta.url).href))
+    .replace("'./production-run.mjs'", JSON.stringify(new URL('./production-run.mjs', import.meta.url).href));
   const { default: worker } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
   const f = fixture(); const secret = 'draft-fixture-secret';
   Object.assign(f.env, { SHOPIFY_API_KEY: 'draft-fixture-app', SHOPIFY_API_SECRET: secret,

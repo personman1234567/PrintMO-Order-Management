@@ -67,6 +67,7 @@ flowchart LR
 - `$app:printmo.production_state_v1` is the only writable per-order production record.
 - D1 `order_projection` is a rebuildable board index, not a second order record.
 - D1 owns mutation requests, audit events, webhook receipts, reconciliation checkpoints, batches, supplier attempts, asset manifests, and migration ledgers.
+- D1 also owns optional shop-wide production-run membership and draft-only target-date preparation (`0013_production_planning.sql`). These are app records, not additional per-order production authorities. After normal enrollment, the prepared date transfers through Shopify's canonical production metafield with compare-digest protection; an existing date or a recorded operator date edit/clear wins. Failed transfers retain preparation and retry through draft reconciliation.
 - R2 owns private asset bytes.
 - The Render service exposes a candidate S&S endpoint that accepts validated aggregate lines and never reads Redis.
 

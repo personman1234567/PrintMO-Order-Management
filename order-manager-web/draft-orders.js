@@ -5,6 +5,10 @@
     uploadRole: 'mockup', uploadPlacement: 'front', uploadItemIds: [] };
   const placements = [['front', 'Front'], ['back', 'Back'], ['left-chest', 'Left chest'],
     ['right-chest', 'Right chest'], ['left-sleeve', 'Left sleeve'], ['right-sleeve', 'Right sleeve'], ['other', 'Other']];
+  const targetDrafts = new Map(), targetSaving = new Set();
+  const targetLabel = value => value ? new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric'
+  }).format(new Date(`${value}T12:00:00Z`)) : 'Not set';
   const $ = id => document.getElementById(id);
   const text = (tag, value, className = '') => {
     const el = document.createElement(tag); el.textContent = value; el.className = className; return el;
@@ -118,7 +122,9 @@
     const updated = new Date(record.updatedAt);
     const time = text('time', `Updated ${updated.toLocaleDateString()}`, 'draft-card-updated'); time.dateTime = record.updatedAt;
     el.append(time);
+    if (record.targetDate) el.append(text('span', `Target ${targetLabel(record.targetDate)}`, 'draft-card-target'));
     if (record.syncPending) el.append(text('span', 'Artwork sync pending', 'draft-card-sync'));
+    if (record.targetDateSyncPending) el.append(text('span', 'Target date transfer pending', 'draft-card-sync'));
     return el;
   }
   function loadingControls() {
@@ -185,6 +191,10 @@
     return !(state.pending.length || state.editing) || window.confirm('Discard the unsaved artwork changes? Uploaded files will be kept.');
   }
   function syncRecord(detail) {
+    if (state.detail?.id === detail.id && (state.detail.targetDateRevision || 0) > (detail.targetDateRevision || 0)) {
+      detail = { ...detail, targetDate: state.detail.targetDate, targetDateRevision: state.detail.targetDateRevision,
+        targetDateSyncPending: state.detail.targetDateSyncPending, targetDatePromotion: state.detail.targetDatePromotion };
+    }
     state.detail = detail;
     const index = state.records.findIndex(record => record.id === detail.id);
     if (index >= 0) state.records[index] = { ...state.records[index], ...detail,
@@ -352,6 +362,66 @@
     });
     menu.append(remove); wrapper.append(trigger, menu); return wrapper;
   }
+  function targetDateForm(record) {
+    const form = text('form', '', 'draft-target-date');
+    const fields = document.createElement('fieldset'); fields.disabled = targetSaving.has(record.id);
+    const legend = text('legend', 'Target date'); fields.append(legend);
+    const feedback = text('p', '', 'draft-target-status'); feedback.setAttribute('role', 'status');
+    const hint = text('p', record.orderId
+      ? record.targetDateSyncPending ? 'Date transfer is pending. It will retry automatically.'
+        : record.targetDatePromotion === 'kept-existing' ? 'The purchased order keeps its existing target date.'
+          : 'This draft is now an order. Change the target date on the purchased order.'
+      : 'Optional finish-by date. Carries into the order when this draft is purchased.', 'draft-target-hint');
+    if (!record.editable) {
+      fields.append(text('span', targetLabel(record.targetDate)), hint); form.append(fields); return form;
+    }
+    const label = text('label', 'Finish by');
+    const input = document.createElement('input'); input.type = 'date'; input.id = 'draft-target-date-input';
+    input.value = targetDrafts.has(record.id) ? targetDrafts.get(record.id) : record.targetDate || '';
+    input.addEventListener('input', () => targetDrafts.set(record.id, input.value));
+    label.htmlFor = input.id;
+    const controls = text('div', '', 'draft-target-controls');
+    const save = button('Save date', () => {}); save.type = 'submit';
+    const cancel = button('Cancel', () => { targetDrafts.delete(record.id); input.value = state.detail?.targetDate || ''; feedback.textContent = ''; });
+    const clear = button('Clear date', () => submit(null));
+    clear.hidden = !record.targetDate;
+    controls.append(label, input, save, cancel, clear);
+    fields.append(controls, hint, feedback); form.append(fields);
+    async function submit(value) {
+      if (targetSaving.has(record.id) || state.busy) return;
+      if (input.validity.badInput) { feedback.textContent = 'Choose a valid calendar date.'; input.focus(); return; }
+      targetSaving.add(record.id); fields.disabled = true; feedback.classList.remove('draft-error'); feedback.textContent = 'Saving target date…';
+      const generation = state.generation;
+      try {
+        const result = await window.api.updateDraftTargetDate(record.id, value, state.detail?.targetDateRevision || 0);
+        targetDrafts.delete(record.id);
+        const index = state.records.findIndex(item => item.id === record.id);
+        if (index >= 0) state.records[index] = { ...state.records[index], targetDate: result.targetDate,
+          targetDateRevision: result.targetDateRevision, targetDateSyncPending: result.targetDateSyncPending };
+        if (generation !== state.generation || state.detail?.id !== record.id) return;
+        state.detail = { ...state.detail, targetDate: result.targetDate, targetDateRevision: result.targetDateRevision,
+          targetDateSyncPending: result.targetDateSyncPending, targetDatePromotion: result.targetDatePromotion };
+        if (!result.editable) { syncRecord(result); renderDetail(); message('Target date saved; the draft has become an order.'); return; }
+        input.value = result.targetDate || ''; clear.hidden = !result.targetDate;
+        feedback.textContent = result.targetDate ? 'Target date saved.' : 'Target date cleared.';
+      } catch (error) {
+        if (generation === state.generation) { feedback.textContent = `${error.message} Your entered date is kept.`; feedback.classList.add('draft-error'); }
+      } finally {
+        targetSaving.delete(record.id); fields.disabled = false;
+        if (generation === state.generation && state.detail?.id === record.id) {
+          const current = $('draft-orders-detail').querySelector('.draft-target-date');
+          if (current && current !== form) {
+            const replacement = targetDateForm(state.detail);
+            const notice = replacement.querySelector('[role="status"]');
+            if (notice) { notice.textContent = feedback.textContent; notice.classList.toggle('draft-error', feedback.classList.contains('draft-error')); }
+            current.replaceWith(replacement);
+          }
+        }
+      }
+    }
+    form.addEventListener('submit', event => { event.preventDefault(); void submit(input.value || null); });
+    return form;
+  }
   function renderDetail() {
     const record = state.detail;
     if (!record) return;
@@ -373,6 +443,7 @@
     const body = text('div', '', 'draft-detail-body');
     const feedback = text('p', '', 'draft-detail-feedback'); feedback.id = 'draft-detail-status';
     feedback.setAttribute('role', 'status'); feedback.setAttribute('aria-live', 'polite'); body.append(feedback);
+    body.append(targetDateForm(record));
     if (record.orderId) body.append(text('p', record.assignmentReview
       ? 'This draft became an order. Review the highlighted files and assign them to the current order items.'
       : `Artwork is attached to ${record.orderName || 'the purchased order'}. Add or remove files from the purchased order.`, 'draft-notice'));

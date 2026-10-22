@@ -12,6 +12,97 @@ const item = id => ({ _candidate: true, _provider: 'shopify', _gid: id, _orderKe
   blanksOrdered: 0, blanksStatus: 0, printsOrdered: 0, printsStatus: 0,
   canonical: { production: { stage: 'received', version: 1 } } });
 
+function workload(orders) {
+  const metric = { setAttribute(name, value) { this[name] = value; } };
+  const trigger = { setAttribute(name, value) { this[name] = value; } };
+  const count = { textContent: '' };
+  const context = vm.createContext({
+    allOrders: orders, activePrintView: 'toPrint', Number,
+    window: { OrderBoardModel: require('../order-manager-web/order-board-model'),
+      OrderGarmentSummary: require('../order-manager-web/order-garment-summary') },
+    isShopifyBoardView: () => true,
+    isGarmentItem: item => Boolean(item.sku) && item.id !== 'transfer',
+    document: { body: { dataset: { boardLoadState: 'ready' } },
+      getElementById: id => ({ 'production-workload': metric, 'production-workload-count': count,
+        'production-workload-toggle': trigger })[id] }
+  });
+  vm.runInContext(section(renderer, 'function printViewForOrder', 'function syncPrintViewUi'), context);
+  return { context, metric, trigger, count, sync: () => context.syncProductionWorkloadUi() };
+}
+
+test('workload counts full printable quantities across providers and bundles, independently of progress and the active tab', () => {
+  const printOrder = (id, extra = {}) => ({ ...item(id), status: 'print', productionStage: 'print',
+    items: [{ id: 'shirt', sku: 'B102', qty: 61 }, { id: 'transfer', sku: 'TRANSFER', qty: 115 }], ...extra });
+  const f = workload([
+    printOrder('one', { progress: 11, bundle: 'Team' }),
+    printOrder('two', { _provider: 'etsy', bundle: 'Team', progress: 1,
+      items: [{ id: 'customer-shirt', qty: 8 }, { id: 'excluded', sku: 'B103', qty: 3 }],
+      printEligibility: { 'customer-shirt': true, excluded: false } }),
+    printOrder('over-complete', { progress: 80 }),
+    printOrder('finished', { productionStage: 'completed' }),
+    printOrder('fulfilled', { displayFulfillmentStatus: 'FULFILLED' }),
+    printOrder('legacy', { _candidate: false }), item('pipeline')
+  ]);
+  f.sync();
+  assert.equal(f.count.textContent, '130');
+  f.context.activePrintView = 'printed'; f.sync();
+  assert.equal(f.count.textContent, '130', 'Printed tab must retain the full To Print workload');
+  f.context.allOrders[0].progress = 21; f.sync();
+  assert.equal(f.count.textContent, '130', 'the incrementor must not reduce the planning quantity');
+  f.context.allOrders[0].status = 'received'; f.sync();
+  assert.equal(f.count.textContent, '69', 'moving an order out of production removes its full quantity');
+  f.context.allOrders[1].productionStage = 'completed'; f.sync();
+  assert.equal(f.count.textContent, '61', 'completing an order removes its full quantity');
+});
+
+test('workload distinguishes empty, loading, failed and incomplete queues and formats large totals', () => {
+  const f = workload([]);
+  f.sync(); assert.equal(f.count.textContent, '0');
+  f.context.document.body.dataset.boardLoadState = 'loading';
+  f.sync(); assert.equal(f.count.textContent, '—');
+  assert.match(f.trigger['aria-label'], /Loading/);
+  f.context.document.body.dataset.boardLoadState = 'error';
+  f.sync(); assert.equal(f.count.textContent, '—');
+  assert.match(f.trigger['aria-label'], /unavailable/);
+  f.context.document.body.dataset.boardLoadState = 'ready';
+  f.context.allOrders = [{ ...item('large'), status: 'print', productionStage: 'print',
+    items: [{ id: 'shirt', sku: 'B102', qty: 1248 }] }];
+  f.sync(); assert.equal(f.count.textContent, '1,248');
+  f.context.allOrders[0].canonical.commerce = { lineItemsComplete: false };
+  f.sync(); assert.equal(f.count.textContent, '—');
+});
+
+test('garment-type rows merge sizes/colors and pocket tees, keep every eligible item, and sum to the header total', () => {
+  const model = require('../order-manager-web/order-board-model');
+  const garment = require('../order-manager-web/order-garment-summary');
+  const line = (id, title, qty, extra = {}) => ({ id, title, qty, sku: 'B102', ...extra });
+  const orders = [{ _candidate: true, progress: 15, items: [
+    line('tee-small', 'Gildan T-shirt', 10, { variantTitle: 'Black / S' }),
+    line('tee-large', 'Tultex Pocket Tee', 5, { variantTitle: 'White / L' }),
+    line('hoodie', 'Heavy Blend Hooded Sweatshirt', 12),
+    line('polo', 'Port Authority Polo', 8),
+    line('long', 'Long Sleeve T-Shirt', 6),
+    line('crewneck', 'Crewneck Sweatshirt', 3),
+    line('unknown', 'Customer supplied garments', 4, { sku: '' }),
+    line('hat', 'Trucker Cap', 2),
+    line('exclude', 'Cotton T-shirt', 100),
+    line('print', 'T-shirt Chest Print', 50, { sku: '' }),
+    line('fee', 'Setup fee', 1, { sku: '' }),
+    line('bad', 'Polo', Infinity), line('negative', 'Hoodie', -8)
+  ], printEligibility: { unknown: true, exclude: false } }];
+  const options = { isGarmentItem: item => Boolean(item.sku), garmentType: garment.garmentType };
+  const data = model.productionWorkload(orders, options);
+  assert.equal(data.total, 50);
+  assert.deepEqual(data.types.map(type => [type.label, type.quantity]), [
+    ['T-shirts', 15], ['Hoodies', 12], ['Polos', 8], ['Sweatshirts', 3],
+    ['Long-sleeve shirts', 6], ['Hats', 2], ['Other / unclassified', 4]
+  ]);
+  assert.equal(data.total, model.printableTotal(orders[0], options));
+  assert.equal(data.types.reduce((total, type) => total + type.quantity, 0), data.total);
+  orders[0].progress = 45;
+  assert.deepEqual(model.productionWorkload(orders, options), data);
+});
+
 function moves(orders = [item('one')]) {
   const frames = [], paints = [];
   const context = vm.createContext({

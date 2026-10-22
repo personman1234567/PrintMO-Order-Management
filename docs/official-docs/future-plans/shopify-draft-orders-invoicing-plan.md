@@ -11,12 +11,20 @@ The September 30 owner decisions supersede the broader July invoicing-engine pro
 
 ## Current Continuation State
 
-- **Current state**: Live and enabled since 2026-09-30; browsing refinement and bulk list optimization released on 2026-10-01. Production D1 migration 0012 remains applied; Worker `02724e16-34b5-4a4a-987f-a83abf607a02`; Pages marker `1790889867120` (focused detail workspace); existing Shopify release `draft-artwork-2026-09-30` includes draft create/update/delete notifications.
+- **Current state**: Live and enabled since 2026-09-30; focused detail released on 2026-10-01. Optional draft target-date preparation and conversion handoff deployed on 2026-10-22 with D1 migration `0013`, Worker `393595ff-a253-4cb1-a0af-6aeeb777ea84`, and Pages marker `1792691078643`. Existing Shopify release `draft-artwork-2026-09-30` includes draft create/update/delete notifications.
 - **Next safe action**: Refresh the embedded Order Manager and review the deployed focused draft-detail workspace. Live artwork/payment/conversion acceptance remains separate.
 - **Remaining blockers**: Live artwork upload/payment/conversion and changed/duplicate-garment acceptance remain unverified. Release blockers are cleared.
-- **Owner / external actions**: Owner authorized the October 1 browsing/loading and focused draft-detail implementation and releases; no additional scopes, migrations, or Shopify configuration release were required.
+- **Owner / external actions**: Owner authorized the October 22 optional planner and draft-date implementation and deployment. Migration `0013` was applied before the Worker; dashboard variables were preserved with `--keep-vars`. No additional Shopify scopes or configuration release were required.
 - **Last verified evidence**: Worker optimization deployed before Pages; production marker and draft JS/CSS hashes match the prepared bundle. Actual `DRAFT_ORDERS_ENABLED=1`, `SS_TEST_ORDER=1`, and existing integration flags verified. All 15 focused draft tests, proxy checks/build, Phase 1/2, documentation checks, and Worker dry-run passed. Synthetic browser checks cover 320px/393px and desktop layout, square/wide/slow/failed previews, four-request concurrency, stale results, retained refresh/pagination, and detail/tab continuity. No live purchase acceptance claimed.
 - **Recovery evidence**: Pre-migration D1 bookmark `00004566-00000576-000050f6-6cace2ff8544d964dedc6c9a60ffd1b3`; first disabled Worker release `ab11ca21-e490-4ab1-ba44-ed8fdbdbdf2b`; deployments used `--keep-vars`. Shopify release: https://dev.shopify.com/dashboard/102036845/apps/305079713793/versions/1150423072769.
+
+October 22 verification: 34 proxy tests, 42 targeted board/garment/planner tests,
+Phase 1/2, syntax, documentation and build checks passed. Synthetic browser checks
+verified draft date save/cancel/reopen, shared-run concurrency and optional empty
+state, and 320–1600px containment. The production marker and eight served asset
+byte comparisons passed. Date handoff/retry/CAS and preservation of existing or
+cleared order dates were verified with fixtures; no live customer purchase was
+performed for acceptance.
 
 ### Focused Draft Detail Workspace — Deployed (2026-10-01)
 
@@ -52,13 +60,13 @@ Verification: 43 synthetic browser assertions cover staged paste/drop/file intak
 
 - Shopify owns draft status, invoice state, commerce, and the resulting `DraftOrder.order` relationship. Only `read_draft_orders` is added to the existing app scopes; no `write_draft_orders` or `read_customers` scope is added. See Shopify's [DraftOrder reference](https://shopify.dev/docs/api/admin-graphql/latest/objects/DraftOrder) and [draftOrders search/pagination reference](https://shopify.dev/docs/api/admin-graphql/latest/queries/draftOrders).
 - D1 stores draft projections, file manifests, immutable item snapshots, assignment revisions, conversion progress, and operator audit events. R2 stores private file bytes. No draft or production writes use Redis.
-- List requests retain Shopify's 25-draft newest-updated cursor query and response contract. Each nonempty page resolves its shop once, batches timestamp-guarded projection upserts, and reads active artwork metadata in one shop-scoped query ordered by creation time and asset ID. Detail/upload/conversion operations retain their existing paths.
+- List requests retain Shopify's 25-draft newest-updated cursor query and response contract. Each nonempty page resolves its shop once, batches timestamp-guarded projection upserts, and reads active artwork metadata and target-date preparation in two shop-scoped queries. Detail/upload/conversion operations retain their existing paths.
 - Authenticated `/order-manager/v1/drafts` routes use the existing partner identity boundary. Private previews reuse short-lived asset tickets; SVG responses retain sandbox and `nosniff` protections. Object keys never appear in draft DTOs.
 - Upload IDs plus file checksums make retries reuse one asset identity and byte object. Assignment/removal require an expected revision. A removal that loses the conversion race cannot remove purchased artwork.
 - On conversion, the same asset ID and R2 object are linked into the existing order manifest/link tables. All selected items must match uniquely by SKU, title, variant title, and all custom attributes. Within the same item kind, matching IDs are preferred only when that identity still matches. If any selection is ambiguous, the file transfers with `needs_review` and no guessed garment links.
 - Draft create/update/delete webhooks use the existing raw-body HMAC/shop boundary. Draft IDs never become Order IDs or production projection records. Failed draft deliveries can be retried; repeated successful deliveries are deduplicated.
 - `orders/paid` can repair known draft relationships or a matching draft in a bounded recent-conversion page. The existing five-minute cron rotates through 20 prepared drafts per run to recover missed/late delivery or interrupted promotion. Large backlogs may require multiple cron runs; handoff is eventual, not a promise of instantaneous delivery.
-- Conversion only attaches files. Existing paid-order eligibility, canonical production state, and intake gates remain authoritative.
+- Conversion attaches files and transfers an optional prepared target date after normal production enrollment. Migration `0013_production_planning.sql` adds revisioned, audited `draft_preparation`; authenticated date saves do not write Shopify draft commerce. The transfer uses the existing canonical order production metafield and compare-digest, preserves an existing date or recorded operator date edit/clear, and retries after interrupted delivery. Date-only drafts participate in paid-order and scheduled reconciliation. Clearing a draft date before conversion leaves no date to transfer. No date is required and no artwork validation or leave guard depends on it. Existing paid-order eligibility and intake gates remain authoritative.
 
 ### Source boundaries
 

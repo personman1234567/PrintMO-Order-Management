@@ -1,9 +1,43 @@
 // worker.js — Order Manager proxy + R2 Storage Browser endpoints
 import { createDraftOrderService } from './draft-orders.mjs';
 import { createGarmentCostService, unavailableEstimate } from './garment-costs.mjs';
+import { createProductionRunService } from './production-run.mjs';
 
 function draftOrderService(env) {
-    return createDraftOrderService(env, { shop: () => d1Shop(env), graphql: coordinatorGraphQL });
+    return createDraftOrderService(env, { shop: () => d1Shop(env), graphql: coordinatorGraphQL,
+        promoteTargetDate: (gid, date, mutationId) => promoteDraftTargetDate(env, gid, date, mutationId) });
+}
+async function promoteDraftTargetDate(env, gid, date, mutationId) {
+    const shop = await d1Shop(env), db = requireOrderDb(env), actor = 'system:draft-target-date';
+    // Date preparation must never enroll an unpaid or otherwise absent order.
+    const projection = await db.prepare('SELECT order_gid FROM order_projection WHERE shop_id = ? AND order_gid = ?')
+        .bind(shop.id, gid).first();
+    if (!projection) return 'pending';
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const current = await readProductionMetafield(env, gid, actor);
+        if (!current.exists) return 'pending';
+        if (current.state.lastMutationId !== mutationId) {
+            if (current.state.targetDate) return 'kept-existing';
+            const edited = await db.prepare(`SELECT id FROM production_events WHERE shop_id = ? AND order_gid = ?
+                AND action = 'production.patch' AND EXISTS (SELECT 1 FROM json_each(changed_fields_json) WHERE value = 'targetDate') LIMIT 1`)
+                .bind(shop.id, gid).first();
+            const pendingEdit = current.state.lastMutationId && await db.prepare(`SELECT id FROM mutation_requests
+                WHERE id = ? AND shop_id = ? AND json_type(requested_patch_json, '$.targetDate') IS NOT NULL`)
+                .bind(current.state.lastMutationId, shop.id).first();
+            if (edited || pendingEdit) return 'kept-existing';
+        }
+        try {
+            const saved = current.state.lastMutationId === mutationId ? current
+                : await setProductionMetafield(env, gid,
+                    applyProductionPatch(current.state, { targetDate: date }, actor, mutationId), current.compareDigest, coordinatorGraphQL);
+            await d1ProjectionUpsert(env, shop.id, gid, saved.state, saved.compareDigest, undefined, current.order);
+            await db.prepare(`INSERT OR IGNORE INTO production_events
+                (id, shop_id, order_gid, actor_id, action, old_revision, new_revision, changed_fields_json, outcome, created_at)
+                VALUES (?, ?, ?, ?, 'draft.target-date', ?, ?, '["targetDate"]', 'committed', ?)`)
+                .bind(mutationId, shop.id, gid, actor, Math.max(0, saved.state.revision - 1), saved.state.revision, isoNow()).run();
+            return 'applied';
+        } catch (error) { if (error.code !== 'VERSION_CONFLICT' || attempt) throw error; }
+    }
 }
 async function handleDraftOrderRequest(request, env, origin, headers, identity) {
     try {
@@ -177,6 +211,17 @@ export default {
 
         if (url.pathname === '/order-manager/v1/drafts' || url.pathname.startsWith('/order-manager/v1/drafts/')) {
             return handleDraftOrderRequest(request, env, allowOrigin || origin || '*', reqAllowHeaders, identity);
+        }
+        if (url.pathname === '/order-manager/v1/production-run') {
+            try {
+                const shop = await d1Shop(env);
+                const service = createProductionRunService(requireOrderDb(env), shop.id);
+                const result = request.method === 'GET' ? await service.get()
+                    : request.method === 'PATCH' ? await service.patch(await request.json(), `${identity.kind}:${identity.subject}`)
+                    : null;
+                if (!result) return v1Error({ code: 'METHOD_NOT_ALLOWED', message: 'Run action unavailable.' }, allowOrigin || origin || '*', reqAllowHeaders, 405);
+                return jsonResponse(result, allowOrigin || origin || '*', reqAllowHeaders);
+            } catch (error) { return v1Error(error, allowOrigin || origin || '*', reqAllowHeaders, error.status || 500, error.details); }
         }
 
         // -----------------------------
@@ -10397,6 +10442,7 @@ export class OrderSyncCoordinator {
     }
 }
 export {
+    promoteDraftTargetDate,
     copyDesignerAsset,
     designerAssetCandidates,
     normalizeEtsyOrderContract,

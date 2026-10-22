@@ -42,6 +42,9 @@ Electron calls authenticated Worker endpoints. It does not directly own Redis or
 | [shopify-preview.js](../../../order-manager-web/shopify-preview.js) | Shopify-first source control, debug-only Legacy Redis switch, failure rollback, rich detail, production controls | `setPreviewActive`, `installLegacyDebugSourceControls` |
 | [storage-browser.js](../../../order-manager-web/storage-browser.js) | Browser storage and endpoint adapter | storage-backed `window.api` methods |
 | [blanks-batches.js](../../../order-manager-web/blanks-batches.js) | Blank-apparel selection, views, aggregation, and batch submission | `processBatch`, blanks view state |
+| [production-workload.js](../../../order-manager-web/production-workload.js) | Production total disclosure and garment-type entry points | `getOrderManagerProductionWorkload`, `#production-workload-toggle` |
+| [production-planner-model.js](../../../order-manager-web/production-planner-model.js), [production-planner.js](../../../order-manager-web/production-planner.js) | Cached garment/material/placement grouping, optional filters and shared-run selection | `ProductionPlannerModel`, `productionPlanner`, `#production-planner` |
+| [draft-orders.js](../../../order-manager-web/draft-orders.js) | Draft artwork workspace and optional target-date form | `targetDateRevision`, draft target-date actions |
 | [shopify-embedded-mobile.js](../../../order-manager-web/shopify-embedded-mobile.js) | Fixed-shell mobile interaction and scroll containment | `installEmbeddedTouchContainment` |
 | [desktop.css](../../../order-manager-web/desktop.css) | Desktop/embedded layout and visual system | desktop component selectors |
 | [mobile.css](../../../order-manager-web/mobile.css) | Constrained/mobile layout, touch targets, and detail scroll ownership | mobile breakpoints, `#detail-content` |
@@ -54,6 +57,8 @@ Electron calls authenticated Worker endpoints. It does not directly own Redis or
 | [0001_redis_free.sql](../../../order-manager-proxy/migrations/0001_redis_free.sql) | Core candidate D1 schema | `order_projection`, `mutation_requests`, `production_events`, `batches`, `asset_manifests`, `migration_ledger` |
 | [0002_designer_asset_metadata.sql](../../../order-manager-proxy/migrations/0002_designer_asset_metadata.sql) | Designer Studio asset linkage | line item, design reference, role, side |
 | [0007_etsy_webhook_delivery.sql](../../../order-manager-proxy/migrations/0007_etsy_webhook_delivery.sql) | PII-free Etsy webhook replay, processing, retry, and recovery ledger | `etsy_webhook_deliveries` |
+| [production-run.mjs](../../../order-manager-proxy/production-run.mjs), [0013_production_planning.sql](../../../order-manager-proxy/migrations/0013_production_planning.sql) | App-only shop-shared run and draft date preparation schema | `createProductionRunService`, `production_runs`, `draft_preparation` |
+| [draft-orders.mjs](../../../order-manager-proxy/draft-orders.mjs) | Draft artwork and optional date preparation/conversion reconciliation | `/drafts/:id/target-date`, `promoteDate`; Worker `promoteDraftTargetDate` owns canonical date transfer |
 | [shopify.app.toml](../../../order-manager-proxy/shopify.app.toml) | Shopify app identity, metafield definition, scopes, API version, webhook subscriptions | app-owned production metafield |
 | [wrangler.jsonc](../../../order-manager-proxy/wrangler.jsonc) | Worker, D1, R2, Durable Object, cron, and pre-cutover bindings | `ORDER_DB`, `R2_BUCKET`, `PREVIEWS` |
 | [production-client.mjs](../../../order-manager-proxy/extensions/printmo-production-status/src/production-client.mjs) | Shared Admin-block normalization, minimal patching, endpoint, auth, and error helpers | production-client exports |

@@ -25,6 +25,12 @@ const fail = (code, message, status = 400) => { throw Object.assign(new Error(me
 export function draftGid(value) {
   return /^gid:\/\/shopify\/DraftOrder\/\d+$/.test(String(value)) ? String(value) : null;
 }
+export function validDraftTargetDate(value) {
+  if (value === null) return true;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value < '0001-01-01') return false;
+  const date = new Date(`${value}T12:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
 // Include all attributes: two identical SKUs carrying different designs must never merge.
 export function draftLineIdentity(item) {
   const attrs = (item.customAttributes || []).map(a => [String(a.key), String(a.value)]);
@@ -119,6 +125,54 @@ export function createDraftOrderService(env, deps) {
   async function saveProjection(node) {
     await projectionStatement(node, await shop(), now()).run();
   }
+  async function preparation(id) {
+    const owner = await shop();
+    return db.prepare('SELECT * FROM draft_preparation WHERE shop_id = ? AND draft_gid = ?').bind(owner.id, id).first();
+  }
+  function preparationDto(row, node) {
+    return { targetDate: row?.target_date || null, targetDateRevision: row?.revision || 0,
+      targetDateSyncPending: Boolean(node.order && row?.target_date && row.promoted_revision !== row.revision),
+      targetDatePromotion: row?.promotion_outcome || null };
+  }
+  async function promoteDate(node) {
+    if (!node.order?.id) return;
+    const row = await preparation(node.id);
+    if (!row?.target_date || row.promoted_revision === row.revision) return;
+    const outcome = await deps.promoteTargetDate?.(node.order.id, row.target_date,
+      `draft-target:${row.shop_id}:${node.id.split('/').pop()}:${row.revision}`) || 'pending';
+    if (outcome === 'pending') return;
+    const owner = await shop();
+    await db.prepare(`UPDATE draft_preparation SET promoted_revision = ?, promoted_order_gid = ?, promotion_outcome = ?
+      WHERE shop_id = ? AND draft_gid = ? AND revision = ?`)
+      .bind(row.revision, node.order.id, outcome, owner.id, node.id, row.revision).run();
+  }
+  async function saveTargetDate(id, body, actor) {
+    if (!validDraftTargetDate(body.targetDate) || !Number.isInteger(body.expectedVersion) || body.expectedVersion < 0)
+      fail('INVALID_TARGET_DATE', 'Choose a valid target date, or clear the date.');
+    const node = await fetchDraft(id);
+    if (node.order || node.status === 'COMPLETED') fail('DRAFT_CONVERTED', 'This draft became an order. Change its target date on the purchased order.', 409);
+    const owner = await shop(), stamp = now();
+    await db.prepare(`INSERT INTO draft_preparation (shop_id, draft_gid, updated_by, updated_at)
+      VALUES (?, ?, ?, ?) ON CONFLICT(shop_id, draft_gid) DO NOTHING`).bind(owner.id, id, actor, stamp).run();
+    const previous = await preparation(id);
+    if (previous.revision !== body.expectedVersion) {
+      if (previous.target_date === body.targetDate) return detail(id);
+      fail('VERSION_CONFLICT', 'The target date changed on another device. Refresh the draft before saving.', 409);
+    }
+    const mutation = crypto.randomUUID();
+    const [changed] = await db.batch([
+      db.prepare(`UPDATE draft_preparation SET target_date = ?, revision = revision + 1,
+        last_mutation_id = ?, promoted_revision = NULL, promoted_order_gid = NULL, promotion_outcome = NULL, updated_by = ?, updated_at = ?
+        WHERE shop_id = ? AND draft_gid = ? AND revision = ?`)
+        .bind(body.targetDate, mutation, actor, stamp, owner.id, id, body.expectedVersion),
+      db.prepare(`INSERT INTO draft_preparation_events (id, shop_id, draft_gid, revision, target_date, actor_id, created_at)
+        SELECT ?, shop_id, draft_gid, revision, target_date, ?, ? FROM draft_preparation
+        WHERE shop_id = ? AND draft_gid = ? AND last_mutation_id = ?`)
+        .bind(mutation, actor, stamp, owner.id, id, mutation)
+    ]);
+    if (!changed.meta?.changes) fail('VERSION_CONFLICT', 'The target date changed on another device. Refresh the draft before saving.', 409);
+    return detail(id);
+  }
   async function rows(id) {
     const owner = await shop();
     return (await db.prepare(`SELECT * FROM draft_artwork WHERE shop_id = ? AND draft_gid = ? AND state = 'active' ORDER BY created_at, id`)
@@ -168,8 +222,11 @@ export function createDraftOrderService(env, deps) {
     await saveProjection(node);
     const items = node.order?.id ? await orderItems(node.order.id) : node.items;
     await promote(node, items);
+    // A transient date handoff must not prevent artwork review; the retained
+    // preparation remains visibly pending and is retried by paid events/cron.
+    try { await promoteDate(node); } catch (_) { /* pending is derived below */ }
     const artwork = (await rows(id)).map(row => assetDto(row, items, node.order ? 'order' : 'draft'));
-    return { ...normalizeDraft(node), items, artwork, editable: !node.order && node.status !== 'COMPLETED',
+    return { ...normalizeDraft(node), ...preparationDto(await preparation(id), node), items, artwork, editable: !node.order && node.status !== 'COMPLETED',
       assignmentReview: artwork.some(asset => asset.needsReassignment) };
   }
   async function list({ after = null, query = '', status = 'active' } = {}) {
@@ -182,6 +239,7 @@ export function createDraftOrderService(env, deps) {
     if (!connection) fail('DRAFT_SYNC_FAILED', 'Draft orders could not load. Try refreshing.', 502);
     const nodes = connection.nodes || [];
     const artwork = new Map();
+    const preparations = new Map();
     if (nodes.length) {
       const owner = await shop(), stamp = now();
       await db.batch(nodes.map(node => projectionStatement(node, owner, stamp)));
@@ -193,11 +251,14 @@ export function createDraftOrderService(env, deps) {
         if (!artwork.has(file.draft_gid)) artwork.set(file.draft_gid, []);
         artwork.get(file.draft_gid).push(file);
       }
+      const prepared = (await db.prepare(`SELECT * FROM draft_preparation WHERE shop_id = ?
+        AND draft_gid IN (${nodes.map(() => '?').join(',')})`).bind(owner.id, ...nodes.map(node => node.id)).all()).results || [];
+      for (const row of prepared) preparations.set(row.draft_gid, row);
     }
     const drafts = nodes.map(node => {
       const files = artwork.get(node.id) || [];
       const summary = normalizeDraft(node);
-      return { ...summary, artworkCount: files.length,
+      return { ...summary, ...preparationDto(preparations.get(node.id), node), artworkCount: files.length,
         mockupCount: files.filter(file => file.role === 'mockup').length,
         designCount: files.filter(file => file.role === 'design').length,
         preview: files.find(file => file.role === 'mockup') ? { assetId: files.find(file => file.role === 'mockup').id } : null,
@@ -293,15 +354,17 @@ export function createDraftOrderService(env, deps) {
         // recent conversion page; the rotating cron repairs older/missed transitions.
         const data = await graphql(LIST_QUERY, { query: 'status:completed', after: null }, 'PrintMODrafts');
         const converted = data.draftOrders?.nodes?.find(node => node.order?.id === orderId);
-        if (converted && (await rows(converted.id)).length) await detail(converted.id);
+        if (converted && ((await rows(converted.id)).length || (await preparation(converted.id))?.target_date)) await detail(converted.id);
       }
       return;
     }
     // Oldest-checked first rotates through prepared drafts instead of starving later rows.
     const pending = (await db.prepare(`SELECT DISTINCT p.draft_gid, p.synced_at FROM draft_order_projection p
-      JOIN draft_artwork a ON a.shop_id = p.shop_id AND a.draft_gid = p.draft_gid
-      WHERE p.shop_id = ? AND p.deleted_at IS NULL AND a.state = 'active'
-        AND (p.order_gid IS NULL OR a.converted_revision IS NULL OR a.converted_revision <> a.revision)
+      LEFT JOIN draft_artwork a ON a.shop_id = p.shop_id AND a.draft_gid = p.draft_gid AND a.state = 'active'
+      LEFT JOIN draft_preparation d ON d.shop_id = p.shop_id AND d.draft_gid = p.draft_gid
+      WHERE p.shop_id = ? AND p.deleted_at IS NULL AND (
+        (a.id IS NOT NULL AND (p.order_gid IS NULL OR a.converted_revision IS NULL OR a.converted_revision <> a.revision))
+        OR (d.target_date IS NOT NULL AND (d.promoted_revision IS NULL OR d.promoted_revision <> d.revision)))
       ORDER BY p.synced_at, p.draft_gid LIMIT 20`).bind(owner.id).all()).results || [];
     for (const row of pending) {
       try { await detail(row.draft_gid); }
@@ -323,6 +386,7 @@ export function createDraftOrderService(env, deps) {
     const id = draftGid(parts[0]);
     if (!id) fail('INVALID_DRAFT_ID', 'Draft order ID is invalid.');
     if (parts.length === 1 && request.method === 'GET') return detail(id);
+    if (parts.length === 2 && parts[1] === 'target-date' && request.method === 'PATCH') return saveTargetDate(id, await request.json(), actor);
     if (parts.length === 2 && parts[1] === 'assets' && request.method === 'POST') return upload(id, await request.formData(), actor);
     if (parts.length === 3 && parts[1] === 'assets' && ['PATCH', 'DELETE'].includes(request.method))
       return mutate(id, parts[2], await request.json(), actor, request.method === 'DELETE');

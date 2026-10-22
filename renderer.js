@@ -396,6 +396,7 @@ function boardLoadErrorPresentation(error, hasRenderedBoard = boardHasRendered) 
 
 function setBoardLoadState(state, detail = {}) {
   if (document.body) document.body.dataset.boardLoadState = state;
+  syncProductionWorkloadUi();
   const region = document.getElementById('board-load-state');
   if (!region) return;
   const title = document.getElementById('board-load-state-title');
@@ -440,6 +441,38 @@ function visibleShopifyPrintOrders(view = activePrintView) {
   });
 }
 
+let productionWorkloadSnapshot = null;
+window.getOrderManagerProductionWorkload = () => productionWorkloadSnapshot;
+
+function syncProductionWorkloadUi() {
+  const metric = document.getElementById('production-workload');
+  const count = document.getElementById('production-workload-count');
+  const trigger = document.getElementById('production-workload-toggle');
+  if (!metric || !count || !isShopifyBoardView()) return;
+  const orders = visibleShopifyPrintOrders('toPrint');
+  const loadState = document.body.dataset.boardLoadState;
+  const incomplete = orders.some(order => order.canonical?.commerce?.lineItemsComplete === false
+    || order.canonical?.sync?.partial);
+  const available = loadState === 'ready' && !incomplete;
+  const workload = available ? window.OrderBoardModel.productionWorkload(orders, {
+    isGarmentItem, garmentType: window.OrderGarmentSummary?.garmentType
+  }) : { total: null, types: [] };
+  const nextSnapshot = Object.freeze({ available, loading: loadState === 'loading' || !loadState, ...workload });
+  const changed = JSON.stringify(nextSnapshot) !== JSON.stringify(productionWorkloadSnapshot);
+  productionWorkloadSnapshot = nextSnapshot;
+  const text = available ? workload.total.toLocaleString('en-US') : '—';
+  if (count.textContent !== text) count.textContent = text;
+  metric.title = available
+    ? 'Full garment quantities across all To Print orders. Printed progress does not reduce this total. Show garment types.'
+    : loadState === 'loading' || !loadState
+      ? 'Loading the total garments left across all To Print orders.'
+      : 'The garment total is unavailable until complete order data can be loaded. Refresh orders to retry.';
+  trigger?.setAttribute('aria-label', available ? `${text} garments left. Show garment types` : `${metric.title} Show garment types`);
+  if (changed && typeof window.CustomEvent === 'function') {
+    document.dispatchEvent(new window.CustomEvent('printmo:production-workload-updated'));
+  }
+}
+
 function syncPrintViewUi() {
   const section = document.getElementById('print-section');
   const container = document.getElementById('col-print');
@@ -463,6 +496,7 @@ function syncPrintViewUi() {
   const printedCount = document.getElementById('print-printed-count');
   if (toPrintCount) toPrintCount.textContent = String(counts.toPrint);
   if (printedCount) printedCount.textContent = String(counts.printed);
+  syncProductionWorkloadUi();
 
   const activeTabId = activePrintView === 'printed' ? 'print-view-printed' : 'print-view-to-print';
   container.setAttribute('aria-labelledby', activeTabId);
@@ -739,6 +773,7 @@ function renderStatusColumn(status) {
     if (!orderIsVisibleOnOperationalBoard(order)) return false;
     if ((order.status || 'received') !== status) return false;
     if (status !== 'print' || !order._candidate) return true;
+    if (window.productionPlanner?.matchesOrder && !window.productionPlanner.matchesOrder(order)) return false;
     if (printViewForOrder(order) !== activePrintView) return false;
     return order.productionStage === 'completed'
       || String(order.displayFulfillmentStatus || '').toUpperCase() !== 'FULFILLED';

@@ -23,7 +23,8 @@ async function run() {
   const root = path.join(__dirname, '..');
   const workerSource = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8')
     .replace("'./draft-orders.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'draft-orders.mjs')).href))
-    .replace("'./garment-costs.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'garment-costs.mjs')).href));
+    .replace("'./garment-costs.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'garment-costs.mjs')).href))
+    .replace("'./production-run.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'production-run.mjs')).href));
   const worker = (await import(`data:text/javascript;base64,${Buffer.from(workerSource).toString('base64')}`)).default;
   const secret = 'phase1-test-secret';
   const now = Math.floor(Date.now() / 1000);
