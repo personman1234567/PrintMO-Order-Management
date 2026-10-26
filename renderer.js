@@ -3311,6 +3311,7 @@ function openProgressModal(order, updateFn) {
 }
 
 function showProductionNotice(message, tone = 'success') {
+  if (document.body.dataset.mobileProgressSaving === 'true') return;
   let notice = document.getElementById('order-move-toast');
   if (!notice) {
     notice = document.createElement('div');
@@ -3359,6 +3360,7 @@ function getProductionProgressCoordinator() {
       ...(stage ? { stage } : {})
     }),
     notify: ({ phase, order, state, error, stageChanged }) => {
+      document.dispatchEvent(new CustomEvent('printmo:progress-save', { detail: { phase, order, error, stageChanged } }));
       if (phase === 'optimistic' || phase === 'saving') {
         progressSaveStatus(`Saving ${state.desiredProgress} / ${state.total}…`);
         return;

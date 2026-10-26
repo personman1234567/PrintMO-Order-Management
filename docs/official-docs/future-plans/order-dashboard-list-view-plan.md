@@ -14,6 +14,42 @@ The list targets the embedded Shopify/provider data plane, not Legacy Redis.
 
 ## Current Continuation State
 
+- **Mobile list workspace, deployed 2026-10-25**:
+  Owner requested production release. The registered deployment command published
+  Pages `68b9878c`, release `1792904436946`, and verified its canonical-host marker.
+  All eight changed runtime asset SHA-256 hashes match the prepared bundle.
+  Owner approved a mobile-only replacement at the existing <=900px breakpoint.
+  Orders, Supplies, Print and More now have persistent direct navigation. Queue
+  rows consume the shared board snapshot; desktop Board/List, Electron and Legacy
+  presentation remain separate. Supplies retains To order / In cart / Ordered;
+  Print retains To Print / Printed. More links the existing Draft Orders,
+  Inventory, History and Storage destinations through the existing lifecycle owner.
+  `mobile-order-model.js` keeps independent session query/filter/stage/scroll
+  state and stores only mobile sorts in a separate preference key. The existing
+  explicit `printmo_list_preview=0` remains the rollback escape hatch.
+  Contextual and selected-order actions reuse the existing List review/recovery
+  service; they do not introduce a supplier retry or production endpoint.
+  Print quantities edit inline through the renderer's existing serialized save
+  coordinator, naming completion/reopening before Save. Unsaved edits have a
+  Discard/Stay guard; failed entries remain available. Updates stay in the current
+  list with nearby scroll/focus recovery. Receiving, manual-add, cart garment
+  requirements and production planning remain available as contextual tools.
+  Six mobile-focused tests, syntax and Phase 1/2 pass. Synthetic Chromium checks
+  at 320/393/600/900/901/1050/1600px found no horizontal overflow and verified
+  the mobile breakpoint, action review, quantity validation/failure/retry,
+  detail return, independent search, filter recovery and More/History navigation.
+  Further synthetic checks cover a four-of-five partial stage move retaining the
+  failed selection, receiving entry, retained Supplies subview, desktop List
+  preference restoration, rollback/Legacy presentation, synthesized Chromium
+  touch scrolling/navigation and a 400px-high viewport keeping quantity input
+  inside its inner scroller. No live supplier or production write was submitted.
+  The existing full List suite has eight baseline failures (four extracted
+  renderer fixtures missing `pendingBoardMoves`, four delayed-motion-feedback
+  expectations); the committed test file reproduces those same eight failures.
+  Six focused tests, Phase 1/2, docs and fresh packaging passed again before
+  release. Physical Shopify phone-app acceptance remains pending; synthetic
+  checks and asset readback do not establish real supplier acceptance.
+
 - **Compact List and workspace restructuring, 2026-10-12**: Owner approved moving
   occasional Orders/Draft Orders switching into the drawer and replacing borrowed
   board navigation with one workspace controller. Implementation gives drafts their

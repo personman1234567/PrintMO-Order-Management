@@ -55,6 +55,7 @@
       window.renderStatusColumn?.('print'); updateContext();
       const cards = document.getElementById('col-print');
       if (filter && cards) cards.dataset.emptyMessage = 'No orders match this selection. Choose Show all to restore the queue.';
+      document.dispatchEvent(new CustomEvent('printmo:production-planning-filter'));
     }
     function clearFilter() { filter = null; repaintBoard(); }
     function applyFilter(next) { filter = next; close(); repaintBoard(); }
@@ -264,7 +265,7 @@
     window.addEventListener('focus', () => { if (candidate()) void refreshRun(true); });
     setInterval(() => { if (candidate() && (!document.body.dataset.activeView || document.body.dataset.activeView === 'orders')) void refreshRun(); }, 20000);
     reduced.addEventListener('change', () => animation?.cancel());
-    window.productionPlanner = { open, filterType, clearFilter, matchesOrder,
+    window.productionPlanner = { open, filterType, clearFilter, matchesOrder, filterLabel: () => filter?.label || '',
       typeOrderCount: type => data().jobs.filter(job => job.lines.some(line => line.type === type)).length };
     schedule();
   }

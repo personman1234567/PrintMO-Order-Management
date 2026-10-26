@@ -328,17 +328,17 @@
     elements.feedback.hidden = !elements.selectionNotice.textContent && elements.results.hidden;
   }
 
-  async function reviewAction(retry = false) {
-    if (busy) return;
+  async function reviewAction(retry = false, returnControl = null) {
+    if (busy || elements.dialog.open) return;
     const savedAnchor = anchor();
-    const source = retry ? elements.retry : elements.review;
+    const source = returnControl || (retry ? elements.retry : elements.review);
     let reviewed;
     try {
       if (!retry) {
         const { action, destination } = choiceParts(elements.action.value);
         reviewed = workflows.review(action, selected, { destination });
       }
-    } catch (error) { elements.selectionNotice.textContent = error.message; render(); return; }
+    } catch (error) { elements.selectionNotice.textContent = error.message; render(); if (returnControl) throw error; return; }
     const dialog = elements.dialog, form = dialog.querySelector('form');
     const title = dialog.querySelector('h2'), description = dialog.querySelector('[data-review-description]');
     title.textContent = retry ? 'Retry remaining steps' : actionChoices.find(([value]) => value === elements.action.value)[1];
@@ -375,7 +375,8 @@
     busy = true; document.body.dataset.orderWorkflowSaving = 'true';
     elements.feedback.dataset.saveState = 'saving';
     renderBusy(); elements.selectionNotice.textContent = 'Saving selected orders…'; updateFeedback();
-    try { showResults(retry ? await workflows.retryRemaining(jobs.map(job => job.key)) : await workflows.execute(reviewed)); }
+    let completed;
+    try { completed = retry ? await workflows.retryRemaining(jobs.map(job => job.key)) : await workflows.execute(reviewed); showResults(completed); }
     catch (error) { elements.feedback.dataset.saveState = 'review'; elements.selectionNotice.textContent = `${error.message} Review the current orders and try again.`; }
     finally {
       busy = false;
@@ -385,6 +386,8 @@
       workflowReturn = savedAnchor || { scrollTop: elements.scroll.scrollTop };
       restoreWorkflowOrigin();
     }
+    if (completed?.cancelled) return;
+    return { results: lastResults, remaining: workflows.remaining(), notice: elements.selectionNotice.textContent };
   }
 
   function restoreWorkflowOrigin() {
@@ -485,6 +488,27 @@
     render();
   }
 
-  window.OrderManagerViews = Object.freeze({ getState: () => state.get(), getSnapshot: readSnapshot, refresh: schedule });
+  window.OrderManagerViews = Object.freeze({
+    getState: () => state.get(), getSnapshot: readSnapshot, refresh: schedule,
+    actions(keys) {
+      if (!workflows) return [];
+      return actionChoices.map(([value, label]) => {
+        const { action, destination } = choiceParts(value);
+        const same = destination && keys.length && keys.every(key => model.stageForOrder(cachedOrders().find(order => model.orderKey(order) === key)) === destination);
+        return { value, label, hidden: Boolean(same), ...workflows.eligibility(action, keys, destination) };
+      });
+    },
+    async reviewMobile(keys, value, returnControl) {
+      if (!preview || !isCandidate() || busy || !workflows || elements.dialog.open) return;
+      if (!actionChoices.some(([action]) => action === value)) throw new Error('Choose an available action.');
+      const previousSelection = selected, previousAction = elements.action.value;
+      selected = [...keys]; elements.action.value = value;
+      lastResults = []; elements.selectionNotice.textContent = '';
+      try { return await reviewAction(false, returnControl); }
+      finally { selected = previousSelection; elements.action.value = previousAction; renderSelection(); }
+    },
+    async retryMobile(returnControl) { if (workflows?.remaining().length) return reviewAction(true, returnControl); },
+    workflowState: () => ({ busy, reviewing: Boolean(elements?.dialog?.open), remaining: workflows?.remaining() || [] })
+  });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setup, { once: true }); else setup();
 })();

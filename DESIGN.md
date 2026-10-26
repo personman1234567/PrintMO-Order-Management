@@ -107,6 +107,26 @@ components:
 
 # Design System: PrintMO Order Management
 
+## Mobile List Workspace
+
+The local mobile workspace uses flat, divided order rows and persistent Orders,
+Supplies, Print and More navigation at viewport widths through 900px. Desktop
+keeps its existing Board/List presentation. This is a mobile arrangement of the
+same operational model, with no new canonical production stages.
+
+The mobile type steps are 20px for the work-area heading, 18px for sheet headings,
+16px for editable fields (preventing phone input zoom), 15px for order/customer
+identity, 14px for the working UI, 13px for controls and status, and 12px for
+supporting metadata. Keep body weights normal; use weight for identity and actions.
+Rows have no elevation or enclosing card border. Touch targets remain at least
+44px even when their visible labels are compact.
+
+Mobile reuses the existing blue selection wash `#EFF6FF`, neutral layers
+`#F1F5F9` / `#F8FAFC`, dividers `#DBE2EC`, field borders `#B7C3D3`, secondary
+text `#526174` and scroll thumb `#94A3B8`. These extend the named slate/blue
+palette as tonal UI values, not additional semantic categories. Noncritical
+facts stay slate; warning and error text retain the existing semantic colors.
+
 ## Overview
 
 **Creative North Star: "The Precision Workbench"**

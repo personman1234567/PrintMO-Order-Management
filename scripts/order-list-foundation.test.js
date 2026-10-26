@@ -2,6 +2,103 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const model = require('../order-manager-web/order-board-model');
 const detail = require('../order-manager-web/order-detail-state');
+const mobile = require('../order-manager-web/mobile-order-model');
+
+test('mobile work areas filter the same snapshot without changing canonical stages', () => {
+  const jobs = model.STAGES.map((stage, index) => order(`mobile-${index}`, stage.id));
+  jobs.push(order('mobile-unknown', 'future_stage'));
+  const data = model.snapshot(jobs, classifiers), before = JSON.stringify(jobs), state = mobile.create();
+  assert.equal(state.browse('orders', data).shown, 7);
+  assert.deepEqual(state.browse('supplies', data).rows.map(row => row.stage), ['to_order']);
+  state.update('supplies', { stage: 'blanks_ordered' });
+  assert.deepEqual(state.browse('supplies', data).rows.map(row => row.stage), ['blanks_ordered']);
+  state.update('print', { stage: 'completed' });
+  assert.deepEqual(state.browse('print', data).rows.map(row => row.stage), ['completed']);
+  state.update('supplies', { stage: 'received' });
+  assert.equal(state.get('supplies').stage, 'blanks_ordered');
+  assert.equal(JSON.stringify(jobs), before);
+});
+
+test('mobile query, filters and scroll are independent per area and only mobile sorts persist', () => {
+  const values = new Map([['printmo:order-manager:list-preferences:v1', JSON.stringify({ layout: 'board', sort: 'oldest' })]]);
+  const storage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value) };
+  const state = mobile.create(storage);
+  state.update('orders', { query: 'River\u0000City', sort: 'target', scrollTop: 220, stage: 'print', filters: { priority: 'rush' } });
+  state.update('supplies', { query: 'School', stage: 'blanks_cart', scrollTop: 90 });
+  assert.equal(state.get('orders').query, 'River City');
+  assert.equal(state.get('orders').filters.priority, 'rush');
+  assert.equal(state.get('orders').scrollTop, 220);
+  assert.equal(state.get('print').query, '');
+  assert.equal(state.get('print').stage, 'print');
+  const next = mobile.create(storage);
+  assert.equal(next.get('orders').sort, 'target');
+  assert.equal(next.get('orders').query, '');
+  assert.equal(next.get('orders').stage, 'all');
+  assert.equal(next.get('supplies').stage, 'to_order');
+  assert.equal(next.get('orders').filters.priority, 'all');
+  assert.deepEqual(JSON.parse(values.get('printmo:order-manager:list-preferences:v1')), { layout: 'board', sort: 'oldest' });
+  state.clear('supplies'); assert.equal(state.get('supplies').stage, 'blanks_cart');
+});
+
+test('mobile preferences tolerate denied storage, invalid values and mutation of returned state', () => {
+  const state = mobile.create({ getItem() { throw new Error('Denied'); }, setItem() { throw new Error('Denied'); } });
+  state.update('orders', { sort: 'rush', query: 'x'.repeat(200), filters: { source: 'invalid', attention: 'needed' } });
+  const copy = state.get('orders'); copy.filters.attention = 'all';
+  assert.equal(state.get('orders').filters.attention, 'needed');
+  assert.equal(state.get('orders').filters.source, 'all');
+  assert.equal(state.get('orders').query.length, 120);
+  assert.equal(state.get('orders').sort, 'rush');
+  assert.equal(mobile.create({ getItem: () => '{invalid' }).get('orders').sort, 'newest');
+});
+
+test('mobile progress validates integers without clamping and names stage-changing consequences', () => {
+  const job = order('mobile-progress', 'print');
+  for (const value of ['', ' ', '1.5', '-1', '25', 'no']) assert.match(mobile.progressInput(job, value, 24).error, /whole number/);
+  assert.deepEqual(mobile.progressInput(job, '12', 24), { count: 12, label: 'Save quantity' });
+  assert.deepEqual(mobile.progressInput(job, '24', 24), { count: 24, label: 'Save and move to Printed' });
+  job.productionStage = 'completed';
+  assert.equal(mobile.progressInput(job, '12', 24).label, 'Save and return to To Print');
+  job._historyReadOnly = true; assert.match(mobile.progressInput(job, '12', 24).error, /read only/);
+  delete job._historyReadOnly; job._capabilities = { productionWrite: false };
+  assert.match(mobile.progressInput(job, '12', 24).error, /read only/);
+});
+
+test('mobile progress rejects unavailable totals, pending mutations and orders outside Print', () => {
+  const job = order('mobile-progress', 'print');
+  assert.match(mobile.progressInput(job, '0', 0).error, /unavailable/);
+  job.canonical = { commerce: { lineItemsComplete: false } };
+  assert.match(mobile.progressInput(job, '12', 24).error, /unavailable/);
+  job.canonical.commerce.lineItemsComplete = true; job._eligibilityMutationPending = true;
+  assert.match(mobile.progressInput(job, '12', 24).error, /finish/);
+  delete job._eligibilityMutationPending; job.productionStage = 'received';
+  assert.match(mobile.progressInput(job, '12', 24).error, /no longer in Print/);
+});
+
+test('mobile navigation owns area and subview, respects leave guards, and retains destination lifecycle', () => {
+  const body = { dataset: { activeView: 'orders', mobileWorkspace: 'true' }, classList: { contains: () => false } };
+  const seen = [], doc = { body, getElementById: () => ({ setAttribute() {}, querySelector: () => null }),
+    querySelectorAll: () => [], addEventListener() {}, dispatchEvent: event => seen.push(event.type) };
+  const context = vm.createContext({ document: doc, CustomEvent: class { constructor(type) { this.type = type; } },
+    window: { matchMedia: () => ({ matches: true }), requestAnimationFrame: fn => fn(), setActiveMobileTab: (tab, opts) => { assert.equal(opts.workspaceReady, true); body.dataset.activeTab = tab; } } });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../order-manager-web/workspace-navigation.js'), 'utf8'), context);
+  const nav = context.window.OrderManagerNavigation;
+  assert.equal(nav.navigateMobile('supplies', { subview: 'blanks_ordered' }), true);
+  assert.equal(body.dataset.mobileSubview, 'blanks_ordered');
+  assert.equal(body.dataset.activeTab, 'blanksOrdered');
+  nav.navigateMobile('orders'); nav.navigateMobile('supplies');
+  assert.equal(body.dataset.mobileSubview, 'blanks_ordered');
+  assert.equal(body.dataset.activeTab, 'blanksOrdered');
+  let resume;
+  nav.setMobileGuard(proceed => { resume = proceed; return false; });
+  assert.equal(nav.navigateMobile('print'), false);
+  assert.equal(body.dataset.mobileArea, 'supplies');
+  resume(); assert.equal(body.dataset.mobileArea, 'print');
+  nav.setMobileGuard(null);
+  let enters = 0; nav.register('inventory', { onEnter() { enters++; } });
+  nav.navigateMobile('more', { destination: 'inventory' });
+  assert.equal(body.dataset.activeView, 'inventory'); assert.equal(enters, 1);
+  assert.ok(seen.includes('printmo:mobile-area-changed'));
+});
 
 test('search is bounded plain text and treats query metacharacters literally', () => {
   const state = model.createViewState();

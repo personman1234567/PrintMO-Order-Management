@@ -91,6 +91,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./production-planner.css" />
   <link rel="stylesheet" href="./order-card-presentation.css" />
   <link rel="stylesheet" href="./cart-garment-view.css" />
+  <link rel="stylesheet" href="./mobile-order-workspace.css" />
 </head>
 <body data-active-tab="pipeline" data-active-view="orders" data-order-source="shopify" data-board-load-state="loading">
   <header class="app-header">
@@ -1210,8 +1211,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   </div>
   </main>
 
-  <!-- List foundation inherits the Precision Workbench; Board stays the default.
-       The opt-in preview renders cached order facts without workflow mutations. -->
+  <!-- Desktop retains its saved Board/List choice. The mobile workspace below
+       reuses the same cached order facts and reviewed mutation workflows. -->
   <!-- existing renderer logic -->
   <script src="./dashboard-motion.js"></script>
   <script src="./web-shim.js"></script>
@@ -1245,5 +1246,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./production-planner-model.js"></script>
   <script src="./production-planner.js"></script>
   <script src="./cart-garment-view.js"></script>
+  <script src="./mobile-order-model.js"></script>
+  <script src="./mobile-order-workspace.js"></script>
 </body>
 </html>

@@ -45,6 +45,19 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 
 ## Subsystem Manual Verification Matrix
 
+Mobile list workspace (local, 2026-10-24): run
+`node --test --test-name-pattern=mobile scripts/order-list-foundation.test.js`
+for work-area stage boundaries, navigation lifecycle/leave guards, isolated
+session state and sort preferences, and quantity validation/consequential Save
+labels. Synthetic checks cover widths 320/393/600/900/901/1050/1600px,
+no horizontal overflow, independent search/filter recovery, direct action review,
+inline progress failure/retry, Discard/Stay, detail Back/focus restoration and
+More destinations. Preserve desktop Board/List preferences across resizing.
+The full List suite currently reproduces eight pre-existing fixture failures:
+four missing `pendingBoardMoves` bindings and four delayed-feedback expectations.
+Actual Shopify phone-app keyboard, touch and live workflow acceptance remain
+separate; see the [list-view plan](../future-plans/order-dashboard-list-view-plan.md).
+
 Board recognition cards and mockup paste (2026-10-19): Pages production release
 `1792465149457` was verified by its served release marker. Synthetic browser
 checks at 1600px, 393px and 320px covered the shared preview heights, two-line

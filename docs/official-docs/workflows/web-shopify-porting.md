@@ -68,19 +68,24 @@ The normal header and mobile surface expose only the **Shopify board**. Both ada
 
 Within the Board's **In S&S Cart** section, **Cards / Garments** is a local view choice, separate from the overall Board/List layout. Cards remain the first-visit default and stay mounted when hidden. Garments groups exact supplier SKUs across orders or separates them by order, with visible colors, sizes, quantities, and inline contributions. This is an expected-requirements reference, not a live supplier-cart match. Shelf claims reduce matching quantities; unresolved shelf data and manual/other items retain their needed quantities explicitly. The isolated `cart-garment-model.js` and `cart-garment-view.js/.css` consume the existing board snapshot and read-only shelf endpoint. No supplier, order, or readiness writes occur. Device storage remembers the local layout/grouping, and Legacy remains unchanged. Representative shop acceptance is tracked in the [In Cart garment view plan](../future-plans/in-cart-garment-view-plan.md).
 
-The Orders workspace exposes **Board / List** on normal Shopify app
+The desktop Orders workspace exposes **Board / List** on normal Shopify app
 launches. First visits default to Board; device storage restores the last layout
 and sort only. Search, stage, filters, selection and phone expansion reset on
 reopen. List uses the same cached orders and
 shared detail screen. No special URL is needed. The explicit query parameter
 `printmo_list_preview=0` hides the optional layout for rollback/debugging;
-older `=1` preview links remain compatible. Phone rows expose operational facts
-with expandable extras. Acknowledged production saves and conflict reconciliation
+older `=1` preview links remain compatible. At viewport widths through 900px,
+the Shopify/provider mobile workspace uses list-only Orders, Supplies, Print and
+More navigation. It has contextual reviewed actions, inline printed quantities,
+session-local search/filter/scroll state and separately stored mobile sorts;
+desktop layout preferences are not overwritten. Updates stay in the current
+list. Existing purchasing, receiving, planning and full detail remain available.
+Acknowledged production saves and conflict reconciliation
 merge by provider/order identity into the displayed snapshot immediately; older
 queue revisions cannot rewind them. Representative workflow acceptance remains
 tracked in the staged list plan.
 
-The candidate dashboard keeps Board/List in the workspace drawer
+The desktop candidate dashboard keeps Board/List in the workspace drawer
 across both layouts. Draft Orders is a peer destination in that drawer, with its
 own scrollable workspace and lazy loading. `workspace-navigation.js` owns active
 workspace state, desktop/phone transitions, visibility, focus, and registered
@@ -248,6 +253,13 @@ The mobile web surface is an application viewport inside Shopify Admin, not a
 document page. Its outer shell remains fixed to the iframe viewport while the
 active queue, detail view, or workflow sheet owns vertical scrolling.
 
+Normal Shopify mobile browsing uses `mobile-order-workspace.js/.css` and
+`mobile-order-model.js`, gated by `data-mobile-workspace="true"`. Work-area
+navigation is owned by `workspace-navigation.js`. Card-grid and old phone-tab
+presentation rules below describe the mounted fallback board used by Legacy or
+the explicit `printmo_list_preview=0` rollback URL. Shared scrolling, source
+isolation and full-detail contracts continue to apply to both presentations.
+
 - Phone order and production cards are tap targets, not draggable desktop
   tiles. Native card dragging is disabled at the mobile breakpoint so it cannot
   steal taps or vertical swipes on iOS.
@@ -279,7 +291,8 @@ active queue, detail view, or workflow sheet owns vertical scrolling.
   flattening the desktop print section must not merge those mobile stages.
 - Mobile Order Detail is a drill-in screen beneath the persistent workflow
   command surface, not a viewport-sealing modal. Its header exposes a 44px
-  **Back** action; Orders, Blanks, Print, Storage, and History remain directly usable.
+  **Back** action; the normal mobile Orders, Supplies, Print and More navigation
+  remains directly usable. Storage and History are destinations within More.
   A global stage selection closes Detail before navigating, while Back restores
   the originating stage, board scroll position, and card focus. Keep the covered
   board inert without making `#mobile-command-surface` inert; mobile Detail uses

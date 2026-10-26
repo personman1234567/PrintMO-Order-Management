@@ -6,6 +6,7 @@
   const shelfCache = new Map(), pending = new Map(), expanded = new Set();
   let layout = 'cards', grouping = 'garment', frame = 0, signature = '', loadRun = null;
   let toolbar, content, status, groupSelect, rowsHost, retry, section;
+  let mobileDialog = null;
   const enabled = () => document.body.dataset.orderSource === 'shopify';
   const orders = () => window.getOrderManagerBoardSnapshot?.() || [];
   const selected = () => orders().filter(order => order._candidate && order.status === 'blanks' && !Number(order.blanksOrdered)
@@ -16,7 +17,7 @@
   function active() { return enabled() && section?.dataset.blanksView !== 'ordered'; }
   function schedule() { if (!frame) frame = requestAnimationFrame(() => { frame = 0; render(); }); }
   async function hydrate(force = false) {
-    if (!active() || layout !== 'garments' || document.hidden || !section.getClientRects().length) return;
+    if ((!mobileDialog?.open && (!active() || layout !== 'garments' || !section.getClientRects().length)) || document.hidden) return;
     if (loadRun) return loadRun;
     const needed = selected().filter(order => (order._provider || 'shopify') === 'shopify'
       && (force || !cached(order)) && !pending.has(model.orderKey(order)));
@@ -73,8 +74,8 @@
   function render() {
     if (!toolbar) return;
     const visible = active(); toolbar.hidden = !visible;
-    const garments = visible && layout === 'garments';
-    section.dataset.cartLayout = garments ? 'garments' : 'cards';
+    const garments = mobileDialog?.open || (visible && layout === 'garments');
+    if (!mobileDialog?.open) section.dataset.cartLayout = garments ? 'garments' : 'cards';
     content.hidden = !garments;
     toolbar.querySelectorAll('[data-cart-layout]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.cartLayout === layout)));
     groupSelect.parentElement.hidden = !garments;
@@ -130,7 +131,28 @@
     document.addEventListener('printmo:board-updated', schedule);
     document.addEventListener('printmo:shelf-changed', event => { for (const [key] of shelfCache) if (key === `shopify:${event.detail?.orderId}`) shelfCache.delete(key); schedule(); });
     document.addEventListener('visibilitychange', () => { if (!document.hidden) { shelfCache.clear(); schedule(); } });
-    window.cartGarmentView = { refresh: schedule };
+    window.cartGarmentView = {
+      refresh: schedule,
+      openMobile() {
+        if (document.body.dataset.mobileWorkspace !== 'true' || mobileDialog?.open) return;
+        const opener = document.activeElement, previousGrouping = grouping, home = document.createComment('Cart garment tool home'); content.before(home);
+        mobileDialog = el('dialog', null, 'mw-sheet mw-cart-tool');
+        mobileDialog.setAttribute('aria-label', 'Cart garment requirements');
+        const header = el('header'), title = el('h2', 'Cart garment requirements'), close = el('button', 'Close'); close.type = 'button';
+        close.onclick = () => mobileDialog.close(); header.append(title, close);
+        const groupLabel = el('label', 'Group by'), mobileGroup = el('select'); mobileGroup.setAttribute('aria-label', 'Group mobile cart requirements');
+        [['garment', 'Garment'], ['order', 'Order']].forEach(([value, copy]) => { const option = el('option', copy); option.value = value; mobileGroup.append(option); });
+        mobileGroup.value = grouping; mobileGroup.onchange = () => { grouping = mobileGroup.value; render(); }; groupLabel.append(mobileGroup);
+        mobileDialog.append(header, groupLabel, content); document.body.append(mobileDialog);
+        mobileDialog.addEventListener('close', () => {
+          home.after(content); home.remove(); mobileDialog.remove(); mobileDialog = null;
+          grouping = previousGrouping; groupSelect.value = grouping; render();
+          if (opener?.isConnected && opener.getClientRects().length) opener.focus({ preventScroll: true });
+        }, { once: true });
+        mobileDialog.showModal(); render();
+      }
+    };
+    matchMedia('(max-width: 900px)').addEventListener('change', event => { if (!event.matches) mobileDialog?.close(); });
     render();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
