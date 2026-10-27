@@ -978,6 +978,13 @@ window.refreshOrderManagerNow = async () => {
   return null;
 };
 
+// Private admin preparation, separate from Shopify draft commerce and production.
+window.api.preparedDraftRequest = async (path = '', options = {}) => {
+  if (document.body.dataset.orderSource !== 'shopify') throw new Error('Open the Shopify workspace to prepare an order.');
+  if (!/^(?:[/?][a-zA-Z0-9%?=&_.:/-]*)?$/.test(path) || path.includes('..')) throw new Error('Invalid prepared order action.');
+  return apiFetch(`/order-manager/v1/prepared-order-drafts${path}`, options);
+};
+
 // Read-only Shopify commerce preview. This endpoint never enumerates or mutates
 // the legacy Redis queue; production workflow continues through getQueue().
 window.api.getShopifyPreviewOrders = async ({ limit = 50, refresh = false } = {}) => {

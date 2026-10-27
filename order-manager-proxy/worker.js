@@ -2,6 +2,7 @@
 import { createDraftOrderService } from './draft-orders.mjs';
 import { createGarmentCostService, unavailableEstimate } from './garment-costs.mjs';
 import { createProductionRunService } from './production-run.mjs';
+import { handlePreparedDraftRequest, handlePublicPreparedOrderRequest } from './prepared-order-drafts.mjs';
 
 function draftOrderService(env) {
     return createDraftOrderService(env, { shop: () => d1Shop(env), graphql: coordinatorGraphQL,
@@ -145,7 +146,8 @@ export default {
         }
 
         const origin = (request.headers.get("Origin") || "").replace(/\/+$/, "");
-        const allowOrigin = pickAllowOrigin(origin, env);
+        const publicPreparedPath = /^\/order-manager\/v1\/prepared-orders\/public\/[a-f0-9-]{36}(?:\/(checkout|quote))?$/i.test(url.pathname);
+        const allowOrigin = pickAllowOrigin(origin, env) || (publicPreparedPath && ['https://print-mo.com','https://www.print-mo.com'].includes(origin) ? origin : '');
 
         // If browser sends an Origin and it's not allowed, block
         if (origin && !allowOrigin) {
@@ -165,6 +167,15 @@ export default {
                 status: 204,
                 headers: corsHeaders(allowOrigin || origin || "*", reqAllowHeaders),
             });
+        }
+
+        // A public prepared-order bearer link permits review and checkout only.
+        // Publication, editing and revocation stay below staff authentication.
+        if (publicPreparedPath) {
+            try {
+                return await handlePublicPreparedOrderRequest(request, env, { graphql: coordinatorGraphQL, drafts: draftOrderService(env) },
+                    { 'Access-Control-Allow-Origin': allowOrigin || origin || '*', Vary: 'Origin' });
+            } catch (error) { return v1Error(error?.code ? error : { code: 'CHECKOUT_UNAVAILABLE', message: 'This order could not load or continue to checkout. Try again, or contact Print-MO.' }, allowOrigin || origin || '*', reqAllowHeaders, error.status || 503); }
         }
 
         // EARLY UNAUTHENTICATED ROUTES: provider signatures are the only
@@ -209,6 +220,15 @@ export default {
             });
         }
 
+        if (url.pathname === '/order-manager/v1/prepared-order-drafts' || url.pathname.startsWith('/order-manager/v1/prepared-order-drafts/')) {
+            try {
+                return await handlePreparedDraftRequest(request, env, { graphql: coordinatorGraphQL, drafts: draftOrderService(env) }, identity,
+                    { 'Access-Control-Allow-Origin': allowOrigin || origin || '*', Vary: 'Origin' });
+            } catch (error) {
+                const safe = error?.code && error?.status ? error : { code: 'PREPARATION_UNAVAILABLE', message: 'Prepared orders could not finish this action. Try again; your current edits are still here.' };
+                return v1Error(safe, allowOrigin || origin || '*', reqAllowHeaders, safe.status || 500);
+            }
+        }
         if (url.pathname === '/order-manager/v1/drafts' || url.pathname.startsWith('/order-manager/v1/drafts/')) {
             return handleDraftOrderRequest(request, env, allowOrigin || origin || '*', reqAllowHeaders, identity);
         }

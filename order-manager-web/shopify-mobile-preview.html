@@ -50,14 +50,21 @@
       height: 650px;
       border: 0;
       background: #ffffff;
-      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.2);
+      display: block;
     }
+    .preview-device { width: max-content; overflow: hidden; border-radius: 18px; background: #000; }
+    .preview-native-header { height: 112px; padding: 16px; color: #fff; background: #000; }
+    .preview-native-header small { display: flex; justify-content: space-between; font-size: 14px; margin: 0 8px 30px; }
+    .preview-native-header strong { display: block; font-size: 17px; }
+    .preview-native-footer { height: 84px; padding: 10px 16px 18px; background: #F3F4F6; position: relative; display: flex; align-items: start; justify-content: space-around; color: #526174; }
+    .preview-native-footer span { display: grid; place-items: center; width: 38px; height: 38px; background: #fff; border-radius: 50%; font-size: 18px; }
+    .preview-native-footer::after { content: ''; position: absolute; width: 130px; height: 4px; background: #000; bottom: 8px; left: calc(50% - 65px); border-radius: 3px; }
   </style>
 </head>
 <body>
   <aside>
     <h1>Shopify embedded mobile</h1>
-    <p>This frame intentionally removes the height normally consumed by Shopify Admin chrome. Fixture data is local-only.</p>
+    <p>The black header and native bottom bar simulate Shopify host chrome. Frame height is the remaining app viewport, including PrintMO navigation. This is a simulation, not authenticated Shopify iOS acceptance.</p>
     <label>
       Frame width
       <input id="frame-width" type="number" min="320" max="500" value="393" />
@@ -69,7 +76,11 @@
     <button id="apply-size" type="button">Apply viewport</button>
     <button id="open-detail" type="button">Open fixture detail</button>
   </aside>
-  <iframe id="preview-frame" title="PrintMO embedded mobile preview" src="./index.html?fixture=1"></iframe>
+  <div class="preview-device">
+    <div class="preview-native-header" aria-hidden="true"><small><span>4:51</span><span>● ▰</span></small><strong>Print-MO Order Manager⌄</strong></div>
+    <iframe id="preview-frame" title="PrintMO embedded mobile preview" src="./index.html?fixture=1"></iframe>
+    <div class="preview-native-footer" aria-hidden="true"><span>⌕</span><span>⌂</span><span>▱</span><span>≡</span><span>●</span></div>
+  </div>
   <script>
     const frame = document.getElementById('preview-frame');
     document.getElementById('apply-size').addEventListener('click', () => {

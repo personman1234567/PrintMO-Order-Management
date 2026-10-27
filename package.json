@@ -12,6 +12,8 @@
     "predist": "node scripts/create-desktop-config.js",
     "dist": "electron-builder",
     "prepare:cloudflare": "bash scripts/prepare-cloudflare-pages-upload.sh",
+    "build:placement-editor": "node scripts/build-placement-editor.js",
+    "test:prepared-orders": "node --test order-manager-proxy/prepared-order-drafts.test.mjs order-manager-proxy/prepared-order-links.test.mjs order-manager-proxy/prepared-recipient.test.mjs scripts/prepared-orders-workspace.test.js",
     "deploy:cloudflare": "bash scripts/deploy-cloudflare-pages.sh",
     "repo": "node scripts/repo-tool.js",
     "docs:check": "node scripts/check-docs.js",

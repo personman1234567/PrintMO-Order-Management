@@ -17,6 +17,16 @@
 
 ## Automated and Syntax Verification Commands
 
+Prepared Orders: `npm run test:prepared-orders` covers private preparation saves,
+idempotent retries, revision conflicts, uploaded-asset ownership, no-image
+catalog variants and authenticated route boundaries. `node scripts/build-placement-editor.js --check`
+rejects full-Studio imports without writing an artifact. In the canonical Website
+`designer/` checkout, run the placement-model, mockup-geometry and workspace-transfer
+tests for physical-coordinate changes. Use the local Shopify mobile harness at
+393×650 and narrower/shorter app frames; check upload/paste, width/rotation/undo,
+saved proof restoration, one scroll owner, visible save controls and frame removal.
+Fixture checks do not establish actual Shopify iOS clipboard/keyboard or purchase acceptance.
+
 Run these targeted CLI commands to verify syntax integrity without side effects:
 
 | Subsystem / File | Verification Command | Expected Output |

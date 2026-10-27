@@ -34,6 +34,8 @@ if [[ -z "$SHOPIFY_API_KEY_VALUE" ]]; then
 fi
 SHOPIFY_API_KEY="$SHOPIFY_API_KEY_VALUE" node -e "const fs=require('fs'); const file=process.argv[1]; const html=fs.readFileSync(file,'utf8'); if(!html.includes('__SHOPIFY_API_KEY__')) throw new Error('Shopify API key placeholder missing'); fs.writeFileSync(file, html.replace('__SHOPIFY_API_KEY__', process.env.SHOPIFY_API_KEY));" "$OUT_DIR/index.html"
 node "$ROOT_DIR/scripts/cache-bust-html.js" "$OUT_DIR/index.html"
+node "$ROOT_DIR/scripts/cache-bust-html.js" "$OUT_DIR/customer-order.html"
+node "$ROOT_DIR/scripts/build-placement-editor.js" --output "$OUT_DIR/placement-editor"
 
 if [[ "$SOURCE_RENDERER_HASH" != "$(node -e "const fs=require('fs'); const crypto=require('crypto'); process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'))" "$SRC_DIR/renderer.js")" ]]; then
   echo "Cloudflare preparation must not modify order-manager-web/renderer.js" >&2

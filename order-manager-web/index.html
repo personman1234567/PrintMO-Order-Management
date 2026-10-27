@@ -79,6 +79,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./mobile.css" media="(max-width: 900px)" />
   <link rel="stylesheet" href="./accessibility-hardening.css" />
   <link rel="stylesheet" href="./draft-orders.css" />
+  <link rel="stylesheet" href="./prepared-orders.css" />
   <link rel="stylesheet" href="./shopify-preview.css" />
   <link rel="stylesheet" href="./order-detail-split.css" />
   <link rel="stylesheet" href="./shelf-allocation.css" />
@@ -99,6 +100,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     <nav class="app-nav" aria-label="Primary navigation">
       <button class="app-nav-tab" type="button" data-view="orders" aria-pressed="true">Orders</button>
       <button class="app-nav-tab" type="button" data-view="drafts" aria-pressed="false">Draft Orders</button>
+      <button class="app-nav-tab" type="button" data-view="prepared" aria-pressed="false">Prepared Orders</button>
       <button class="app-nav-tab" type="button" data-view="inventory" aria-pressed="false">Inventory</button>
       <button class="app-nav-tab" type="button" data-view="previous" aria-pressed="false">Previous Orders</button>
       <button class="app-nav-tab" type="button" data-view="storage" aria-pressed="false">Storage Browser</button>
@@ -206,6 +208,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         <div id="shopify-preview-detail-content" class="shopify-preview-detail-content" hidden></div>
       </div>
     </dialog>
+  </section>
+  <section id="prepared-orders-view" class="app-view" aria-hidden="true" aria-label="Prepared Orders">
+    <header class="prepared-workspace-heading"><h2>Prepared Orders</h2></header>
+    <div id="prepared-orders-root"></div>
   </section>
   <div id="drafts-view" class="app-view" aria-hidden="true">
     <header class="draft-workspace-heading"><h2>Draft Orders</h2></header>
@@ -1217,6 +1223,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./dashboard-motion.js"></script>
   <script src="./web-shim.js"></script>
   <script src="./workspace-navigation.js"></script>
+  <script src="./prepared-orders.js"></script>
   <script src="./storage-browser.js"></script>
   <script src="./order-detail-state.js"></script>
   <script src="./order-board-model.js"></script>

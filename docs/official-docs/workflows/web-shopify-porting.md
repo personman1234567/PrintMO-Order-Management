@@ -64,6 +64,195 @@ Pages deployments replace the entire web artifact. Before publishing from an iso
 
 ### Source-switched operational board
 
+#### Prepared Orders preparation screen
+
+Customer-link publishing now connects the private preparation screen to the
+existing Designer Prepared Orders lifecycle. Authenticated publish/update/revoke
+actions reuse its expiry, revocation and owned asset URLs; the existing Studio
+and ordinary Share Link flows remain unchanged. The generated link opens the
+existing website at `/pages/designer-studio?preparedOrder=<id>`, using its
+`SharedLinkLandingModal` recipient review. The earlier Pages customer page is
+now only a compatibility redirect; do not build a separate recipient UI.
+`PREPARED_ORDER_PREVIEW_THEME_ID=163707977976` currently targets Designer
+Testing 2. Clear this variable to an empty string only when promoting the
+website recipient code to the published theme; `keep_vars` means deleting a
+config entry alone does not reliably clear the deployed value. Both refreshed
+admin links and old Pages redirects use the server-selected website URL.
+Customers review mockups/configuration, choose sizes and quantities, confirm any
+omitted garments and continue to a Shopify draft checkout. No invoice email is
+sent. `write_draft_orders` is required and checked before issuing a link.
+
+The website also offers Add to cart when every selected garment and print add-on
+is purchasable through the Online Store. Quote responses include `cartHandle` for
+garments and print variants so the browser can check exact public availability
+and prices. Unlisted status alone is never a reason to suppress cart. Both
+purchase actions export the current customer-edited design; cart uses the
+existing Designer persistent export uploads and grouping properties, while
+draft checkout uses Order Manager's production attachments. Editable previews
+rehydrate all designed sides on initial load; manual mockups remain per-item.
+The isolated editor adds live drag selection, a touch-sized rotation handle and
+horizontal-only centering; Front/Back/Left/Right are views, with print classes
+kept separate and legacy chest-view coordinates rebased when reopened.
+
+The server reloads legitimate Active/Unlisted variants and canonical Designer
+print classes, honors saved class overrides, supports explicit manual printing
+or no-print configuration, and reads actual Shopify variant prices. Missing
+images, mockups or Studio projects do not prevent manual-item purchasing. Private
+notes never enter public review; the optional customer message is explicit.
+Checkout accepts quantities for prepared variants only, rechecks link lifecycle
+and prices, preserves group/batch metadata, and reuses a session/selection-keyed
+checkout on retry. Uncertain mutation responses recover by a deterministic tag.
+An already-open Shopify checkout survives later link revision or revocation.
+
+The publisher includes complete workspace variants/configuration, selected
+color, artwork URLs, rotation, dimensions and canvas calibration. The website
+uses that server-resolved catalog instead of requiring public product visibility.
+Boot must select the saved workspace ID; unconfigured prepared items bypass the
+editor-only configuration exit. Supplied mockups are per item, have no editable
+project, and cannot enter the editor by button or Escape. Editable items use the
+existing edit/return path, retaining quantities and the complete order.
+
+The website requests server quotes after design changes. Checkout validates the
+quote, variants and geometry; current artwork is exported through Studio's
+calibrated SVG/text exporter and attached to matching draft garment lines.
+SVG blob URLs must be expanded to source text before vector export. Shopify
+applies eligible discounts at checkout; review does not promise the separate
+storefront-cart bulk discount calculation.
+
+Recipient repair released to testing 2026-10-27: Worker
+`6da41ac2-13f3-48da-a8b3-3d6f5ca050a7`, Pages `e9320be1` (release
+`1793116292601`), Designer Testing 2 entry `designer-entry.CcePrnOM.js`.
+The live browser smoke used one unlisted garment with a supplied mockup and one
+editable SVG garment. Both reached Shopify checkout with their print charges;
+edit/return preserved quantities. No payment was made. The test drafts were
+deleted and the temporary links revoked. The published storefront theme has
+not been promoted. Full typecheck still reports the existing unrelated missing
+`customerNames.js` declaration in the website test tree; builds/contracts and
+focused recipient and checkout tests pass.
+
+An immutable private snapshot retains original artwork and placement metadata.
+Original PNG/SVG artwork and raster mockups are attached through the established
+draft-artwork service before the checkout URL is returned, so its existing paid
+conversion preserves line associations. JPEG/WebP source artwork is retained as
+a reference rather than mislabeled as a print-ready PNG. Shared files are copied
+once per role/location and associated with all selected garment lines. Public
+review/checkout are bearer-link operations; creation and administration remain
+behind existing staff authentication. The lifecycle token is a Worker secret.
+`prepared-commerce-pricing.mjs` is generated from canonical Designer modules by
+`node scripts/build-placement-editor.js`; rebuild it before Worker releases.
+
+Customer-link integration released 2026-10-26: Worker
+`62b254ed-9127-4979-a82f-2df481e0e72f`, Pages `e5ca3925`, release
+`1793072225776`. Production release marker verified. The lifecycle connection
+uses the `PREPARED_ORDER_SERVICE` service binding and a server-only staff secret.
+The app's additional `write_draft_orders` permission was approved. One live
+unlisted garment without imagery reached Shopify checkout with its chest-print
+charge; no payment or email was sent, and the test draft was deleted.
+Production/grouping attributes use private underscore-prefixed Shopify fields;
+the renderer recognizes these for prepared items while preserving Studio fields.
+Refreshing a link rechecks Shopify prices and creates a distinct immutable
+snapshot when prices change; opening a saved order rechecks lifecycle status.
+
+Workbench and placement correction released 2026-10-26: Worker
+`5a5b72d9-f3d4-46b0-bbfe-70f69a3b8fdb`, Pages `d2769552`, release
+`1793067454930`. Canonical release and new editor/workbench assets verified.
+Isolated desktop/phone checks covered exact sizing, corner resize, undo,
+classification override persistence and viewport-contained save controls.
+
+Garment-workflow correction released 2026-10-26: Worker
+`f4545a05-24e9-48a4-a728-6c25db166cee`, Pages `c0def5c4`, release
+`1793059150923`. Fixes the catalog adapter and introduces the garment-centered
+autosaving screen below. Canonical release and updated assets verified; native
+Shopify tab testing was unavailable because Computer Use could not verify the
+browser URL. Focused service and local DOM workflow checks passed alongside
+Phase 1/2 app contracts. Owner interactive acceptance remains pending.
+
+Released 2026-10-26: Worker `c9c23b68-d034-432d-a03c-808273f97784` and production
+Pages deployment `784310a3`, release marker `1793057827596`. The canonical live
+marker, editor assets and unauthenticated API rejection were verified. Before
+release, all 51 existing frontend assets were accounted for and the live Worker
+matched the pre-feature Git checkpoint after bundle normalization. Existing
+Worker variables were preserved with `--keep-vars`; no migration, scope or app
+configuration release was needed. Actual Shopify phone-app paste, keyboard and
+interaction acceptance remains owner-tested. This release prepares artwork and
+configurations; customer purchase links and checkout were added in the later integration above.
+
+Prepared Orders is a separate destination in the desktop workspace drawer and
+phone More area. It opens directly to garment selection and optional mockups;
+order names and recipients are optional inline fields; notes use a disclosure. The preparation controller and
+placement editor load only when opened. Shopify Admin sign-in and the existing
+partner-user authorization gate both the screen's first read and every API.
+
+`prepared-orders.js` is the small navigation loader;
+`prepared-orders-workspace.js` and `prepared-orders.css` own the screen.
+`web-shim.js` calls `/order-manager/v1/prepared-order-drafts` through the existing
+ID-token adapter. The Worker delegates to `prepared-order-drafts.mjs` only after
+authentication. Catalog reads include Active and Unlisted products and paginate
+all selected product variants. Product images and artwork are optional. These
+app preparation records remain private app records. Customer checkout creates a
+Shopify Draft Order internally; that commerce handoff is separate from the saved
+preparation and does not enroll unpaid work into production.
+
+The garment-centered workspace uses a garment selector and one active garment
+preview/action pane, with a horizontal selector on phones. Order metadata,
+supplied images and secondary garment options use disclosures. It autosaves through serialized, revision-aware
+requests; a lost acknowledgment retries the same mutation before saving newer
+edits. Catalog/product calls unwrap the shared GraphQL response envelope and
+show recoverable errors. The picker supports pagination, thumbnails and several
+colors at once. Garment/color changes and artwork reuse preserve original image
+layers but reset calibration and generated proofs for placement review. Supplied
+mockups can carry `itemIds` for one or more garments; older images without this
+field remain order references. Changing a garment removes its supplied-mockup
+assignment instead of presenting the previous garment image as current. Private
+records remain backward compatible and require no database migration.
+
+Private R2 stores app preparation JSON and content-addressed artwork under a
+shop-scoped prefix. Conditional ETag saves prevent concurrent overwrite and
+mutation IDs support uncertain-response retries. Only same-order uploaded asset
+IDs are accepted; transient URLs and submitted prices are not persisted. Images
+are bounded, privately authenticated attachments; SVG bytes are sanitized by the
+shared Designer sanitizer before display. Upload/paste has a native input
+fallback, and successful uploads are retained if a later step fails. No new
+Shopify scopes, credentials, CORS origins or D1 migration are introduced.
+
+The canonical focused-editor source is in the Website repository at
+`designer/src/adminPlacementEditor/`. It shares Studio's Konva stage, geometry,
+history, calibration migration, alpha trimming, SVG sanitizer and mockup fallback
+loader, with customer telemetry disabled for this admin consumer. It supports
+uploaded image layers, drag, proportional width, rotation, centering, locations,
+remove and undo/redo. Existing text/full-Studio projects are not imported or
+flattened. The editor receives no staff credential: a source/origin/session-
+checked parent broker uploads assets and saves the selected item's project and
+current-view proof. Removing the iframe ends its active rendering; leaving the
+preparation workspace also releases its image URLs, DOM and product cache. A missing
+proof cannot prevent project saving; no-image products use a labeled placement
+reference rather than an invented garment composite. This first slice saves one
+current-view proof per item, not a complete multi-view production export set.
+
+The focused editor fits its canvas beside a scrollable settings panel on desktop;
+phone editing stacks these inside the inner frame with a persistent save footer.
+Exact width/height, proportional slider and a pointer-captured corner handle use
+the shared trimmed/rotated ink bounds, safe-area fit and history snapshots.
+Print classification reuses Studio's `derivePrintPricingForDesign` and product
+tier choices. `printClassOverrides` and derived `printSummary` are optional
+private project fields; overrides change classification, not geometry. They are
+admin preparation metadata. Purchase conversion validates the chosen class
+against current product rules and charges its Shopify print variant.
+
+`npm run prepare:cloudflare` builds a separate hashed editor document from the
+canonical source. See `placement-editor-build` in the tool registry for checkout
+location and in-memory dependency checks. WSL packaging delegates this build to
+Windows Node when using Windows-installed Designer dependencies. Website theme
+pushes alone do not publish this Pages artifact. Deploy the Worker and Pages
+together for this feature, using the existing verified deployment tooling.
+
+The screen and editor use the inner Shopify iframe height, explicit body scroll
+owners, 44px controls and a non-scrolling save footer. The local-only
+`shopify-mobile-preview.html` harness includes simulated 112px top and 84px bottom
+host chrome around a 393×650 app iframe. Narrow/short iframe checks are required;
+this harness is not evidence of authenticated Shopify iOS keyboard, paste or
+production acceptance and is excluded from Pages packaging.
+
 The normal header and mobile surface expose only the **Shopify board**. Both adapters remain in the codebase, but Legacy Redis is available only through the explicit `?printmo_debug_legacy=1` operational-debug URL; `web-shim.js` selects the data adapter and mutation endpoints.
 
 Within the Board's **In S&S Cart** section, **Cards / Garments** is a local view choice, separate from the overall Board/List layout. Cards remain the first-visit default and stay mounted when hidden. Garments groups exact supplier SKUs across orders or separates them by order, with visible colors, sizes, quantities, and inline contributions. This is an expected-requirements reference, not a live supplier-cart match. Shelf claims reduce matching quantities; unresolved shelf data and manual/other items retain their needed quantities explicitly. The isolated `cart-garment-model.js` and `cart-garment-view.js/.css` consume the existing board snapshot and read-only shelf endpoint. No supplier, order, or readiness writes occur. Device storage remembers the local layout/grouping, and Legacy remains unchanged. Representative shop acceptance is tracked in the [In Cart garment view plan](../future-plans/in-cart-garment-view-plan.md).

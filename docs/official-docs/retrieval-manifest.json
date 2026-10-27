@@ -3,6 +3,13 @@
   "description": "Machine-readable retrieval and repository-tool registry. The Markdown context router is the human-readable companion.",
   "tools": [
     {
+      "id": "placement-editor-build",
+      "command": "node scripts/build-placement-editor.js --check",
+      "purpose": "Build the canonical Designer placement entry in memory and reject full-Studio imports; omit --check to build the local Pages editor artifact.",
+      "mode": "read-only",
+      "script": "scripts/build-placement-editor.js"
+    },
+    {
       "id": "route",
       "command": "npm run repo -- route <task-or-error>",
       "purpose": "Rank the smallest relevant documentation sections, source symbols, tools, and verification commands.",
@@ -123,6 +130,87 @@
     }
   ],
   "routes": [
+    {
+      "id": "prepared-order-placement",
+      "description": "Private Prepared Orders screen, catalog selection, uploaded mockups and isolated basic artwork placement editor",
+      "taskTypes": [
+        "implementation",
+        "planning",
+        "diagnosis",
+        "design",
+        "build"
+      ],
+      "keywords": [
+        "prepared orders",
+        "prepared-order-drafts",
+        "place artwork",
+        "placement editor",
+        "prepared mockup",
+        "prepared-orders-workspace"
+      ],
+      "paths": [
+        "order-manager-web/prepared-orders.js",
+        "order-manager-web/prepared-orders-workspace.js",
+        "order-manager-web/prepared-orders.css",
+        "order-manager-proxy/prepared-order-drafts.mjs",
+        "scripts/build-placement-editor.js"
+      ],
+      "symbols": [
+        "handlePreparedDraftRequest",
+        "createPreparedDraftService",
+        "openEditor",
+        "saveRecord"
+      ],
+      "errors": [
+        "INVALID_PROJECT",
+        "ASSET_MISSING",
+        "INVALID_PLACEMENT",
+        "Prepared Orders could not load"
+      ],
+      "read": [
+        {
+          "path": "docs/official-docs/workflows/web-shopify-porting.md",
+          "anchor": "prepared-orders-preparation-screen"
+        }
+      ],
+      "inspect": [
+        {
+          "path": "order-manager-web/prepared-orders-workspace.js",
+          "symbols": [
+            "openEditor",
+            "saveRecord"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/prepared-order-drafts.mjs",
+          "symbols": [
+            "handlePreparedDraftRequest",
+            "createPreparedDraftService"
+          ]
+        },
+        {
+          "path": "scripts/build-placement-editor.js",
+          "symbols": [
+            "PRINTMO_DESIGNER_ROOT"
+          ]
+        }
+      ],
+      "tools": [
+        "placement-editor-build",
+        "verify-phase2",
+        "cloudflare-bundle"
+      ],
+      "verify": [
+        "npm run test:prepared-orders",
+        "node scripts/build-placement-editor.js --check",
+        "npm run verify:phase2",
+        "npm run prepare:cloudflare",
+        "npm run docs:check"
+      ],
+      "stop": [
+        "Customer links reuse the existing website recipient screen. Preserve staff-only publishing, bearer-scoped quotes/checkout, Studio legacy links and correct production file associations. Full-Studio project import and native Shopify iOS acceptance remain separate."
+      ]
+    },
     {
       "id": "draft-artwork",
       "description": "Shopify draft artwork preparation, garment and placement assignments, private files, conversion handoff and release prerequisites",

@@ -2523,7 +2523,14 @@ function setupManualDesignControls() {
  * this helper is presentation-only.
  */
 function customerItemAttributes(item) {
-  return Object.fromEntries((item?.customAttributes || []).map(attribute => [attribute.key, attribute.value]));
+  const attributes = Object.fromEntries((item?.customAttributes || []).map(attribute => [attribute.key, attribute.value]));
+  // Prepared checkouts keep production metadata private in Shopify checkout.
+  if (attributes._preparedOrderId) {
+    for (const key of ['group_id', 'batch_id', 'group_role', 'batch_role', 'garment_color', 'garment_size']) {
+      if (attributes['_'+key] !== undefined) attributes[key] = attributes['_'+key];
+    }
+  }
+  return attributes;
 }
 
 function customerItemInstructionKey(item, index) {

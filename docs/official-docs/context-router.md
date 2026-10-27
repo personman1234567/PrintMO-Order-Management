@@ -1,5 +1,7 @@
 # Context Router
 
+<!-- route:prepared-order-placement -->
+
 > Human-readable fallback for targeted retrieval. The structured authority is [retrieval-manifest.json](retrieval-manifest.json).
 
 ## Preferred Lookup
@@ -26,6 +28,7 @@ The command ranks exact document sections, source symbols, registered tools, ver
 | Shared Kanban cards, drag/drop, detail opening, garments left, production planner or Today’s run | [Shared board render and mutation flow](workflows/order-ingestion-kanban.md#shared-board-render-and-mutation-flow); [stage and view semantics](workflows/order-ingestion-kanban.md#stage-and-view-semantics) | `renderer.js → renderBoard, openDetail`; `production-planner-model.js`; `production-planner.js`; `production-run.mjs → createProductionRunService` | Phase 2; planner model and proxy tests | Canonical stage or source-isolation change |
 | UI containers, card fields, modal overlays | [UI containers reference](reference/ui-containers-and-views.md#global-application-layout--top-level-containers) | `index.html`, `renderer.js`, `desktop.css`, `mobile.css` | Phase 2 plus representative viewport | Core production schema change |
 | S&S SKU aggregation or batch state | [Batch submission and state update](workflows/blanks-batching.md#batch-submission--state-update) | `blanks-batches.js → saveBatchForOrders`; `worker.js → /order-manager/v1/batches/commit` | Phase 2 | Live supplier enablement or payload/auth changes |
+| Prepared Orders, basic placement editor, customer links and checkout | [Preparation screen](workflows/web-shopify-porting.md#prepared-orders-preparation-screen) | `prepared-orders-workspace.js`, `prepared-order-links.mjs`, `prepared-order-drafts.mjs`, canonical Website editor source | `npm run test:prepared-orders`; editor build check; Phase 2; Pages bundle | Staff-only publishing; public bearer review and Shopify draft checkout; preserve existing Studio links |
 | Embedded Shopify web, mobile iframe, Pages bundle | [Source-switched operational board](workflows/web-shopify-porting.md#source-switched-operational-board) | `web-shim.js`, `shopify-preview.js`, `shopify-embedded-mobile.js` | Phase 2; `npm run prepare:cloudflare` | CORS, scopes, or browser-visible secrets |
 | Shopify detail says `404 - [object Object]` or `ACCESS_DENIED` | [Shopify live detail scope failure](runbooks/troubleshooting.md#shopify-live-detail-scope-failure) | `worker.js → fulfillmentOrders`; `web-shim.js → apiErrorMessage` | Phase 2 plus known live-order check | Scope changes require Shopify release and approval |
 | Admin block says `A valid idempotency key is required` | [Admin-block idempotency rejection](runbooks/troubleshooting.md#admin-block-idempotency-key-rejection) | `production-client.mjs → idempotencyKey`; Worker validation | Proxy tests/build plus one live save | Extension fix requires Shopify app release |

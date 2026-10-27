@@ -375,7 +375,7 @@
       if (more) {
         $('.mw-selection').hidden = true; $('.mw-empty').hidden = true;
         const host = $('.mw-more');
-        if (!host.children.length) for (const [destination, label] of [['drafts', 'Draft Orders'], ['inventory', 'Inventory'], ['previous', 'History'], ['storage', 'Storage Browser']]) host.append(button(label, () => navigation.navigateMobile('more', { destination })));
+        if (!host.children.length) for (const [destination, label] of [['prepared', 'Prepared Orders'], ['drafts', 'Draft Orders'], ['inventory', 'Inventory'], ['previous', 'History'], ['storage', 'Storage Browser']]) host.append(button(label, () => navigation.navigateMobile('more', { destination })));
         return;
       }
       const result = state.browse(area, snapshot);

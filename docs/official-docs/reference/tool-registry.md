@@ -19,6 +19,14 @@
 
 ## Registered Commands
 
+<!-- tool:placement-editor-build -->
+### `placement-editor-build`
+
+- Command: `node scripts/build-placement-editor.js --check` (read-only); omit `--check` or run `npm run build:placement-editor` to write the local Pages editor artifact. Never deploys.
+- Source: set `PRINTMO_DESIGNER_ROOT` to the canonical Website `designer/` directory, or use the neighboring `Print-MO Website/Shopify Website/designer` checkout. Its installed esbuild dependency is required.
+- Output: JSON dependency-boundary and compressed-code result; normal build emits a separate editor document, hashed assets, mockup/calibration data and build contract beneath this repository's ignored `dist/`. `--output` must stay under `dist/`.
+- Called by `npm run prepare:cloudflare`; the main board never imports this entry. Exit 1 means missing canonical source, dependency-boundary failure or build failure. Use `--help` for options.
+
 The machine-readable authority is `../retrieval-manifest.json`. Run `npm run repo -- tools` for the current executable listing.
 
 <!-- tool:inventory-enrollment -->

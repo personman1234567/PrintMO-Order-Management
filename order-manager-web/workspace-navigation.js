@@ -2,7 +2,7 @@
  * another workspace's controls or create a second order cache. */
 (() => {
   const destinations = new Map();
-  const views = { orders: 'orders-view', drafts: 'drafts-view', inventory: 'inventory-view',
+  const views = { orders: 'orders-view', drafts: 'drafts-view', prepared: 'prepared-orders-view', inventory: 'inventory-view',
     previous: 'previous-orders-view', storage: 'storage-view' };
   let ready = false, lastOrdersTab = 'pipeline';
   let mobileGuard = null;
@@ -13,7 +13,7 @@
   function navigate(view, { mobileTab, scrollTop = false, force = false, mobileGuarded = false } = {}) {
     const next = Object.hasOwn(views, view) ? view : 'orders';
     if (!force && !mobileGuarded && mobileWorkspace() && mobileGuard?.(() => navigate(view, { mobileTab, scrollTop, mobileGuarded: true })) === false) return false;
-    if (next === 'drafts' && document.body.dataset.orderSource !== 'shopify') return false;
+    if (['drafts', 'prepared'].includes(next) && document.body.dataset.orderSource !== 'shopify') return false;
     const previous = document.body.dataset.activeView || 'orders';
     if (!force && previous !== next && destinations.get(previous)?.canLeave?.() === false) return false;
     if (previous === 'orders' && next !== 'orders') lastOrdersTab = document.body.dataset.activeTab || 'pipeline';

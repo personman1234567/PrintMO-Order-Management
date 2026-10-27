@@ -96,7 +96,7 @@
           : view === 'orders' ? document.querySelector(document.body.dataset.orderLayout === 'list'
             ? '.order-list-heading' : '.production-panel-header')
           : document.querySelector({ inventory: '.shelf-inventory-header', previous: '.previous-orders-header',
-            storage: '.storage-header', drafts: '.draft-workspace-heading' }[view] || '.production-panel-header');
+            storage: '.storage-header', drafts: '.draft-workspace-heading', prepared: '.prepared-workspace-heading' }[view] || '.production-panel-header');
         if (target && launcher.parentNode !== target) {
           const restoreFocus = document.activeElement === launcher;
           launcher.parentElement?.classList.remove('dashboard-menu-host');
