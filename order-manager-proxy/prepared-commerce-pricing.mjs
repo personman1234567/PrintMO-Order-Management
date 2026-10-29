@@ -338,6 +338,11 @@ function resolveInkRectFromTrim(trim, design) {
 }
 
 // ../Print-MO Website/Shopify Website/designer/src/adminPlacementEditor/placementModel.ts
+var FALLBACK_PLACEMENT_CALIBRATION = {
+  version: 1,
+  fingerprint: "admin-reference-12x16",
+  bySide: Object.fromEntries(["front", "back", "left", "right", "breast"].map((side) => [side, { referenceWidthIn: 12, safeWidthIn: 12, safeHeightIn: 16 }]))
+};
 function placementInkBounds(print) {
   return rotSubRectAabb(print, resolveInkRectFromTrim(print.trim || print.asset.trim, print.design) || { x: 0, y: 0, w: print.design.wIn, h: print.design.hIn });
 }

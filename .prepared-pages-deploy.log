@@ -1,0 +1,45 @@
+
+> printmo-order-management@1.3.0 repo
+> node scripts/repo-tool.js deploy cloudflare --production
+
+warning: in the working copy of 'docs/official-docs/reference/test-map.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/official-docs/workflows/web-shopify-porting.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'order-manager-proxy/prepared-commerce-pricing.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'order-manager-proxy/prepared-order-drafts.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'order-manager-proxy/prepared-order-drafts.test.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'order-manager-proxy/prepared-order-links.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'order-manager-proxy/prepared-order-links.test.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'order-manager-proxy/prepared-recipient.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'order-manager-proxy/prepared-recipient.test.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'order-manager-web/prepared-orders-workspace.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'order-manager-web/prepared-orders.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/prepared-orders-workspace.test.js', LF will be replaced by CRLF the next time Git touches it
+
+> printmo-order-management@1.3.0 prepare:cloudflare
+> bash scripts/prepare-cloudflare-pages-upload.sh
+
+Prepared release 1793245404702 with cache-busted assets in /mnt/e/PrintMO/PrintMO-Order-Management/dist/cloudflare-order-manager-web/index.html
+Prepared release 1793245404702 with cache-busted assets in /mnt/e/PrintMO/PrintMO-Order-Management/dist/cloudflare-order-manager-web/customer-order.html
+{"mode":"local-build","isolated":true,"jsChunks":1,"allJsGzipKiB":140.6}
+Prepared Cloudflare upload folder:
+  /mnt/e/PrintMO/PrintMO-Order-Management/dist/cloudflare-order-manager-web
+Skipped optional upload zip (zip utility not installed).
+Deploying release 1793245404702 to production for project print-mo-order-manager...
+
+ ⛅️ wrangler 4.95.0 (update available 4.155.0)
+──────────────────────────────────────────────
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mWarning: Your working directory is a git repo and has uncommitted changes[0m
+
+  To silence this warning, pass in --commit-dirty=true
+
+
+Uploading... (79/86)
+Uploading... (81/86)
+Uploading... (83/86)
+Uploading... (86/86)
+✨ Success! Uploaded 7 files (79 already uploaded) (1.58 sec)
+
+🌎 Deploying...
+✨ Deployment complete! Take a peek over at https://052161eb.print-mo-order-manager.pages.dev
+Verified production release 1793245404702 at https://print-mo-order-manager.pages.dev/?printmo_release=1793245404702

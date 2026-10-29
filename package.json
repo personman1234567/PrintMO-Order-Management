@@ -13,7 +13,7 @@
     "dist": "electron-builder",
     "prepare:cloudflare": "bash scripts/prepare-cloudflare-pages-upload.sh",
     "build:placement-editor": "node scripts/build-placement-editor.js",
-    "test:prepared-orders": "node --test order-manager-proxy/prepared-order-drafts.test.mjs order-manager-proxy/prepared-order-links.test.mjs order-manager-proxy/prepared-recipient.test.mjs scripts/prepared-orders-workspace.test.js",
+    "test:prepared-orders": "node --test order-manager-proxy/prepared-choices.test.mjs order-manager-proxy/prepared-order-drafts.test.mjs order-manager-proxy/prepared-order-links.test.mjs order-manager-proxy/prepared-publishing.test.mjs order-manager-proxy/prepared-recipient.test.mjs order-manager-proxy/prepared-size-guides.test.mjs order-manager-proxy/prepared-price-products.test.mjs scripts/prepared-orders-workspace.test.js scripts/prepared-colors.test.js order-manager-proxy/prepared-catalog.test.mjs",
     "deploy:cloudflare": "bash scripts/deploy-cloudflare-pages.sh",
     "repo": "node scripts/repo-tool.js",
     "docs:check": "node scripts/check-docs.js",

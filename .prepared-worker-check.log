@@ -1,0 +1,24 @@
+
+ ⛅️ wrangler 4.95.0
+───────────────────
+Total Upload: 627.64 KiB / gzip: 137.47 KiB
+Your Worker has access to the following bindings:
+Binding                                                                                   Resource                  
+env.ORDER_SYNC_COORDINATOR (OrderSyncCoordinator)                                         Durable Object            
+env.ORDER_DB (printmo-order-manager)                                                      D1 Database               
+env.PREVIEWS (designer-previews)                                                          R2 Bucket                 
+env.R2_BUCKET (printmo-artwork-private)                                                   R2 Bucket                 
+env.PREPARED_ORDER_SERVICE (designer-preview-upload)                                      Worker                    
+env.LEGACY_INGEST_ENABLED ("1")                                                           Environment Variable      
+env.MIGRATION_UPSTREAM_ENABLED ("1")                                                      Environment Variable      
+env.MIGRATION_QUARANTINE_ORDER_NUMBERS ("1000")                                           Environment Variable      
+env.SS_TEST_ORDER ("1")                                                                   Environment Variable      
+env.SHELF_ALLOCATION_ENABLED ("1")                                                        Environment Variable      
+env.DRAFT_ORDERS_ENABLED ("1")                                                            Environment Variable      
+env.PREPARED_ORDER_PREVIEW_THEME_ID ("")                                                  Environment Variable      
+env.ETSY_REDIRECT_URI ("https://order-manager-proxy.printmobu...")                        Environment Variable      
+env.ETSY_WEBHOOK_CALLBACK_URL ("https://order-manager-proxy.printmobu...")                Environment Variable      
+env.ETSY_WEBHOOK_ENROLLMENT_ENABLED ("1")                                                 Environment Variable      
+env.ETSY_WEBHOOK_RECONCILIATION_ENABLED ("1")                                             Environment Variable      
+
+--dry-run: exiting now.

@@ -18,6 +18,19 @@
 ## Automated and Syntax Verification Commands
 
 Prepared Orders: `npm run test:prepared-orders` covers private preparation saves,
+stacked complete-catalog filters, source-cache refresh, base-color fallbacks,
+native SKU/style matches and finder query encoding (`prepared-catalog.test.mjs`),
+global list search/pagination, link-state summaries, archive/revision isolation,
+rename conflicts, deletion/revocation failures, publisher-lease exclusion and
+retained production originals (`prepared-order-drafts.test.mjs`),
+renderer reuse/reset, export acknowledgments, message isolation, bounded preview
+failures and editor startup recovery (`scripts/prepared-orders-workspace.test.js`),
+native/fallback swatches, color-only fit preservation, independent copied
+artwork with physical calibration, and mockup/review flags
+(`scripts/prepared-colors.test.js`, `prepared-order-drafts.test.mjs`), plus
+streamed publishing progress, bounded concurrency, request-local product reuse,
+unchanged-content skips, per-link image reuse, failed-update retries and stable
+active URLs (`order-manager-proxy/prepared-publishing.test.mjs`), plus
 idempotent retries, revision conflicts, uploaded-asset ownership, no-image
 catalog variants and authenticated route boundaries. `node scripts/build-placement-editor.js --check`
 rejects full-Studio imports without writing an artifact. In the canonical Website
@@ -146,3 +159,9 @@ Items visual finish (2026-10-07): 72 focused synthetic browser assertions passed
 | Syntax passes but live permissions fail | Local contract tests cannot prove installed external scopes | Run the explicit production scope/acceptance gate. |
 | Candidate batch is expected to enter Ordered immediately | Supplier confirmation and operator Mark Ordered were conflated | Expect `blanks_cart`, then verify the operator-controlled transition. |
 | Docs and source maps drift despite code tests passing | Documentation validation was omitted | Run `npm run docs:check`. |
+
+Prepared alternatives use `order-manager-proxy/prepared-choices.test.mjs` for group/selection validation and `order-manager-proxy/prepared-order-links.test.mjs` for publishing compatibility, selected-only quotes and Shopify checkout line associations. These run in `npm run test:prepared-orders`.
+
+Prepared price batching and explicit testing URLs: `order-manager-proxy/prepared-price-products.test.mjs` covers current commerce, unlisted/no-image handling, failure boundaries and URL identity. `prepared-recipient.test.mjs` covers per-item published hydration without Shopify product reads.
+
+Two-sided prepared orders: prepared-order-links.test.mjs checks complete automatic print coverage and front/back checkout lines. scripts/prepared-orders-workspace.test.js covers visible garment removal, alternatives, retained uploads and cancellation of obsolete preview work.

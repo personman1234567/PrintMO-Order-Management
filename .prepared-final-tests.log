@@ -1,0 +1,482 @@
+
+> printmo-order-management@1.3.0 test:prepared-orders
+> node --test order-manager-proxy/prepared-choices.test.mjs order-manager-proxy/prepared-order-drafts.test.mjs order-manager-proxy/prepared-order-links.test.mjs order-manager-proxy/prepared-publishing.test.mjs order-manager-proxy/prepared-recipient.test.mjs order-manager-proxy/prepared-size-guides.test.mjs order-manager-proxy/prepared-price-products.test.mjs scripts/prepared-orders-workspace.test.js scripts/prepared-colors.test.js order-manager-proxy/prepared-catalog.test.mjs
+
+TAP version 13
+# Subtest: complete cached catalog supports stacked filters, exact styles, pagination and recent IDs
+ok 1 - complete cached catalog supports stacked filters, exact styles, pagination and recent IDs
+  ---
+  duration_ms: 3.2386
+  type: 'test'
+  ...
+# Subtest: native base colors win; denied optional metadata does not break unlisted selection
+ok 2 - native base colors win; denied optional metadata does not break unlisted selection
+  ---
+  duration_ms: 1.1305
+  type: 'test'
+  ...
+# Subtest: unused color values do not create false color matches; exact SKU matches use Shopify
+ok 3 - unused color values do not create false color matches; exact SKU matches use Shopify
+  ---
+  duration_ms: 0.3483
+  type: 'test'
+  ...
+# Subtest: query encoding preserves stack semantics through the authenticated path allowlist
+ok 4 - query encoding preserves stack semantics through the authenticated path allowlist
+  ---
+  duration_ms: 0.2122
+  type: 'test'
+  ...
+# Subtest: failed catalog loads can retry and are never cached as an empty catalog
+ok 5 - failed catalog loads can retry and are never cached as an empty catalog
+  ---
+  duration_ms: 0.4493
+  type: 'test'
+  ...
+# Subtest: private snapshots avoid cold Shopify reads and refresh stale metadata in the background
+ok 6 - private snapshots avoid cold Shopify reads and refresh stale metadata in the background
+  ---
+  duration_ms: 0.4094
+  type: 'test'
+  ...
+# Subtest: typing another search does not wait for a background catalog rebuild
+ok 7 - typing another search does not wait for a background catalog rebuild
+  ---
+  duration_ms: 0.3833
+  type: 'test'
+  ...
+# Subtest: old clients receive only the proposed garments
+ok 8 - old clients receive only the proposed garments
+  ---
+  duration_ms: 0.868
+  type: 'test'
+  ...
+# Subtest: replacement and extra selection include only explicit published configurations
+ok 9 - replacement and extra selection include only explicit published configurations
+  ---
+  duration_ms: 0.3844
+  type: 'test'
+  ...
+# Subtest: dangling, cyclic and nested alternatives are rejected
+ok 10 - dangling, cyclic and nested alternatives are rejected
+  ---
+  duration_ms: 0.0982
+  type: 'test'
+  ...
+# Subtest: no image or Studio project is required; temporary URLs and submitted prices are not retained
+ok 11 - no image or Studio project is required; temporary URLs and submitted prices are not retained
+  ---
+  duration_ms: 1.071
+  type: 'test'
+  ...
+# Subtest: save and reopen preserve an unlisted/no-image configuration; list is private summary metadata
+ok 12 - save and reopen preserve an unlisted/no-image configuration; list is private summary metadata
+  ---
+  duration_ms: 2.4344
+  type: 'test'
+  ...
+# Subtest: browse searches garments across pages, sorts globally and retains private lightweight summaries
+ok 13 - browse searches garments across pages, sorts globally and retains private lightweight summaries
+  ---
+  duration_ms: 7.8339
+  type: 'test'
+  ...
+# Subtest: archive and restore preserve the published revision, customer link, content and assets
+ok 14 - archive and restore preserve the published revision, customer link, content and assets
+  ---
+  duration_ms: 0.549
+  type: 'test'
+  ...
+# Subtest: rename keeps garment data, rejects stale revisions and correctly marks unpublished changes
+ok 15 - rename keeps garment data, rejects stale revisions and correctly marks unpublished changes
+  ---
+  duration_ms: 1.0162
+  type: 'test'
+  ...
+# Subtest: deleting disables the customer link, hides the preparation and prevents stale-save resurrection without deleting files
+ok 16 - deleting disables the customer link, hides the preparation and prevents stale-save resurrection without deleting files
+  ---
+  duration_ms: 10.8788
+  type: 'test'
+  ...
+# Subtest: deletion waits for publishing and retains the preparation if revocation fails
+ok 17 - deletion waits for publishing and retains the preparation if revocation fails
+  ---
+  duration_ms: 0.4712
+  type: 'test'
+  ...
+# Subtest: list states distinguish absence, publishing, expiry, disabled and edited links
+ok 18 - list states distinguish absence, publishing, expiry, disabled and edited links
+  ---
+  duration_ms: 0.0768
+  type: 'test'
+  ...
+# Subtest: server normalization preserves crop and calibration without retaining temporary browser URLs
+ok 19 - server normalization preserves crop and calibration without retaining temporary browser URLs
+  ---
+  duration_ms: 0.4117
+  type: 'test'
+  ...
+# Subtest: uncertain-save retry is idempotent and concurrent revisions cannot overwrite each other
+ok 20 - uncertain-save retry is idempotent and concurrent revisions cannot overwrite each other
+  ---
+  duration_ms: 0.4283
+  type: 'test'
+  ...
+# Subtest: artwork references belong to the same order and cannot point at another private order
+ok 21 - artwork references belong to the same order and cannot point at another private order
+  ---
+  duration_ms: 6.2202
+  type: 'test'
+  ...
+# Subtest: invalid uploads, oversized payloads, invalid transforms and missing artwork fail without replacing the order
+ok 22 - invalid uploads, oversized payloads, invalid transforms and missing artwork fail without replacing the order
+  ---
+  duration_ms: 1.1371
+  type: 'test'
+  ...
+# Subtest: WebP signature parsing is independent of UTF-8 byte sequences in its binary size header
+ok 23 - WebP signature parsing is independent of UTF-8 byte sequences in its binary size header
+  ---
+  duration_ms: 0.7728
+  type: 'test'
+  ...
+# Subtest: product detail follows all variant pages and retains unlisted/no-image products
+ok 24 - product detail follows all variant pages and retains unlisted/no-image products
+  ---
+  duration_ms: 0.3214
+  type: 'test'
+  ...
+# Subtest: catalog unwraps the production adapter envelope and carries pagination without requiring images
+ok 25 - catalog unwraps the production adapter envelope and carries pagination without requiring images
+  ---
+  duration_ms: 0.5086
+  type: 'test'
+  ...
+# Subtest: product details use native swatch colors/textures, retain configured fallbacks and support missing swatches
+ok 26 - product details use native swatch colors/textures, retain configured fallbacks and support missing swatches
+  ---
+  duration_ms: 0.1879
+  type: 'test'
+  ...
+# Subtest: per-item swatches and mockup/review flags persist without accepting executable image URLs
+ok 27 - per-item swatches and mockup/review flags persist without accepting executable image URLs
+  ---
+  duration_ms: 0.0776
+  type: 'test'
+  ...
+# Subtest: Shopify product failures are actionable and never interpreted as an empty catalog
+ok 28 - Shopify product failures are actionable and never interpreted as an empty catalog
+  ---
+  duration_ms: 0.1452
+  type: 'test'
+  ...
+# Subtest: mockup assignments preserve legacy references and only retain garments in this order
+ok 29 - mockup assignments preserve legacy references and only retain garments in this order
+  ---
+  duration_ms: 0.1022
+  type: 'test'
+  ...
+# Subtest: admin classification overrides and automatic summaries survive private project persistence
+ok 30 - admin classification overrides and automatic summaries survive private project persistence
+  ---
+  duration_ms: 0.1312
+  type: 'test'
+  ...
+# Subtest: private asset response is authenticated-route-only, attachment/no-sniff and never exposes an R2 key
+ok 31 - private asset response is authenticated-route-only, attachment/no-sniff and never exposes an R2 key
+  ---
+  duration_ms: 2.1127
+  type: 'test'
+  ...
+# Subtest: every preparation route is behind existing Shopify/partner authentication
+ok 32 - every preparation route is behind existing Shopify/partner authentication
+  ---
+  duration_ms: 26.3388
+  type: 'test'
+  ...
+# Subtest: optional quantity prefills survive normalization without requiring Designer data
+ok 33 - optional quantity prefills survive normalization without requiring Designer data
+  ---
+  duration_ms: 0.2745
+  type: 'test'
+  ...
+# Subtest: two-sided automatic artwork cannot silently lose an unpriced side
+ok 34 - two-sided automatic artwork cannot silently lose an unpriced side
+  ---
+  duration_ms: 2.2442
+  type: 'test'
+  ...
+# Subtest: published alternatives remain outside legacy templates and only chosen configurations reach Shopify
+ok 35 - published alternatives remain outside legacy templates and only chosen configurations reach Shopify
+  ---
+  duration_ms: 22.9344
+  type: 'test'
+  ...
+# Subtest: edited front/back production exports and the supplied mockup remain assigned to their own garments
+ok 36 - edited front/back production exports and the supplied mockup remain assigned to their own garments
+  ---
+  duration_ms: 5.1635
+  type: 'test'
+  ...
+# Subtest: manual and artwork-configured prints reuse canonical classes without requiring images or Studio data
+ok 37 - manual and artwork-configured prints reuse canonical classes without requiring images or Studio data
+  ---
+  duration_ms: 0.3706
+  type: 'test'
+  ...
+# Subtest: mixed selections keep garment/print quantities together and reject injected variants or invalid quantities
+ok 38 - mixed selections keep garment/print quantities together and reject injected variants or invalid quantities
+  ---
+  duration_ms: 0.3386
+  type: 'test'
+  ...
+# Subtest: shared artwork and mockups are copied once, assigned to all selected garment lines and retained on retry
+ok 39 - shared artwork and mockups are copied once, assigned to all selected garment lines and retained on retry
+  ---
+  duration_ms: 2.2966
+  type: 'test'
+  ...
+# Subtest: edited artwork is quoted and checked out with manual items; exported files reach the correct production lines
+ok 40 - edited artwork is quoted and checked out with manual items; exported files reach the correct production lines
+  ---
+  duration_ms: 4.4106
+  type: 'test'
+  ...
+# Subtest: publish, public review and idempotent Shopify checkout work without imagery and never expose private notes
+ok 41 - publish, public review and idempotent Shopify checkout work without imagery and never expose private notes
+  ---
+  duration_ms: 3.2398
+  type: 'test'
+  ...
+# Subtest: only concurrent identical quotes coalesce; later quotes and checkout validate current commerce again
+ok 42 - only concurrent identical quotes coalesce; later quotes and checkout validate current commerce again
+  ---
+  duration_ms: 49.2849
+  type: 'test'
+  ...
+# Subtest: current pricing batches only snapshot-member variants and current product configuration, without catalog images
+ok 43 - current pricing batches only snapshot-member variants and current product configuration, without catalog images
+  ---
+  duration_ms: 1.251
+  type: 'test'
+  ...
+# Subtest: testing links are explicit and reversible without changing their prepared order identity
+ok 44 - testing links are explicit and reversible without changing their prepared order identity
+  ---
+  duration_ms: 0.6998
+  type: 'test'
+  ...
+# Subtest: first publish loads each product once and bounds image/product concurrency
+ok 45 - first publish loads each product once and bounds image/product concurrency
+  ---
+  duration_ms: 17.9375
+  type: 'test'
+  ...
+# Subtest: unchanged publication does no Shopify/product/asset work; explicit price refresh still works
+ok 46 - unchanged publication does no Shopify/product/asset work; explicit price refresh still works
+  ---
+  duration_ms: 4.2468
+  type: 'test'
+  ...
+# Subtest: editing an order reuses old files, copies only new files, and keeps the URL
+ok 47 - editing an order reuses old files, copies only new files, and keeps the URL
+  ---
+  duration_ms: 3.4518
+  type: 'test'
+  ...
+# Subtest: new and refreshed customer URLs stay on the live website even with an old preview variable
+ok 48 - new and refreshed customer URLs stay on the live website even with an old preview variable
+  ---
+  duration_ms: 1.1477
+  type: 'test'
+  ...
+# Subtest: removing and later restoring a mockup does not upload it again
+ok 49 - removing and later restoring a mockup does not upload it again
+  ---
+  duration_ms: 2.1792
+  type: 'test'
+  ...
+# Subtest: simultaneous publishers cannot create competing links for one saved order
+ok 50 - simultaneous publishers cannot create competing links for one saved order
+  ---
+  duration_ms: 1.038
+  type: 'test'
+  ...
+# Subtest: failed updates preserve the live mapping and acknowledged copies for a retry
+ok 51 - failed updates preserve the live mapping and acknowledged copies for a retry
+  ---
+  duration_ms: 3.4194
+  type: 'test'
+  ...
+# Subtest: a revoked link cannot reuse the old no-op path
+ok 52 - a revoked link cannot reuse the old no-op path
+  ---
+  duration_ms: 1.6968
+  type: 'test'
+  ...
+# Subtest: bounded workers await in-flight tasks before propagating an error
+ok 53 - bounded workers await in-flight tasks before propagating an error
+  ---
+  duration_ms: 0.3206
+  type: 'test'
+  ...
+# Subtest: progress stream sends actual phases and a final result without buffering the operation
+ok 54 - progress stream sends actual phases and a final result without buffering the operation
+  ---
+  duration_ms: 2.5893
+  type: 'test'
+  ...
+# Subtest: progress errors preserve recoverable codes and never become a false success
+ok 55 - progress errors preserve recoverable codes and never become a false success
+  ---
+  duration_ms: 0.4787
+  type: 'test'
+  ...
+# Subtest: a disconnected progress reader does not cancel the tracked publication
+ok 56 - a disconnected progress reader does not cancel the tracked publication
+  ---
+  duration_ms: 0.144
+  type: 'test'
+  ...
+# Subtest: stream reader handles split Unicode/chunks, interrupted responses and JSON fallback
+ok 57 - stream reader handles split Unicode/chunks, interrupted responses and JSON fallback
+  ---
+  duration_ms: 0.5446
+  type: 'test'
+  ...
+# Subtest: recipient swatches use exact Shopify solids and textures with saved/configured fallback, never fabricated gray
+ok 58 - recipient swatches use exact Shopify solids and textures with saved/configured fallback, never fabricated gray
+  ---
+  duration_ms: 1.2083
+  type: 'test'
+  ...
+# Subtest: previously published alternatives recover saved swatches without querying unavailable inactive products
+ok 59 - previously published alternatives recover saved swatches without querying unavailable inactive products
+  ---
+  duration_ms: 0.1475
+  type: 'test'
+  ...
+# Subtest: transparent WebP proofs remain associated with the edited production item
+ok 60 - transparent WebP proofs remain associated with the edited production item
+  ---
+  duration_ms: 0.3818
+  type: 'test'
+  ...
+# Subtest: mixed recipient workspaces retain per-item pasted proofs, editable art, calibration and real variants without storefront images
+ok 61 - mixed recipient workspaces retain per-item pasted proofs, editable art, calibration and real variants without storefront images
+  ---
+  duration_ms: 0.2775
+  type: 'test'
+  ...
+# Subtest: customer edits are isolated, recalculated with canonical print classes and cannot modify mockup-only items
+ok 62 - customer edits are isolated, recalculated with canonical print classes and cannot modify mockup-only items
+  ---
+  duration_ms: 1.3129
+  type: 'test'
+  ...
+# Subtest: known sizes hydrate for editable and mockup items without changing artwork or variants
+ok 63 - known sizes hydrate for editable and mockup items without changing artwork or variants
+  ---
+  duration_ms: 0.2585
+  type: 'test'
+  ...
+# Subtest: modern recipient hydration reuses per-item published colors and artwork with no Shopify product reads
+ok 64 - modern recipient hydration reuses per-item published colors and artwork with no Shopify product reads
+  ---
+  duration_ms: 0.7889
+  type: 'test'
+  ...
+# Subtest: only exposes approved current guide measurements and safe public fields, with legacy Page fallback
+ok 65 - only exposes approved current guide measurements and safe public fields, with legacy Page fallback
+  ---
+  duration_ms: 1.0935
+  type: 'test'
+  ...
+# Subtest: reads authorized snapshot products once and keeps unavailable chart failures independent of purchasing
+ok 66 - reads authorized snapshot products once and keeps unavailable chart failures independent of purchasing
+  ---
+  duration_ms: 0.3986
+  type: 'test'
+  ...
+# Subtest: color-only changes and extra colors keep fit and deduplicate size variants
+ok 67 - color-only changes and extra colors keep fit and deduplicate size variants
+  ---
+  duration_ms: 5.4691
+  type: 'test'
+  ...
+# Subtest: artwork reuse preserves source physical calibration without sharing mutable project data
+ok 68 - artwork reuse preserves source physical calibration without sharing mutable project data
+  ---
+  duration_ms: 0.4775
+  type: 'test'
+  ...
+# Subtest: prepared workspace is isolated from Legacy and preserves editor leave protection
+ok 69 - prepared workspace is isolated from Legacy and preserves editor leave protection
+  ---
+  duration_ms: 1.3172
+  type: 'test'
+  ...
+# Subtest: main page loads a small preparation controller, never the editor entry or a hidden startup frame
+ok 70 - main page loads a small preparation controller, never the editor entry or a hidden startup frame
+  ---
+  duration_ms: 0.7026
+  type: 'test'
+  ...
+# Subtest: Place artwork opens the isolated editor with no pending preview
+ok 71 - Place artwork opens the isolated editor with no pending preview
+  ---
+  duration_ms: 3.765
+  type: 'test'
+  ...
+# Subtest: visible garment removal handles alternatives, mockup assignments and pending previews
+ok 72 - visible garment removal handles alternatives, mockup assignments and pending previews
+  ---
+  duration_ms: 2.2792
+  type: 'test'
+  ...
+# Subtest: editor startup cancels an existing matching preview, never an absent one
+ok 73 - editor startup cancels an existing matching preview, never an absent one
+  ---
+  duration_ms: 2.3427
+  type: 'test'
+  ...
+# Subtest: startup failures release the busy state and allow opening the editor again
+ok 74 - startup failures release the busy state and allow opening the editor again
+  ---
+  duration_ms: 2.5968
+  type: 'test'
+  ...
+# Subtest: background previews reuse one renderer, acknowledge exports, and reset the previous canvas
+ok 75 - background previews reuse one renderer, acknowledge exports, and reset the previous canvas
+  ---
+  duration_ms: 5.9257
+  type: 'test'
+  ...
+# Subtest: preview messages require the matching source, origin and current session
+ok 76 - preview messages require the matching source, origin and current session
+  ---
+  duration_ms: 0.4815
+  type: 'test'
+  ...
+# Subtest: a stalled preview is bounded and the renderer can be retried afterwards
+ok 77 - a stalled preview is bounded and the renderer can be retried afterwards
+  ---
+  duration_ms: 20.5309
+  type: 'test'
+  ...
+# Subtest: prepared browse state labels do not conflate saved work with customer-link readiness
+ok 78 - prepared browse state labels do not conflate saved work with customer-link readiness
+  ---
+  duration_ms: 2.9929
+  type: 'test'
+  ...
+1..78
+# tests 78
+# suites 0
+# pass 78
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 187.0258

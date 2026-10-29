@@ -146,7 +146,7 @@ export default {
         }
 
         const origin = (request.headers.get("Origin") || "").replace(/\/+$/, "");
-        const publicPreparedPath = /^\/order-manager\/v1\/prepared-orders\/public\/[a-f0-9-]{36}(?:\/(checkout|quote))?$/i.test(url.pathname);
+        const publicPreparedPath = /^\/order-manager\/v1\/prepared-orders\/public\/[a-f0-9-]{36}(?:\/(checkout|quote|size-guides))?$/i.test(url.pathname);
         const allowOrigin = pickAllowOrigin(origin, env) || (publicPreparedPath && ['https://print-mo.com','https://www.print-mo.com'].includes(origin) ? origin : '');
 
         // If browser sends an Origin and it's not allowed, block
@@ -223,7 +223,7 @@ export default {
         if (url.pathname === '/order-manager/v1/prepared-order-drafts' || url.pathname.startsWith('/order-manager/v1/prepared-order-drafts/')) {
             try {
                 return await handlePreparedDraftRequest(request, env, { graphql: coordinatorGraphQL, drafts: draftOrderService(env) }, identity,
-                    { 'Access-Control-Allow-Origin': allowOrigin || origin || '*', Vary: 'Origin' });
+                    { 'Access-Control-Allow-Origin': allowOrigin || origin || '*', Vary: 'Origin' }, ctx);
             } catch (error) {
                 const safe = error?.code && error?.status ? error : { code: 'PREPARATION_UNAVAILABLE', message: 'Prepared orders could not finish this action. Try again; your current edits are still here.' };
                 return v1Error(safe, allowOrigin || origin || '*', reqAllowHeaders, safe.status || 500);

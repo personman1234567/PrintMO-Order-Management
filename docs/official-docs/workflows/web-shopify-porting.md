@@ -66,6 +66,78 @@ Pages deployments replace the entire web artifact. Before publishing from an iso
 
 #### Prepared Orders preparation screen
 
+Copy testing link is a separate action inside Link options and the saved-order menu. It preserves the same prepared-order ID and explicitly adds the current Designer Testing 2 theme parameter. Normal copies remain clean; the testing choice is never persisted on the publication or as the default. Clipboard fallback displays the actual selected URL.
+
+Complete published recipient presentation now opens without Shopify product reads; incomplete legacy data retains bounded deduplicated fallback. Fresh quotes use `prepared-price-products.mjs` to batch snapshot-member variants and current product/configuration metadata, without catalog media or all-color variant pagination. Current print prices are still resolved and checkout validates afresh. Only simultaneous identical quote requests coalesce; no completed-price cache can bypass current pricing or revocation checks.
+
+Sizes & quantities is optional on each garment. Staff may prefill known counts or
+leave them for the customer. Counts are bounded whole numbers, saved independently
+of Designer project data, and hydrate for both editable and supplied-mockup items.
+Replacement garments retain counts for explicit review; new colors/alternatives
+start without counts. Unoffered saved sizes must be cleared before applying the
+admin quantity form, and remain recoverable in recipient size controls. Publishing
+review shows each item's counts. Customers can change prefills without modifying
+the staff snapshot.
+
+The public bearer `/size-guides` read resolves only products in the validated,
+unexpired published snapshot, with one optional batched Shopify metadata request
+and a five-minute cache. Approved current structured measurements take precedence
+over the existing size-chart Page reference. Internal source/reviewer metadata is
+not published. Denied optional access or missing charts returns no guide and never
+blocks recipient boot, quotes or checkout. This does not broaden Shopify scopes or
+create new chart data; the recipient sanitizes legacy Page markup before display.
+
+Add/Change garment opens the dedicated finder: desktop keeps results and selected
+garment/colors side by side, while mobile has an explicit Back to results path.
+Mobile filters are a separate view with staged changes and Show garments; they
+never stack their controls above the result list. Search debounces 300ms, Enter
+can submit immediately, old responses cannot replace newer searches, and pending
+color selections survive browsing/filter changes. Multiple product/color options
+are added together through the existing configuration/artwork-preservation path.
+Color-only changes still use the existing direct picker. No Studio engine runs
+inside either picker.
+
+Status, garment type, brand and color-family facets combine with AND between
+facets and OR within each facet. Search covers names, brands, styles and offered
+colors; code-like searches also query native Shopify SKU matches. Filters cover
+the complete eligible catalog rather than a loaded result page. The compact
+catalog index lives in private R2 with request-coalesced memory caching; after
+five minutes an authenticated read can serve the snapshot while refreshing in
+the background. Refresh catalog explicitly waits for fresh Shopify metadata.
+Selected garment details and publish/checkout still validate current Shopify data.
+Native base-color taxonomy references take precedence; denied optional metadata
+access uses previously cached references, then named/hex family fallbacks.
+Unmapped colors remain browsable, missing images never exclude products, and
+color-family matching means an offered variant, not an inventory guarantee.
+
+The saved-preparation list opens by default and has Current / Archived / All
+views, server-side customer/order/garment search, global recent/name sorting,
+25-row pagination, saved thumbnails and per-row customer-link state. R2 summary
+metadata drives browsing; older records hydrate their summary on read. Visible
+private thumbnails load lazily with three concurrent reads; no editor, mockup
+generation or per-row Shopify catalog calls run for this list. Link badges
+reflect the locally acknowledged publication and expiry; Copy/Preview validates
+the current upstream link before using the canonical website URL. Do not label
+a copied link as sent or infer that an order has been purchased.
+
+Archive / Restore are separate private management metadata, so they never change
+the design revision or disable a customer link. Rename changes the preparation
+title and requires publishing to update customer-facing content. Bulk operations
+apply only to explicitly selected listed records and report partial failures.
+Deletion requires confirmation, shares the publisher lease, and revokes the link
+before writing a deletion tombstone with compare-etag protection. A failed revoke
+retains the preparation; a concurrent edit blocks deletion. Tombstones prevent
+stale saves from restoring deleted work. This is list/lifecycle removal, not an
+asset-retention purge: original assets and immutable published/checkout snapshots
+remain available to internal production recovery; deleted preparations and their
+admin asset URLs cannot be reopened. Purchased Shopify orders are never deleted.
+The browser preserves list search, view and scroll when returning from an order.
+
+Opening a saved preparation shows the local animated robot and a live loading
+message until the record resolves. The image has a separate animation-free SVG
+selected by `prefers-reduced-motion`; failures clear the loading overlay and
+restore the saved-order controls. There is no minimum display delay.
+
 Customer-link publishing now connects the private preparation screen to the
 existing Designer Prepared Orders lifecycle. Authenticated publish/update/revoke
 actions reuse its expiry, revocation and owned asset URLs; the existing Studio
@@ -73,11 +145,11 @@ and ordinary Share Link flows remain unchanged. The generated link opens the
 existing website at `/pages/designer-studio?preparedOrder=<id>`, using its
 `SharedLinkLandingModal` recipient review. The earlier Pages customer page is
 now only a compatibility redirect; do not build a separate recipient UI.
-`PREPARED_ORDER_PREVIEW_THEME_ID=163707977976` currently targets Designer
-Testing 2. Clear this variable to an empty string only when promoting the
-website recipient code to the published theme; `keep_vars` means deleting a
-config entry alone does not reliably clear the deployed value. Both refreshed
-admin links and old Pages redirects use the server-selected website URL.
+The prepared-order Designer assets are promoted to the live storefront. Generated
+and refreshed URLs contain only the preparedOrder ID, with no preview_theme_id.
+The old preview environment variable is explicitly empty because keep_vars would
+otherwise retain it, and URL construction ignores even a stale preview value.
+Both refreshed admin links and old Pages redirects use the normal website URL.
 Customers review mockups/configuration, choose sizes and quantities, confirm any
 omitted garments and continue to a Shopify draft checkout. No invoice email is
 sent. `write_draft_orders` is required and checked before issuing a link.
@@ -94,6 +166,42 @@ The isolated editor adds live drag selection, a touch-sized rotation handle and
 horizontal-only centering; Front/Back/Left/Right are views, with print classes
 kept separate and legacy chest-view coordinates rebased when reopened.
 
+Prepared garment selection reads Shopify native option-value swatches (solid
+colors and image textures), falling back to Designer-configured swatches and
+finally a named unknown-swatch choice. Missing swatches never prevent selection.
+The public recipient bridge also carries native swatches into workspace colors,
+with exact saved-item/Designer swatches as fallback instead of inventing gray.
+Previously published alternative definitions recover their saved exact swatches
+without querying inactive product availability. Refreshing an existing customer
+link picks up the presentation repair; no republish or new link is required.
+The current color has a direct picker beside Add another color; color-only
+changes retain other non-size options such as fit, and adding colors permits
+multiple selections without replacing the original garment. Swatches also
+appear on the order's garment list. A color change keeps supplied mockups as
+references and marks the garment as needing a new mockup rather than recoloring
+a flat customer image.
+
+Artwork reuse and garment/color changes retain source physical calibration.
+A single serialized, on-demand preview iframe uses the same isolated placement
+editor in `previewOnly` mode, rebases that calibration to the target garment,
+classifies the resulting prints and saves a fresh proof without opening the
+interactive editor or full Studio. Fit adjustments are flagged for review.
+Unlisted/no-image products use a labeled placement reference. Failed previews
+offer retry and never discard the editable project. Existing missing proofs can
+be refreshed with Generate mockup. Old/stale preview results are rejected by
+order, item and project signature. Private artwork blobs are shared within the
+open order and released when leaving it; previews are never loaded on board
+startup. `prepared-preview-renderer.mjs` reuses that iframe within the open order
+but unmounts each completed canvas. It acknowledges each preview response and
+checks source, origin and session before accepting it. Calibration and manifest
+data stay warm, while raster upload bytes are reused for display rather than
+downloaded again (SVG still uses the server-sanitized bytes). Preview capture uses
+a cancellable task and synchronous Konva draw, not animation-frame callbacks
+that hidden embedded frames may stop receiving. Asset reads, product reads and
+saving start together; explicit image/initialization failures return immediately.
+Publishing waits for queued previews and the final autosave so it cannot
+publish half of an artwork/color update.
+
 The server reloads legitimate Active/Unlisted variants and canonical Designer
 print classes, honors saved class overrides, supports explicit manual printing
 or no-print configuration, and reads actual Shopify variant prices. Missing
@@ -104,7 +212,28 @@ and prices, preserves group/batch metadata, and reuses a session/selection-keyed
 checkout on retry. Uncertain mutation responses recover by a deterministic tag.
 An already-open Shopify checkout survives later link revision or revocation.
 
-The publisher includes complete workspace variants/configuration, selected
+Publishing loads each distinct product once per request (up to three concurrently), reuses
+those same reads for the recipient template, and copies at most two images at a
+time. The private link mapping records acknowledged content-addressed assets
+scoped to that specific public link ID. Unchanged files are reused without
+reading or uploading their bytes; revoking/expiring a link never permits reuse
+of its asset URLs in a replacement link. Failed active-link updates retain
+acknowledged copies for retry and preserve the last published customer version.
+
+Normal publishing skips an unchanged saved revision after checking that the
+link is still active. The UI labels that state **Link up to date** and keeps
+**Refresh products and prices** under Link options. That explicit refresh still
+revalidates Shopify data, but skips writing another public revision when content
+is identical. Purchase-time price and variant checks remain unchanged.
+
+Staff publishing can request `Accept: application/x-ndjson` to receive actual
+checking/products/assets/publishing progress and a final result or typed error.
+The stream stays below existing staff authentication; JSON clients retain their
+contract. `ctx.waitUntil` tracks publication if the client disconnects. The web
+reader treats an interrupted stream as an uncertain result, never a success;
+retry checks the same saved link. No polling or artificial percentage is used.
+
+The website receives complete workspace variants/configuration, selected
 color, artwork URLs, rotation, dimensions and canvas calibration. The website
 uses that server-resolved catalog instead of requiring public product visibility.
 Boot must select the saved workspace ID; unconfigured prepared items bypass the
@@ -193,9 +322,18 @@ app preparation records remain private app records. Customer checkout creates a
 Shopify Draft Order internally; that commerce handoff is separate from the saved
 preparation and does not enroll unpaid work into production.
 
-The garment-centered workspace uses a garment selector and one active garment
-preview/action pane, with a horizontal selector on phones. Order metadata,
-supplied images and secondary garment options use disclosures. It autosaves through serialized, revision-aware
+The garment-centered workspace separates assembly from staff review and link
+sharing. Assembly keeps garment/color selection, artwork or supplied mockup
+choices, and a visible printing summary together; no-print and manual print
+locations remain available without imagery or a Studio project. Manual location
+controls reveal classifications only for checked sides and validate unanswered
+classes before applying. A persistent Review customer order action opens all
+items, customer-facing instructions/message, and existing link actions; publishing
+requires printing choices, not images. Order details and internal notes use
+compact dialogs rather than expanding above the garment work. Supplied-image
+controls stay per-item, with separate order reference images and assignments.
+Phone layouts retain the selected garment in a horizontal selector and keep the
+review/publish footer inside the available app height. It autosaves through serialized, revision-aware
 requests; a lost acknowledgment retries the same mutation before saving newer
 edits. Catalog/product calls unwrap the shared GraphQL response envelope and
 show recoverable errors. The picker supports pagination, thumbnails and several
@@ -223,11 +361,22 @@ uploaded image layers, drag, proportional width, rotation, centering, locations,
 remove and undo/redo. Existing text/full-Studio projects are not imported or
 flattened. The editor receives no staff credential: a source/origin/session-
 checked parent broker uploads assets and saves the selected item's project and
-current-view proof. Removing the iframe ends its active rendering; leaving the
+proof covering every designed side, labeled when multiple sides are present.
+Removing the iframe ends its active rendering; leaving the
 preparation workspace also releases its image URLs, DOM and product cache. A missing
 proof cannot prevent project saving; no-image products use a labeled placement
-reference rather than an invented garment composite. This first slice saves one
-current-view proof per item, not a complete multi-view production export set.
+reference rather than an invented garment composite. Capture waits for each
+view's matching mockup and artwork, uses bounded timers even in offscreen frames,
+and restores the original editor view. A failed side capture omits the optional
+proof rather than saving a misleading partial image. Production artwork remains
+separate from this presentation image.
+
+The garment heading exposes **Remove garment** beside **Change garment**.
+Removal confirms attached alternatives, cancels obsolete preview work and
+removes image assignments while retaining uploaded files as order references.
+Automatic print classification must cover every designed side before publishing
+or quoting; explicit manual printing and no-print configurations retain their
+chosen charges.
 
 The focused editor fits its canvas beside a scrollable settings panel on desktop;
 phone editing stacks these inside the inner frame with a persistent save footer.
@@ -517,3 +666,11 @@ isolation and full-detail contracts continue to apply to both presentations.
 | Tab focus wrap stalls, escapes, or lands on invisible controls | The dialog focusable filter counted controls under hidden tab panels, zero-geometry descendants, or negative-tabindex roving tabs | Exclude hidden/inert ancestry, zero geometry, and `tabindex=-1` from the trap's rendered focusable set; verify wraparound with each panel active. |
 | Data changes not saved in browser | `storage-browser.js` falling back to read-only state | Check browser local storage permissions and network logs. |
 | Layout broken inside Shopify Admin iframe | Mobile CSS media query override missing | Verify `mobile.css` breakpoint rules and container width limits. |
+
+#### Prepared garment alternatives
+
+The private preparation screen offers Add alternative on proposed garments, reusing the existing finder, artwork placement/copy and supplied-mockup upload paths. Items optionally carry `alternativeForItemId`; the server rejects dangling, cyclic and nested groups. Removing a proposed garment explicitly includes its alternatives, retaining uploaded assets.
+
+Publishing retains all configurations in an immutable private snapshot, while the public template contains only proposed garments. Optional choice metadata supplies alternative workspaces to the updated recipient. Quote and checkout selections validate group membership, replacements and explicit extras against that snapshot. Unchosen alternatives cannot enter production lines, assets, omission checks or selected-only quotes. No new public catalog access or staff permissions are introduced.
+
+The updated storefront layout is first deployed to Designer Testing 2. Copied customer links remain clean live-domain URLs; use a separate theme preview URL for acceptance until storefront promotion. Do not send alternative-bearing test orders as customer-ready proposals before that acceptance.

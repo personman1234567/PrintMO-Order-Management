@@ -1,0 +1,5 @@
+
+> printmo-order-management@1.3.0 verify:phase1
+> node scripts/verify-phase1.js
+
+Phase 1 contract verification passed.

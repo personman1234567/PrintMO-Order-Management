@@ -1,0 +1,12 @@
+
+> printmo-order-management@1.3.0 verify:phase2
+> node scripts/verify-phase2.js
+
+=== Running Phase 2 Shadow Data Plane Verification ===
+(node:35700) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Phase 1 contract verification passed.
+Etsy webhook endpoint error: ETSY_WEBHOOK_NOT_CONFIGURED
+Etsy webhook processing error: ETSY_RECEIPT_READ_FAILED
+Initial Shopify board reconciliation failed: Fixture bootstrap failure
+Phase 2 shadow data plane verification passed.

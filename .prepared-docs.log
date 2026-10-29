@@ -1,0 +1,5 @@
+
+> printmo-order-management@1.3.0 docs:check
+> node scripts/check-docs.js
+
+Documentation validation passed (48 Markdown files, 23 routes, 18 tools).

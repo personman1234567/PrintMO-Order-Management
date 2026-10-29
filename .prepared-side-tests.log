@@ -1,0 +1,124 @@
+TAP version 13
+# Subtest: two-sided automatic artwork cannot silently lose an unpriced side
+ok 1 - two-sided automatic artwork cannot silently lose an unpriced side
+  ---
+  duration_ms: 2.0311
+  type: 'test'
+  ...
+# Subtest: published alternatives remain outside legacy templates and only chosen configurations reach Shopify
+ok 2 - published alternatives remain outside legacy templates and only chosen configurations reach Shopify
+  ---
+  duration_ms: 21.7272
+  type: 'test'
+  ...
+# Subtest: edited front/back production exports and the supplied mockup remain assigned to their own garments
+ok 3 - edited front/back production exports and the supplied mockup remain assigned to their own garments
+  ---
+  duration_ms: 5.0353
+  type: 'test'
+  ...
+# Subtest: manual and artwork-configured prints reuse canonical classes without requiring images or Studio data
+ok 4 - manual and artwork-configured prints reuse canonical classes without requiring images or Studio data
+  ---
+  duration_ms: 0.3605
+  type: 'test'
+  ...
+# Subtest: mixed selections keep garment/print quantities together and reject injected variants or invalid quantities
+ok 5 - mixed selections keep garment/print quantities together and reject injected variants or invalid quantities
+  ---
+  duration_ms: 0.3623
+  type: 'test'
+  ...
+# Subtest: shared artwork and mockups are copied once, assigned to all selected garment lines and retained on retry
+ok 6 - shared artwork and mockups are copied once, assigned to all selected garment lines and retained on retry
+  ---
+  duration_ms: 2.0596
+  type: 'test'
+  ...
+# Subtest: edited artwork is quoted and checked out with manual items; exported files reach the correct production lines
+ok 7 - edited artwork is quoted and checked out with manual items; exported files reach the correct production lines
+  ---
+  duration_ms: 4.0612
+  type: 'test'
+  ...
+# Subtest: publish, public review and idempotent Shopify checkout work without imagery and never expose private notes
+ok 8 - publish, public review and idempotent Shopify checkout work without imagery and never expose private notes
+  ---
+  duration_ms: 3.2023
+  type: 'test'
+  ...
+# Subtest: only concurrent identical quotes coalesce; later quotes and checkout validate current commerce again
+ok 9 - only concurrent identical quotes coalesce; later quotes and checkout validate current commerce again
+  ---
+  duration_ms: 34.3139
+  type: 'test'
+  ...
+# Subtest: prepared workspace is isolated from Legacy and preserves editor leave protection
+ok 10 - prepared workspace is isolated from Legacy and preserves editor leave protection
+  ---
+  duration_ms: 1.3213
+  type: 'test'
+  ...
+# Subtest: main page loads a small preparation controller, never the editor entry or a hidden startup frame
+ok 11 - main page loads a small preparation controller, never the editor entry or a hidden startup frame
+  ---
+  duration_ms: 0.6994
+  type: 'test'
+  ...
+# Subtest: Place artwork opens the isolated editor with no pending preview
+ok 12 - Place artwork opens the isolated editor with no pending preview
+  ---
+  duration_ms: 3.7995
+  type: 'test'
+  ...
+# Subtest: visible garment removal handles alternatives, mockup assignments and pending previews
+ok 13 - visible garment removal handles alternatives, mockup assignments and pending previews
+  ---
+  duration_ms: 2.164
+  type: 'test'
+  ...
+# Subtest: editor startup cancels an existing matching preview, never an absent one
+ok 14 - editor startup cancels an existing matching preview, never an absent one
+  ---
+  duration_ms: 2.129
+  type: 'test'
+  ...
+# Subtest: startup failures release the busy state and allow opening the editor again
+ok 15 - startup failures release the busy state and allow opening the editor again
+  ---
+  duration_ms: 2.1898
+  type: 'test'
+  ...
+# Subtest: background previews reuse one renderer, acknowledge exports, and reset the previous canvas
+ok 16 - background previews reuse one renderer, acknowledge exports, and reset the previous canvas
+  ---
+  duration_ms: 5.4894
+  type: 'test'
+  ...
+# Subtest: preview messages require the matching source, origin and current session
+ok 17 - preview messages require the matching source, origin and current session
+  ---
+  duration_ms: 0.4654
+  type: 'test'
+  ...
+# Subtest: a stalled preview is bounded and the renderer can be retried afterwards
+ok 18 - a stalled preview is bounded and the renderer can be retried afterwards
+  ---
+  duration_ms: 12.291
+  type: 'test'
+  ...
+# Subtest: prepared browse state labels do not conflate saved work with customer-link readiness
+ok 19 - prepared browse state labels do not conflate saved work with customer-link readiness
+  ---
+  duration_ms: 2.8244
+  type: 'test'
+  ...
+1..19
+# tests 19
+# suites 0
+# pass 19
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 127.2721

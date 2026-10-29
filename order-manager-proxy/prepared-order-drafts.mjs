@@ -1,4 +1,9 @@
-import { handlePreparedLinkRequest, handlePublicPreparedLinkRequest } from './prepared-order-links.mjs';
+import { preparedDraftSummary, browsePreparedOrders } from './prepared-order-browse.mjs';
+import { searchPreparedCatalog } from './prepared-catalog.mjs';
+import { handlePreparedLinkRequest, handlePublicPreparedLinkRequest, deletePreparedPreparation } from './prepared-order-links.mjs';
+import {preparedPriceProducts} from './prepared-price-products.mjs';
+import { preparedPublishStream } from './prepared-publish-progress.mjs';
+import { validateAlternativeGroups } from './prepared-choices.mjs';
 // Private admin preparation only. These records are not Shopify Draft Orders,
 // public prepared links, paid orders, or a second production-order authority.
 const ROOT = 'admin-prepared-orders/v1/';
@@ -57,8 +62,15 @@ export function normalizePreparedDraft(input) {
       printSummary: (Array.isArray(project.printSummary) ? project.printSummary : []).slice(0, 4)
         .filter(value => object(value) && ['front', 'back', 'left', 'right'].includes(value.side) && Number.isSafeInteger(value.variantId) && value.variantId > 0)
         .map(value => ({ side: value.side, variantId: value.variantId, label: text(value.label, 100), mode: value.mode === 'manual' ? 'manual' : 'automatic' })) } : null;
-    return { id: itemId, productId: item.productId, variantId: item.variantId, handle: text(item.handle, 255),
+    return { id: itemId, ...(item.alternativeForItemId ? {alternativeForItemId:id(item.alternativeForItemId)} : {}), productId: item.productId, variantId: item.variantId, handle: text(item.handle, 255),
       title: text(item.title, 180), variantTitle: text(item.variantTitle, 180), color: text(item.color, 100), optionLabel: text(item.optionLabel, 180),
+      swatch: { color: /^#[0-9a-f]{6}$/i.test(item.swatch?.color || '') ? item.swatch.color : '', image: /^https:\/\/cdn\.shopify\.com\//.test(item.swatch?.image || '') ? item.swatch.image : '' },
+      sizeQty: Object.fromEntries(Object.entries(object(item.sizeQty)?item.sizeQty:{}).slice(0,30).map(([size,quantity])=>{
+        if(!Number.isSafeInteger(quantity)||quantity<0||quantity>9999||size.length>80)fail('INVALID_QUANTITY','Enter whole garment quantities from 0 to 9999.');
+        return [size,quantity];
+      }).filter(([,quantity])=>quantity>0)),
+      mockupNeedsUpdate: item.mockupNeedsUpdate === true,
+      placementNeedsReview: item.placementNeedsReview === true,
       image: /^https:\/\/cdn\.shopify\.com\//.test(item.image || '') ? item.image : '',
       instructions: text(item.instructions, 1000), project: cleanProject,
       printMode: ['auto', 'manual', 'none'].includes(item.printMode) ? item.printMode : null,
@@ -68,6 +80,7 @@ export function normalizePreparedDraft(input) {
       proofAssetId: item.proofAssetId ? assetId(item.proofAssetId) : null,
       proofSide: text(item.proofSide, 16), proofKind: item.proofKind === 'garment' ? 'garment' : 'placement-reference' };
   });
+  validateAlternativeGroups(items);
   if (!Array.isArray(input.mockups || []) || (input.mockups || []).length > 20) fail('TOO_MANY_MOCKUPS', 'Use up to 20 mockups.');
   return { version: 1, title: text(input.title, 160) || 'Untitled prepared order',
     preparedFor: text(input.preparedFor, 120), customerMessage: text(input.customerMessage, 240), note: text(input.note, 1000), items,
@@ -82,9 +95,9 @@ async function limitedBytes(request, limit) {
     total += part.value.byteLength; if (total > limit) { await reader.cancel(); fail('TOO_LARGE', 'This upload is too large.', 413); } chunks.push(part.value); }
   const bytes = new Uint8Array(total); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; } return bytes;
 }
-function summary(record) { return { id: record.id, title: record.title, preparedFor: record.preparedFor, updatedAt: record.updatedAt, itemCount: record.items.length, mockupCount: record.mockups.length }; }
 function collectAssets(draft) { return new Set([...draft.mockups.map(a => a.assetId), ...draft.items.flatMap(item => [item.proofAssetId, ...(item.project?.prints || []).map(p => p.asset.assetId)]).filter(Boolean)]); }
 const productFields = `id title handle status featuredMedia { preview { image { url } } }
+  options { name optionValues { name swatch { color image { image { url } } } } }
   designerConfig: metafield(namespace: "custom", key: "designer_config") { value }
   variants(first: 100, after: $variantCursor) { nodes { id title price selectedOptions { name value } media(first: 1) { nodes { preview { image { url } } } } } pageInfo { hasNextPage endCursor } }`;
 export const PREPARED_PRODUCT_QUERY = `query PreparedAdminProduct($id: ID!, $variantCursor: String) { product(id: $id) { ${productFields} } }`;
@@ -105,27 +118,62 @@ export function createPreparedDraftService(env, { graphql }) {
   const prefix = `${ROOT}${encodeURIComponent(String(env.SHOPIFY_SHOP_DOMAIN || '').toLowerCase())}/`;
   const key = value => `${prefix}drafts/${id(value)}.json`;
   const assetKey = (draftId, hash) => `${prefix}assets/${id(draftId)}/${assetId(hash)}`;
-  async function read(draftId) {
+  const verifiedAssetOwners = new Set();
+  async function read(draftId, includeDeleted = false) {
     const stored = await bucket.get(key(draftId));
     if (!stored) fail('DRAFT_NOT_FOUND', 'This prepared order was not found. Return to the list and refresh.', 404);
-    return { ...(await stored.json()), revision: stored.etag };
+    const record = { ...(await stored.json()), revision: stored.etag };
+    if (record.deletedAt && !includeDeleted) fail('DRAFT_NOT_FOUND', 'This prepared order has been deleted. Return to the list.', 404);
+    verifiedAssetOwners.add(draftId);
+    return record;
   }
   return {
-    async list(cursor) {
-      const result = await bucket.list({ prefix: `${prefix}drafts/`, limit: 25, cursor: cursor || undefined, include: ['customMetadata'] });
-      const drafts = result.objects.map(entry => { try { return JSON.parse(entry.customMetadata?.summary || 'null'); } catch { return null; } }).filter(Boolean);
-      return { drafts: drafts.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), cursor: result.truncated ? result.cursor : null };
-    },
+    list(cursor, options = {}) { return browsePreparedOrders(env, { ...options, cursor }, read); },
     read,
+    async manage(draftId, body, actor) {
+      const mutationId = id(body.mutationId), record = await read(draftId);
+      if (body.action === 'rename') {
+        const title = text(body.title, 160);
+        if (!title) fail('TITLE_REQUIRED', 'Enter an order name.');
+        return this.save(draftId, { draft: { ...record, title }, expectedRevision: body.expectedRevision, mutationId }, actor);
+      }
+      if (!['archive', 'restore'].includes(body.action)) fail('INVALID_ACTION', 'Choose archive, restore, rename or delete.');
+      const managementKey = `${prefix}management/${id(draftId)}.json`;
+      const previous = await bucket.get(managementKey), existing = previous ? await previous.json() : null;
+      if (existing?.mutationId === mutationId) return { managed: true };
+      if (body.expectedRevision !== record.revision) fail('VERSION_CONFLICT', 'This order changed. Refresh the list before trying again.', 409);
+      const value = { id: draftId, archivedAt: body.action === 'archive' ? new Date().toISOString() : null, mutationId, updatedBy: actor };
+      const saved = await bucket.put(managementKey, JSON.stringify(value), {
+        onlyIf: previous ? { etagMatches: previous.etag } : { etagDoesNotMatch: '*' },
+        httpMetadata: { contentType: 'application/json' }, customMetadata: { management: JSON.stringify(value) },
+      });
+      if (!saved) fail('VERSION_CONFLICT', 'This order was managed in another session. Refresh the list.', 409);
+      return { managed: true };
+    },
+    async remove(draftId, body, actor, disableLink) {
+      const mutationId = id(body.mutationId), record = await read(draftId, true);
+      if (record.deletedAt) return { deleted: true };
+      if (body.expectedRevision !== record.revision) fail('VERSION_CONFLICT', 'This order changed. Refresh and review it before deleting.', 409);
+      await disableLink();
+      // Keep original assets and immutable published snapshots for production /
+      // checkout recovery. The tombstone prevents stale saves from resurrecting it.
+      const { revision, ...original } = record;
+      const value = { ...original, deletedAt: new Date().toISOString(), deletedBy: actor, mutationId };
+      const saved = await bucket.put(key(draftId), JSON.stringify(value), { onlyIf: { etagMatches: revision },
+        httpMetadata: { contentType: 'application/json' }, customMetadata: { summary: JSON.stringify(preparedDraftSummary(value)) } });
+      if (!saved) fail('VERSION_CONFLICT', 'This order changed during deletion. Its link was disabled; refresh and review before retrying.', 409);
+      return { deleted: true };
+    },
     async save(draftId, body, actor) {
       id(draftId); const mutationId = id(body.mutationId), draft = normalizePreparedDraft(body.draft);
       const previous = await bucket.get(key(draftId)); const existing = previous ? await previous.json() : null;
+      if (existing?.deletedAt) fail('DRAFT_NOT_FOUND', 'This prepared order has been deleted.', 404);
       if (existing?.mutationId === mutationId) return { ...existing, revision: previous.etag };
       if (previous ? body.expectedRevision !== previous.etag : Boolean(body.expectedRevision)) fail('VERSION_CONFLICT', 'This prepared order changed in another session. Your edits are still here; reopen the saved version before replacing them.', 409);
       for (const hash of collectAssets(draft)) if (!(await bucket.head(assetKey(draftId, hash)))) fail('ASSET_MISSING', 'An artwork upload has not finished. Retry the upload before saving.', 409);
       const record = { ...draft, id: draftId, createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), updatedBy: actor, mutationId };
       const stored = await bucket.put(key(draftId), JSON.stringify(record), { onlyIf: previous ? { etagMatches: previous.etag } : { etagDoesNotMatch: '*' },
-        httpMetadata: { contentType: 'application/json' }, customMetadata: { summary: JSON.stringify(summary(record)) } });
+        httpMetadata: { contentType: 'application/json' }, customMetadata: { summary: JSON.stringify(preparedDraftSummary(record)) } });
       if (!stored) fail('VERSION_CONFLICT', 'Another session saved this prepared order first. Your edits are still here.', 409);
       return { ...record, revision: stored.etag };
     },
@@ -149,7 +197,8 @@ export function createPreparedDraftService(env, { graphql }) {
       return { assetId: hash, mime, bytes: bytes.length };
     },
     async asset(draftId, hash) {
-      await read(draftId); const stored = await bucket.get(assetKey(draftId, hash));
+      if (!verifiedAssetOwners.has(draftId)) await read(draftId, true);
+      const stored = await bucket.get(assetKey(draftId, hash));
       if (!stored) fail('ASSET_NOT_FOUND', 'This artwork could not be found. Upload it again.', 404);
       return stored;
     },
@@ -158,6 +207,7 @@ export function createPreparedDraftService(env, { graphql }) {
       const result = catalogData(await graphql(env, PREPARED_CATALOG_QUERY, { query: `(status:active OR status:unlisted)${safe ? ` AND (title:*${safe.replace(/[^\p{L}\p{N} _.-]/gu, ' ').trim().split(/\s+/).join('* AND title:*')}*)` : ''}`, after: after || null }, 'PreparedAdminCatalog'));
       return { products: result.products.nodes.filter(p => ['ACTIVE', 'UNLISTED'].includes(p.status)).map(productDto), ...result.products.pageInfo };
     },
+    priceProducts(record,snapshotItems) { return preparedPriceProducts(env,graphql,record,snapshotItems,config); },
     async product(productId) {
       if (!gid(productId, 'Product')) fail('INVALID_PRODUCT', 'Choose a catalog product.');
       let cursor = null, product, variants = [];
@@ -166,7 +216,15 @@ export function createPreparedDraftService(env, { graphql }) {
         product = result.product;
         if (!product || !['ACTIVE', 'UNLISTED'].includes(product.status)) fail('PRODUCT_UNAVAILABLE', 'This product is no longer active or unlisted.', 404);
         variants.push(...product.variants.nodes.map(({ media, ...variant }) => ({ ...variant, image: media?.nodes?.[0]?.preview?.image || null })));
-        if (!product.variants.pageInfo.hasNextPage) return { ...productDto(product), config: config(product.designerConfig?.value), variants };
+        if (!product.variants.pageInfo.hasNextPage) {
+          const designer = config(product.designerConfig?.value), swatches = {};
+          for (const value of designer.colors || []) if (value.name) swatches[value.name] = { color: /^#[0-9a-f]{6}$/i.test(value.tintHex || '') ? value.tintHex : '', image: /^https:\/\/cdn\.shopify\.com\//.test(value.swatchImage || '') ? value.swatchImage : '' };
+          for (const option of product.options || []) if (/colou?r/i.test(option.name)) for (const value of option.optionValues || []) {
+            const color = value.swatch?.color, image = value.swatch?.image?.image?.url;
+            if (color || image) swatches[value.name] = { color: color || swatches[value.name]?.color || '', image: image || swatches[value.name]?.image || '' };
+          }
+          return { ...productDto(product), config: designer, swatches, variants };
+        }
         cursor = product.variants.pageInfo.endCursor;
         if (!cursor) break;
       }
@@ -174,15 +232,28 @@ export function createPreparedDraftService(env, { graphql }) {
     },
   };
 }
-export async function handlePreparedDraftRequest(request, env, deps, identity, headers) {
+export async function handlePreparedDraftRequest(request, env, deps, identity, headers, context) {
   if (!env.R2_BUCKET || !env.SHOPIFY_SHOP_DOMAIN) fail('PREPARATION_UNAVAILABLE', 'Prepared order storage is not configured.', 503);
   const service = createPreparedDraftService(env, deps), url = new URL(request.url);
   const tail = url.pathname.slice('/order-manager/v1/prepared-order-drafts'.length).split('/').filter(Boolean).map(decodeURIComponent);
   const json = value => Response.json(value, { headers: { ...headers, 'Cache-Control': 'no-store' } });
-  if (!tail.length && request.method === 'GET') return json(await service.list(url.searchParams.get('cursor')));
+  if (!tail.length && request.method === 'GET') return json(await service.list(url.searchParams.get('cursor'), Object.fromEntries(url.searchParams)));
+  if (tail[0] === 'catalog' && tail[1] === 'finder' && tail.length === 2 && request.method === 'GET') return json(await searchPreparedCatalog(env, deps.graphql, Object.fromEntries(url.searchParams), context));
   if (tail[0] === 'catalog' && request.method === 'GET') return json(await service.catalog(url.searchParams.get('q'), url.searchParams.get('after')));
   if (tail[0] === 'product' && tail.length === 2 && request.method === 'GET') return json(await service.product(tail[1]));
+  if (tail.length === 2 && tail[1] === 'publish' && request.method === 'POST' && request.headers.get('Accept')?.includes('application/x-ndjson')) {
+    return preparedPublishStream(progress => handlePreparedLinkRequest(request, env, deps, service, tail[0], tail[1], progress), headers, context);
+  }
   if (tail.length === 2 && ['publish', 'link', 'revoke', 'print-choices'].includes(tail[1])) return json(await handlePreparedLinkRequest(request, env, deps, service, tail[0], tail[1]));
+  if (tail.length === 2 && tail[1] === 'manage' && request.method === 'POST') {
+    let body;
+    try { body = JSON.parse(new TextDecoder().decode(await limitedBytes(request, 4096))); }
+    catch (error) { if (error.status) throw error; fail('INVALID_JSON', 'This order action could not be read. Refresh and retry.'); }
+    if (!object(body)) fail('INVALID_ACTION', 'Choose an order action.');
+    const actor = `${identity.kind}:${identity.subject}`;
+    if (body.action === 'delete') return json(await deletePreparedPreparation(env, service, tail[0], body, actor));
+    return json(await service.manage(tail[0], body, actor));
+  }
   if (tail.length === 1 && request.method === 'GET') return json(await service.read(tail[0]));
   if (tail.length === 1 && request.method === 'PUT') {
     let body; try { body = JSON.parse(new TextDecoder().decode(await limitedBytes(request, MAX_JSON))); } catch (error) { if (error.status) throw error; fail('INVALID_JSON', 'The order details could not be read.'); }
@@ -190,6 +261,7 @@ export async function handlePreparedDraftRequest(request, env, deps, identity, h
   }
   if (tail.length === 2 && tail[1] === 'assets' && request.method === 'POST') return json(await service.upload(tail[0], request));
   if (tail.length === 3 && tail[1] === 'assets' && request.method === 'GET') {
+    await service.read(tail[0]);
     const asset = await service.asset(tail[0], tail[2]);
     // SVG is always downloaded as bytes, sanitized by the shared editor before
     // rendering, and never exposed as an executable/public SVG document.

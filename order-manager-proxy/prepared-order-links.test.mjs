@@ -5,6 +5,56 @@ const id='d20f720b-ae22-4b31-886e-b72bbf8aed36',itemId='ad7410a7-0592-4abc-8eae-
 const variant='gid://shopify/ProductVariant/1';
 const product={title:'Unlisted shirt',image:'',config:{placements:{}},variants:[{id:variant,title:'Navy / S',price:'10.00',selectedOptions:[{name:'Color',value:'Navy'},{name:'Size',value:'S'}]}]};
 const record={id,revision:'source-1',title:'Team order',preparedFor:'Team',customerMessage:'Choose your sizes.',note:'PRIVATE STAFF NOTE',mockups:[],items:[{id:itemId,productId:'gid://shopify/Product/1',variantId:variant,title:product.title,color:'Navy',printMode:'manual',manualPrints:[{side:'front',variantId:46714190168312}],project:null}]};
+
+test('two-sided automatic artwork cannot silently lose an unpriced side',()=>{
+  const art=side=>({type:'image',side,design:{xIn:1,yIn:1,wIn:3,hIn:3,rotation:0},asset:{}});
+  const item={...record.items[0],printMode:'auto',project:{prints:[art('front'),art('back')]}};
+  const prints=resolveItemPrints(item,product);
+  assert.deepEqual(prints.map(print=>print.side),['front','back']);
+  const selection=buildPreparedCheckoutLines([{id:item.id,title:item.title,variants:[{id:variant}],prints}],{[item.id]:{[variant]:2}},id,'snapshot');
+  assert.equal(selection.lines.length,3);
+  assert.deepEqual(selection.lines.slice(1).map(line=>line.customAttributes.find(value=>value.key==='_side').value),['front','back']);
+  item.project.prints[1].design.wIn=0;
+  assert.throws(()=>resolveItemPrints(item,product),/no print charge/);
+});
+
+test('published alternatives remain outside legacy templates and only chosen configurations reach Shopify',async()=>{
+  const altId='bd7410a7-0592-4abc-8eae-5c866bf65333',altVariant='gid://shopify/ProductVariant/2';
+  const source=structuredClone(record);source.items.push({...source.items[0],id:altId,alternativeForItemId:itemId,productId:'gid://shopify/Product/2',variantId:altVariant});
+  const env={R2_BUCKET:bucket(),SHOPIFY_SHOP_DOMAIN:'test.myshopify.com',PREPARED_ORDER_ADMIN_TOKEN:'fixture-token'};
+  let template,unavailable=false,lines;const original=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>{
+    const path=new URL(url).pathname;
+    if(path.includes('/public/'))return Response.json({preparedOrder:{id:linkId,reference:'PM-TEST',expiresAt:'2099-01-01',template}});
+    if(path.endsWith('/finalize')){template=JSON.parse(options.body).template;return Response.json({id:linkId,expiresAt:'2099-01-01'});}
+    return Response.json({id:linkId,status:'uploading'});
+  };
+  const deps={graphql:async(_,query,variables)=>{
+    if(query.includes('PreparedCheckoutScopes'))return {ok:true,data:{currentAppInstallation:{accessScopes:[{handle:'write_draft_orders'}]}}};
+    if(query.includes('PreparedCheckoutPrices'))return {ok:true,data:{nodes:[{id:'gid://shopify/ProductVariant/46714190168312',price:'5.00'}]}};
+    if(query.includes('PreparedCheckoutCreate')){lines=variables.input.lineItems;return {ok:true,data:{draftOrderCreate:{draftOrder:{id:'gid://shopify/DraftOrder/1',invoiceUrl:'https://test.myshopify.com/invoice/test'},userErrors:[]}}};}
+    throw Error('Unexpected query');
+  },drafts:{detail:async()=>({items:[{id:'line-alt',customAttributes:[{key:'_preparedItemId',value:altId},{key:'group_role',value:'garment'}]}]})}};
+  const service={read:async()=>structuredClone(source),product:async productId=>{if(productId.endsWith('/2')&&unavailable)throw Error('Alternative unavailable');const next=structuredClone(product);if(productId.endsWith('/2'))next.variants[0].id=altVariant;return next;}};
+  const base='https://test/order-manager/v1/prepared-orders/public/'+linkId;
+  const post=(path,body)=>handlePublicPreparedLinkRequest(new Request(base+path,{method:'POST',body:JSON.stringify(body)}),env,deps,service);
+  try{
+    await handlePreparedLinkRequest(new Request('https://test',{method:'POST',body:JSON.stringify({expectedRevision:source.revision})}),env,deps,service,id,'publish');
+    assert.deepEqual(template.workspaces.map(ws=>ws.id),[itemId]);
+    unavailable=true;
+    const view=await handlePublicPreparedLinkRequest(new Request(base),env,deps,service),snapshotId=view.order.snapshotId;
+    assert.equal(view.order.choices[0].options.length,2);
+    assert.equal(JSON.stringify(view).includes('PRIVATE STAFF NOTE'),false);
+    const primary=await post('/quote',{snapshotId,designs:{}});assert.deepEqual(primary.items.map(item=>item.id),[itemId]);
+    unavailable=false;
+    const selection={choices:{[itemId]:altId},extras:[]},quote=await post('/quote',{snapshotId,selection,designs:{}});
+    assert.deepEqual(quote.items.map(item=>item.id),[altId]);
+    await post('/checkout',{snapshotId,selection,designs:{},quoteId:quote.quoteId,sessionId:id,quantities:{[altId]:{[altVariant]:2}}});
+    assert.equal(lines[0].variantId,altVariant);assert.equal(lines[0].quantity,2);
+    assert.ok(lines.every(line=>line.customAttributes.some(attr=>attr.key==='_preparedItemId'&&attr.value===altId)));
+    await assert.rejects(post('/checkout',{snapshotId,selection,designs:{},quoteId:quote.quoteId,sessionId:id,quantities:{[itemId]:{[variant]:2}}}),error=>error.code==='INVALID_SELECTION');
+  }finally{globalThis.fetch=original;}
+});
 test('edited front/back production exports and the supplied mockup remain assigned to their own garments',async()=>{
   const manualId='bd7410a7-0592-4abc-8eae-5c866bf65333',uploads=[];
   const source=structuredClone(record);source.items.push({...source.items[0],id:manualId});
@@ -107,4 +157,15 @@ test('publish, public review and idempotent Shopify checkout work without imager
     await handlePreparedLinkRequest(new Request('https://test',{method:'POST'}),env,deps,service,id,'revoke');await assert.rejects(handlePublicPreparedLinkRequest(publicRequest,env,deps,service),error=>error.status===410);
     const inactive=await handlePreparedLinkRequest(new Request('https://test'),env,deps,service,id,'link');assert.equal(inactive.link.status,'revoked');
   }finally{globalThis.fetch=original}
+});
+
+test('only concurrent identical quotes coalesce; later quotes and checkout validate current commerce again',async()=>{
+  const snapshotId='c'.repeat(64),env={SHOPIFY_SHOP_DOMAIN:'coalescing.myshopify.com',R2_BUCKET:bucket(),PREPARED_ORDER_SERVICE:{fetch:async()=>Response.json({preparedOrder:{id:linkId,expiresAt:'2099-01-01',template:{purchase:{kind:'order_manager_prepared',snapshotId}}}})}};
+  await env.R2_BUCKET.put('admin-prepared-orders/v1/coalescing.myshopify.com/published/'+linkId+'/'+snapshotId+'.json',JSON.stringify({record,items:[{id:itemId,variants:[{id:variant,size:'S',priceCents:1000}],prints:[],images:[]}]}));
+  let reads=0;const service={priceProducts:async()=>{reads++;await new Promise(resolve=>setTimeout(resolve,2));return new Map([[record.items[0].productId,product]])}},deps={graphql:async()=>({data:{nodes:[{id:'gid://shopify/ProductVariant/46714190168312',price:'5.00',product:{handle:'printing'}}]}})};
+  const request=(path,extra={})=>new Request('https://worker.test/order-manager/v1/prepared-orders/public/'+linkId+'/'+path,{method:'POST',body:JSON.stringify({snapshotId,...extra})});
+  const first=await Promise.all([handlePublicPreparedLinkRequest(request('quote'),env,deps,service),handlePublicPreparedLinkRequest(request('quote'),env,deps,service)]);
+  assert.equal(reads,1);assert.equal(first[0].quoteId,first[1].quoteId);
+  await handlePublicPreparedLinkRequest(request('quote'),env,deps,service);assert.equal(reads,2);
+  await assert.rejects(handlePublicPreparedLinkRequest(request('checkout',{designs:{},sessionId:id,quoteId:'stale',quantities:{[itemId]:{[variant]:1}}}),env,deps,service),error=>error.code==='PRICE_CHANGED');assert.equal(reads,3);
 });
