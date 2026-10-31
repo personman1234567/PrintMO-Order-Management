@@ -31,6 +31,28 @@ test('transparent WebP proofs remain associated with the edited production item'
   assert.deepEqual(files.map(file=>[file.itemId,file.side,file.mime]),[['editor','front',undefined],['editor','other','image/webp']])
   assert.equal(recipientArtwork(record,designs,{editor:{front:'<svg/>'}},new Set(),{editor:'data:image/webp;base64,UklGRg=='}).length,0)
 });
+test('optional front recognition files stay separate from the complete proof and actual print exports',()=>{
+  const designs={editor:{prints:[art]}},svg='<svg></svg>';
+  const args=[record,designs,{editor:{front:svg}},new Set(['editor']),{editor:'data:image/webp;base64,Q09NQklORUQ='}];
+  const files=recipientArtwork(...args,{editor:'data:image/png;base64,RlJPTlQ=',image:'data:image/png;base64,SU5KRUNURUQ='});
+  assert.deepEqual(files.map(file=>[file.itemId,file.side,file.role]),[['editor','front',undefined],['editor','other',undefined],['editor','front','mobile-preview']]);
+  assert.equal(files[0].svg,svg);
+  assert.equal(files[1].base64,'Q09NQklORUQ=');
+  for(const optional of [undefined,null,[],{editor:'https://example.test/combined.png'},{editor:'data:image/svg+xml;base64,PHN2Zy8+'}]){
+    assert.deepEqual(recipientArtwork(...args,optional),files.slice(0,2));
+  }
+  assert.throws(()=>recipientArtwork(record,designs,{},new Set(['editor']),{}, {editor:'data:image/png;base64,RlJPTlQ='}));
+  const back={editor:{prints:[{...art,side:'back'}]}};
+  assert.equal(recipientArtwork(record,back,{editor:{back:svg}},new Set(['editor']),{}, {editor:'data:image/png;base64,RlJPTlQ='}).some(file=>file.role==='mobile-preview'),false);
+});
+test('optional front derivatives obey per-item and total budgets while required artwork remains complete',()=>{
+  const ids=['first','second','third','oversized'],source={items:ids.map(id=>({id}))};
+  const designs=Object.fromEntries(ids.map(id=>[id,{prints:[art]}])),input=Object.fromEntries(ids.map(id=>[id,{front:'<svg></svg>'}]));
+  const prefix='data:image/png;base64,',full=prefix+'A'.repeat(1024*1024-prefix.length);
+  const files=recipientArtwork(source,designs,input,new Set(ids),{},{first:full,second:full,third:prefix+'AA==',oversized:full+'AAAA'});
+  assert.deepEqual(files.filter(file=>file.role==='mobile-preview').map(file=>file.itemId),['first','second']);
+  assert.deepEqual(files.filter(file=>file.svg).map(file=>file.itemId),ids);
+});
 test('mixed recipient workspaces retain per-item pasted proofs, editable art, calibration and real variants without storefront images',async()=>{
   const items=record.items.map(item=>({id:item.id,variants:[{id:item.variantId,size:'M',priceCents:1000}],prints:[],images:[`https://proof.test/${item.id}.png`]}));
   const result=await recipientTemplate(record,items,{product:async()=>product},{workspaces:[{id:'editor',design:{prints:[{...art,asset:{url:'https://art.test/art.png'}}]}}]});

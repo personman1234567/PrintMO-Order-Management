@@ -114,6 +114,13 @@ Supplies, Print and More navigation at viewport widths through 900px. Desktop
 keeps its existing Board/List presentation. This is a mobile arrangement of the
 same operational model, with no new canonical production stages.
 
+Orders rows lead with a 96px square, contained preview and garment/color/unit
+context. Prefer an explicitly associated front derivative; retain the combined
+proof when no derivative exists. Standalone art is labeled **Order artwork**;
+catalog and schematic fallbacks remain distinguishable. Delivery method has its
+own icon and text before opening detail; unknown method reads **Check delivery**.
+Desktop and detail retain the existing combined proof and image selection.
+
 The mobile type steps are 20px for the work-area heading, 18px for sheet headings,
 16px for editable fields (preventing phone input zoom), 15px for order/customer
 identity, 14px for the working UI, 13px for controls and status, and 12px for

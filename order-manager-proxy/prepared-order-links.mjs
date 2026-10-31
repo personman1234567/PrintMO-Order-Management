@@ -3,6 +3,7 @@ import { recipientTemplate, recipientDesigns, recipientArtwork, recipientChoiceP
 import { selectedPreparedRecord, primaryPreparedTemplate, preparedSelection } from './prepared-choices.mjs';
 import { mapConcurrent } from './prepared-publish-progress.mjs';
 import {recipientSizeGuides} from './prepared-size-guides.mjs';
+import {preparedColorOptions,recipientConfigurations} from './prepared-colors.mjs';
 const UPSTREAM = 'https://designer-preview-upload.printmobusiness.workers.dev';
 const customerUrl = (_env,id) => 'https://print-mo.com/pages/designer-studio?preparedOrder='+id;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -94,11 +95,13 @@ function variantChoices(item, product) {
   const reference=product.variants.find(variant=>variant.id===item.variantId);
   if(!reference)fail('PRODUCT_CHANGED',`${item.title} has changed in Shopify. Choose its garment and color again.`);
   const options=reference.selectedOptions.filter(option=>!/^size$/i.test(option.name));
-  return product.variants.filter(variant=>options.every(option=>variant.selectedOptions.some(value=>value.name===option.name&&value.value===option.value))).map(variant=>({id:variant.id,size:variant.selectedOptions.find(option=>/^size$/i.test(option.name))?.value||'One size',priceCents:Math.round(Number(variant.price)*100)}));
+  return product.variants.filter(variant=>options.every(option=>variant.selectedOptions.some(value=>value.name===option.name&&value.value===option.value))).map(variant=>({id:variant.id,size:variant.selectedOptions.find(option=>/^size$/i.test(option.name))?.value||'One size',priceCents:Math.round(Number(variant.price)*100),...(item.recipientConfiguration&&typeof variant.availableForSale==='boolean'?{available:variant.availableForSale}:{})}));
 }
-async function enrich(env,deps,service,record,snapshotItems) {
+async function enrich(env,deps,service,record,snapshotItems,preloadedProducts=new Map()) {
   if(!record.items.length)fail('ITEMS_REQUIRED','Add a garment before creating a customer link.');
-  const products=snapshotItems&&service.priceProducts?await service.priceProducts(record,snapshotItems):new Map(),items=[];
+  const missingRecord={...record,items:record.items.filter(item=>!preloadedProducts.has(item.productId))};
+  const lean=snapshotItems&&service.priceProducts&&missingRecord.items.length?await service.priceProducts(missingRecord,snapshotItems):new Map();
+  const products=new Map([...lean,...preloadedProducts]),items=[];
   await mapConcurrent([...new Set(record.items.map(item=>item.productId))].filter(id=>!products.has(id)),3,async id=>products.set(id,await service.product(id)));
   for(const item of record.items){if(!products.has(item.productId))products.set(item.productId,await service.product(item.productId));const product=products.get(item.productId);const dimensions=(item.project?.prints||[]).map(print=>{const bounds=placementInkBounds(print),side=item.project.canvasCalibration?.bySide?.[print.side],scale=side?side.referenceWidthIn/side.safeWidthIn:1;return `${print.side}: ${(bounds.w*scale).toFixed(2)} x ${(bounds.h*scale).toFixed(2)} in, ${print.design.rotation} degrees`;}).join('; ');items.push({id:item.id,title:product.title,color:item.optionLabel||item.color||item.variantTitle,variants:variantChoices(item,product),prints:resolveItemPrints(item,product),dimensions,instructions:item.instructions||'',image:product.image||''});}
   const ids=[...new Set(items.flatMap(item=>item.prints.map(print=>'gid://shopify/ProductVariant/'+print.variantId)))];
@@ -212,7 +215,7 @@ export function buildPreparedCheckoutLines(items,selections,orderId,snapshotId) 
   for(const item of items){const values=selections[item.id]||{};if(typeof values!=='object'||Array.isArray(values))fail('INVALID_QUANTITY','Enter whole-number quantities.');
     for(const [variantId,quantity] of Object.entries(values)){
       if(!Number.isInteger(quantity)||quantity<0||quantity>9999)fail('INVALID_QUANTITY','Use whole-number quantities between 0 and 9999.');if(!quantity)continue;
-      const variant=item.variants.find(value=>value.id===variantId);if(!variant)fail('VARIANT_UNAVAILABLE','A selected size is unavailable. Reload the order and choose again.',409);
+      const variant=item.variants.find(value=>value.id===variantId);if(!variant||variant.available===false)fail('VARIANT_UNAVAILABLE','A selected size is unavailable. Reload the order and choose again.',409);
       total+=quantity;if(total>10000)fail('QUANTITY_LIMIT','Contact Print-MO for orders over 10,000 garments.');
       const batch=orderId+':'+item.id+':'+variantId.split('/').pop();
       const base={group_id:orderId+':'+item.id,batch_id:batch,_preparedOrderId:orderId,_preparedConfigId:snapshotId,_preparedItemId:item.id,method:'DTF',garment_color:item.color,garment_size:variant.size,product_title:item.title};
@@ -227,14 +230,24 @@ export function buildPreparedCheckoutLines(items,selections,orderId,snapshotId) 
   if(lines.length>200)fail('ORDER_TOO_LARGE','This order has too many size and print combinations. Contact Print-MO to split it.');
   return {lines,chosen,total};
 }
+export async function withOptionalPreparedPreviewDeadline(work,{setTimer=setTimeout,clearTimer=clearTimeout}={}) {
+  let timer;
+  const timeout=new Promise(resolve=>{timer=setTimer(()=>resolve(false),5000);});
+  try {
+    return await Promise.race([Promise.resolve().then(work).then(()=>true),timeout]);
+  } catch { return false; }
+  finally { if(timer!==undefined)clearTimer(timer); }
+}
 export async function transferProductionAssets(env,deps,service,snapshot,checkoutId,draftId,chosen,progress) {
   const detail=await deps.drafts.detail(draftId),roles={front:'front',back:'back',breast:'left-chest',left:'left-sleeve',right:'right-sleeve'},jobs=new Map();
   for(const item of snapshot.record.items){
     if(!chosen.some(value=>value.itemId===item.id))continue;
     const lineIds=detail.items.filter(line=>line.customAttributes?.some(value=>value.key==='_preparedItemId'&&value.value===item.id)&&line.customAttributes?.some(value=>['group_role','_group_role'].includes(value.key)&&value.value==='garment')).map(line=>line.id);
     if(!lineIds.length)fail('PRODUCTION_ASSOCIATION_PENDING','Your checkout is being prepared. Retry in a moment.',503);
-    const edited=(snapshot.recipientFiles||[]).filter(file=>file.itemId===item.id);
+    const recipientFiles=(snapshot.recipientFiles||[]).filter(file=>file.itemId===item.id);
+    const edited=recipientFiles.filter(file=>file.role!=='mobile-preview');
     const files=[...edited.map(file=>({assetId:'recipient-'+item.id+'-'+file.side,mime:file.mime||'image/svg+xml',svg:file.svg,base64:file.base64,role:file.svg?'design':'mockup',placement:roles[file.side]||'other'})),
+      ...recipientFiles.filter(file=>file.role==='mobile-preview'&&file.side==='front').map(file=>({assetId:'recipient-'+item.id+'-mobile-front',mime:file.mime,base64:file.base64,role:'mobile-preview',placement:'front'})),
       ...(!edited.length?item.project?.prints||[]:[]).map(print=>({assetId:print.asset.assetId,mime:print.asset.mime,role:['image/png','image/svg+xml'].includes(print.asset.mime)?'design':'mockup',placement:roles[print.side]||'other'})),
       ...(item.proofAssetId&&!edited.length?[{assetId:item.proofAssetId,mime:'image/png',role:'mockup',placement:roles[item.proofSide]||'other'}]:[]),
       ...snapshot.record.mockups.filter(mockup=>!mockup.itemIds?.length||mockup.itemIds.includes(item.id)).map(mockup=>({...mockup,role:'mockup',placement:'other'}))];
@@ -243,19 +256,35 @@ export async function transferProductionAssets(env,deps,service,snapshot,checkou
   // One shared original/proof is copied once and assigned to every matching line.
   for(const [key,file] of jobs){
     const uploadId='prep-'+await hash(checkoutId+key);if(progress.completedUploads.includes(uploadId))continue;
-    const bytes=file.svg?new TextEncoder().encode(file.svg):file.base64?Uint8Array.from(atob(file.base64),value=>value.charCodeAt(0)):await (await service.asset(snapshot.record.id,file.assetId)).arrayBuffer(),extension={'image/png':'.png','image/svg+xml':'.svg','image/jpeg':'.jpg','image/webp':'.webp'}[file.mime];if(!extension)fail('ARTWORK_FORMAT','An artwork file format needs attention. Contact Print-MO.');
-    const form=new FormData();form.set('role',file.role);form.set('placement',file.placement);form.set('lineItemIds',JSON.stringify([...file.lineIds]));form.set('uploadId',uploadId);form.set('file',new File([bytes],'prepared-'+file.assetId.slice(0,32)+extension,{type:file.mime}));
-    await deps.drafts.handle(new Request('https://internal/order-manager/v1/drafts/'+encodeURIComponent(draftId)+'/assets',{method:'POST',body:form}),'prepared-checkout');
-    progress.completedUploads.push(uploadId);await writeJson(env.R2_BUCKET,ROOT(env)+'checkouts/'+checkoutId+'.json',progress);
+    try {
+      const bytes=file.svg?new TextEncoder().encode(file.svg):file.base64?Uint8Array.from(atob(file.base64),value=>value.charCodeAt(0)):await (await service.asset(snapshot.record.id,file.assetId)).arrayBuffer(),extension={'image/png':'.png','image/svg+xml':'.svg','image/jpeg':'.jpg','image/webp':'.webp'}[file.mime];if(!extension)fail('ARTWORK_FORMAT','An artwork file format needs attention. Contact Print-MO.');
+      const form=new FormData();form.set('role',file.role);form.set('placement',file.placement);form.set('lineItemIds',JSON.stringify([...file.lineIds]));form.set('uploadId',uploadId);form.set('file',new File([bytes],'prepared-'+file.assetId.slice(0,32)+extension,{type:file.mime}));
+      const request=new Request('https://internal/order-manager/v1/drafts/'+encodeURIComponent(draftId)+'/assets',{method:'POST',body:form});
+      if(file.role==='mobile-preview') {
+        if(await withOptionalPreparedPreviewDeadline(()=>deps.drafts.handle(request,'prepared-checkout')))progress.completedUploads.push(uploadId);
+        // The next required-file checkpoint or final ready write persists this
+        // progress. Optional media adds no separate unbounded storage wait.
+        continue;
+      }
+      await deps.drafts.handle(request,'prepared-checkout');
+      progress.completedUploads.push(uploadId);await writeJson(env.R2_BUCKET,ROOT(env)+'checkouts/'+checkoutId+'.json',progress);
+    } catch (error) {
+      if (file.role!=='mobile-preview') throw error;
+      // Recognition is best-effort. Production artwork/proof errors remain blocking.
+    }
   }
 }
 async function recipientQuote(env,deps,service,document,body) {
   if(body.snapshotId!==document.purchase.snapshotId)fail('ORDER_CHANGED','Print-MO updated this order. Reload it before continuing.',409);
   const selected=selectedPreparedRecord(document.snapshot.record,body.selection);
-  const edited=recipientDesigns(selected,body.designs);
-  const items=await enrich(env,deps,service,edited.record,document.snapshot.items);
-  for(const item of items){const saved=document.snapshot.items.find(value=>value.id===item.id);item.images=saved.images||[];}
-  const quoteId=await hash(JSON.stringify({snapshotId:body.snapshotId,designs:edited.designs,items,...(body.selection?{selection:body.selection}:{})}));
+  if(body.configurations&&env.PREPARED_RECIPIENT_COLORS_ENABLED!=='true')fail('COLORS_UNAVAILABLE','Color changes are not enabled on this order service.',409);
+  const colorProducts=new Map(),configuredService=body.configurations?{...service,product:id=>{if(!colorProducts.has(id))colorProducts.set(id,service.product(id));return colorProducts.get(id);}}:service;
+  const configured=await recipientConfigurations(selected,body.configurations,configuredService);
+  const edited=recipientDesigns(configured,body.designs);
+  const loadedProducts=new Map(await Promise.all([...colorProducts].map(async([id,job])=>[id,await job])));
+  const items=await enrich(env,deps,configuredService,edited.record,document.snapshot.items,loadedProducts);
+  for(const item of items){const saved=document.snapshot.items.find(value=>value.id===item.id);const changed=configured.items.find(value=>value.id===item.id)?.variantId!==selected.items.find(value=>value.id===item.id)?.variantId;item.images=changed?[]:saved.images||[];}
+  const quoteId=await hash(JSON.stringify({snapshotId:body.snapshotId,designs:edited.designs,items,...(body.selection?{selection:body.selection}:{}),...(body.configurations?{configurations:body.configurations}:{})}));
   return {...edited,items,quoteId};
 }
 async function checkout(request,env,deps,service,id,document,isQuote=false) {
@@ -267,16 +296,16 @@ async function checkout(request,env,deps,service,id,document,isQuote=false) {
   for(const [itemId,values] of Object.entries(body.quantities||{}))if(!selectedIds.has(itemId)&&Object.values(values||{}).some(quantity=>Number(quantity)>0))fail('INVALID_SELECTION','An unselected option cannot be purchased. Review your order.');
   let quote=null;
   if(isQuote){
-    const key=await hash(JSON.stringify({shop:env.SHOPIFY_SHOP_DOMAIN,id,snapshotId:body.snapshotId,designs:body.designs,selection:body.selection}));
+    const key=await hash(JSON.stringify({shop:env.SHOPIFY_SHOP_DOMAIN,id,snapshotId:body.snapshotId,designs:body.designs,selection:body.selection,...(body.configurations?{configurations:body.configurations}:{})}));
     let job=quoteFlights.get(key);
     if(!job){job=recipientQuote(env,deps,service,document,body);if(quoteFlights.size<100)quoteFlights.set(key,job);}
     try{quote=await job}finally{if(quoteFlights.get(key)===job)quoteFlights.delete(key);}
-  }else if(body.designs||body.selection)quote=await recipientQuote(env,deps,service,document,body);
+  }else if(body.designs||body.selection||body.configurations)quote=await recipientQuote(env,deps,service,document,body);
   if(isQuote)return {quoteId:quote.quoteId,items:quote.items};
   if(!UUID.test(body.sessionId||''))fail('INVALID_SESSION','Reload this order, then try checkout again.');
   if(quote&&body.quoteId!==quote.quoteId)fail('PRICE_CHANGED','The price or design changed. Return to the review and retry checkout.',409);
   const chosen=buildPreparedCheckoutLines(quote?.items||document.snapshot.items.filter(item=>selectedIds.has(item.id)),body.quantities,id,body.snapshotId);
-  const files=recipientArtwork(document.snapshot.record,quote?.designs||{},body.artwork,new Set(chosen.chosen.map(value=>value.itemId)),body.previews);
+  const files=recipientArtwork(document.snapshot.record,quote?.designs||{},body.artwork,new Set(chosen.chosen.map(value=>value.itemId)),body.previews,body.frontPreviews);
   const checkoutId=await hash(JSON.stringify({id,snapshotId:body.snapshotId,sessionId:body.sessionId,chosen:chosen.chosen,...(quote?{quoteId:quote.quoteId,artworkHash:await hash(JSON.stringify(files))}:{})})),key=ROOT(env)+'checkouts/'+checkoutId+'.json';
   const existing=await readJson(env.R2_BUCKET,key);
   if(existing?.value.state==='ready')return {checkoutUrl:existing.value.url};
@@ -288,7 +317,7 @@ async function checkout(request,env,deps,service,id,document,isQuote=false) {
   }
   if(!progress?.draftId){
     const fresh=quote?.items||await enrich(env,deps,service,selectedPreparedRecord(document.snapshot.record,body.selection));
-    for(const item of document.snapshot.items){const current=fresh.find(value=>value.id===item.id);for(const selection of chosen.chosen.filter(value=>value.itemId===item.id)){const old=item.variants.find(value=>value.id===selection.variantId),now=current.variants.find(value=>value.id===selection.variantId);if(!now||now.priceCents!==old.priceCents||(!quote&&JSON.stringify(current.prints)!==JSON.stringify(item.prints)))fail('PRICE_CHANGED','This order’s products or prices have changed. Ask Print-MO to update your link before purchasing.',409);}}
+    for(const item of document.snapshot.items){const current=fresh.find(value=>value.id===item.id);const changed=quote&&quote.record.items.find(value=>value.id===item.id)?.variantId!==document.snapshot.record.items.find(value=>value.id===item.id)?.variantId;for(const selection of chosen.chosen.filter(value=>value.itemId===item.id)){const old=item.variants.find(value=>value.id===selection.variantId),now=current.variants.find(value=>value.id===selection.variantId);if(!now||(!changed&&(!old||now.priceCents!==old.priceCents))||(!quote&&JSON.stringify(current.prints)!==JSON.stringify(item.prints)))fail('PRICE_CHANGED','This order’s products or prices have changed. Ask Print-MO to update your link before purchasing.',409);}}
     await requireCheckoutAccess(env,deps);
     const lease=await writeJson(env.R2_BUCKET,key,{state:'pending',startedAt:new Date().toISOString()},existing?{etagMatches:existing.etag}:{etagDoesNotMatch:'*'});if(!lease)fail('CHECKOUT_PENDING','Your checkout is already being prepared. Retry in a moment.',409);
     const result=checked(await deps.graphql(env,PREPARED_CHECKOUT_CREATE,{input:{lineItems:chosen.lines,tags:['pm-prepared-checkout','pm-prepared-'+checkoutId.slice(0,40)],acceptAutomaticDiscounts:true,allowDiscountCodesInCheckout:true,customAttributes:[{key:'_preparedOrderId',value:id},{key:'_preparedConfigId',value:body.snapshotId}]}},'PreparedCheckoutCreate')).draftOrderCreate;
@@ -302,9 +331,15 @@ async function checkout(request,env,deps,service,id,document,isQuote=false) {
   progress.state='ready';await writeJson(env.R2_BUCKET,key,progress);return {checkoutUrl:progress.url};
 }
 export async function handlePublicPreparedLinkRequest(request,env,deps,service) {
-  const match=new URL(request.url).pathname.match(/^\/order-manager\/v1\/prepared-orders\/public\/([a-f0-9-]{36})(?:\/(checkout|quote|size-guides))?$/i);
+  const match=new URL(request.url).pathname.match(/^\/order-manager\/v1\/prepared-orders\/public\/([a-f0-9-]{36})(?:\/(checkout|quote|size-guides|colors))?$/i);
   if(!match)fail('LINK_UNAVAILABLE','This order link is unavailable.',404);
   const document=await publishedOrder(env,match[1]);
+  if(request.method==='GET'&&match[2]==='colors'){
+    if(env.PREPARED_RECIPIENT_COLORS_ENABLED!=='true')fail('COLORS_UNAVAILABLE','Color changes are not enabled on this order service.',409);
+    const params=new URL(request.url).searchParams;
+    if(params.get('snapshotId')!==document.purchase.snapshotId)fail('ORDER_CHANGED','Print-MO updated this order. Reload before changing colors.',409);
+    return preparedColorOptions(document.snapshot.record,params.get('item'),service);
+  }
   if(request.method==='GET'&&match[2]==='size-guides')return recipientSizeGuides(env,deps,document.snapshot.record);
   if(request.method==='GET'&&!match[2]){
     const template=await recipientTemplate(selectedPreparedRecord(document.snapshot.record),document.snapshot.items,service,document.order.template,{preferPublished:true});

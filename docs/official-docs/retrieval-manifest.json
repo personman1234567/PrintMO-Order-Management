@@ -77,14 +77,14 @@
       "command": "npm run repo -- build cloudflare",
       "purpose": "Prepare the Cloudflare Pages upload bundle.",
       "mode": "local-write",
-      "script": "scripts/prepare-cloudflare-pages-upload.sh"
+      "script": "scripts/repo-tool.js"
     },
     {
       "id": "cloudflare-deploy",
       "command": "npm run repo -- deploy cloudflare -- --production|--preview [branch]",
       "purpose": "Publish a prepared Cloudflare Pages release and verify its served release marker.",
       "mode": "remote-write",
-      "script": "scripts/deploy-cloudflare-pages.sh"
+      "script": "scripts/repo-tool.js"
     },
     {
       "id": "ss-feedback-simulator",

@@ -26,14 +26,24 @@
 
 ## Current Release Boundary
 
-Current production deployment on 2026-09-03:
+Current Order Manager production deployment on 2026-10-31:
 
-- Worker version: `24b570ed-ac91-4e34-8029-849c88157e78`
-- Pages deployment: `67c73fcb.print-mo-order-manager.pages.dev` (release marker `1788475312134`)
-- Shopify app version: `designer-assets-idempotency-2026-07-23`
-- Stateless supplier gateway commit: `d3a0d5a`
+- D1 migration: `0014_mobile_order_recognition.sql`, applied once at `2026-10-31 17:10:05 UTC`; no migrations remain pending. The 358 manifests, 598 asset links and 62 draft files retained their existing rows with empty `preview_kind` defaults.
+- Worker version: `eeb5fa6f-fc32-4a69-a546-e88f549b90d6`, verified active at `https://order-manager-proxy.printmobusiness.workers.dev`.
+- Pages deployment: `3611787d.print-mo-order-manager.pages.dev`, production release marker `1793466752930` at `https://print-mo-order-manager.pages.dev`.
+- Scope: Order Manager migration, Worker and Pages only. All Shopify/Designer changes from this task remain local and undeployed, including the Designer preview Worker, website frontend and every theme. New website submissions therefore do not yet emit the additive front preview; existing combined-image fallbacks remain supported.
 
-This release adds per-line printable-piece eligibility and includes Shopify `closedAt` alongside cancellation and exact `FULFILLED`
+Verification distinguishes local behavior from release delivery. Local fixture tests,
+Phase 1/2 and browser checks at 320px/393px passed, including desktop combined-image
+preservation and mobile-to-desktop restoration. Production served-byte verification
+matched both HTML files and six runtime assets to the published artifact. Public
+browser rendering passed without authenticated order data. Authenticated post-release
+mobile/desktop smoke checks, including real delivery labels and image fallback, remain
+**incomplete**: Shopify's iframe stayed at `about:blank`, then Computer Use stopped
+because it could not confidently establish the current browser URL. No browser retry
+or customer-record test mutation followed that stop.
+
+The board retains per-line printable-piece eligibility and includes Shopify `closedAt` alongside cancellation and exact `FULFILLED`
 source-driven: each removes the order from active-board projection reads
 without deleting its D1 projection or production history, and later production
 reconciliation cannot reactivate it while Shopify continues to report the

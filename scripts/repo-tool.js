@@ -104,6 +104,11 @@ function runNode(script, args = []) {
   run(process.execPath, [path.join(root, script), ...args]);
 }
 
+function cloudflareCommand(action, args, platform = process.platform) {
+  if (platform === 'win32') return [process.execPath, [path.join(root, 'scripts/cloudflare-pages-native.cjs'), action, ...args]];
+  return ['bash', [action === 'build' ? 'scripts/prepare-cloudflare-pages-upload.sh' : 'scripts/deploy-cloudflare-pages.sh', ...args]];
+}
+
 function runRegisteredCommand(args) {
   const [group, action, ...rest] = args;
   const commandArgs = rest[0] === '--' ? rest.slice(1) : rest;
@@ -118,8 +123,7 @@ function runRegisteredCommand(args) {
   if (group === 'redis' && action === 'backup') return runNode('scripts/backup-redis-queue.js', rest);
   if (group === 'parity' && action === 'check') return runNode('scripts/run-parity-check.js', rest);
   if (group === 'build' && action === 'desktop-config') return runNode('scripts/create-desktop-config.js', rest);
-  if (group === 'build' && action === 'cloudflare') return run('bash', ['scripts/prepare-cloudflare-pages-upload.sh', ...commandArgs]);
-  if (group === 'deploy' && action === 'cloudflare') return run('bash', ['scripts/deploy-cloudflare-pages.sh', ...commandArgs]);
+  if (['build', 'deploy'].includes(group) && action === 'cloudflare') return run(...cloudflareCommand(group, commandArgs));
   if (group === 'simulate' && action === 'ss-feedback') return runNode('scripts/simulate-ss-feedback.js', commandArgs);
   if (group === 'migration' && ['dry-run', 'execute'].includes(action)) {
     const mode = action === 'execute' ? '--execute' : '--dry-run';
@@ -185,4 +189,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { loadManifest, routeQuery, routeScore, runRegisteredCommand };
+module.exports = { loadManifest, routeQuery, routeScore, runRegisteredCommand, cloudflareCommand };

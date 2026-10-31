@@ -46,3 +46,18 @@ inventory-sync/.env*
 inventory-sync/.wrangler/
 inventory-sync/.enrollment-*/
 .wrangler/
+
+# Task-local baselines, previews, test output, downloads and packaged candidates
+/tmp/
+
+# Local Prepared Orders verification and deployment logs
+/.prepared-*.log
+
+# Local secret configuration; retain shareable example templates
+.env.*
+!.env.example
+!.env.*.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+!.dev.vars.*.example

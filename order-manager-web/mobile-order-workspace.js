@@ -29,6 +29,24 @@
     document.getElementById('orders-view').prepend(root);
     const $ = selector => root.querySelector(selector);
     const scroll = $('.mw-scroll'), rows = $('.mw-rows'), search = $('.mw-search input'), feedback = $('.mw-feedback');
+    const visibleRows = new Set();
+    let visibilityFrame = 0, visibleSignature = '';
+    function publishVisibleRows() {
+      if (visibilityFrame) return;
+      visibilityFrame = requestAnimationFrame(() => {
+        visibilityFrame = 0;
+        const keys = enabled() && area === 'orders' && !root.hidden
+          ? currentRows.filter(row => !previewObserver || visibleRows.has(row.key)).slice(0, previewObserver ? undefined : 8).map(row => row.key) : [];
+        const signature = JSON.stringify([area, view().stage, keys]);
+        if (signature === visibleSignature) return;
+        visibleSignature = signature;
+        document.dispatchEvent(new CustomEvent('printmo:mobile-recognition-visible', { detail: { keys } }));
+      });
+    }
+    const previewObserver = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+      for (const entry of entries) entry.isIntersecting ? visibleRows.add(entry.target.dataset.orderKey) : visibleRows.delete(entry.target.dataset.orderKey);
+      publishVisibleRows();
+    }, { root: scroll, rootMargin: '160px 0px', threshold: 0 }) : null;
     const nav = el('nav', null, 'mw-navigation'); nav.hidden = true; nav.setAttribute('aria-label', 'Work areas');
     for (const name of model.AREAS) {
       const item = button('', () => navigation.navigateMobile(name)); item.dataset.mobileAreaTarget = name;
@@ -138,20 +156,92 @@
       const checkLabel = el('label', null, 'mw-row-selection'), check = document.createElement('input'); check.type = 'checkbox';
       checkLabel.append(check); check.addEventListener('change', () => { check.checked ? selected.add(row.key) : selected.delete(row.key); renderSelection(); });
       const open = button('', () => openOrder(row.key), 'mw-row-open');
+      const preview = el('div', null, 'mw-row-preview'), previewButton = button('', () => openOrder(row.key), 'mw-preview-open');
+      const previewMedia = el('span', null, 'mw-preview-media'), previewCaption = el('span', null, 'mw-preview-caption');
+      previewButton.append(previewMedia); preview.append(previewButton, previewCaption); preview.hidden = true;
       const identity = el('div', null, 'mw-row-identity'), customer = el('strong'), number = el('span', null, 'mw-row-number'); identity.append(customer, number);
+      const garments = el('div', null, 'mw-row-garments'), delivery = el('div', null, 'mw-row-delivery'); garments.hidden = true; delivery.hidden = true;
       const meta = el('div', null, 'mw-row-meta'), detail = el('div', null, 'mw-row-detail'), attention = el('div', null, 'mw-row-attention');
       open.append(identity, meta, detail, attention);
+      const status = el('div', null, 'mw-row-status'); status.hidden = true;
       const action = button('Actions', () => openActions([row.key], action), 'mw-row-actions');
       const progress = button('', () => startProgress(row.key), 'mw-progress');
-      node.append(checkLabel, open, action, progress);
+      node.append(checkLabel, preview, open, action, progress, status);
       node.addEventListener('click', event => { if (!event.target.closest('button, input, label, form')) openOrder(row.key); });
-      return { node, checkLabel, check, open, customer, number, meta, detail, attention, action, progress, signature: '' };
+      previewObserver?.observe(node);
+      return { node, checkLabel, check, open, customer, number, meta, detail, attention, action, progress, preview, previewButton, previewMedia, previewCaption, garments, delivery, status, signature: '', previewSignature: '' };
+    }
+    function renderPreview(row, record, recognition, order) {
+      const preview = recognition?.preview || {};
+      const signature = JSON.stringify([preview, window.OrderGarmentSummary?.models?.(order)?.[0]?.key]);
+      record.previewButton.disabled = busy;
+      record.previewButton.setAttribute('aria-label', `Open preview and order details for ${row.number}, ${row.customer}`);
+      if (record.previewSignature === signature) return;
+      record.previewSignature = signature;
+      record.previewMedia.replaceChildren(); record.previewMedia.dataset.state = preview.state || 'unavailable';
+      record.previewCaption.textContent = preview.kind === 'artwork' ? 'Order artwork' : preview.kind === 'catalog' ? 'Garment reference' : preview.kind === 'garment' ? 'Garment summary' : '';
+      record.previewCaption.hidden = !record.previewCaption.textContent;
+      if (preview.url && preview.state !== 'failed') {
+        const image = document.createElement('img'); image.alt = ''; image.width = 96; image.height = 96;
+        image.loading = 'lazy'; image.decoding = 'async';
+        image.addEventListener('load', () => {
+          if (record.previewSignature === signature) record.previewMedia.dataset.state = 'ready';
+        });
+        image.addEventListener('error', () => {
+          if (record.previewSignature !== signature) return;
+          window.MobileOrderRecognition?.markPreviewFailed?.(order, preview.identity);
+          record.previewSignature = ''; record.signature = ''; schedule();
+        }, { once: true });
+        record.previewMedia.append(image); image.src = preview.url;
+      } else {
+        const garment = window.OrderGarmentSummary?.models?.(order)?.[0];
+        if (garment && window.OrderGarmentSummary?.diagram) {
+          record.previewMedia.innerHTML = window.OrderGarmentSummary.diagram({ ...garment, locations: [] });
+          record.previewCaption.textContent = 'Garment summary'; record.previewCaption.hidden = false;
+        } else {
+          const mark = document.createElement('img'); mark.alt = ''; mark.src = 'Assets/order-preview-mark.svg'; mark.width = 46; mark.height = 40;
+          record.previewMedia.append(mark, el('span', preview.state === 'loading' ? 'Loading preview' : preview.state === 'failed' ? 'Preview unavailable' : 'No preview available', 'mw-preview-state'));
+        }
+      }
+    }
+    function renderRecognition(row, record, recognition, order) {
+      const active = area === 'orders';
+      record.node.classList.toggle('mw-row-recognition', active);
+      record.preview.hidden = !active; record.status.hidden = !active; record.garments.hidden = !active; record.delivery.hidden = !active;
+      if (!active) {
+        if (record.meta.parentNode !== record.open) record.open.append(record.meta, record.detail, record.attention);
+        record.garments.remove(); record.delivery.remove(); return;
+      }
+      if (record.delivery.parentNode !== record.open) record.open.append(record.delivery, record.garments);
+      if (record.meta.parentNode !== record.status) { record.status.append(record.meta, record.detail); record.node.append(record.attention); }
+      const groups = (recognition?.garments || []).slice(0, 2);
+      record.garments.replaceChildren(...groups.map(item => el('span', `${item.qty > 0 ? `${item.qty} × ` : ''}${item.label}`, 'mw-garment-description')));
+      if (recognition?.moreLabel) record.garments.append(el('span', recognition.moreLabel, 'mw-garment-more'));
+      if (!groups.length) record.garments.append(el('span', recognition?.partial ? 'Garment details unavailable' : 'Open order for item details', 'mw-garment-more'));
+      const delivery = recognition?.delivery || { kind: 'unknown', label: 'Delivery method unknown' };
+      record.delivery.dataset.kind = delivery.kind;
+      const deliveryPaths = {
+        pickup: 'M3 10h18M5 10v10h14V10M3 10l2-7h14l2 7M9 20v-6h6v6',
+        'in-store': 'M3 10h18M5 10v10h14V10M3 10l2-7h14l2 7M9 20v-6h6v6',
+        shipping: 'M3 6h11v12H3zM14 10h4l3 4v4h-7M5 18a2 2 0 1 0 4 0M15 18a2 2 0 1 0 4 0',
+        'pickup-point': 'M3 6h11v12H3zM14 10h4l3 4v4h-7M5 18a2 2 0 1 0 4 0M15 18a2 2 0 1 0 4 0',
+        'local-delivery': 'M12 3a7 7 0 0 0-7 7c0 5 7 11 7 11s7-6 7-11a7 7 0 0 0-7-7M9 10h6M12 7v6',
+        mixed: 'M3 4h8v8H3zM13 12h8v8h-8zM7 12v5h6M17 12V7h-6',
+        none: 'M3 3l18 18M6 3h12v15M3 6v15h15',
+        unknown: 'M9 9a3 3 0 1 1 4 3c-1 .5-1 1-1 2M12 18h.01M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20'
+      };
+      const deliveryPath = deliveryPaths[delivery.kind] || deliveryPaths.unknown;
+      record.delivery.innerHTML = icon(deliveryPath); record.delivery.append(el('span', delivery.label));
+      record.open.setAttribute('aria-label', `Open ${row.number}, ${row.customer}. ${delivery.label}. ${groups.map(item => `${item.qty > 0 ? `${item.qty} ` : ''}${item.label}`).join('. ')}`);
+      renderPreview(row, record, recognition, order);
     }
     function renderRow(row, record) {
       record.checkLabel.hidden = !selectionMode; record.check.checked = selected.has(row.key);
       record.check.setAttribute('aria-label', `Select ${row.number}, ${row.customer}`); record.check.disabled = busy;
       record.node.classList.toggle('is-selected', selected.has(row.key)); record.action.hidden = selectionMode;
-      const signature = JSON.stringify([row, area, selectionMode]);
+      const order = area === 'orders' ? findOrder(row.key) : null;
+      const recognition = area === 'orders' ? window.MobileOrderRecognition?.describe?.(order) : null;
+      const signature = JSON.stringify([row, area, selectionMode, recognition]);
       if (record.signature !== signature) {
         record.signature = signature;
         record.customer.textContent = row.customer; record.number.textContent = `${row.number} · ${row.provider === 'etsy' ? 'Etsy' : 'PrintMO'}${row.synthetic ? ' · TEST' : ''}`;
@@ -163,18 +253,21 @@
         const facts = area === 'supplies'
           ? [`${row.quantities.garments} garments`, row.accounting ? `${row.accounting.accountedGarments}/${row.accounting.expectedGarments} received` : `Blanks ${row.materials.blanks.label.toLowerCase()}`]
           : area === 'print' ? [`Blanks ${row.materials.blanks.label.toLowerCase()}`, `Prints ${row.materials.prints.label.toLowerCase()}`]
-            : [`${row.quantities.garments} garments`, `${row.quantities.prints} print items`, `Blanks ${row.materials.blanks.label.toLowerCase()}`, `Prints ${row.materials.prints.label.toLowerCase()}`];
+            : [...(row.partial || recognition?.partial ? ['Item quantities unavailable'] : []), `Blanks ${row.materials.blanks.label.toLowerCase()}`, `Prints ${row.materials.prints.label.toLowerCase()}`];
         record.detail.textContent = facts.join(' · ');
-        const warnings = board.indicators(row).filter(item => item.label !== 'Materials marked ready');
+        const warnings = board.indicators(row).filter(item => item.label !== 'Materials marked ready'
+          && (area !== 'orders' || !['Needs blanks', 'No mockup'].includes(item.label)));
         if (row.bundle) warnings.push({ label: `Bundle: ${row.bundle}`, tone: 'neutral' });
         if (area === 'supplies' && row.supplier?.label) warnings.push({ label: `${row.supplier.label}${row.supplier.stale ? ' · check overdue' : ''}`, tone: row.supplier.stale ? 'warning' : 'neutral' });
         record.attention.replaceChildren(...warnings.map(item => el('span', item.label, `mw-indicator-${item.tone}`))); record.attention.hidden = !warnings.length;
         record.progress.textContent = `${row.progress.printed}/${row.progress.printable} printed · Update`;
         record.progress.setAttribute('aria-label', `Update printed quantity for ${row.number}, ${row.progress.printed} of ${row.progress.printable}`);
+        renderRecognition(row, record, recognition, order);
       }
       record.progress.hidden = area !== 'print' || selectionMode;
       record.action.disabled = busy; record.progress.disabled = busy;
       record.open.disabled = busy;
+      record.previewButton.disabled = busy;
       renderEditor(row, record);
     }
     function renderEditor(row, record) {
@@ -357,14 +450,14 @@
       }
     }
     function render(preserve = true) {
-      if (!enabled()) return;
+      if (!enabled()) { publishVisibleRows(); return; }
       const activeView = document.body.dataset.activeView || 'orders';
       root.hidden = activeView !== 'orders';
       for (const control of nav.querySelectorAll('button')) {
         const active = control.dataset.mobileAreaTarget === area;
         control.setAttribute('aria-current', active ? 'page' : 'false');
       }
-      if (root.hidden) return;
+      if (root.hidden) { publishVisibleRows(); return; }
       const anchor = preserve ? captureAnchor() : null;
       const snapshot = list.getSnapshot();
       $('#mobile-workspace-title').textContent = titles[area];
@@ -376,7 +469,7 @@
         $('.mw-selection').hidden = true; $('.mw-empty').hidden = true;
         const host = $('.mw-more');
         if (!host.children.length) for (const [destination, label] of [['prepared', 'Prepared Orders'], ['drafts', 'Draft Orders'], ['inventory', 'Inventory'], ['previous', 'History'], ['storage', 'Storage Browser']]) host.append(button(label, () => navigation.navigateMobile('more', { destination })));
-        return;
+        publishVisibleRows(); return;
       }
       const result = state.browse(area, snapshot);
       if (area === 'print' && view().stage === 'print' && window.productionPlanner?.matchesOrder) {
@@ -394,7 +487,7 @@
       $('.mw-count').textContent = !snapshot.total && loadState === 'loading' ? 'Loading orders…'
         : !snapshot.total && loadState === 'error' ? 'Orders unavailable'
           : `${result.shown} ${result.shown === 1 ? 'order' : 'orders'}${view().query || filtersCount ? ' matching' : ''}${snapshot.identityErrors ? ` · ${snapshot.identityErrors} unavailable` : ''}`;
-      for (const [key, record] of records) if (!keys.has(key) && editor?.key !== key) { record.node.remove(); records.delete(key); }
+      for (const [key, record] of records) if (!keys.has(key) && editor?.key !== key) { previewObserver?.unobserve(record.node); visibleRows.delete(key); record.node.remove(); records.delete(key); }
       let cursor = rows.firstChild;
       for (const row of currentRows) {
         let record = records.get(row.key); if (!record) { record = makeRow(row); records.set(row.key, record); }
@@ -424,6 +517,7 @@
       root.setAttribute('aria-busy', String(busy));
       if (restoredScroll) { scroll.scrollTop = view().scrollTop; restoredScroll = false; }
       else if (preserve) restoreAnchor(anchor);
+      publishVisibleRows();
     }
     function schedule() { if (!frame) frame = requestAnimationFrame(() => { frame = 0; render(); }); }
     function revealEditorInput() {
@@ -450,7 +544,7 @@
       if (enabled() && area === 'print' && window.productionPlanner?.filterLabel?.()) navigation.navigateMobile('print', { subview: 'print', guarded: true });
       schedule();
     });
-    for (const name of ['printmo:board-updated', 'printmo:blanks-accounting-updated', 'printmo:progress-save']) document.addEventListener(name, schedule);
+    for (const name of ['printmo:board-updated', 'printmo:blanks-accounting-updated', 'printmo:progress-save', 'printmo:mobile-recognition-updated']) document.addEventListener(name, schedule);
     const detail = document.getElementById('detail-overlay');
     if (detail) new MutationObserver(restoreDetail).observe(detail, { attributes: true, attributeFilter: ['class', 'aria-hidden'] });
     new MutationObserver(updateEnabled).observe(document.body, { attributes: true, attributeFilter: ['data-order-source', 'data-board-load-state'] });

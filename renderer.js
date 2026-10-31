@@ -1749,6 +1749,9 @@ function productionMockupSlotMarkup(url, state, orderNumber) {
 
 function updateBoardMockupPreview(order, { resolvePlaceholder = false } = {}) {
   if (!order?.name) return false;
+  if (document.body?.dataset.mobileWorkspace === 'true') {
+    document.dispatchEvent(new CustomEvent('printmo:mobile-recognition-updated'));
+  }
   const url = getFirstMockupUrl(order);
   if (!url && !resolvePlaceholder) return false;
   const orderNumber = String(order.orderNumber || order.name.match(/^#?(\d+)/)?.[1] || order.name).replace(/^#/, '');
@@ -2635,7 +2638,7 @@ function consolidateLineItemsForDisplay(items = []) {
     .toLowerCase()
     .replace(/[\s-]+/g, '_');
   const hiddenAttributeKeys = new Set([
-    'group_id', 'batch_id', 'role', 'group_role', 'batch_role', '_designer_item_instructions', '_designeritemname'
+    'group_id', 'batch_id', 'role', 'group_role', 'batch_role', '_designer_item_instructions', '_designeritemname', '_designer_front_preview_url'
   ]);
 
   (Array.isArray(items) ? items : []).forEach((item, index) => {

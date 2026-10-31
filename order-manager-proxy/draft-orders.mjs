@@ -56,7 +56,8 @@ export function draftUploadMetadata(file, role, placement) {
   if (!file || typeof file.arrayBuffer !== 'function') fail('FILE_REQUIRED', 'Choose a file to upload.');
   const types = role === 'design'
     ? { '.png': 'image/png', '.svg': 'image/svg+xml' }
-    : role === 'mockup' ? { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' } : {};
+    : role === 'mobile-preview' ? { '.png': 'image/png', '.webp': 'image/webp' }
+      : role === 'mockup' ? { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' } : {};
   const name = String(file.name || '');
   const extension = /\.[a-z0-9]+$/i.exec(name)?.[0]?.toLowerCase();
   const contentType = types[extension];
@@ -64,7 +65,10 @@ export function draftUploadMetadata(file, role, placement) {
     ? 'Print files must be PNG or SVG.' : 'Mockups must be PNG, JPG, or WebP.', 415);
   if (!Number.isInteger(file.size) || file.size < 1 || file.size > MAX_BYTES) fail('INVALID_FILE_SIZE', 'Choose a file smaller than 50 MB.', 413);
   if (!DRAFT_PLACEMENTS.includes(placement)) fail('INVALID_PLACEMENT', 'Choose a print placement.');
-  return { contentType, placement, role, filename: name.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^\.+/, '').slice(0, 120) || 'artwork' };
+  if (role === 'mobile-preview' && placement !== 'front') fail('INVALID_PLACEMENT', 'Mobile previews must show the front.');
+  return { contentType, placement, role: role === 'mobile-preview' ? 'mockup' : role,
+    previewKind: role === 'mobile-preview' ? 'mobile-front' : '',
+    filename: name.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^\.+/, '').slice(0, 120) || 'artwork' };
 }
 function parse(value, fallback) { try { return JSON.parse(value); } catch { return fallback; } }
 function normalizeDraft(node) {
@@ -173,16 +177,17 @@ export function createDraftOrderService(env, deps) {
     if (!changed.meta?.changes) fail('VERSION_CONFLICT', 'The target date changed on another device. Refresh the draft before saving.', 409);
     return detail(id);
   }
-  async function rows(id) {
+  async function rows(id, { includeMobile = false } = {}) {
     const owner = await shop();
-    return (await db.prepare(`SELECT * FROM draft_artwork WHERE shop_id = ? AND draft_gid = ? AND state = 'active' ORDER BY created_at, id`)
+    return (await db.prepare(`SELECT * FROM draft_artwork WHERE shop_id = ? AND draft_gid = ? AND state = 'active'
+      ${includeMobile ? '' : "AND preview_kind = ''"} ORDER BY created_at, id`)
       .bind(owner.id, id).all()).results || [];
   }
   function assetDto(row, items, kind) {
     const saved = parse(row.items_json, []);
     const result = matchDraftAssignments(saved, items, { sameKind: row.item_kind === kind });
     return { assetId: row.id, name: row.filename, contentType: row.content_type, byteSize: row.byte_size,
-      role: row.role, placement: row.placement, revision: row.revision,
+      role: row.preview_kind === 'mobile-front' ? 'mobile-preview' : row.role, placement: row.placement, revision: row.revision,
       lineItemIds: result.matched.map(item => item.id), needsReassignment: result.needsReview,
       appliesTo: saved.map(item => `${item.title}${item.variantTitle ? ` · ${item.variantTitle}` : ''}`).join(', ') };
   }
@@ -190,7 +195,7 @@ export function createDraftOrderService(env, deps) {
     if (!node.order?.id) return;
     const owner = await shop();
     const stamp = now();
-    for (const row of await rows(node.id)) {
+    for (const row of await rows(node.id, { includeMobile: true })) {
       const mapped = matchDraftAssignments(parse(row.items_json, []), items, { sameKind: row.item_kind === 'order' });
       // Preserve files with no guessed associations if even one selected item is ambiguous.
       const ids = mapped.needsReview ? [''] : mapped.matched.map(item => item.id);
@@ -198,18 +203,18 @@ export function createDraftOrderService(env, deps) {
       const sourceKey = `draft-upload:${row.id}`;
       const guard = `EXISTS (SELECT 1 FROM draft_artwork WHERE id = ? AND revision = ? AND state = 'active')`;
       const statements = [db.prepare(`INSERT INTO asset_manifests
-        (id, shop_id, order_gid, object_key, filename, content_type, byte_size, sha256, state, source_key, created_by, created_at, updated_at, role, side)
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ? WHERE ${guard}
+        (id, shop_id, order_gid, object_key, filename, content_type, byte_size, sha256, state, source_key, created_by, created_at, updated_at, role, side, preview_kind)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ? WHERE ${guard}
         ON CONFLICT(id) DO NOTHING`).bind(row.id, owner.id, node.order.id, row.object_key, row.filename,
-          row.content_type, row.byte_size, row.sha256, sourceKey, row.created_by, row.created_at, stamp, row.role, side || null, row.id, row.revision),
+          row.content_type, row.byte_size, row.sha256, sourceKey, row.created_by, row.created_at, stamp, row.role, side || null, row.preview_kind || '', row.id, row.revision),
         db.prepare(`DELETE FROM asset_manifest_links WHERE asset_id = ? AND source_key = ? AND ${guard}`)
           .bind(row.id, sourceKey, row.id, row.revision)];
       for (const id of ids) statements.push(db.prepare(`INSERT INTO asset_manifest_links
-        (asset_id, line_item_id, design_ref, role, side, source_key, created_at, placement, assignment_status, assignment_label, origin_draft_gid)
-        SELECT ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ? WHERE ${guard}
+        (asset_id, line_item_id, design_ref, role, side, source_key, created_at, placement, assignment_status, assignment_label, origin_draft_gid, preview_kind)
+        SELECT ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ${row.preview_kind === 'mobile-front' ? "'mobile-front'" : "''"} WHERE ${guard}
         ON CONFLICT(asset_id, line_item_id, design_ref, role, side) DO UPDATE SET
         placement = excluded.placement, assignment_status = excluded.assignment_status,
-        assignment_label = excluded.assignment_label, origin_draft_gid = excluded.origin_draft_gid`)
+        assignment_label = excluded.assignment_label, origin_draft_gid = excluded.origin_draft_gid, preview_kind = excluded.preview_kind`)
         .bind(row.id, id, row.role, side, sourceKey, stamp, row.placement, mapped.needsReview ? 'needs_review' : 'assigned',
           parse(row.items_json, []).map(item => `${item.title} · ${item.variantTitle || item.sku || 'Custom item'}`).join(', '), node.id, row.id, row.revision));
       statements.push(db.prepare(`UPDATE draft_artwork SET converted_order_gid = ?, converted_revision = ?, sync_error = NULL
@@ -225,8 +230,10 @@ export function createDraftOrderService(env, deps) {
     // A transient date handoff must not prevent artwork review; the retained
     // preparation remains visibly pending and is retried by paid events/cron.
     try { await promoteDate(node); } catch (_) { /* pending is derived below */ }
-    const artwork = (await rows(id)).map(row => assetDto(row, items, node.order ? 'order' : 'draft'));
-    return { ...normalizeDraft(node), ...preparationDto(await preparation(id), node), items, artwork, editable: !node.order && node.status !== 'COMPLETED',
+    const files = await rows(id, { includeMobile: true });
+    const artwork = files.filter(row => !row.preview_kind).map(row => assetDto(row, items, node.order ? 'order' : 'draft'));
+    const mobilePreview = files.filter(row => row.preview_kind === 'mobile-front').map(row => assetDto(row, items, node.order ? 'order' : 'draft')).find(asset => !asset.needsReassignment) || null;
+    return { ...normalizeDraft(node), ...preparationDto(await preparation(id), node), items, artwork, mobilePreview, editable: !node.order && node.status !== 'COMPLETED',
       assignmentReview: artwork.some(asset => asset.needsReassignment) };
   }
   async function list({ after = null, query = '', status = 'active' } = {}) {
@@ -246,6 +253,7 @@ export function createDraftOrderService(env, deps) {
       // Only list metadata crosses this boundary; private keys and assignments stay in detail.
       const files = (await db.prepare(`SELECT draft_gid, id, role, revision, converted_revision FROM draft_artwork
         WHERE shop_id = ? AND draft_gid IN (${nodes.map(() => '?').join(',')}) AND state = 'active'
+          AND preview_kind = ''
         ORDER BY draft_gid, created_at, id`).bind(owner.id, ...nodes.map(node => node.id)).all()).results || [];
       for (const file of files) {
         if (!artwork.has(file.draft_gid)) artwork.set(file.draft_gid, []);
@@ -285,6 +293,10 @@ export function createDraftOrderService(env, deps) {
     const file = form.get('file');
     const metadata = draftUploadMetadata(file, role, placement);
     const selected = await selectedItems(node, parse(String(form.get('lineItemIds')), []));
+    if (metadata.previewKind && selected.some(item => {
+      const attributes = Object.fromEntries((item.customAttributes || []).map(value => [value.key, value.value]));
+      return (attributes.batch_role || attributes.group_role || attributes._batch_role || attributes._group_role) !== 'garment';
+    })) fail('INVALID_PREVIEW_ASSIGNMENT', 'A mobile preview must be attached to explicit garment lines.');
     const uploadId = String(form.get('uploadId') || '');
     if (!/^[A-Za-z0-9_-]{16,80}$/.test(uploadId)) fail('UPLOAD_ID_REQUIRED', 'Refresh this draft before uploading.');
     const owner = await shop();
@@ -292,11 +304,16 @@ export function createDraftOrderService(env, deps) {
     if (bytes.byteLength !== file.size) fail('FILE_CHANGED', 'The file changed during upload. Select it again.');
     const digest = await crypto.subtle.digest('SHA-256', bytes);
     const sha = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
-    const idDigest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${owner.id}:${id}:${uploadId}:${sha}`));
+    const idDigest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${owner.id}:${id}:${uploadId}:${sha}${metadata.previewKind ? `:${metadata.previewKind}` : ''}`));
     const assetId = `draft_${Array.from(new Uint8Array(idDigest), b => b.toString(16).padStart(2, '0')).join('').slice(0, 32)}`;
     const existing = await db.prepare('SELECT * FROM draft_artwork WHERE shop_id = ? AND id = ?').bind(owner.id, assetId).first();
     if (existing) return detail(id); // Safe retry never restores a removed/reassigned upload.
-    if ((await rows(id)).length >= 100) fail('TOO_MANY_FILES', 'This draft already has 100 files. Remove unused files before uploading more.', 422);
+    const existingRows = await rows(id, { includeMobile: true });
+    if (metadata.previewKind) {
+      if (existingRows.filter(row => row.preview_kind === 'mobile-front').length >= 20)
+        fail('TOO_MANY_PREVIEWS', 'This draft already has 20 mobile previews.', 422);
+    } else if (existingRows.filter(row => !row.preview_kind).length >= 100)
+      fail('TOO_MANY_FILES', 'This draft already has 100 files. Remove unused files before uploading more.', 422);
     if (!env.R2_BUCKET) fail('R2_NOT_CONFIGURED', 'Artwork storage is unavailable. Try again later.', 503);
     const key = `drafts/${id.split('/').pop()}/${assetId}/${metadata.filename}`;
     await env.R2_BUCKET.put(key, bytes, { httpMetadata: { contentType: metadata.contentType } });
@@ -306,9 +323,9 @@ export function createDraftOrderService(env, deps) {
       fail('UPLOAD_UNVERIFIED', 'The file could not be saved reliably. Try uploading it again.', 502);
     const stamp = now();
     await db.batch([db.prepare(`INSERT INTO draft_artwork
-      (id, shop_id, draft_gid, object_key, filename, content_type, byte_size, sha256, role, placement, items_json, item_kind, revision, state, created_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, 'active', ?, ?, ?) ON CONFLICT(id) DO NOTHING`)
-      .bind(assetId, owner.id, id, key, metadata.filename, metadata.contentType, bytes.length, sha, role, placement, JSON.stringify(selected), actor, stamp, stamp),
+      (id, shop_id, draft_gid, object_key, filename, content_type, byte_size, sha256, role, placement, items_json, item_kind, revision, state, created_by, created_at, updated_at, preview_kind)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, 'active', ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`)
+      .bind(assetId, owner.id, id, key, metadata.filename, metadata.contentType, bytes.length, sha, metadata.role, placement, JSON.stringify(selected), actor, stamp, stamp, metadata.previewKind),
       await event(owner, id, assetId, actor, 'upload')]);
     // Re-fetch covers a conversion while the private bytes were being uploaded.
     return detail(id);
@@ -322,6 +339,7 @@ export function createDraftOrderService(env, deps) {
     if (!Number.isInteger(body.revision) || row.revision !== body.revision) fail('VERSION_CONFLICT', 'Artwork changed on another device. Refresh before saving.', 409);
     if (remove && (node.order || row.converted_order_gid)) fail('DRAFT_CONVERTED', 'Converted artwork is retained with the purchased order.', 409);
     if (!remove && !DRAFT_PLACEMENTS.includes(body.placement)) fail('INVALID_PLACEMENT', 'Choose a print placement.');
+    if (!remove && row.preview_kind === 'mobile-front' && body.placement !== 'front') fail('INVALID_PLACEMENT', 'Mobile previews must show the front.');
     const selected = remove ? [] : await selectedItems(node, body.lineItemIds);
     const updated = await db.prepare(`UPDATE draft_artwork SET items_json = ?, item_kind = ?, placement = ?, state = ?, revision = revision + 1, updated_at = ?
       WHERE shop_id = ? AND id = ? AND revision = ? AND state = 'active'${remove ? " AND converted_order_gid IS NULL AND NOT EXISTS (SELECT 1 FROM asset_manifests WHERE id = draft_artwork.id)" : ''}`)

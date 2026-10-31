@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handlePreparedLinkRequest, handlePublicPreparedLinkRequest, buildPreparedCheckoutLines, resolveItemPrints, transferProductionAssets } from './prepared-order-links.mjs';
+import { handlePreparedLinkRequest, handlePublicPreparedLinkRequest, buildPreparedCheckoutLines, resolveItemPrints, transferProductionAssets, withOptionalPreparedPreviewDeadline } from './prepared-order-links.mjs';
 const id='d20f720b-ae22-4b31-886e-b72bbf8aed36',itemId='ad7410a7-0592-4abc-8eae-5c866bf65333',linkId='a17410a7-0592-4abc-8eae-5c866bf65333';
 const variant='gid://shopify/ProductVariant/1';
 const product={title:'Unlisted shirt',image:'',config:{placements:{}},variants:[{id:variant,title:'Navy / S',price:'10.00',selectedOptions:[{name:'Color',value:'Navy'},{name:'Size',value:'S'}]}]};
@@ -65,6 +65,61 @@ test('edited front/back production exports and the supplied mockup remain assign
   assert.deepEqual(uploads,[{role:'design',placement:'front',lines:['line-0'],bytes:'<svg>EDITED FRONT</svg>'},{role:'design',placement:'back',lines:['line-0'],bytes:'<svg>EDITED BACK</svg>'},{role:'mockup',placement:'other',lines:['line-1'],bytes:'SUPPLIED MOCKUP'}]);
 });
 function bucket(){const objects=new Map();let revision=0;return{async get(key){const value=objects.get(key);return value?{etag:value.etag,json:async()=>structuredClone(value.body)}:null},async put(key,body,options={}){const previous=objects.get(key);if(options.onlyIf?.etagMatches&&previous?.etag!==options.onlyIf.etagMatches)return null;if(options.onlyIf?.etagDoesNotMatch==='*'&&previous)return null;const value={body:JSON.parse(body),etag:'r'+(++revision)};objects.set(key,value);return value},objects};}
+
+test('prepared checkout transfers optional front recognition separately and tolerates only its upload failure',async()=>{
+  const uploads=[],env={R2_BUCKET:bucket(),SHOPIFY_SHOP_DOMAIN:'test.myshopify.com'};
+  let failingRole='';
+  const deps={drafts:{detail:async()=>({items:[{id:'line',customAttributes:[{key:'_preparedItemId',value:itemId},{key:'group_role',value:'garment'}]}]}),handle:async request=>{
+    const form=await request.formData(),role=form.get('role');
+    if(role===failingRole)throw Error('Upload unavailable');
+    uploads.push({role,placement:form.get('placement'),lines:JSON.parse(form.get('lineItemIds'))});
+  }}};
+  const snapshot={record,recipientFiles:[{itemId,side:'front',svg:'<svg/>'},{itemId,side:'other',mime:'image/png',base64:'Q09NQklORUQ='},{itemId,side:'front',role:'mobile-preview',mime:'image/png',base64:'RlJPTlQ='}]};
+  const run=()=>transferProductionAssets(env,deps,{},snapshot,'front-checkout','draft',[{itemId}],{completedUploads:[]});
+  await run();
+  assert.deepEqual(uploads,[{role:'design',placement:'front',lines:['line']},{role:'mockup',placement:'other',lines:['line']},{role:'mobile-preview',placement:'front',lines:['line']}]);
+  uploads.length=0;failingRole='mobile-preview';await run();
+  assert.deepEqual(uploads.map(file=>file.role),['design','mockup']);
+  failingRole='design';await assert.rejects(run(),/Upload unavailable/);
+});
+
+test('a recognition derivative alone cannot suppress the original prepared artwork/proof fallback',async()=>{
+  const source=structuredClone(record),uploads=[];
+  source.items[0].proofAssetId='a'.repeat(64);source.items[0].proofSide='front';
+  const deps={drafts:{detail:async()=>({items:[{id:'line',customAttributes:[{key:'_preparedItemId',value:itemId},{key:'group_role',value:'garment'}]}]}),handle:async request=>{uploads.push((await request.formData()).get('role'));}}};
+  await transferProductionAssets({R2_BUCKET:bucket(),SHOPIFY_SHOP_DOMAIN:'test.myshopify.com'},deps,{asset:async()=>({arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer})},{record:source,recipientFiles:[{itemId,side:'front',role:'mobile-preview',mime:'image/png',base64:'RlJPTlQ='}]},'fallback-checkout','draft',[{itemId}],{completedUploads:[]});
+  assert.deepEqual(uploads,['mobile-preview','mockup']);
+});
+
+test('the optional prepared preview deadline is injectable and clears success, failure and timeout timers',async()=>{
+  let expire,delay,cleared=[];
+  const timers={setTimer:(callback,ms)=>{expire=callback;delay=ms;return 17;},clearTimer:id=>cleared.push(id)};
+  assert.equal(await withOptionalPreparedPreviewDeadline(async()=>{},timers),true);
+  assert.equal(delay,5000);assert.deepEqual(cleared,[17]);
+  assert.equal(await withOptionalPreparedPreviewDeadline(async()=>{throw Error('Optional unavailable');},timers),false);
+  cleared=[];
+  const pending=withOptionalPreparedPreviewDeadline(()=>new Promise(()=>{}),timers);
+  expire();assert.equal(await pending,false);assert.deepEqual(cleared,[17]);
+});
+
+test('a never-settling optional draft upload cannot hold required files or checkout asset transfer open',async t=>{
+  let expire,delay,markStarted;
+  const started=new Promise(resolve=>{markStarted=resolve;});
+  t.mock.method(globalThis,'setTimeout',(callback,ms)=>{expire=callback;delay=ms;return 23;});
+  t.mock.method(globalThis,'clearTimeout',()=>{});
+  const source=structuredClone(record),uploads=[];
+  source.mockups=[{assetId:'a'.repeat(64),mime:'image/png',itemIds:[itemId]}];
+  const deps={drafts:{detail:async()=>({items:[{id:'line',customAttributes:[{key:'_preparedItemId',value:itemId},{key:'group_role',value:'garment'}]}]}),handle:async request=>{
+    const form=await request.formData(),role=form.get('role');
+    if(role==='mobile-preview'){markStarted();return new Promise(()=>{});}
+    uploads.push({role,placement:form.get('placement'),lines:JSON.parse(form.get('lineItemIds'))});
+  }}};
+  const progress={completedUploads:[]};
+  const pending=transferProductionAssets({R2_BUCKET:bucket(),SHOPIFY_SHOP_DOMAIN:'test.myshopify.com'},deps,{asset:async()=>({arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer})},{record:source,recipientFiles:[{itemId,side:'front',svg:'<svg/>'},{itemId,side:'other',mime:'image/png',base64:'Q09NQklORUQ='},{itemId,side:'front',role:'mobile-preview',mime:'image/png',base64:'RlJPTlQ='}]},'timeout-checkout','draft',[{itemId}],progress);
+  await started;assert.equal(delay,5000);expire();await pending;
+  assert.deepEqual(uploads,[{role:'design',placement:'front',lines:['line']},{role:'mockup',placement:'other',lines:['line']},{role:'mockup',placement:'other',lines:['line']}]);
+  assert.equal(progress.completedUploads.length,3);
+});
 test('manual and artwork-configured prints reuse canonical classes without requiring images or Studio data',()=>{
   assert.equal(resolveItemPrints(record.items[0],product)[0].label,'Chest Print');
   assert.deepEqual(resolveItemPrints({...record.items[0],printMode:'none'},product),[]);
@@ -113,12 +168,12 @@ test('edited artwork is quoted and checked out with manual items; exported files
   try{
     const quote=await handlePublicPreparedLinkRequest(new Request(base+'/quote',{method:'POST',body:JSON.stringify({snapshotId,designs})}),env,deps,service);
     assert.equal(quote.items[1].prints[0].label,'Full Front Print');
-    const body={sessionId:id,snapshotId,quoteId:quote.quoteId,designs,quantities:{[itemId]:{[variant]:2},[editorId]:{[variant]:1}},artwork:{[editorId]:{front:svg}}};
+    const body={sessionId:id,snapshotId,quoteId:quote.quoteId,designs,quantities:{[itemId]:{[variant]:2},[editorId]:{[variant]:1}},artwork:{[editorId]:{front:svg}},frontPreviews:{[editorId]:'data:image/png;base64,RlJPTlQ='}};
     const result=await handlePublicPreparedLinkRequest(new Request(base+'/checkout',{method:'POST',body:JSON.stringify(body)}),env,deps,service);
     assert.equal(result.checkoutUrl,'https://test.myshopify.com/invoice/test');
     assert.deepEqual(mutation.lineItems.map(line=>line.quantity),[2,2,1,1]);
     assert.equal(mutation.lineItems[3].variantId,'gid://shopify/ProductVariant/46714190201080');
-    assert.deepEqual(uploads,[{lines:['line-1'],text:svg,role:'design'}]);
+    assert.deepEqual(uploads,[{lines:['line-1'],text:svg,role:'design'},{lines:['line-1'],text:'FRONT',role:'mobile-preview'}]);
     await assert.rejects(handlePublicPreparedLinkRequest(new Request(base+'/checkout',{method:'POST',body:JSON.stringify({...body,quoteId:'stale'})}),env,deps,service),error=>error.code==='PRICE_CHANGED');
   }finally{globalThis.fetch=original}
 });

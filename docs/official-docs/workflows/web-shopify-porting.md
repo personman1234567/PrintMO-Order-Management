@@ -66,6 +66,8 @@ Pages deployments replace the entire web artifact. Before publishing from an iso
 
 #### Prepared Orders preparation screen
 
+Recipient inline colors were deployed on 2026-10-30 after separate authorization for the shared Worker update. The additive `/public/:id/colors?item=:itemId&snapshotId=:snapshotId` read and explicit `configurations` request field require `PREPARED_RECIPIENT_COLORS_ENABLED=true`; omitted intent retains the existing quote contract. Options resolve only published editable items, preserve non-color/non-size configuration, honor hidden colors, and use canonical Shopify swatches/availability. Quotes and checkout validate the chosen reference variant against that product/configuration. Supplied flat mockups remain on the help path. `prepared-colors.test.mjs` covers the new contract and old-client/disabled behavior. The website flag defaults off; only unpublished Designer Testing 2 received the enabled UI. The deployed Worker version is `6da5920c-9a12-44f7-aeb2-4cc02359c361`; its previous version is `28373cd3-4a2b-492d-92b8-47cee3a7b47e`. Actual options/quote reads and the test-theme Navy proof/quantity transition passed; no cart, checkout, or publication write was exercised.
+
 Copy testing link is a separate action inside Link options and the saved-order menu. It preserves the same prepared-order ID and explicitly adds the current Designer Testing 2 theme parameter. Normal copies remain clean; the testing choice is never persisted on the publication or as the default. Clipboard fallback displays the actual selected URL.
 
 Complete published recipient presentation now opens without Shopify product reads; incomplete legacy data retains bounded deduplicated fallback. Fresh quotes use `prepared-price-products.mjs` to batch snapshot-member variants and current product/configuration metadata, without catalog media or all-color variant pagination. Current print prices are still resolved and checkout validates afresh. Only simultaneous identical quote requests coalesce; no completed-price cache can bypass current pricing or revocation checks.
@@ -598,6 +600,38 @@ presentation rules below describe the mounted fallback board used by Legacy or
 the explicit `printmo_list_preview=0` rollback URL. Shared scrolling, source
 isolation and full-detail contracts continue to apply to both presentations.
 
+The Orders workspace uses `mobile-order-recognition.js` for square contained
+previews, bounded garment/color/unit summaries and delivery labels. An explicitly
+associated front derivative is separate from canonical `assets`; current line
+identity and design reference must agree. Staff replacements take priority.
+Existing combined proofs remain the fallback and the desktop/detail source.
+Unassigned files are order artwork, never evidence of a garment association.
+Visible mobile rows reuse the private batch hydration path, including requests
+queued while a batch is pending; they do not fetch detail per row.
+
+The summary delivery projection uses exact Shopify fulfillment-order method
+types, not addresses or shipping-title text. Missing, inaccessible or truncated
+fulfillment-order data remains unknown; mixed methods are explicit and pickup
+does not imply readiness. Other providers without an authoritative summary method
+display **Check delivery**. The existing shared detail presentation is unchanged.
+
+The additive Designer `_designer_front_preview_url` and Prepared `frontPreviews`
+paths are optional and deadline-bounded. Asset DTO role `mobile-preview`, side
+`front`, and persisted `preview_kind='mobile-front'` prevent these derivatives
+from entering canonical rank-one previews, draft galleries or order detail.
+Migration `0014_mobile_order_recognition.sql` must precede the updated Order
+Manager Worker. The Order Manager migration, Worker and Pages were released on
+2026-10-31; deployed IDs and the incomplete authenticated smoke check are recorded
+in [Current Release Boundary](../architecture/shopify-primary-data-plane.md#current-release-boundary).
+All Shopify/Designer changes from this task remain local and undeployed, including
+the Designer preview Worker, website frontend and all themes. Deploy the Designer preview Worker capability before enabling
+the corresponding theme bundle; the client skips optional uploads until that
+capability is advertised. Publish the Order Manager Pages artifact after its
+Worker. The separate Designer release remains pending; its local tests are not
+evidence of a website deployment or production submission acceptance.
+Historical orders are not backfilled; absent/failed derivatives preserve their
+original proofs. Back-only and breast-only Prepared captures retain that fallback.
+
 - Phone order and production cards are tap targets, not draggable desktop
   tiles. Native card dragging is disabled at the mobile breakpoint so it cannot
   steal taps or vertical swipes on iOS.
@@ -674,3 +708,9 @@ The private preparation screen offers Add alternative on proposed garments, reus
 Publishing retains all configurations in an immutable private snapshot, while the public template contains only proposed garments. Optional choice metadata supplies alternative workspaces to the updated recipient. Quote and checkout selections validate group membership, replacements and explicit extras against that snapshot. Unchosen alternatives cannot enter production lines, assets, omission checks or selected-only quotes. No new public catalog access or staff permissions are introduced.
 
 The updated storefront layout is first deployed to Designer Testing 2. Copied customer links remain clean live-domain URLs; use a separate theme preview URL for acceptance until storefront promotion. Do not send alternative-bearing test orders as customer-ready proposals before that acceptance.
+
+### Prepared garment finder host-inset handling
+
+On narrow embedded screens the top-layer garment finder uses the visible viewport height/top offset and Shopify App Bridge's --shopify-safe-area-inset-bottom, with the device safe-area as a fallback rather than adding both insets. Its header and action footer remain outside the internal scrolling content. This avoids placing Add garment behind Shopify Mobile's floating navigation; selecting an option alone does not apply it, and Close still dismisses the selection. The existing viewport metrics owner also tracks visualViewport scroll for keyboard-driven offsets.
+
+The normal review footer remains in the app's flex flow and benefits from App Bridge's automatic body padding. Do not add the host inset again to every footer. Verify that body padding is present in native acceptance. Shopify documents the inset at https://shopify.dev/docs/api/app-home/latest/apis/authentication-and-data/environment-api . This is an Order Manager Pages frontend contract, not a storefront theme or Worker deployment.

@@ -17,6 +17,13 @@
 
 ## Automated and Syntax Verification Commands
 
+For the 2026-10-31 mobile recognition release, local fixture tests and browser
+checks passed; deployed HTML/runtime byte verification also passed. Authenticated
+post-release mobile/desktop smoke verification remains incomplete. These are
+separate acceptance claims; see [Current Release Boundary](../architecture/shopify-primary-data-plane.md#current-release-boundary)
+for deployed IDs and the browser stop. All Shopify/Designer changes from this task
+remain undeployed, regardless of their local test/build results.
+
 Prepared Orders: `npm run test:prepared-orders` covers private preparation saves,
 stacked complete-catalog filters, source-cache refresh, base-color fallbacks,
 native SKU/style matches and finder query encoding (`prepared-catalog.test.mjs`),
@@ -53,6 +60,8 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Shared run and draft target-date handoff | Run `npm test` in `order-manager-proxy` | Shop isolation, active-order validation, concurrent revision protection, idempotent deltas, optional date save/clear, conversion retries, canonical CAS and preservation of existing/cleared purchased-order dates pass |
 | Garment recognition summary | `node --test scripts/garment-summary.test.js scripts/print-placements.test.js` | Color aliases, size grouping, placement association, distinct print areas, wearer-side sleeves, supplied vector views, seam contrast, neutral fallbacks, safe SVG assets, manual invoice links, canonical preservation, input bounds, cross-order rejection and conflict reconciliation pass |
 | Preview state settlement | `node --test scripts/mockup-preview-state.test.js` | Confirmed empty and failed lookups, overlapping queue pages, detail refresh races, current DTO reconciliation, Etsy without a mapping, pending private/catalog assets, and the 250-order bulk cap pass |
+| Mobile order recognition | `node --test scripts/mobile-order-recognition.test.js scripts/mobile-order-workspace.test.js` | Explicit front association, canonical/detail composite preservation, internal-property hiding, failed-image fallback, private hydration settlement, exact delivery labels, partial summaries, mobile-only rows and return behavior pass. Inspect 320px/393px containment and compare desktop against the pre-change baseline. |
+| Additive front asset isolation | `node --test order-manager-proxy/mobile-order-recognition.test.mjs order-manager-proxy/draft-orders.test.mjs` | Purpose survives upload/promotion, PNG/WebP previews remain outside canonical rank-one/detail/gallery selections, current-line association is required, delivery projection remains bounded, and optional previews cannot consume the canonical upload quota. Prepared deadline/fallback checks also run in `prepared-order-links.test.mjs` and `prepared-recipient.test.mjs`. |
 | Optional Order List Browsing | `npm run verify:order-list` | Stable provider identities, six canonical stages, individual bundle counts, active/history exclusion, material milestones, printable eligibility, target dates, combined search/filter counts, deterministic sorts, unknown money, and separate attention/accounting/cached supplier summaries pass |
 | Cloudflare Worker Proxy | `node --check order-manager-proxy/worker.js` | Silent exit code 0 |
 | Phase 1 Auth/Transport Contract | `npm run verify:phase1` | `Phase 1 contract verification passed.` |
@@ -165,3 +174,5 @@ Prepared alternatives use `order-manager-proxy/prepared-choices.test.mjs` for gr
 Prepared price batching and explicit testing URLs: `order-manager-proxy/prepared-price-products.test.mjs` covers current commerce, unlisted/no-image handling, failure boundaries and URL identity. `prepared-recipient.test.mjs` covers per-item published hydration without Shopify product reads.
 
 Two-sided prepared orders: prepared-order-links.test.mjs checks complete automatic print coverage and front/back checkout lines. scripts/prepared-orders-workspace.test.js covers visible garment removal, alternatives, retained uploads and cancellation of obsolete preview work.
+
+Prepared garment finder host overlays: node --test scripts/prepared-viewport.test.js scripts/prepared-orders-workspace.test.js covers visual viewport height/top, standalone fallback and dialog/scroll contracts. Browser fixtures should place a simulated host overlay outside the app iframe, check Add garment with selections, a shorter/offset keyboard viewport, zero-inset standalone mobile, desktop and the normal review footer. Physical Shopify iOS acceptance remains distinct from these simulations.

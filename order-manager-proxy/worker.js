@@ -146,7 +146,7 @@ export default {
         }
 
         const origin = (request.headers.get("Origin") || "").replace(/\/+$/, "");
-        const publicPreparedPath = /^\/order-manager\/v1\/prepared-orders\/public\/[a-f0-9-]{36}(?:\/(checkout|quote|size-guides))?$/i.test(url.pathname);
+        const publicPreparedPath = /^\/order-manager\/v1\/prepared-orders\/public\/[a-f0-9-]{36}(?:\/(checkout|quote|size-guides|colors))?$/i.test(url.pathname);
         const allowOrigin = pickAllowOrigin(origin, env) || (publicPreparedPath && ['https://print-mo.com','https://www.print-mo.com'].includes(origin) ? origin : '');
 
         // If browser sends an Origin and it's not allowed, block
@@ -2812,6 +2812,10 @@ const ORDER_SUMMARIES_QUERY = `query PrintMOOrderSummaries($ids: [ID!]!) {
       currentTotalPriceSet { shopMoney { amount currencyCode } }
       shippingAddress { name }
       billingAddress { name }
+      fulfillmentOrders(first: 10) {
+        nodes { id status deliveryMethod { methodType } }
+        pageInfo { hasNextPage }
+      }
       lineItems(first: 25) {
         nodes {
           id sku title variantTitle quantity currentQuantity customAttributes { key value }
@@ -2854,7 +2858,7 @@ const ORDER_DETAIL_QUERY = `query PrintMOOrderDetail($id: ID!, $after: String) {
     shippingAddress { name company address1 address2 city province provinceCode zip country countryCodeV2 phone }
     billingAddress { name company address1 address2 city province provinceCode zip country countryCodeV2 phone }
     shippingLines(first: 10) { nodes { id title code source deliveryCategory custom originalPriceSet { shopMoney { amount currencyCode } } currentDiscountedPriceSet { shopMoney { amount currencyCode } } } }
-    fulfillmentOrders(first: 10) { nodes { id status requestStatus fulfillAt fulfillBy deliveryMethod { id methodType presentedName serviceCode minDeliveryDateTime maxDeliveryDateTime } } }
+    fulfillmentOrders(first: 10) { nodes { id status requestStatus fulfillAt fulfillBy deliveryMethod { id methodType presentedName serviceCode minDeliveryDateTime maxDeliveryDateTime } } pageInfo { hasNextPage } }
     fulfillments { id name status displayStatus createdAt updatedAt deliveredAt estimatedDeliveryAt totalQuantity trackingInfo(first: 10) { number url company } }
     customerJourneySummary { ready customerOrderIndex daysToConversion firstVisit { id occurredAt source sourceDescription sourceType landingPage referrerUrl referralCode } lastVisit { id occurredAt source sourceDescription sourceType landingPage referrerUrl referralCode } }
     discountApplications(first: 10) { nodes { __typename allocationMethod targetSelection targetType value { __typename ... on MoneyV2 { amount currencyCode } ... on PricingPercentageValue { percentage } } ... on AutomaticDiscountApplication { title } ... on DiscountCodeApplication { code } ... on ManualDiscountApplication { title description } ... on ScriptDiscountApplication { title } } }
@@ -5830,6 +5834,7 @@ async function d1AssetsForOrder(env, shopId, gid) {
       FROM asset_manifests AS manifests
       LEFT JOIN asset_manifest_links AS links ON links.asset_id = manifests.id
       WHERE manifests.shop_id = ? AND manifests.order_gid = ? AND manifests.state = 'active'
+        AND manifests.preview_kind = '' AND COALESCE(links.preview_kind, '') = ''
       ORDER BY manifests.created_at, manifests.id, links.line_item_id, links.role, links.side
     `).bind(shopId, gid).all();
     return (result.results || []).map(row => {
@@ -5879,6 +5884,7 @@ async function d1AssetsForOrders(env, shopId, gids) {
             FROM asset_manifests AS manifests
             LEFT JOIN asset_manifest_links AS links ON links.asset_id = manifests.id
             WHERE manifests.shop_id = ? AND manifests.state = 'active'
+              AND manifests.preview_kind = '' AND COALESCE(links.preview_kind, '') = ''
               AND manifests.order_gid IN (${placeholders})
           )
           WHERE asset_rank = 1
@@ -5901,6 +5907,52 @@ async function d1AssetsForOrders(env, shopId, gids) {
         }
     }
     return byOrder;
+}
+
+// Mobile derivatives are never candidates for the canonical mockup/gallery.
+// Their role is projected separately because stored artwork roles are stable.
+async function d1MobilePreviewsForOrders(env, shopId, gids) {
+    const valid = [...new Set((gids || []).map(canonicalOrderGid).filter(Boolean))];
+    const byOrder = new Map();
+    for (let index = 0; index < valid.length; index += 50) {
+        const chunk = valid.slice(index, index + 50);
+        const result = await requireOrderDb(env).prepare(`
+          SELECT * FROM (
+            SELECT manifests.order_gid, manifests.id, manifests.filename, manifests.content_type,
+                   manifests.byte_size, manifests.sha256, links.line_item_id, links.design_ref, links.origin_draft_gid,
+                   ROW_NUMBER() OVER (PARTITION BY manifests.order_gid
+                     ORDER BY manifests.created_at DESC, manifests.id, links.line_item_id) AS preview_rank
+            FROM asset_manifests AS manifests
+            JOIN asset_manifest_links AS links ON links.asset_id = manifests.id
+            WHERE manifests.shop_id = ? AND manifests.state = 'active'
+              AND manifests.preview_kind = 'mobile-front' AND links.preview_kind = 'mobile-front'
+              AND links.role = 'mockup' AND links.side = 'front' AND links.line_item_id <> ''
+              AND links.assignment_status <> 'needs_review'
+              AND manifests.order_gid IN (${chunk.map(() => '?').join(', ')})
+          ) WHERE preview_rank = 1
+        `).bind(shopId, ...chunk).all();
+        for (const row of result.results || []) byOrder.set(row.order_gid, {
+            assetId: row.id, name: row.filename, contentType: row.content_type,
+            byteSize: row.byte_size, sha256: row.sha256, lineItemId: row.line_item_id,
+            designRef: row.design_ref || null, role: 'mobile-preview', side: 'front', previewKind: 'mobile-front',
+            originDraftId: row.origin_draft_gid || null
+        });
+    }
+    return byOrder;
+}
+
+function mobilePreviewForSummary(preview, summary) {
+    if (!preview) return null;
+    const line = summary?.commerce?.lineItems?.find(item => item.id === preview.lineItemId);
+    if (!line || !(Number(line.currentQuantity ?? line.quantity) > 0)) return null;
+    if (preview.originDraftId) {
+        const values = designerAttributeMap(line.customAttributes);
+        return (values.get('batch_role') || values.get('group_role') || values.get('_batch_role') || values.get('_group_role')) === 'garment' ? preview : null;
+    }
+    // An edited/removed property must not keep showing an older derivative.
+    const current = designerAssetCandidates(summary).some(candidate => candidate.previewKind === 'mobile-front'
+        && candidate.lineItemId === preview.lineItemId && candidate.designRef === preview.designRef && candidate.name === preview.name);
+    return current ? preview : null;
 }
 
 function shopifyProjectionActiveValue(state, summary, order = {}) {
@@ -6285,6 +6337,21 @@ function selectOperationalCustomerName(node) {
     return null;
 }
 
+function summarizeDeliveryMethods(connection, errors = [], fetchedAt = isoNow()) {
+    const kinds = { PICK_UP: 'pickup', SHIPPING: 'shipping', LOCAL: 'local-delivery',
+        PICKUP_POINT: 'pickup-point', RETAIL: 'in-store', NONE: 'none' };
+    const nodes = Array.isArray(connection?.nodes) ? connection.nodes.filter(node => node?.status !== 'CANCELLED') : [];
+    const types = [...new Set(nodes.map(node => node?.deliveryMethod?.methodType).filter(type => typeof type === 'string'))].sort();
+    const unavailable = errors.some(error => !Array.isArray(error?.path)
+        || error.path.some(part => part === 'fulfillmentOrders' || part === 'deliveryMethod'));
+    const reason = unavailable ? 'unavailable' : !connection ? 'not-returned'
+        : connection.pageInfo?.hasNextPage !== false ? 'incomplete'
+            : !nodes.length ? 'not-assigned' : nodes.some(node => !kinds[node?.deliveryMethod?.methodType]) ? 'unknown-method' : null;
+    return { kind: reason ? 'unknown' : types.length > 1 ? 'mixed' : kinds[types[0]],
+        types, complete: !reason, source: 'shopify-fulfillment-orders', fetchedAt,
+        ...(reason ? { reason } : {}) };
+}
+
 async function normalizeShopifySummary(env, node, resultErrors = [], graphQL = coordinatorGraphQL) {
     const now = new Date();
     const lines = await completeLineItems(env, node.id, node.lineItems, graphQL);
@@ -6308,6 +6375,7 @@ async function normalizeShopifySummary(env, node, resultErrors = [], graphQL = c
             discount: moneyValue(node.currentTotalDiscountsSet, currency)?.amount || null,
             total: moneyValue(node.currentTotalPriceSet, currency)?.amount || null,
             currentLineItemQuantity: Number(node.currentSubtotalLineItemsQuantity || 0),
+            deliveryMethod: summarizeDeliveryMethods(node.fulfillmentOrders, resultErrors, now.toISOString()),
             lineItemsComplete: lines.complete,
             lineItems: lines.items
         },
@@ -6358,38 +6426,31 @@ function designerAssetCandidates(summary) {
     for (const item of summary?.commerce?.lineItems || []) {
         const values = designerAttributeMap(item.customAttributes);
         const designRef = [...DESIGNER_REFERENCE_KEYS].map(key => values.get(key)).find(Boolean);
-        const previewUrl = [...DESIGNER_PREVIEW_KEYS].map(key => values.get(key)).find(Boolean);
-        if (!designRef || !previewUrl || !/^[A-Za-z0-9_-]{8,160}$/.test(designRef)) continue;
-        let parsed;
-        try { parsed = new URL(previewUrl); } catch (_) { continue; }
-        if (parsed.protocol !== 'https:') continue;
-        const match = parsed.pathname.match(/^\/previews\/(\d{4}-\d{2}-\d{2})\/([^/]+)\/(.+)$/);
-        if (!match) continue;
-        let pathDesignRef;
-        let rest;
-        try {
-            pathDesignRef = decodeURIComponent(match[2]);
-            rest = match[3].split('/').map(segment => decodeURIComponent(segment)).join('/');
-        } catch (_) {
-            continue;
+        if (!designRef || !/^[A-Za-z0-9_-]{8,160}$/.test(designRef)) continue;
+        const groupRole = String(values.get('batch_role') || values.get('group_role')
+            || values.get('_batch_role') || values.get('_group_role') || '').toLowerCase();
+        const sources = [{ url: [...DESIGNER_PREVIEW_KEYS].map(key => values.get(key)).find(Boolean), previewKind: '' }];
+        if (groupRole === 'garment' && item.id) sources.push({ url: values.get('_designer_front_preview_url'), previewKind: 'mobile-front' });
+        for (const { url, previewKind } of sources) {
+            if (!url) continue;
+            let parsed;
+            try { parsed = new URL(url); } catch (_) { continue; }
+            if (parsed.protocol !== 'https:') continue;
+            const match = parsed.pathname.match(/^\/previews\/(\d{4}-\d{2}-\d{2})\/([^/]+)\/(.+)$/);
+            if (!match) continue;
+            let pathDesignRef, rest;
+            try {
+                pathDesignRef = decodeURIComponent(match[2]);
+                rest = match[3].split('/').map(segment => decodeURIComponent(segment)).join('/');
+            } catch (_) { continue; }
+            if (pathDesignRef !== designRef || !rest || rest.split('/').some(segment => !segment || segment === '.' || segment === '..')) continue;
+            candidates.push({ lineItemId: item.id, designRef,
+                previewKey: `previews/${match[1]}/${designRef}/${rest}`, orderNumber, rest,
+                name: safeAssetName(rest.split('/').pop()),
+                role: (previewKind || groupRole === 'garment') ? 'mockup' : groupRole === 'print' ? 'design' : item.sku ? 'mockup' : 'design',
+                side: previewKind ? 'front' : designerSideFromName(rest),
+                ...(previewKind ? { previewKind } : {}) });
         }
-        if (pathDesignRef !== designRef) continue;
-        if (!rest || rest.split('/').some(segment => !segment || segment === '.' || segment === '..')) continue;
-        const groupRole = String(values.get('batch_role') || values.get('group_role') || '').toLowerCase();
-        candidates.push({
-            lineItemId: item.id,
-            designRef,
-            previewKey: `previews/${match[1]}/${designRef}/${rest}`,
-            orderNumber,
-            rest,
-            name: safeAssetName(rest.split('/').pop()),
-            role: groupRole === 'garment'
-                ? 'mockup'
-                : groupRole === 'print'
-                    ? 'design'
-                    : item.sku ? 'mockup' : 'design',
-            side: designerSideFromName(rest)
-        });
     }
     return candidates;
 }
@@ -6422,6 +6483,7 @@ async function copyDesignerAsset(env, shopId, gid, candidate) {
         designRef: String(candidate.designRef || ''),
         role: String(candidate.role || ''),
         side: String(candidate.side || ''),
+        previewKind: String(candidate.previewKind || ''),
         sourceKey: String(candidate.previewKey || '')
     };
     const existingLink = await db.prepare(`
@@ -6431,10 +6493,11 @@ async function copyDesignerAsset(env, shopId, gid, candidate) {
       WHERE manifests.shop_id = ? AND manifests.order_gid = ? AND manifests.state = 'active'
         AND links.line_item_id = ? AND links.design_ref = ? AND links.role = ?
         AND links.side = ? AND links.source_key = ?
+        AND links.preview_kind = ? AND manifests.preview_kind = ?
       LIMIT 1
     `).bind(
         shopId, gid, linkValues.lineItemId, linkValues.designRef, linkValues.role,
-        linkValues.side, linkValues.sourceKey
+        linkValues.side, linkValues.sourceKey, linkValues.previewKind, linkValues.previewKind
     ).first();
     if (existingLink) return { state: 'existing', assetId: existingLink.id };
 
@@ -6442,6 +6505,12 @@ async function copyDesignerAsset(env, shopId, gid, candidate) {
     if (!sourceKey) throw new Error(`Designer Studio asset was not found for ${candidate.designRef}/${candidate.rest}.`);
     const source = await env.PREVIEWS.get(sourceKey);
     if (!source) throw new Error(`Designer Studio source disappeared during import: ${sourceKey}.`);
+    if (!candidate.previewKind && source.customMetadata?.role === 'mobile-preview') throw new Error('Mobile derivatives cannot replace canonical artwork.');
+    if (candidate.previewKind && (candidate.previewKind !== 'mobile-front' || candidate.side !== 'front'
+        || source.customMetadata?.role !== 'mobile-preview' || source.customMetadata?.side !== 'front'
+        || source.customMetadata?.designref !== candidate.designRef)) {
+        throw new Error('Mobile front preview metadata is invalid.');
+    }
     const bytes = new Uint8Array(await source.arrayBuffer());
     if (!bytes.byteLength || bytes.byteLength > DESIGNER_ASSET_MAX_BYTES) {
         throw new Error(`Designer Studio asset size is invalid for ${candidate.name}.`);
@@ -6450,21 +6519,23 @@ async function copyDesignerAsset(env, shopId, gid, candidate) {
     const sourceHeaders = new Headers();
     if (typeof source.writeHttpMetadata === 'function') source.writeHttpMetadata(sourceHeaders);
     const contentType = sourceHeaders.get('Content-Type') || guessContentTypeFromKey(candidate.name);
+    if (candidate.previewKind && contentType !== 'image/png') throw new Error('Mobile front previews must be PNG.');
     const existingBlob = await db.prepare(`
       SELECT id
       FROM asset_manifests
       WHERE shop_id = ? AND order_gid = ? AND state = 'active'
         AND sha256 = ? AND byte_size = ? AND content_type = ?
+        AND preview_kind = ?
       ORDER BY created_at, id
       LIMIT 1
-    `).bind(shopId, gid, sha256, bytes.byteLength, contentType).first();
+    `).bind(shopId, gid, sha256, bytes.byteLength, contentType, linkValues.previewKind).first();
     const now = isoNow();
     if (existingBlob) {
         await insertAssetManifestLink(db, existingBlob.id, linkValues, now);
         return { state: 'existing', assetId: existingBlob.id };
     }
 
-    const assetId = await stableAssetId(`${gid}:sha256:${sha256}:${bytes.byteLength}:${contentType}`);
+    const assetId = await stableAssetId(`${gid}:sha256:${sha256}:${bytes.byteLength}:${contentType}${linkValues.previewKind ? `:${linkValues.previewKind}` : ''}`);
     const objectKey = `orders/${numericIdFromGid(gid)}/assets/${assetId}/${candidate.name}`;
     if (!env.R2_BUCKET) throw new Error('Private artwork storage is not configured.');
     await env.R2_BUCKET.put(objectKey, bytes, {
@@ -6481,8 +6552,8 @@ async function copyDesignerAsset(env, shopId, gid, candidate) {
       INSERT INTO asset_manifests (
         id, shop_id, order_gid, object_key, filename, content_type, byte_size,
         sha256, state, source_key, created_by, created_at, updated_at,
-        line_item_id, design_ref, role, side
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 'designer-studio-sync', ?, ?, ?, ?, ?, ?)
+        line_item_id, design_ref, role, side, preview_kind
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 'designer-studio-sync', ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         object_key = excluded.object_key,
         filename = excluded.filename,
@@ -6495,12 +6566,13 @@ async function copyDesignerAsset(env, shopId, gid, candidate) {
         design_ref = excluded.design_ref,
         role = excluded.role,
         side = excluded.side,
+        preview_kind = excluded.preview_kind,
         deleted_at = NULL,
         updated_at = excluded.updated_at
     `).bind(
         assetId, shopId, gid, objectKey, candidate.name, contentType, bytes.byteLength,
         sha256, sourceKey, now, now, candidate.lineItemId, candidate.designRef,
-        candidate.role, candidate.side
+        candidate.role, candidate.side, linkValues.previewKind
     ).run();
     await insertAssetManifestLink(db, assetId, linkValues, now);
     return { state: 'imported', assetId };
@@ -6509,8 +6581,8 @@ async function copyDesignerAsset(env, shopId, gid, candidate) {
 async function insertAssetManifestLink(db, assetId, values, createdAt = isoNow()) {
     await db.prepare(`
       INSERT OR IGNORE INTO asset_manifest_links (
-        asset_id, line_item_id, design_ref, role, side, source_key, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        asset_id, line_item_id, design_ref, role, side, source_key, created_at, preview_kind
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
         assetId,
         String(values?.lineItemId || ''),
@@ -6518,7 +6590,8 @@ async function insertAssetManifestLink(db, assetId, values, createdAt = isoNow()
         String(values?.role || ''),
         String(values?.side || ''),
         String(values?.sourceKey || ''),
-        createdAt
+        createdAt,
+        String(values?.previewKind || '')
     ).run();
 }
 
@@ -6603,6 +6676,7 @@ async function handleV1DesignAssetUpload(request, env, allowOrigin, reqAllowHead
           FROM asset_manifests
           WHERE shop_id = ? AND order_gid = ? AND state = 'active'
             AND sha256 = ? AND byte_size = ? AND content_type = ?
+            AND preview_kind = ''
           ORDER BY created_at, id
           LIMIT 1
         `).bind(shop.id, orderIdentity.id, sha256, bytes.byteLength, metadata.contentType).first();
@@ -6731,6 +6805,9 @@ async function syncDesignerStudioAssetsForSummary(env, shopId, summary) {
             const result = await copyDesignerAsset(env, shopId, summary.id, candidate);
             report[result.state] += 1;
         } catch (error) {
+            // Recognition derivatives are optional; the canonical import and
+            // commerce freshness must survive an unavailable derivative.
+            if (candidate.previewKind) continue;
             report.errors.push({
                 code: 'DESIGNER_ASSET_SYNC_FAILED',
                 message: error.message,
@@ -7539,12 +7616,15 @@ async function loadDataPage(env, { view = 'active', stage = '', q = '', limit, o
     ]);
     const shopifyById = new Map((shopifyRows.results || []).map(row => [row.order_gid, row]));
     const providerById = new Map((providerRows.results || []).map(row => [row.order_key, row]));
-    const assetsByOrder = await d1AssetsForOrders(env, shop.id, shopifyIds);
+    const [assetsByOrder, mobilePreviewsByOrder] = await Promise.all([
+        d1AssetsForOrders(env, shop.id, shopifyIds), d1MobilePreviewsForOrders(env, shop.id, shopifyIds)
+    ]);
     const records = refList.map(ref => {
         if (ref.source_kind === 'provider') return providerProjectionRecord(providerById.get(ref.source_id) || {});
         const row = shopifyById.get(ref.source_id) || {};
         const record = d1ProjectionRecord(row);
         record.production.assets = assetsByOrder.get(row.order_gid) || [];
+        record.production.mobilePreview = mobilePreviewForSummary(mobilePreviewsByOrder.get(row.order_gid), record.summary);
         return record;
     });
     return {
@@ -10462,6 +10542,13 @@ export class OrderSyncCoordinator {
     }
 }
 export {
+    d1AssetsForOrder,
+    d1AssetsForOrders,
+    d1MobilePreviewsForOrders,
+    mobilePreviewForSummary,
+    normalizeShopifySummary,
+    summarizeDeliveryMethods,
+    syncDesignerStudioAssetsForSummary,
     promoteDraftTargetDate,
     copyDesignerAsset,
     designerAssetCandidates,

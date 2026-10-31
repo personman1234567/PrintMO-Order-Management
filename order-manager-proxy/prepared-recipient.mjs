@@ -85,8 +85,9 @@ export async function recipientTemplate(record, items, service, sourceTemplate,{
   return {version:1,activeHandle:workspaces[0]?.handle||null,activeWorkspaceId:workspaces[0]?.id,workspaces};
 }
 
-export function recipientArtwork(record, designs, input, selectedIds, previews={}) {
+export function recipientArtwork(record, designs, input, selectedIds, previews={}, frontPreviews={}) {
   const files = [];
+  let frontBudget = 2*1024*1024;
   for (const item of record.items) {
     if (!selectedIds.has(item.id) || !designs[item.id]) continue;
     const sides = [...new Set(designs[item.id].prints.map(print=>print.side))];
@@ -100,6 +101,17 @@ export function recipientArtwork(record, designs, input, selectedIds, previews={
     if (typeof preview === 'string' && preview.length <= 8*1024*1024) {
       const match = preview.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);
       if (match) files.push({itemId:item.id,side:'other',mime:match[1],base64:match[2]});
+    }
+    // Optional recognition media is separate from the complete proof and print exports.
+    // Malformed or omitted derivatives never invalidate otherwise valid production files.
+    const front = frontPreviews && typeof frontPreviews === 'object' && !Array.isArray(frontPreviews)
+      ? frontPreviews[item.id] : null;
+    if (sides.includes('front') && typeof front === 'string' && front.length <= Math.min(1024*1024,frontBudget)) {
+      const match = front.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);
+      if (match) {
+        files.push({itemId:item.id,side:'front',role:'mobile-preview',mime:match[1],base64:match[2]});
+        frontBudget -= front.length;
+      }
     }
   }
   return files;

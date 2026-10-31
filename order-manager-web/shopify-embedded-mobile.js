@@ -195,6 +195,7 @@
   function syncViewportMetrics() {
     const height = Math.round(window.visualViewport?.height || window.innerHeight);
     document.documentElement.style.setProperty('--embedded-viewport-height', `${height}px`);
+    document.documentElement.style.setProperty('--embedded-viewport-offset-top', `${Math.max(0, Math.round(window.visualViewport?.offsetTop || 0))}px`);
     document.body.classList.toggle('shopify-embedded-mobile', isMobile());
     document.body.classList.toggle('embedded-short-viewport', isMobile() && height < 700);
     if (document.body.classList.contains('detail-open')) {
@@ -487,6 +488,7 @@
     });
     window.addEventListener('resize', syncViewportMetrics, { passive: true });
     window.visualViewport?.addEventListener('resize', syncViewportMetrics, { passive: true });
+    window.visualViewport?.addEventListener('scroll', syncViewportMetrics, { passive: true });
     maybeLoadPreviewFixtures();
   }
 

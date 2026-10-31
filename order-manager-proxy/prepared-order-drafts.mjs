@@ -99,7 +99,7 @@ function collectAssets(draft) { return new Set([...draft.mockups.map(a => a.asse
 const productFields = `id title handle status featuredMedia { preview { image { url } } }
   options { name optionValues { name swatch { color image { image { url } } } } }
   designerConfig: metafield(namespace: "custom", key: "designer_config") { value }
-  variants(first: 100, after: $variantCursor) { nodes { id title price selectedOptions { name value } media(first: 1) { nodes { preview { image { url } } } } } pageInfo { hasNextPage endCursor } }`;
+  variants(first: 100, after: $variantCursor) { nodes { id title price availableForSale selectedOptions { name value } media(first: 1) { nodes { preview { image { url } } } } } pageInfo { hasNextPage endCursor } }`;
 export const PREPARED_PRODUCT_QUERY = `query PreparedAdminProduct($id: ID!, $variantCursor: String) { product(id: $id) { ${productFields} } }`;
 export const PREPARED_CATALOG_QUERY = `query PreparedAdminCatalog($query: String!, $after: String) {
   products(first: 15, query: $query, after: $after, sortKey: TITLE) { nodes { id title handle status featuredMedia { preview { image { url } } } } pageInfo { hasNextPage endCursor } }

@@ -425,8 +425,9 @@
       const itemCell = element('td');
       itemCell.appendChild(element('strong', '', item.title || 'Untitled item'));
       if (item.variantTitle) itemCell.appendChild(element('span', 'shopify-detail-muted', item.variantTitle));
-      if (item.customAttributes?.length) {
-        itemCell.appendChild(element('span', 'shopify-detail-attributes', item.customAttributes.map((attribute) => `${attribute.key}: ${attribute.value}`).join(' · ')));
+      const visibleAttributes = item.customAttributes?.filter(attribute => String(attribute.key || '').trim().toLowerCase() !== '_designer_front_preview_url') || [];
+      if (visibleAttributes.length) {
+        itemCell.appendChild(element('span', 'shopify-detail-attributes', visibleAttributes.map((attribute) => `${attribute.key}: ${attribute.value}`).join(' · ')));
       }
       row.appendChild(itemCell);
       row.appendChild(element('td', '', item.sku || '—'));

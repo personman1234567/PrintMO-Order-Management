@@ -88,6 +88,41 @@
   body[data-mobile-workspace="true"] .mw-progress { grid-column: 1 / -1; justify-self: start; padding: 8px 0; margin-top: 4px; border: 0; color: var(--mw-blue); font-size: 13px; }
   body[data-mobile-workspace="true"] .mw-row-selection { display: flex; align-items: center; justify-content: center; grid-column: 2; grid-row: 1; width: 44px; min-height: 44px; }
   body[data-mobile-workspace="true"] .mw-row-selection input { min-height: 20px; width: 20px; height: 20px; padding: 0; margin: 0; accent-color: var(--mw-blue); }
+  body[data-mobile-workspace="true"] .mw-row-recognition {
+    grid-template-columns: 96px minmax(0, 1fr) 44px;
+    column-gap: 8px; row-gap: 4px; padding: 12px 0;
+  }
+  body[data-mobile-workspace="true"] .mw-row-recognition .mw-row-open {
+    grid-column: 2 / -1; grid-row: 1; align-self: start; min-width: 0;
+  }
+  body[data-mobile-workspace="true"] .mw-row-preview { grid-column: 1; grid-row: 1; width: 96px; min-width: 0; }
+  body[data-mobile-workspace="true"] .mw-preview-open {
+    display: block; width: 96px; height: 96px; padding: 0; overflow: hidden;
+    border: 1px solid var(--mw-line); border-radius: 6px; background: #f8fafc;
+  }
+  body[data-mobile-workspace="true"] .mw-preview-media {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    width: 100%; height: 100%; color: var(--mw-muted); font-weight: 400;
+  }
+  body[data-mobile-workspace="true"] .mw-preview-media > img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  body[data-mobile-workspace="true"] .mw-preview-media > img + .mw-preview-state { margin-top: 3px; }
+  body[data-mobile-workspace="true"] .mw-preview-media:has(.mw-preview-state) > img { width: 46px; height: 40px; opacity: .65; }
+  body[data-mobile-workspace="true"] .mw-preview-media > svg { display: block; width: 72px; height: 90px; }
+  body[data-mobile-workspace="true"] .mw-preview-state { padding: 0 3px; font-size: 11px; line-height: 1.2; text-align: center; }
+  body[data-mobile-workspace="true"] .mw-preview-caption { display: block; padding-top: 4px; color: var(--mw-muted); font-size: 11px; line-height: 1.3; overflow-wrap: anywhere; }
+  body[data-mobile-workspace="true"] .mw-row-garments { display: grid; gap: 2px; margin-top: 6px; color: var(--mw-text); text-align: left; }
+  body[data-mobile-workspace="true"] .mw-garment-description { font-size: 13px; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+  body[data-mobile-workspace="true"] .mw-garment-more { font-size: 12px; font-weight: 400; line-height: 1.4; color: var(--mw-muted); overflow-wrap: anywhere; }
+  body[data-mobile-workspace="true"] .mw-row-delivery { display: flex; align-items: flex-start; gap: 5px; margin-top: 6px; color: var(--mw-ink); font-size: 13px; font-weight: 650; line-height: 1.4; text-align: left; }
+  body[data-mobile-workspace="true"] .mw-row-delivery > svg { flex: 0 0 18px; width: 18px; height: 18px; }
+  body[data-mobile-workspace="true"] .mw-row-delivery > span { min-width: 0; overflow-wrap: anywhere; }
+  body[data-mobile-workspace="true"] .mw-row-delivery[data-kind="unknown"] { color: var(--mw-muted); font-weight: 500; }
+  body[data-mobile-workspace="true"] .mw-row-status { grid-column: 1 / 3; grid-row: 2; align-self: center; min-width: 0; }
+  body[data-mobile-workspace="true"] .mw-row-recognition .mw-row-meta { margin-top: 0; font-size: 12px; gap: 2px 8px; }
+  body[data-mobile-workspace="true"] .mw-row-recognition .mw-row-detail { margin-top: 3px; overflow-wrap: anywhere; }
+  body[data-mobile-workspace="true"] .mw-row-recognition .mw-row-attention { grid-column: 1 / -1; margin-top: 0; overflow-wrap: anywhere; }
+  body[data-mobile-workspace="true"] .mw-row-recognition .mw-row-actions,
+  body[data-mobile-workspace="true"] .mw-row-recognition .mw-row-selection { grid-column: 3; grid-row: 2; width: 44px; padding: 5px 0; align-self: center; }
   body[data-mobile-workspace="true"] .mw-progress-editor { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 8px; padding: 12px 0; border-top: 1px solid var(--mw-line); }
   body[data-mobile-workspace="true"] .mw-progress-editor > label, body[data-mobile-workspace="true"] .mw-progress-editor > p { grid-column: 1 / -1; margin: 0; }
   body[data-mobile-workspace="true"] .mw-progress-editor input { grid-column: 1 / -1; width: 100%; }

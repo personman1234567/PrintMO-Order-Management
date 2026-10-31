@@ -140,6 +140,8 @@ The machine-readable authority is `../retrieval-manifest.json`. Run `npm run rep
 - Mode: local build output.
 - Purpose: prepares the deployable Cloudflare Pages asset bundle.
 - Equivalent existing command: `npm run prepare:cloudflare`.
+- Windows registered commands use `scripts/cloudflare-pages-native.cjs`; other platforms retain the Bash implementation. Native builds require Node, `SHOPIFY_API_KEY` in the environment or ignored `.env`, and the canonical Designer dependencies. They create a fresh `dist/cloudflare-order-manager-web-<release>-<suffix>/` directory without deleting previous artifacts, copy the root renderer, and verify required files and a common release marker. The supported editor build also refreshes its generated server pricing module.
+- Native verification: `node --test scripts/cloudflare-pages-native.test.cjs`. Use the registered command on Windows when Bash, `rsync`, or `zip` is unavailable; an optional ZIP is not required for publishing.
 
 <!-- tool:cloudflare-deploy -->
 ### `cloudflare-deploy`
@@ -148,6 +150,7 @@ The machine-readable authority is `../retrieval-manifest.json`. Run `npm run rep
 - Mode: remote write; preview and production publishing are explicit.
 - Purpose: creates a fresh Pages artifact, deploys to the selected branch, and verifies the release marker served from that target.
 - Safety: production requires `--production`, deploys only to `main`, and exits nonzero unless the production hostname serves the exact marker. The bundle preparation step must not alter tracked web source.
+- On Windows, the native helper resolves an already installed Wrangler Node CLI from repository dependencies or the existing PATH/global npm installation; it never invokes installation. Preview rejects `main`. Deployment and readback stay scoped to `CLOUDFLARE_PAGES_PROJECT` (default `print-mo-order-manager`); readback makes at most 15 attempts with two-second pauses. No mode or `--help` performs no publishing. Exit 2 indicates invalid arguments; exit 1 indicates build, publish, or release-verification failure. A publish followed by failed readback must be checked before repeating the deployment.
 
 <!-- tool:ss-feedback-simulator -->
 ### `ss-feedback-simulator`

@@ -438,6 +438,8 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
     source: order.source || null,
     canonical: order,
     assets: production.assets || [],
+    // Kept out of items/assets so shared desktop and detail selection cannot use it.
+    mobilePreview: production.mobilePreview || null,
   };
   if (register) registerCandidate(mapped);
   return mapped;
@@ -545,6 +547,10 @@ function candidateAssetOrderPriority(record) {
 }
 
 function candidateRecordBelongsToActiveMobileTab(record) {
+  if (document.body?.dataset.mobileWorkspace === "true") {
+    const key = JSON.stringify([String(record?.source?.provider || "shopify").toLowerCase(), String(record?.orderKey || record?.id)]);
+    return Array.from(document.querySelectorAll(".mw-row[data-order-key]")).some(node => node.dataset.orderKey === key);
+  }
   const stage = record?.production?.stage;
   const activeTab = document.body?.dataset.activeTab || "pipeline";
   if (activeTab === "pipeline") return stage === "received";
@@ -565,13 +571,18 @@ function candidateRecordIsVisibleInBoard(record) {
   const displayName = record?.displayName || record?.id || "Shopify order";
   const customer = selectOperationalCustomerName(record) || "Name unavailable";
   const orderName = `${displayName} – ${customer}`;
-  const card = Array.from(document.querySelectorAll(".card[data-order-id]")).find(node => node.dataset.orderId === orderName);
+  const mobileKey = JSON.stringify([String(record?.source?.provider || "shopify").toLowerCase(), String(record?.orderKey || record?.id)]);
+  const card = document.body?.dataset.mobileWorkspace === "true"
+    ? Array.from(document.querySelectorAll(".mw-row[data-order-key]")).find(node => node.dataset.orderKey === mobileKey)
+    : Array.from(document.querySelectorAll(".card[data-order-id]")).find(node => node.dataset.orderId === orderName);
   if (!card) return false;
   const rect = card.getBoundingClientRect();
+  const mobileRoot = document.body?.dataset.mobileWorkspace === 'true'
+    ? document.querySelector('.mw-scroll')?.getBoundingClientRect() : null;
   return rect.width > 0 && rect.height > 0
-    && rect.bottom >= 0
+    && rect.bottom >= (mobileRoot ? mobileRoot.top - 160 : 0)
     && rect.right >= 0
-    && rect.top <= (window.innerHeight || document.documentElement.clientHeight)
+    && rect.top <= (mobileRoot ? mobileRoot.bottom + 160 : (window.innerHeight || document.documentElement.clientHeight))
     && rect.left <= (window.innerWidth || document.documentElement.clientWidth);
 }
 
@@ -582,11 +593,16 @@ function candidateAssetHydrationQueue(records, { boardVisibleOnly = false } = {}
   const mobile = window.matchMedia?.("(max-width: 900px)")?.matches;
   const scopedRecords = boardVisibleOnly && mobile
     ? [...records].filter(candidateRecordBelongsToActiveMobileTab)
+      .filter(record => document.body?.dataset.mobileWorkspace !== 'true' || candidateRecordIsVisibleInBoard(record))
     : [...records];
   scopedRecords
     .sort((left, right) => candidateAssetOrderPriority(left) - candidateAssetOrderPriority(right))
     .forEach((record) => {
       const assets = Array.isArray(record?.production?.assets) ? record.production.assets : [];
+      const mobilePreview = document.body?.dataset.mobileWorkspace === "true" ? record?.production?.mobilePreview : null;
+      if (mobilePreview?.role === "mobile-preview" && mobilePreview.side === "front") {
+        firstMockups.push({ asset: mobilePreview, record, isMockup: true });
+      }
       const mockups = assets.filter(candidateAssetIsMockup);
       if (mockups[0]) firstMockups.push({ asset: mockups[0], record, isMockup: true });
       mockups.slice(1).forEach((asset) => remainingMockups.push({ asset, record, isMockup: true }));
@@ -632,6 +648,9 @@ async function hydrateCandidateAssets(records, { onMockupChange, boardVisibleOnl
       console.warn("Unable to hydrate private Designer Studio asset", asset?.assetId, error);
     } finally {
       if (!repainted && isMockup && typeof onMockupChange === "function") onMockupChange(record);
+      if (document.body?.dataset.mobileWorkspace === 'true') {
+        document.dispatchEvent(new CustomEvent('printmo:mobile-recognition-updated'));
+      }
     }
   });
   const catalogPreviews = candidateCatalogPreviewEntries(records);
@@ -654,6 +673,9 @@ async function hydrateCandidateAssets(records, { onMockupChange, boardVisibleOnl
 
 function applyCandidateCachedAssetUrls(records) {
   records.forEach((order) => {
+    const mobilePreview = order?.production?.mobilePreview;
+    const mobileUrl = candidateCachedAssetUrl(mobilePreview?.assetId);
+    if (mobilePreview && mobileUrl) mobilePreview.url = mobileUrl;
     (order?.production?.assets || []).forEach((asset) => {
       const cached = candidateCachedAssetUrl(asset?.assetId);
       if (cached) asset.url = cached;
@@ -681,8 +703,10 @@ async function loadCandidateQueue({ refresh = false, onPage } = {}) {
     const customer = selectOperationalCustomerName(record) || "Name unavailable";
     const key = `${displayName} \u2013 ${customer}`;
     const current = candidateOrdersByName.get(key);
-    if (!current || typeof window.updateBoardMockupPreview !== "function") return;
-    const updated = window.updateBoardMockupPreview(current, { resolvePlaceholder: true });
+    if (!current) return;
+    document.dispatchEvent(new CustomEvent('printmo:mobile-recognition-updated'));
+    const updated = typeof window.updateBoardMockupPreview === 'function'
+      ? window.updateBoardMockupPreview(current, { resolvePlaceholder: true }) : false;
     if (updated) candidatePerfLog("tile-preview-source-attached");
   };
 
@@ -770,6 +794,33 @@ document.addEventListener?.("click", (event) => {
       boardVisibleOnly: true,
     }).catch(error => console.warn("Unable to hydrate active mobile previews", error));
   }, 0);
+});
+
+// Newly visible rows reuse the same private-ticket batch, never full order detail.
+// Skip settled assets so a repaint/visibility event cannot start a hydration loop.
+let mobileRecognitionHydrationPending = false;
+let mobileRecognitionHydrationKeys = new Set();
+function hydrateVisibleMobileRecognition() {
+  if (mobileRecognitionHydrationPending || document.body?.dataset.mobileWorkspace !== 'true') return;
+  const keys = mobileRecognitionHydrationKeys;
+  mobileRecognitionHydrationKeys = new Set();
+  const records = candidateBoardHydrationRecords.filter(record => {
+    const key = JSON.stringify([String(record?.source?.provider || 'shopify').toLowerCase(), String(record?.orderKey || record?.id)]);
+    const candidates = [record.production?.mobilePreview, ...(record.production?.assets || [])].filter(Boolean);
+    return keys.has(key) && candidates.some(asset => !asset.url && asset._previewState !== 'failed');
+  });
+  if (!records.length) return;
+  mobileRecognitionHydrationPending = true;
+  void hydrateCandidateAssets(records, { onMockupChange: candidateBoardMockupRepaint, boardVisibleOnly: true })
+    .catch(error => console.warn('Unable to hydrate visible mobile previews', error))
+    .finally(() => {
+      mobileRecognitionHydrationPending = false;
+      if (mobileRecognitionHydrationKeys.size) hydrateVisibleMobileRecognition();
+    });
+}
+document.addEventListener?.('printmo:mobile-recognition-visible', event => {
+  mobileRecognitionHydrationKeys = new Set(event.detail?.keys || []);
+  hydrateVisibleMobileRecognition();
 });
 
 function candidateByName(name) {
