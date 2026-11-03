@@ -41,6 +41,250 @@
   let overviewProgressObserver = null;
   let targetDateContext = null;
   let placementContext = null;
+  let materialMenu = null;
+  let materialSavePending = false;
+  let materialUndo = null;
+  let materialContextOrder = null;
+  const materialOptions = {
+    prints: [['none', 'Not recorded'], ['sheet', 'On saved sheet'], ['ordered', 'Ordered'], ['hand', 'In hand']],
+    blanks: [['none', 'Not recorded'], ['cart', 'In S&S cart'], ['ordered', 'Ordered'], ['hand', 'In hand']]
+  };
+
+  function materialSnapshot(order) {
+    return {
+      stage: order?.productionStage || order?.canonical?.production?.stage || 'received',
+      blanksStatus: Number(Boolean(Number(order?.blanksStatus || 0))),
+      blanksOrdered: Number(Boolean(Number(order?.blanksOrdered || 0))),
+      printsStatus: Number(Boolean(Number(order?.printsStatus || 0))),
+      printsOrdered: Number(Boolean(Number(order?.printsOrdered || 0))),
+      printsOnSavedSheet: Boolean(order?.printsOnSavedSheet)
+    };
+  }
+
+  function materialValue(kind, state) {
+    if (state[kind === 'prints' ? 'printsStatus' : 'blanksStatus']) return 'hand';
+    if (state[kind === 'prints' ? 'printsOrdered' : 'blanksOrdered']) return 'ordered';
+    if (kind === 'prints' && state.printsOnSavedSheet) return 'sheet';
+    if (kind === 'blanks' && state.stage === 'blanks_cart') return 'cart';
+    return 'none';
+  }
+
+  function materialPatch(kind, value, state) {
+    if (kind === 'prints') return {
+      printsStatus: value === 'hand' ? 1 : 0,
+      printsOrdered: value === 'ordered' ? 1 : value === 'hand' ? state.printsOrdered : 0,
+      printsOnSavedSheet: value === 'sheet'
+    };
+    const patch = {
+      blanksStatus: value === 'hand' ? 1 : 0,
+      blanksOrdered: value === 'ordered' ? 1 : value === 'hand' ? state.blanksOrdered : 0
+    };
+    if (value === 'cart' || value === 'ordered') patch.stage = value === 'cart' ? 'blanks_cart' : 'blanks_ordered';
+    else if (value === 'none' && ['blanks_cart', 'blanks_ordered'].includes(state.stage)) patch.stage = 'received';
+    return patch;
+  }
+
+  function materialReference(order) {
+    return order?._provider && (order._orderKey || order._gid)
+      ? { provider: order._provider, orderKey: order._orderKey || order._gid } : order?.name;
+  }
+
+  function closeMaterialMenu({ focus = false } = {}) {
+    const context = materialMenu;
+    materialMenu = null;
+    const menu = document.getElementById('material-status-menu');
+    if (menu) {
+      if (menu.matches(':popover-open')) menu.hidePopover();
+      menu.hidden = true;
+    }
+    context?.button?.setAttribute('aria-expanded', 'false');
+    if (focus) context?.button?.focus({ preventScroll: true });
+    return context?.button || null;
+  }
+
+  function syncMaterialStatuses() {
+    const tracking = document.getElementById('material-status-tracking');
+    if (!tracking) return;
+    const order = currentDetailOrder;
+    const active = Boolean(order?._candidate && document.body.dataset.orderSource === 'shopify');
+    tracking.hidden = !active;
+    if (!active) { closeMaterialMenu(); return; }
+    if (materialContextOrder !== order) {
+      closeMaterialMenu();
+      materialContextOrder = order;
+      materialUndo = null;
+      const feedback = document.getElementById('material-status-feedback');
+      if (feedback) feedback.textContent = '';
+    }
+    const state = materialSnapshot(order);
+    for (const kind of ['prints', 'blanks']) {
+      const button = document.getElementById(`material-${kind}-button`);
+      if (!button) continue;
+      const value = materialValue(kind, state), label = materialOptions[kind].find(option => option[0] === value)[1];
+      button.dataset.state = value;
+      button.disabled = materialSavePending || Boolean(order._historyReadOnly) || order._capabilities?.productionWrite === false;
+      button.setAttribute('aria-label', `${kind === 'prints' ? 'Print' : 'Blanks'} status: ${label}`);
+      button.querySelector('.material-status-value').textContent = label;
+    }
+    const undo = document.getElementById('material-status-undo');
+    if (undo) { undo.hidden = !materialUndo; undo.disabled = materialSavePending; }
+  }
+
+  function materialFeedback(copy, error = false) {
+    const node = document.getElementById('material-status-feedback');
+    if (node) {
+      node.textContent = copy;
+      node.parentElement.classList.toggle('is-error', error);
+    }
+  }
+
+  async function saveMaterialStatus(kind, value, undoPatch) {
+    const order = currentDetailOrder;
+    if (!order || materialSavePending || order._historyReadOnly || order._capabilities?.productionWrite === false) return;
+    const before = materialSnapshot(order);
+    if (!undoPatch && materialValue(kind, before) === value) { closeMaterialMenu({ focus: true }); return; }
+    const patch = undoPatch || materialPatch(kind, value, before);
+    const reference = materialReference(order);
+    const button = document.getElementById(`material-${kind}-button`);
+    closeMaterialMenu({ focus: true });
+    materialSavePending = true;
+    materialUndo = null;
+    syncMaterialStatuses();
+    materialFeedback('Saving status…');
+    try {
+      await window.api.updateReady(reference, patch);
+      const localPatch = { ...patch };
+      if (patch.stage) {
+        localPatch.productionStage = patch.stage;
+        localPatch.status = ['blanks_cart', 'blanks_ordered'].includes(patch.stage) ? 'blanks'
+          : patch.stage === 'to_order' ? 'toOrder' : patch.stage === 'received' ? 'received'
+          : patch.stage === 'completed' ? 'print' : patch.stage;
+        delete localPatch.stage;
+      }
+      Object.assign(order, localPatch);
+      const touched = typeof patchLocalOrders === 'function' ? patchLocalOrders([reference], localPatch) : null;
+      if (touched && typeof renderBoardFromLocalState === 'function') await renderBoardFromLocalState(touched);
+      if (currentDetailOrder !== order) return;
+      syncCanonicalProductionControls(order);
+      const saved = materialSnapshot(order);
+      if (!undoPatch) {
+        const previous = Object.fromEntries(Object.keys(patch).map(key => [key, before[key]]));
+        // Ordering retires the saved-sheet mark; reversing it does not revive stale preparation.
+        if (kind === 'prints' && ['ordered', 'hand'].includes(value)) previous.printsOnSavedSheet = false;
+        materialUndo = { order, kind, patch: previous, saved: JSON.stringify(saved) };
+      }
+      const label = materialOptions[kind].find(option => option[0] === materialValue(kind, saved))[1];
+      materialFeedback(undoPatch ? 'Status change undone.' : `${kind === 'prints' ? 'Prints' : 'Blanks'}: ${label}.`);
+    } catch (error) {
+      if (currentDetailOrder === order) materialFeedback(`Status was not saved. ${error?.message || 'Try again.'}`, true);
+    } finally {
+      materialSavePending = false;
+      syncMaterialStatuses();
+      if (currentDetailOrder === order) button?.focus();
+    }
+  }
+
+  function openMaterialMenu(kind, button) {
+    const order = currentDetailOrder;
+    if (!order || button.disabled) return;
+    if (materialMenu?.kind === kind) { closeMaterialMenu({ focus: true }); return; }
+    closeMaterialMenu();
+    const menu = document.getElementById('material-status-menu'), options = document.getElementById('material-status-options');
+    if (!menu || !options) return;
+    const current = materialValue(kind, materialSnapshot(order));
+    document.getElementById('material-status-menu-title').textContent = kind === 'prints' ? 'Print status' : 'Blanks status';
+    options.replaceChildren(...materialOptions[kind].map(([value, label]) => {
+      const option = document.createElement('button');
+      option.type = 'button'; option.setAttribute('role', 'menuitemradio'); option.setAttribute('aria-checked', String(value === current));
+      const copy = document.createElement('span'); copy.textContent = label;
+      option.append(copy);
+      if (value === current) {
+        // Official Material Symbols Outlined, optical size 20 / weight 400:
+        // https://raw.githubusercontent.com/google/material-design-icons/master/symbols/web/check/materialsymbolsoutlined/check_20px.svg
+        const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        check.setAttribute('viewBox', '0 -960 960 960'); check.setAttribute('height', '20'); check.setAttribute('width', '20');
+        check.classList.add('material-option-check'); check.setAttribute('aria-hidden', 'true'); check.setAttribute('focusable', 'false');
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', 'M389-267 195-460l51-52 143 143 325-324 51 51-376 375Z');
+        check.append(path); option.append(check);
+      }
+      option.addEventListener('click', () => saveMaterialStatus(kind, value));
+      return option;
+    }));
+    menu.hidden = false;
+    materialMenu = { kind, button, order };
+    button.setAttribute('aria-expanded', 'true');
+    menu.showPopover();
+    positionMaterialMenu(button, menu);
+    options.querySelector('[aria-checked="true"]')?.focus();
+  }
+
+  function positionMaterialMenu(button, menu) {
+    const viewport = window.visualViewport;
+    const bounds = { left: viewport?.offsetLeft || 0, top: viewport?.offsetTop || 0,
+      width: viewport?.width || window.innerWidth, height: viewport?.height || window.innerHeight };
+    const margin = 12, gap = 6, anchor = button.getBoundingClientRect();
+    const width = Math.min(216, Math.max(0, bounds.width - margin * 2));
+    menu.style.width = `${width}px`;
+    menu.style.maxHeight = 'none';
+    const naturalHeight = menu.getBoundingClientRect().height;
+    const above = Math.max(0, anchor.top - bounds.top - margin - gap);
+    const below = Math.max(0, bounds.top + bounds.height - margin - anchor.bottom - gap);
+    const useBelow = naturalHeight <= below || below >= above;
+    const available = useBelow ? below : above;
+    menu.style.maxHeight = `${Math.min(naturalHeight, available)}px`;
+    const height = menu.getBoundingClientRect().height;
+    const left = Math.max(bounds.left + margin, Math.min(anchor.right - width, bounds.left + bounds.width - margin - width));
+    const top = useBelow ? anchor.bottom + gap : anchor.top - gap - height;
+    menu.style.left = `${left}px`;
+    menu.style.top = `${Math.max(bounds.top + margin, Math.min(top, bounds.top + bounds.height - margin - height))}px`;
+  }
+
+  function wireMaterialStatuses() {
+    const tracking = document.getElementById('material-status-tracking');
+    if (!tracking || tracking.dataset.wired) return;
+    tracking.dataset.wired = 'true';
+    for (const kind of ['prints', 'blanks']) {
+      const button = document.getElementById(`material-${kind}-button`);
+      button?.addEventListener('click', () => openMaterialMenu(kind, button));
+      button?.addEventListener('keydown', event => {
+        if (['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); openMaterialMenu(kind, button); }
+      });
+    }
+    tracking.addEventListener('keydown', event => {
+      if (!materialMenu) return;
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeMaterialMenu({ focus: true }); return; }
+      if (event.key === 'Tab') { closeMaterialMenu(); return; }
+      const options = [...document.querySelectorAll('#material-status-options button')];
+      const index = options.indexOf(event.target);
+      if (index < 0) return;
+      const next = event.key === 'ArrowDown' ? (index + 1) % options.length : event.key === 'ArrowUp' ? (index + options.length - 1) % options.length : event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : null;
+      if (next !== null) { event.preventDefault(); options[next]?.focus(); }
+    });
+    document.addEventListener('pointerdown', event => {
+      if (materialMenu && !document.getElementById('material-status-menu')?.contains(event.target)
+          && !materialMenu.button.contains(event.target)) closeMaterialMenu();
+    });
+    const dismissMovedMenu = event => {
+      const menu = document.getElementById('material-status-menu');
+      const withinMenu = event?.target instanceof Node && menu?.contains(event.target);
+      if (materialMenu && !withinMenu) closeMaterialMenu({ focus: Boolean(menu?.contains(document.activeElement)) });
+    };
+    window.addEventListener('resize', dismissMovedMenu);
+    document.addEventListener('scroll', dismissMovedMenu, true);
+    window.visualViewport?.addEventListener('resize', dismissMovedMenu);
+    window.visualViewport?.addEventListener('scroll', dismissMovedMenu);
+    document.getElementById('material-status-undo')?.addEventListener('click', () => {
+      const undo = materialUndo;
+      if (!undo || undo.order !== currentDetailOrder) return;
+      if (JSON.stringify(materialSnapshot(currentDetailOrder)) !== undo.saved) {
+        materialUndo = null; syncMaterialStatuses(); materialFeedback('The status changed again. Review its current value before changing it.', true); return;
+      }
+      void saveMaterialStatus(undo.kind, null, undo.patch);
+    });
+  }
+  // The menu stays in the detail DOM while its native popover paints above clipping ancestors.
+  window.OrderDetailMaterialMenu = Object.freeze({ isOpen: () => Boolean(materialMenu), close: closeMaterialMenu });
 
   function syncPrintPlacements(order) {
     const placeholder = document.getElementById('detail-mockups-placeholder');
@@ -413,6 +657,7 @@
     }
     order.sync = result.sync || order.sync || {};
     order.canonicalDetail = result;
+    window.OrderActions?.rememberDetail(order, result);
 
     if (lineItems.length) {
       order.items = lineItems.map(item => {
@@ -981,6 +1226,7 @@
     renderActivityAndExceptions(order, result);
     renderOverview(order, result);
     enhanceItemsTable(order);
+    window.MobileOrderDetail?.sync(order, result);
     document.dispatchEvent(new CustomEvent('printmo:detail-items-rendered', {
       detail: { orderName: order?.name || '' }
     }));
@@ -1094,6 +1340,10 @@
   }
 
   function overviewMaterialCount() {
+    if (currentDetailOrder?._candidate) {
+      const state = materialSnapshot(currentDetailOrder);
+      return Number(Boolean(state.blanksStatus)) + Number(Boolean(state.printsStatus));
+    }
     return checkboxIds.filter(id => document.getElementById(id)?.checked).length;
   }
 
@@ -1111,10 +1361,10 @@
         target: 'tab-activity'
       };
     }
-    if (snapshot.materialCount < checkboxIds.length) {
+    if (snapshot.materialCount < snapshot.materialGoal) {
       return {
         title: 'Review material readiness',
-        description: `${snapshot.materialCount} of ${checkboxIds.length} existing material milestones are marked.`,
+        description: currentDetailOrder?._candidate ? 'Blanks and physical prints are not both recorded in hand.' : `${snapshot.materialCount} of ${checkboxIds.length} existing material milestones are marked.`,
         action: 'Open production',
         target: 'tab-production',
         mobileAnchor: 'ready-controls'
@@ -1152,6 +1402,7 @@
     const printableTotal = typeof printablePieceTotal === 'function' ? printablePieceTotal(order) : counts.apparel;
     const progress = Math.max(0, Number(order.progress || 0));
     const materialCount = overviewMaterialCount();
+    const materialGoal = order._candidate ? 2 : checkboxIds.length;
     const stage = String(result?.production?.stage || order.productionStage || order.status || 'received').toLowerCase();
     const fulfillment = String(
       result?.commerce?.fulfillmentStatus
@@ -1164,6 +1415,7 @@
       apparel: printableTotal,
       progress,
       materialCount,
+      materialGoal,
       fulfillment,
       reasons
     });
@@ -1181,13 +1433,13 @@
     }
 
     setText('overview-order-state', stageLabel, 'Received');
-    setText('overview-materials-state', `${materialCount} of ${checkboxIds.length} marked`);
+    setText('overview-materials-state', order._candidate ? materialCount === materialGoal ? 'In hand' : 'Not all in hand' : `${materialCount} of ${checkboxIds.length} marked`);
     setText('overview-printing-state', `${progress} of ${printableTotal} pieces`);
     setText('overview-fulfillment-state', normalizedStageLabel(fulfillment.toLowerCase()), 'Unfulfilled');
     setOverviewMilestone('overview-milestone-order', stage === 'completed' ? 'complete' : 'current');
     setOverviewMilestone(
       'overview-milestone-materials',
-      materialCount === checkboxIds.length ? 'complete' : materialCount > 0 ? 'current' : 'pending'
+      materialCount === materialGoal ? 'complete' : materialCount > 0 ? 'current' : 'pending'
     );
     setOverviewMilestone(
       'overview-milestone-printing',
@@ -1567,6 +1819,10 @@
   }
 
   function readyStateFromInputs() {
+    if (currentDetailOrder?._candidate) {
+      const state = materialSnapshot(currentDetailOrder), ready = state.blanksStatus && state.printsStatus;
+      return { label: ready ? 'Materials in hand' : 'Material status', state: ready ? 'ready' : 'missing' };
+    }
     const checked = checkboxIds.filter(id => document.getElementById(id)?.checked).length;
     if (checked === checkboxIds.length) return { label: 'Materials marked ready', state: 'ready' };
     if (checked > 0) return { label: `${checked} of 4 material milestones`, state: 'partial' };
@@ -1594,6 +1850,14 @@
       pill.textContent = readyState.label;
       pill.dataset.state = readyState.state;
       pill.title = `${completed} of ${checkboxIds.length} material readiness milestones marked`;
+    }
+
+    if (currentDetailOrder?._candidate) {
+      if (pill) pill.title = 'Tracks physical blanks and prints; artwork approval is separate.';
+      checkboxIds.forEach(id => { const input = document.getElementById(id); if (input) input.disabled = false; });
+      wireMaterialStatuses();
+      syncMaterialStatuses();
+      return;
     }
 
     readinessSequences.forEach(sequence => {
@@ -1689,6 +1953,7 @@
   }
 
   function enforceReadinessSequence(changedInput) {
+    if (currentDetailOrder?._candidate) return;
     const sequence = readinessSequences.find(candidate =>
       candidate.orderedId === changedInput?.id || candidate.readyId === changedInput?.id
     );
@@ -1881,6 +2146,7 @@
   }
 
   function activateDetailTab(panelId, options = {}) {
+    panelId = window.MobileOrderDetail?.panelFor(panelId) || panelId;
     const tabs = Array.from(document.querySelectorAll('#detail-tabs-header .detail-tab-item'));
     const panels = Array.from(document.querySelectorAll('#detail-tab-panels .detail-tab-panel'));
     const targetTab = tabs.find(tab => tab.dataset.tab === panelId) || tabs[0];
@@ -1898,6 +2164,7 @@
       panel.hidden = !active;
       panel.setAttribute('aria-hidden', String(!active));
     });
+    window.MobileOrderDetail?.onTabChange(targetTab.dataset.tab);
     targetTab.scrollIntoView?.({
       block: 'nearest',
       inline: 'nearest',
@@ -2205,8 +2472,7 @@
     return options.at(-1) || 'Size not specified';
   }
 
-  function mockupItemArtworkScopeKey(item) {
-    const product = String(item?.title || '').trim().toLowerCase();
+  function mockupItemColor(item) {
     const explicitColor = (item?.customAttributes || []).find(attribute =>
       /^(color|colour|garment color|garment colour)$/i.test(String(attribute?.key || '').trim())
     )?.value;
@@ -2214,9 +2480,12 @@
       .split('/')
       .map(value => value.trim())
       .filter(Boolean);
-    const color = String(explicitColor || (variantParts.length > 1 ? variantParts[0] : ''))
-      .trim()
-      .toLowerCase();
+    return String(explicitColor || (variantParts.length > 1 ? variantParts[0] : '')).trim();
+  }
+
+  function mockupItemArtworkScopeKey(item) {
+    const product = String(item?.title || '').trim().toLowerCase();
+    const color = mockupItemColor(item).toLowerCase();
     return product && color ? `${product}\u0000${color}` : '';
   }
 
@@ -2259,8 +2528,9 @@
         const product = String(item.title || 'Linked item').trim();
         const size = mockupItemSize(item);
         const key = `${product}\u0000${size}`;
-        const current = groups.get(key) || { product, size, qty: 0 };
+        const current = groups.get(key) || { product, size, qty: 0, colors: new Set() };
         current.qty += Number(item.qty) || 0;
+        current.colors.add(mockupItemColor(item));
         groups.set(key, current);
       });
     if (!groups.size) return;
@@ -2282,6 +2552,8 @@
       const productName = document.createElement('span');
       productName.className = 'detail-mockup-context-product-name';
       productName.textContent = product;
+      const colors = new Set(entries.flatMap(entry => [...entry.colors]));
+      if (colors.size === 1 && [...colors][0]) productName.dataset.linkedColor = [...colors][0];
       const quantities = document.createElement('span');
       quantities.className = 'detail-mockup-context-quantities';
       entries.forEach(entry => {
@@ -2295,6 +2567,7 @@
     });
     context.append(heading, list);
     context.classList.remove('hidden');
+    window.MobileOrderDetail?.refreshCaption();
   }
 
   function resetMockupFrame(mainButton = document.getElementById('detail-mockup-main')) {
@@ -2681,6 +2954,9 @@
   }
 
   function preserveNotesDraftForClose() {
+    closeMaterialMenu();
+    materialUndo = null;
+    materialContextOrder = null;
     rememberCurrentNotesDraft();
     setNotesEditing(false);
     currentDetailOrder = null;
@@ -2739,6 +3015,7 @@
       overlay?.setAttribute('aria-hidden', 'false');
       activateDetailTab('tab-overview');
       syncDetailHeader(order);
+      window.MobileOrderDetail?.sync(order);
       wireCustomerNotesControls();
       wireReadyInputs();
       setReadyBaselines();
@@ -2758,7 +3035,8 @@
       requestAnimationFrame(scheduleDesignFilesEnhancement);
       setTimeout(scheduleDesignFilesEnhancement, 250);
       setTimeout(scheduleDesignFilesEnhancement, 1000);
-      hydrateCanonicalDetail(order);
+      const hydration = hydrateCanonicalDetail(order);
+      window.OrderActionsDetailReady = requested => requested === order ? hydration : Promise.resolve({ ok: false });
       window.renderShelfAllocationForOrder?.(order);
       return result;
     };

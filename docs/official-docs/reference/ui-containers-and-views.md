@@ -129,9 +129,7 @@ entrances or financial values. The shared renderer's per-asset updater calls
 Source labels and supplier/receiving statuses are plain metadata, without pill
 backgrounds. The production header stays white as part of the single card.
 The redundant prints-pending warning is omitted on the candidate board; material
-readiness remains visible beside its quantities. Candidate cards have no removal
-button. The existing archive operation remains available in order detail under
-**Order actions → Remove from board**, with confirmation and no history mutation.
+readiness remains visible beside its quantities. Candidate cards expose a card-wide right-click/keyboard menu, including artwork; only mobile retains the visible **Actions** control. The menu provides with a Copy submenu, reviewed production moves, eligible printed-count editing, and confirmed **Remove from board**. The existing detail removal remains available. Candidate removal archives PrintMO state without deleting the source order; Legacy deletion is excluded and no Undo is promised.
 
 An **Order Card** (`.pipeline-card`, `.card`) is the fundamental visual unit displayed in Kanban columns *before* a user clicks to open the Order Detail overlay.
 
@@ -175,6 +173,22 @@ Below is the complete inventory of all 10 modal overlays and secondary screens e
 
 ### 1. Order Detail Workbench (`#detail-overlay`, `#detail-card`)
 
+At Shopify/provider phone widths (up to 900px), `mobile-order-detail.js` composes
+the existing live sections as a light blue job sheet. Only Back/order identity
+and Order, Production, Fulfillment, More navigation remain fixed outside the
+single `#detail-content` scroller. Order opens with customer, authoritative total,
+payment, explicit delivery method and fulfillment status, then the existing
+combined proof and verified item context. The preview counter reveals the same
+thumbnail chooser; enlargement retains the canonical combined image. Two actual
+commercial rows open first, with their instructions and an in-place expansion
+for the complete ledger. Charges and payment are disclosed below, with Shopify
+discounts identified as included rather than deducted again. Unknown facts remain
+unknown. Production retains readiness/progress, design files, instructions,
+stock, garment cost and the prior workflow overview. More exposes Customer,
+Activity and existing authorized actions. The controller relocates live nodes
+with return anchors, restoring their original positions on close, source change
+or desktop resize; desktop and Legacy layouts retain the original composition.
+
 The Shopify/provider selected mockup reuses the board's approved shirt/list mark
 and clipped scan-bar animation while fetching detail or loading the image.
 Confirmed absence and failed previews use distinct static states. Loading motion
@@ -187,11 +201,11 @@ For Shopify details, selected-file item instructions appear in the design inspec
 The shared renderer reads `_designer_item_instructions` from Shopify custom attributes and deduplicates identical text within `group_id`. Display consolidation preserves separate Designer garment groups even for identical SKUs and variants. Conflicting instruction text is retained with its corresponding sizes; missing group IDs keep line-item association. Zero-current-quantity rows do not contribute instructions. Both initial and canonical-detail rendering use the same helper, and customer content is inserted as plain text. The implementation is code-verified; mobile visual acceptance remains owner-tested.
 - **Purpose**: Responsive order workbench for production decisions and Shopify commerce inspection. Desktop uses a modal split canvas; mobile uses a drill-in screen beneath the persistent workflow navigation.
 - **Displayed Data & Topology**:
-  - **Header Bar** (`#detail-header`, `#detail-header-bar`): Order identifier (`#detail-order-id`), customer name (`#detail-header-customer`), financial and fulfillment badges (`#badge-financial`, `#badge-fulfillment`), received timestamp (`#detail-timestamp`), item and total summaries, readiness summary, and the canonical close control (`#detail-close`). Shopify details also keep the overall garment estimate (`#detail-header-garment-cost`) visible across tabs and mobile; selecting it opens/focuses cost details in Items. Saved captures, partial known totals, unavailable/loading values, and changed capture quantities are distinguished from the commerce total.
+  - **Desktop Header Bar** (`#detail-header`, `#detail-header-bar`): Order identifier (`#detail-order-id`), customer name (`#detail-header-customer`), financial and fulfillment badges (`#badge-financial`, `#badge-fulfillment`), received timestamp (`#detail-timestamp`), item and total summaries, readiness summary, and the canonical close control (`#detail-close`). Shopify desktop details keep the overall garment estimate (`#detail-header-garment-cost`) visible across tabs; selecting it opens/focuses cost details in Items. Mobile keeps that disclosure under Production. Saved captures, partial known totals, unavailable/loading values, and changed capture quantities are distinguished from the commerce total.
   - **Always-visible Production Pane (~39% desktop)** (`#detail-left-pane`):
     - **Order Artwork** (`#detail-mockups-strip`): At desktop Shopify-board widths, the selected preview (`#detail-mockup-feature`, `#detail-mockup-main`) derives its frame from the image's intrinsic aspect ratio and caps it to the production pane or a bounded working height. This preserves square, 16:9, and uncommon horizontal artwork without cropping or a misleading empty stage; the image-led frame is followed by a horizontal thumbnail track (`#detail-mockups-track`) and source-aware item context (`#detail-mockup-context`). The context aggregates every garment-size quantity in the selected artwork's product-and-color scope, so a mockup linked to one size represents the other sizes of that same garment color too; unlinked manual artwork is explicitly labeled as order-level rather than assigned to a garment. Upload and paste controls remain available. Selecting a thumbnail updates the large preview; the large preview opens the asset viewer.
     - **Production Progress** (`#detail-production-card`): Progress bar and printed-piece count, immediately responsive `+1 Print`, custom quantity, and visible save feedback. Rapid increments keep one mutation in flight and coalesce to the latest desired count. The custom dialog validates an absolute printed total, provides stepper and `Mark all printed` actions, and reaching the garment total atomically persists the count with canonical `completed` stage.
-    - **Readiness** (`#ready-controls`): Two independent two-step sequences: `Blanks ordered` → `Blanks ready` and `Prints ordered` → `Prints ready`. Ready controls are blocked until their corresponding ordered milestone is set, and changed values are explicitly saved with `#ready-apply`.
+    - **Materials** (`#ready-controls`, `#material-status-tracking`): Candidate details use compact Prints/Blanks state menus with immediate revision-safe saves and Undo. Physical In hand is independent of Ordered; saved-sheet preparation is separate from artwork approval and supplier history. Legacy retains its existing controls. The current polish separates the Materials heading from Printing progress, uses 184px/44px triggers, Material Symbols SVG chevron/current check, and a focus-contained native top-layer menu with collision bounds and menu-first Escape; no status semantics change.
     - **Customer & Shop Instructions** (`#detail-notes-wrapper`): Customer name, compact instructions preview, inline desktop editor, and the expanded notes viewer. This production-critical context remains visible while other tabs change.
   - **Tabbed Workspace (~61% desktop)** (`#detail-right-pane`):
     - **Accessible Tabs** (`#detail-tabs-header`): Action Blue active line, click navigation, arrow-key navigation, and synchronized `tab`/`tabpanel` ARIA state.

@@ -31,7 +31,8 @@
       const shelf = (order._provider || 'shopify') === 'shopify' ? shelfFor(order) : { lines: [] };
       for (const [index, item] of (order.items || []).entries()) {
         const quantity = Number(item.qty);
-        if (!Number.isFinite(quantity) || quantity <= 0 || isPrint(item)) continue;
+        if (!Number.isFinite(quantity) || quantity <= 0 || isPrint(item)
+          || text(item.sku || item.supplierSku) === 'PM-ART-BG-REMOVE') continue;
         const sku = text(item.supplierSku || item.sku);
         const line = { ...variant(item), key: `${key}:${item.id || index}`, source, title: text(item.title) || 'Untitled item', sku, quantity, shelf: 0, expected: quantity, reason: '' };
         if (!sku) {

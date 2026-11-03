@@ -1246,6 +1246,39 @@ body[data-order-source="shopify"] #detail-mockups-placeholder.preview-status-hos
   margin-top: 10px;
 }
 
+.material-status-tracking { grid-column: 1 / -1; position: relative; min-width: 0; }
+.material-status-tracking[hidden], .material-status-menu[hidden], #material-status-undo[hidden] { display: none; }
+body[data-order-source="shopify"] #ready-controls > .readiness-sequence,
+body[data-order-source="shopify"] #ready-controls > .readiness-save-row { display: none; }
+.material-status-row { display: grid; grid-template-columns: minmax(54px, 1fr) minmax(0, 184px); align-items: center; gap: 12px; padding: 4px 0; }
+.material-status-label { color: var(--detail-text, #1e293b); font-size: .82rem; font-weight: 650; }
+.material-status-button { display: flex; align-items: center; gap: 8px; justify-self: end; width: 184px; max-width: 100%; height: 44px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 10px; background: #fff; color: #475569; text-align: left; font: inherit; font-size: .82rem; cursor: pointer; }
+.material-status-button[data-state="sheet"], .material-status-button[data-state="cart"] { color: #92400e; background: #fffbeb; border-color: #fde68a; }
+.material-status-button[data-state="ordered"] { color: #1e40af; background: #eff6ff; border-color: #bfdbfe; }
+.material-status-button[data-state="hand"] { color: #166534; background: #f0fdf4; border-color: #bbf7d0; }
+.material-status-value { min-width: 0; flex: 1; font-weight: 500; }
+.material-status-chevron, .material-option-check { width: 20px; height: 20px; flex: 0 0 20px; fill: currentColor; }
+.material-status-button:focus-visible, .material-status-menu button:focus-visible, #material-status-undo:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.material-status-button:disabled { cursor: wait; opacity: .7; }
+.material-status-menu { position: fixed; inset: auto; margin: 0; width: 216px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; padding: 6px; border: 0; border-radius: 8px; background: #fff; color: #1e293b; box-shadow: 0 6px 24px #0f172a30; }
+.material-status-menu-title { padding: 7px 10px; color: #64748b; font-size: .72rem; font-weight: 600; }
+.material-status-menu button { display: flex; gap: 10px; align-items: center; justify-content: space-between; width: 100%; min-height: 44px; padding: 8px 10px; border: 0; border-radius: 5px; background: #fff; color: #1e293b; font: inherit; font-size: .84rem; text-align: left; cursor: pointer; }
+.material-status-menu button:hover, .material-status-menu button:focus { background: #f1f5f9; }
+.material-status-menu button[aria-checked="true"] { color: #1d4ed8; background: #eff6ff; }
+.material-status-help { margin: 6px 0 0; color: #64748b; font-size: .72rem; line-height: 1.45; }
+.material-status-feedback { display: flex; align-items: center; gap: 8px; min-height: 0; color: #475569; font-size: .75rem; line-height: 1.4; }
+.material-status-feedback:has(#material-status-feedback:not(:empty)) { margin-top: 4px; min-height: 26px; }
+.material-status-feedback.is-error { color: #b91c1c; }
+#material-status-undo { min-height: 44px; padding: 5px 8px; border: 0; background: transparent; color: #1d4ed8; font: inherit; font-weight: 600; cursor: pointer; }
+.material-printing-group { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--detail-border, #e2e8f0); }
+body[data-order-source="shopify"] #detail-production-card .production-status-pill { display: none; }
+body[data-order-source="shopify"] #detail-production-card h3 { margin: 0; font-size: .88rem; font-weight: 650; }
+body[data-order-source="shopify"] #detail-production-card > .production-section-header { margin-bottom: 4px; }
+body[data-order-source="shopify"] #ready-controls { display: block; margin-top: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+body[data-order-source="shopify"] #detail-production-card #progress-section { margin-top: 8px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+body[data-order-source="shopify"] #detail-production-card #progress-row { grid-template-columns: minmax(88px, max-content) minmax(0, 1fr); }
+body[data-order-source="shopify"] #detail-production-card #progress-plus1 { white-space: nowrap; }
+
 #ready-controls::before {
   display: none;
 }

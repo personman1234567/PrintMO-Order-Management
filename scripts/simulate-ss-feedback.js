@@ -111,12 +111,19 @@ function fixture(options) {
 
 async function loadNormalizer() {
   const source = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8')
-    .replace("'./draft-orders.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'draft-orders.mjs')).href));
+    .replace(/(['"])(\.\/[a-z0-9-]+\.mjs)\1/g, (_, quote, relative) => JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', relative)).href));
   const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
   return (await import(moduleUrl)).normalizeSupplierCommitReport;
 }
 
 function displayRows(report) {
+  if (Array.isArray(report.lineResults)) return report.lineResults.map(line => ({
+    Status: line.status.toUpperCase(), Order: (line.orderNames || []).join(', '),
+    Item: (line.itemNames || []).join(', '), SKU: line.sku, Requested: line.requestedQty,
+    'Supplier reported accepted': line.reportedAcceptedQty ?? 'Not reported',
+    'Not confirmed': line.unconfirmedQty ?? 'Unknown',
+    Why: (line.issues || []).map(issue => issue.reason).join('; ') || line.evidence
+  }));
   const accepted = report.acceptedLines.map(line => ({
     Status: 'ACCEPTED',
     Order: (line.orderNames || []).join(', '),

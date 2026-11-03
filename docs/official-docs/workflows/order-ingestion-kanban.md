@@ -67,8 +67,8 @@ flowchart LR
 - Candidate queue loads are generation-guarded. Within affected columns, unchanged cards retain their DOM and loaded previews; version-only acknowledgments do not recreate cards. Reused cards open the latest DTO by provider and immutable order identity.
 - Slow private assets hydrate after commerce/production cards are usable.
 
-The Stage 2 list is an opt-in embedded candidate extension
-(`?printmo_list_preview=1`). Board remains the reload default; Legacy remains
+The embedded candidate List uses the same cached board snapshot; an explicit
+`?printmo_list_preview=0` keeps Board as the rollback layout. Legacy remains
 Board. Its controller reads `getOrderManagerBoardSnapshot()` and existing
 board/accounting events, with a read-only supplier getter from the batch cache.
 Browsing does not fetch queue/detail or write production state. Opening a row
@@ -86,9 +86,27 @@ The eight-column desktop table has sticky headings; below 1200px, stacked rows
 retain the same facts inside the list's vertical scroller. Counts remain individual
 bundle members, material milestones do not imply artwork approval or release,
 and supplier delivery does not imply received or allocated garments. Missing
-financial/receiving data stays unknown. This preview carries no selection
-or inline workflow actions; see the
+financial/receiving data stays unknown. List selection uses explicit reviewed
+workflow actions; see the
 [staged list-view plan](../future-plans/order-dashboard-list-view-plan.md).
+
+Individual candidate cards and rows expose **Actions**, also available by
+right-click on noninteractive surfaces. The shared menu offers **Copy** (source
+order number, operational customer name, complete canonical line items, shipping
+address and email), reviewed production-stage moves, eligible printed-count
+editing, and confirmed **Remove from board** for eligible Etsy orders only.
+Removal archives the Etsy production record without deleting or fulfilling its
+source order. Shopify/PrintMO orders and unknown sources cannot be removed by this
+action; the shared adapter and Worker enforce the same restriction. Existing
+archived history is preserved. No Undo is promised. Copy uses already-loaded
+canonical facts, preserves per-line variants/services, and treats fresh nulls as
+unavailable rather than falling back to stale contact data. No menu-open fetch or
+new protected-data access occurs. Links, images, editable controls and selected
+text retain native menus; keyboard and mobile use the same visible Actions.
+
+The card accessibility **Move back** and **Move forward** buttons are mobile-only (through 900px).
+Desktop keeps reviewed Actions/keyboard movement and drag/drop; other Back
+navigation and the forward control retain their behavior.
 
 Candidate moves are optimistic and atomic:
 
@@ -141,6 +159,18 @@ Candidate stages are:
 - `completed`
 
 `blanks_cart` and `blanks_ordered` are distinct canonical stages. **In S&S Cart** and **Ordered** tabs filter those stages; selecting a tab alone is read-only. A confirmed supplier submission enters `blanks_cart`; an operator later marks it `blanks_ordered`. After confirmation, the client repaints both `to_order` and `blanks_cart` immediately and opens **In S&S Cart**. Adapter-side batch metadata must not preempt the renderer's source/destination-column calculation.
+
+The deployed correction adds compact Prints and Blanks status
+menus to Order Detail on the candidate board.
+Prints offers Not recorded, On saved sheet, Ordered and In hand; Blanks offers Not
+recorded, In S&S cart, Ordered and In hand. Choosing a different state saves through
+the existing revision/idempotency path; the current choice is a no-op. Physical
+materials can be In hand without an Ordered flag, including shelf blanks. Prints
+In hand means physical transfers, not artwork approval. The additive JSON field
+`printsOnSavedSheet` records awaiting-purchase preparation and is retired by Ordered
+or In hand; reversing Ordered does not revive it. Blanks cart reuses the canonical
+stage. Not recorded clears manual tracking only, preserving supplier references,
+receiving/allocation facts and their warnings. No SQL migration or backfill applies.
 
 The Shopify board keeps commerce fulfillment separate from PrintMO production state. Ready to Print has two internal views: **To Print** renders canonical `print` orders and **Printed** renders canonical `completed` orders. Completed but unfulfilled work remains in Printed for customer handoff. Exact Shopify `FULFILLED` or an archived order’s `closedAt` removes an order from every active dashboard section without rewriting its production stage. The preserved order appears in the lazy-loaded, view-only **Previous Orders** desktop menu or **History** mobile menu; the list contains no asset summaries, and complete detail/artwork loads only after an order is opened.
 

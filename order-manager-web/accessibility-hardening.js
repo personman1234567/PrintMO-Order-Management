@@ -72,6 +72,7 @@
     const nextIndex = currentIndex + direction;
     const button = document.createElement('button');
     button.type = 'button';
+    button.dataset.moveDirection = direction < 0 ? 'back' : 'forward';
     button.disabled = nextIndex < 0 || nextIndex >= FLOW.length;
     if (button.disabled) return;
 
@@ -315,8 +316,25 @@
     });
 
     document.addEventListener('keydown', event => {
+      if (window.OrderActions?.isOpen()) return;
       const activeConfig = dialogConfigs.filter(isDialogOpen).at(-1);
       if (!activeConfig) return;
+
+      if (activeConfig.root === '#detail-overlay' && window.OrderDetailMaterialMenu?.isOpen()) {
+        if (event.key === 'Escape' || event.key === 'Tab') {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          const opener = window.OrderDetailMaterialMenu.close({ focus: true });
+          if (event.key === 'Tab') {
+            const choices = activeConfig.mobileDrillIn
+              ? [...focusableElements(document.getElementById('mobile-command-surface')), ...focusableElements(activeConfig.contentElement)]
+              : focusableElements(activeConfig.contentElement);
+            const index = choices.indexOf(opener);
+            if (choices.length) choices[(index + (event.shiftKey ? -1 : 1) + choices.length) % choices.length]?.focus();
+          }
+          return;
+        }
+      }
 
       if (event.key === 'Escape') {
         const inlineNotesOwnsEscape = activeConfig.root === '#detail-overlay'

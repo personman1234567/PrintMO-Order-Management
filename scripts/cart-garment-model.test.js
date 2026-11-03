@@ -14,6 +14,13 @@ test('sizes and styles with different supplier SKUs remain separate, even with i
   const result = model.build([order('1', [shirt('a', 10), { ...shirt('b', 8, 'RED-L'), variantTitle: 'Red / L' }, shirt('c', 24, 'OTHER-M')])], options);
   assert.equal(result.rows.length, 3); assert.equal(result.total, 42);
 });
+
+test('artwork service charges are not physical garments and other PM SKUs stay physical', () => {
+  const result = model.build([order('1', [shirt('service', 1, 'PM-ART-BG-REMOVE'), shirt('physical', 3, 'PM-SHIRT-M')])], options);
+  assert.equal(result.total, 3);
+  assert.equal(result.expected, 3);
+  assert.deepEqual(result.rows.map(row => row.sku), ['PM-SHIRT-M']);
+});
 test('shelf claims subtract only from the matching current line', () => {
   const result = model.build([order('1', [shirt('a', 10), shirt('b', 6, 'BLUE-M')])], {
     ...options, shelfFor: () => ({ lines: [{ lineItemId: 'a', quantity: 10, claimed: 4 }] }) });

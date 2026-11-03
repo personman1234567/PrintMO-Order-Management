@@ -295,7 +295,7 @@
   $('production-cancel-upload').onclick = () => controller?.abort();
   $('production-discard-pending').onclick = () => { releasePending(); renderPending(); notice('Pending files discarded.'); $('production-add-design').focus(); };
   $('production-manage-blanks').onclick = () => {
-    $('detail-tab-items').click();
+    $(window.MobileOrderDetail?.tabForTarget('shelf-allocation', 'detail-tab-items') || 'detail-tab-items').click();
     const target = $('shelf-allocation');
     const disclosure = target.querySelector('details');
     if (disclosure) disclosure.open = true;

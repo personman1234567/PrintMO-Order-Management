@@ -112,6 +112,7 @@
       expand.setAttribute('aria-expanded', String(record.expanded)); expand.textContent = record.expanded ? 'Less details' : 'More details';
       expand.setAttribute('aria-label', `${record.expanded ? 'Less' : 'More'} details for ${button.textContent}`);
     });
+    window.OrderActions?.attach(node, key);
     rowNodes.set(key, record); return record;
   }
 
@@ -330,7 +331,7 @@
 
   async function reviewAction(retry = false, returnControl = null) {
     if (busy || elements.dialog.open) return;
-    const savedAnchor = anchor();
+    const savedAnchor = returnControl && document.body.dataset.orderLayout !== 'list' ? null : anchor();
     const source = returnControl || (retry ? elements.retry : elements.review);
     let reviewed;
     try {
@@ -345,6 +346,7 @@
     description.textContent = retry ? 'Continue only the unsaved steps. Saved receiving records and stage moves will be kept.'
       : reviewed.action === 'supplier' ? 'Send these orders through the existing S&S cart workflow. Review the supplier result before any retry.'
       : reviewed.action === 'ordered' ? 'Record the S&S order number and create a receiving record for these orders. This does not place a supplier order.'
+      : reviewed.action === 'move' && reviewed.args.destination === 'blanks_cart' ? 'Move only the listed orders to In S&S Cart after completing the S&S cancel/add-back step. This updates the board without sending another S&S request.'
       : reviewed.action === 'unbundle' ? 'Remove only these selected members. Other orders in each bundle will stay bundled.'
       : 'Apply this change only to the orders listed below. Material readiness does not establish artwork approval or production release.';
     const jobs = retry ? workflows.remainingJobs() : reviewed.jobs;
@@ -382,9 +384,12 @@
       busy = false;
       delete document.body.dataset.orderWorkflowSaving;
       if (elements.selectionNotice.textContent === 'Saving selected orders…') elements.selectionNotice.textContent = '';
-      render(); renderBusy(); restoreAnchor(savedAnchor);
-      workflowReturn = savedAnchor || { scrollTop: elements.scroll.scrollTop };
-      restoreWorkflowOrigin();
+      render(); renderBusy();
+      if (savedAnchor) {
+        restoreAnchor(savedAnchor);
+        workflowReturn = savedAnchor;
+        restoreWorkflowOrigin();
+      } else if (source?.isConnected) source.focus({ preventScroll: true });
     }
     if (completed?.cancelled) return;
     return { results: lastResults, remaining: workflows.remaining(), notice: elements.selectionNotice.textContent };
@@ -408,7 +413,6 @@
       search: byId('order-list-search'), sort: byId('order-list-sort'), filters: byId('order-list-filters'), filterToggle: byId('order-list-filters-toggle'),
       clear: byId('order-list-clear'), empty: byId('order-list-empty') };
     if (Object.values(elements).some(value => !value)) { elements = null; return; }
-    if (!preview) { document.body.dataset.orderLayout = 'board'; return; }
     workflows = window.OrderListWorkflows.create({ getOrders: cachedOrders, api: window.api,
       blanks: window.blanksBatchFoundation, submit: refs => window.submitOrderManagerSupplierOrders(refs),
       showSupplierError: error => window.showOrderManagerSupplierError?.(error), onChange: schedule });
@@ -498,14 +502,17 @@
         return { value, label, hidden: Boolean(same), ...workflows.eligibility(action, keys, destination) };
       });
     },
-    async reviewMobile(keys, value, returnControl) {
-      if (!preview || !isCandidate() || busy || !workflows || elements.dialog.open) return;
+    async reviewOrders(keys, value, returnControl) {
+      if (!isCandidate() || busy || !workflows || elements.dialog.open) return;
       if (!actionChoices.some(([action]) => action === value)) throw new Error('Choose an available action.');
       const previousSelection = selected, previousAction = elements.action.value;
       selected = [...keys]; elements.action.value = value;
       lastResults = []; elements.selectionNotice.textContent = '';
       try { return await reviewAction(false, returnControl); }
       finally { selected = previousSelection; elements.action.value = previousAction; renderSelection(); }
+    },
+    async reviewMobile(keys, value, returnControl) {
+      return window.OrderManagerViews.reviewOrders(keys, value, returnControl);
     },
     async retryMobile(returnControl) { if (workflows?.remaining().length) return reviewAction(true, returnControl); },
     workflowState: () => ({ busy, reviewing: Boolean(elements?.dialog?.open), remaining: workflows?.remaining() || [] })

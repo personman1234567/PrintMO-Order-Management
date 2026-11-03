@@ -52,7 +52,7 @@ sequenceDiagram
 When orders are dragged into the batch zone:
 
 1. Resolve selected GIDs from active D1 projections and validate their production stages.
-2. Read complete Shopify-derived line items from the projection; exclude known print-service lines.
+2. Read complete Shopify-derived line items from the projection; exclude known print-service lines and the exact artwork-service SKU `PM-ART-BG-REMOVE`. Its customer charge remains unchanged. Other `PM-*` SKUs are not excluded by prefix.
 3. Filter items containing valid supplier `sku` strings.
 4. Group by `sku` and aggregate total required quantities:
    $$\text{TotalQty}(\text{SKU}_k) = \sum_{i \in \text{SelectedOrders}} \text{ItemQty}_i(\text{SKU}_k)$$
@@ -76,14 +76,86 @@ The installed Order Manager app must have Shopify `read_products` as well as ord
 
 1. The Worker inserts an idempotent D1 batch and allows only one transition to `submitting`.
 2. Before aggregation, the Worker retains a private SKU-to-source-order map so supplier feedback can identify the affected PrintMO order without sending customer data to S&S.
-3. The Render gateway validates the already-aggregated lines, adds server-held credentials/payment/shipping configuration, and posts to S&S without reading Redis. The current `testOrder` cart workflow skips optional per-SKU price lookups so a large batch does not spend S&S's API request budget before the POST; its estimated subtotal is null. Future non-test submissions retain bounded price lookup retries and warnings. Detailed gateway responses may contain S&S `Orders` plus `LineErrors`; the Worker remains backward-compatible with the earlier summary-only success response.
+3. The Render gateway validates aggregated lines, adds server-held credentials/payment/shipping configuration, and posts to S&S **Orders**, without reading Redis. `SS_TEST_ORDER` is passed through unchanged; S&S documents test orders as created and cancelled, not a shopping-cart API operation. Optional per-SKU price lookups remain skipped in test mode. Responses can contain both created `Orders` and native `LineErrors`; order-number-only and summary-only success remain supported.
 4. The Worker normalizes every attempt as `confirmed`, `partial`, `rejected`, or `unknown`, stores the redacted report in `batches.response_json` and `supplier_attempts`, and exposes the latest report to the authenticated board.
-5. A confirmed S&S response is stored before Shopify metadata is advanced. For a partial response, only orders whose complete garment SKU set was accepted remain in `batch_orders`, receive the PO, and advance to `blanks_cart`; affected orders remain documented in the immutable request report but are removed from confirmed-batch reconciliation membership and stay in Build Order.
+5. The supplier response is stored before production metadata advances. Customer orders with fully covered supplier requirements use the existing `blanks_cart` workflow stage; that stage name does not establish an automated S&S cart operation. Service charges do not count as supplier garments. Missing or unmatched line details are separate from order-placement success, and short shared SKUs are not allocated between customer orders by guess.
 6. A structured supplier `4xx` is a deterministic rejection rather than an ambiguous result. The board shows the human-readable product and variant, rejected SKU, requested quantity, affected order, and supplier reason when returned.
 7. If the supplier confirms but metadata is incomplete, the response lists repair-required GIDs and nightly integrity reconciliation repairs them. The supplier order is never resent.
 8. The gateway marks whether an S&S order POST was attempted. An error known to occur before that POST is stored as failed and shown as safe to retry after the issue clears. A timeout, gateway `5xx`, or success-shaped response after the POST (or without a trustworthy attempt marker) is stored as `unknown`, displayed with its batch reference, and must not be blindly retried.
 
-The embedded board keeps the submit button label stable and opens a keyboard-contained S&S result report after every attempt. The most recent persisted report can be reopened after reload. Preflight failures say that no order request was sent; confirmed results with incomplete pricing instruct staff to verify the total in S&S. Partial and unknown reports include explicit operational warnings; the internal `ssb-` reference is not an S&S order or PO number. For an unknown cart-workaround result, check S&S cart contents and unexpected purchases before any repeat submission. The browser never renders raw gateway payloads or credentials.
+Error reports retain native `upstreamHttpStatus` and bounded `supplierMessage`
+separately from the gateway transport status, plus original `attemptStartedAt`.
+`orderSubmissionAttempted` is true, false, or null when evidence is absent;
+absence never proves that no order POST occurred. Blocked selections show their
+own quantities and the earlier attempt's time/error.
+
+An explicitly owner-authorized retry resolution is an append-only
+`supplier_attempts` row of type `owner_retry_resolution`, outcome
+`owner_authorized_retry`. Its original line hash, updated timestamp and exact
+response snapshot must still match the reviewed failed/unknown batch before it
+can stop blocking a deliberately new intent. The original batch and commit audit
+remain unchanged. This does not establish supplier placement, replay an old
+intent, release in-flight claims, or waive other unknown attempts. There is no
+new public override endpoint or supplier retry automation.
+
+Deployed retry correction: an authenticated native JSON
+HTTP 503 with code `503` and exactly "You are being throttled. Please wait 1
+minute before your next request." is classified as `rate_limited` only without
+contradictory order or line evidence. This is the supplier's explicit refusal,
+not a guarantee that no order could exist. The report retains
+`orderSubmissionAttempted: true`, original time and native message; it is never
+labelled preflight/not sent. A deliberate new intent is allowed after the saved
+cooldown (at least 60 seconds from the response). There is no automatic POST.
+Same-key replay, concurrent claims and genuinely ambiguous outcomes stay guarded.
+Generic 503, missing JSON/code, transport failure or contradictory evidence do
+not qualify. Existing historical records are not automatically reclassified.
+
+The prepared error diagnostic records only gateway HTTP status, media type,
+JSON/non-JSON/empty format, byte length and presence booleans for supplier
+status/message/dispatch fields. Raw HTML, customer bodies and credentials are
+not retained. The captured complete local HTTP fixture verifies the real
+gateway handler, Worker parser, Shopify commit persistence and UI; it does not
+explain or reproduce the original live response-body loss.
+
+The result leads with the official S&S order reference(s) and native supplier
+errors. Order placement and line attribution are separate facts: missing quantity
+is not zero; explicit zero stays zero; a mismatched supplier identifier does not
+erase the returned order reference or other line evidence. `sku` and numeric
+`skuID` are distinct fields, selected by explicit name priority rather than JSON
+property order. An ID-only historical response is not guessed into a SKU.
+
+For Print-MO's normal cart workaround, staff review the returned order on S&S,
+choose **Cancel Order**, then **Yes** to add items back to cart when that step is
+outstanding. The app does not perform cancellation or website-cart read/write.
+The report never asserts that this manual step has already occurred. Genuine
+ambiguous POST outcomes still require review before any repeat submission.
+
+The deployed audited correction retains original same-attempt idempotency and uses
+existing batch evidence to protect actual overlapping unresolved demand. A prior
+fully confirmed customer order is not a lifetime lock on future demand. The
+`0015` hold/audit tables and their existing records are preserved as history; they
+are no longer the normal submission eligibility gate. The bespoke cart-review
+and cart-reconcile endpoints are retired with `410`, without deleting history.
+
+Blocked, saved and replayed actions explicitly identify that no new supplier
+request was sent. The deployed restoration leads with the
+current selection and keeps old evidence in a separate collapsed disclosure.
+Known order references with attribution-only warnings or completed native partial
+results are not permanent ordering bans. In-flight requests and genuinely
+ambiguous POST outcomes remain protected, including ambiguous HTTP failures with
+references. A known preflight failure is safe to retry. The client retains the same
+intent key while a request is running or ambiguous; a deliberately new order after
+a completed result uses a new key. The added retry-review override is retired with
+`410` and its historical audit remains intact. No original supplier result is
+rewritten or silently resolved by this eligibility restoration.
+
+Explicit selected board corrections reuse the existing reviewed **Move to In S&S
+Cart** workflow after the operator's cancel/add-back step. This changes production
+stage without another supplier request or rewriting the original supplier report.
+It does not create a receiving manifest or mark garments received. PDF export and
+automatic residual supplier retry remain deferred. Worker and Pages are deployed;
+the gateway mapper correction is deployed too. Unmatched identifiers remain
+explicit review cases without guessed aliases; see the current release boundary.
 
 The stateless gateway is deployed from the sibling `shopify-ss-integration` source boundary. Gateway commit `d3a0d5a` introduced an operator-safe `Orders`/`LineErrors` shape plus normalized accepted lines from `/order-manager/v1/supplier/ss/commit`; it strips shipping, payment, pricing internals, and unknown supplier fields. Structured S&S `400`, `404`, and `422` responses remain deterministic rejections. A failure before the order POST is safe to retry only when the gateway explicitly attests that the POST was not attempted; authentication, throttling, server, and transport failures during or after the POST remain uncertain. Changing S&S `rejectLineErrors` behavior remains a separate gateway release decision and must first be exercised with `SS_TEST_ORDER=1`.
 

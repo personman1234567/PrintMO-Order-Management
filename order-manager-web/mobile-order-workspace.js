@@ -324,8 +324,12 @@
         if (!editor) (records.get(row.key)?.progress || records.get(currentRows[Math.min(anchor.index, currentRows.length - 1)]?.key)?.open || search).focus({ preventScroll: true });
       }
     }
-    function openActions(keys, opener) {
+    function openActions(keys, opener, compact = true) {
       guarded(() => {
+        if (compact && keys.length === 1 && window.OrderActions) {
+          window.OrderActions.open(keys[0], opener);
+          return;
+        }
         actions.content.replaceChildren(); returnFocus = opener;
         actions.dialog.querySelector('h2').textContent = keys.length === 1 ? 'Order actions' : `${keys.length} selected orders`;
         const jobs = keys.map(findOrder).filter(Boolean), stages = jobs.map(board.stageForOrder);
@@ -373,7 +377,7 @@
       host.replaceChildren(el('strong', `${selected.size} selected`));
       host.append(button('Select matching', () => { selected = new Set(currentRows.map(row => row.key)); render(); }),
         button('Clear', () => { selected.clear(); render(); }));
-      const action = button('Actions', () => openActions([...selected], action), 'mw-primary'); action.disabled = !selected.size || busy; host.append(action);
+      const action = button('Actions', () => openActions([...selected], action, false), 'mw-primary'); action.disabled = !selected.size || busy; host.append(action);
       for (const [key, record] of records) { record.check.checked = selected.has(key); record.node.classList.toggle('is-selected', selected.has(key)); }
     }
     function openFilters() {

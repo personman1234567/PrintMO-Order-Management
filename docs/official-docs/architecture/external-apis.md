@@ -54,6 +54,15 @@ Embedded client
 - `GET /order-manager/v1/batches/latest` returns the latest authenticated, redacted result report for the board; it never returns gateway credentials or raw customer/shipping payloads.
 - `SS_TEST_ORDER=1` remains required until owner approval enables live ordering.
 
+The supplier endpoint is `POST /v2/orders/` in both modes. The flag does not select
+a cart endpoint: S&S documents test orders as created and cancelled. Print-MO's
+manual Cancel Order / Yes, add items back to cart workflow is an operator step on
+the supplier website. Preserve official order references and native errors even
+when item identifiers or quantity details need review; do not convert that detail
+uncertainty into a claim that no order response exists. The audited Worker/Pages
+result correction and gateway SKU-precedence correction are deployed. Unmatched
+returned identifiers remain explicit review cases; they are never guessed aliases.
+
 The Legacy Redis view continues using its isolated legacy batch route until final cutover.
 
 For linked numeric S&S order numbers, the five-minute Worker schedule calls the authenticated gateway's read-only `/order-manager/v1/supplier/ss/order-status` route. The gateway reads S&S Orders and TrackingDataByOrderNum, including box data, and returns only redacted order/delivery status, tracking events, and an observation timestamp. The Worker stores snapshots in private R2 objects separate from receiving manifests. It checks at most 25 order numbers per run and never makes a carrier event a physical receipt or a Shopify production-stage mutation. Operators can request a rate-limited status check from the receiving workspace. Multi-order purchases can be linked with comma-separated numeric S&S order numbers; the aggregate stays partial until all linked orders and expected boxes are delivered. A stale or failed read preserves the last observed state and its timestamp. SanMar, PromoStandards, threshold optimization, and multi-supplier receiving remain future work.

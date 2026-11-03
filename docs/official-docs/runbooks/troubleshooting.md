@@ -46,11 +46,28 @@
 | Packaged desktop app fails before loading orders | Public OIDC config, sign-in, or authenticated Worker connectivity failed | `main.js:loadRuntimeConfig`, `DesktopOidcAuth`, `main.js:workerFetch` | Verify public runtime config and identity/Worker reachability. Never copy `.env` or infrastructure secrets into the package. |
 | Codex Desktop closes, hangs, or must be reinstalled after an agent starts Browser or Chrome; its log ends with `Recoverable Chromium child process gone ... processType=GPU reason=crashed` followed by `reason=launch-failed` | Codex Desktop's Chromium GPU process and persistent browser/shader caches, not the PrintMO Electron runtime | `%LOCALAPPDATA%\Codex\Logs`; `%APPDATA%\Codex\web\Codex` | Stop browser retries and follow Procedure I. A normal app reinstall preserves this roaming browser profile. Move only the listed transient caches to a timestamped backup while Codex is fully closed, then verify a fresh in-app Browser load and Chrome connection. |
 | S&S batch submission returns 401 Unauthorized | Supplier-gateway credentials or Worker-to-gateway authentication failed | Worker batch route and stateless supplier gateway | Inspect server-side gateway configuration and request IDs. No S&S credential belongs in Electron or the browser. |
+| Place S&S order immediately shows an earlier result without a new supplier attempt | In-flight/genuine uncertain POST protection, or an overbroad historical overlap gate in the preceding release | `claimSupplierAttempt`, `supplierSubmissionReportFromError`, `SupplierResults` | Match current selection/reference to saved attempt evidence. Prepared with zero commits is no new supplier failure. Selective restoration removes bans based only on known placement plus identifier warnings; preserve same-intent replay, concurrent claims and actual transport uncertainty. Keep historical evidence separate from current counts; do not purge records or add override steps. |
 | S&S submission reports a rejected garment or partial result | S&S returned a structured request or line error for a SKU, quantity, or inventory condition | `handleV1BatchCommit`, supplier gateway detailed response, S&S result dialog | Use the displayed batch reference and line feedback. Fully accepted orders may advance; affected orders remain in Build Order. Never resubmit an `unknown` result. |
 
 ---
 
 ## Detailed Troubleshooting & Recovery Procedures
+
+### Supplier 503 followed by an immediate blocked selection
+
+Match the current selection's reference to its earlier blocking attempt. A
+prepared batch with zero commits was not sent. The 2026-11-02 incident
+`ssb-c9df41fc34b5a509fabe003c` reached the S&S Orders POST at 23:29:57 UTC and
+received supplier HTTP 503; the gateway returned transport HTTP 502. Older
+normalization hid the native error. New reports retain both statuses, bounded
+message and original attempt time. An absent dispatch marker is null, not proof
+of a preflight failure.
+
+Do not infer that 503 proves no purchase was created. Check exact supplier
+history and retain the original result. Only explicit owner approval can resolve
+a particular failed/unknown attempt's retry block through the append-only audit
+contract in the batching workflow. Never purge history, broadly unlock other
+attempts, or issue a supplier POST as a deployment check.
 
 ### A. Diagnosing Base64 Attachment Bloat
 - **Trap**: Uploading high-resolution PNG mockups encodes raw image files as multi-megabyte Base64 strings embedded directly inside `shopifyOrdersQueue` JSON objects.

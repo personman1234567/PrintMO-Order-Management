@@ -304,11 +304,34 @@
     {
       "id": "electron-ipc",
       "description": "Electron initialization, IPC bridge, OIDC token custody, and Worker transport",
-      "taskTypes": ["change", "diagnosis", "security"],
-      "keywords": ["electron", "ipc", "preload", "context isolation", "oidc", "desktop", "worker transport"],
-      "paths": ["main.js", "preload.js", "desktop-auth.js"],
-      "symbols": ["workerFetch", "contextBridge.exposeInMainWorld", "ipcMain.handle"],
-      "errors": ["window.api is undefined", "PrintMO sign-in failed"],
+      "taskTypes": [
+        "change",
+        "diagnosis",
+        "security"
+      ],
+      "keywords": [
+        "electron",
+        "ipc",
+        "preload",
+        "context isolation",
+        "oidc",
+        "desktop",
+        "worker transport"
+      ],
+      "paths": [
+        "main.js",
+        "preload.js",
+        "desktop-auth.js"
+      ],
+      "symbols": [
+        "workerFetch",
+        "contextBridge.exposeInMainWorld",
+        "ipcMain.handle"
+      ],
+      "errors": [
+        "window.api is undefined",
+        "PrintMO sign-in failed"
+      ],
       "read": [
         {
           "path": "docs/official-docs/architecture/ipc-and-storage.md",
@@ -316,21 +339,60 @@
         }
       ],
       "inspect": [
-        {"path": "main.js", "symbols": ["workerFetch", "createWindow"]},
-        {"path": "preload.js", "symbols": ["contextBridge.exposeInMainWorld"]}
+        {
+          "path": "main.js",
+          "symbols": [
+            "workerFetch",
+            "createWindow"
+          ]
+        },
+        {
+          "path": "preload.js",
+          "symbols": [
+            "contextBridge.exposeInMainWorld"
+          ]
+        }
       ],
-      "tools": ["verify-phase1"],
-      "verify": ["node --check main.js", "node --check preload.js", "npm run verify:phase1"],
-      "stop": ["Changing authentication authority, secret placement, or the Worker trust boundary requires explicit review."]
+      "tools": [
+        "verify-phase1"
+      ],
+      "verify": [
+        "node --check main.js",
+        "node --check preload.js",
+        "npm run verify:phase1"
+      ],
+      "stop": [
+        "Changing authentication authority, secret placement, or the Worker trust boundary requires explicit review."
+      ]
     },
     {
       "id": "legacy-redis",
       "description": "Legacy Redis fallback queue, attachment payloads, and legacy adapter behavior",
-      "taskTypes": ["change", "diagnosis", "migration"],
-      "keywords": ["redis", "legacy board", "shopifyOrdersQueue", "base64", "queue", "legacy adapter"],
-      "paths": ["order-manager-proxy/worker.js", "renderer.js"],
-      "symbols": ["shopifyOrdersQueue", "splitOrderAssets"],
-      "errors": ["assets || []).forEach is not a function", "Redis board shows zero cards"],
+      "taskTypes": [
+        "change",
+        "diagnosis",
+        "migration"
+      ],
+      "keywords": [
+        "redis",
+        "legacy board",
+        "shopifyOrdersQueue",
+        "base64",
+        "queue",
+        "legacy adapter"
+      ],
+      "paths": [
+        "order-manager-proxy/worker.js",
+        "renderer.js"
+      ],
+      "symbols": [
+        "shopifyOrdersQueue",
+        "splitOrderAssets"
+      ],
+      "errors": [
+        "assets || []).forEach is not a function",
+        "Redis board shows zero cards"
+      ],
       "read": [
         {
           "path": "docs/official-docs/architecture/ipc-and-storage.md",
@@ -342,21 +404,67 @@
         }
       ],
       "inspect": [
-        {"path": "order-manager-proxy/worker.js", "symbols": ["shopifyOrdersQueue"]},
-        {"path": "renderer.js", "symbols": ["splitOrderAssets"]}
+        {
+          "path": "order-manager-proxy/worker.js",
+          "symbols": [
+            "shopifyOrdersQueue"
+          ]
+        },
+        {
+          "path": "renderer.js",
+          "symbols": [
+            "splitOrderAssets"
+          ]
+        }
       ],
-      "tools": ["redis-backup", "verify-phase1"],
-      "verify": ["npm run verify:phase1"],
-      "stop": ["Stop before restoring, deleting, or structurally rewriting legacy Redis data."]
+      "tools": [
+        "redis-backup",
+        "verify-phase1"
+      ],
+      "verify": [
+        "npm run verify:phase1"
+      ],
+      "stop": [
+        "Stop before restoring, deleting, or structurally rewriting legacy Redis data."
+      ]
     },
     {
       "id": "order-data-inventory",
       "description": "Current UI field coverage and complete Shopify/PrintMO order-data inventory for visualization planning",
-      "taskTypes": ["design", "reference", "architecture"],
-      "keywords": ["order data", "field inventory", "visualization", "current display", "shopify order fields", "conversion summary", "line items", "customer data", "mockup thumbnail"],
-      "paths": ["renderer.js", "order-manager-web/web-shim.js", "order-manager-web/shopify-preview.js", "order-manager-proxy/worker.js"],
-      "symbols": ["candidateOrderToBoard", "makeCard", "openDetail", "SHOPIFY_PREVIEW_ORDER_DETAIL_QUERY", "ORDER_SUMMARIES_QUERY"],
-      "errors": ["field is not displayed", "protected customer data", "partial Shopify detail"],
+      "taskTypes": [
+        "design",
+        "reference",
+        "architecture"
+      ],
+      "keywords": [
+        "order data",
+        "field inventory",
+        "visualization",
+        "current display",
+        "shopify order fields",
+        "conversion summary",
+        "line items",
+        "customer data",
+        "mockup thumbnail"
+      ],
+      "paths": [
+        "renderer.js",
+        "order-manager-web/web-shim.js",
+        "order-manager-web/shopify-preview.js",
+        "order-manager-proxy/worker.js"
+      ],
+      "symbols": [
+        "candidateOrderToBoard",
+        "makeCard",
+        "openDetail",
+        "SHOPIFY_PREVIEW_ORDER_DETAIL_QUERY",
+        "ORDER_SUMMARIES_QUERY"
+      ],
+      "errors": [
+        "field is not displayed",
+        "protected customer data",
+        "partial Shopify detail"
+      ],
       "read": [
         {
           "path": "docs/official-docs/reference/order-data-visualization-inventory.md",
@@ -364,23 +472,96 @@
         }
       ],
       "inspect": [
-        {"path": "renderer.js", "symbols": ["makeCard", "openDetail"]},
-        {"path": "order-manager-web/web-shim.js", "symbols": ["candidateOrderToBoard"]},
-        {"path": "order-manager-web/shopify-preview.js", "symbols": ["renderOrderDetail"]},
-        {"path": "order-manager-proxy/worker.js", "symbols": ["ORDER_SUMMARIES_QUERY", "SHOPIFY_PREVIEW_ORDER_DETAIL_QUERY"]}
+        {
+          "path": "renderer.js",
+          "symbols": [
+            "makeCard",
+            "openDetail"
+          ]
+        },
+        {
+          "path": "order-manager-web/web-shim.js",
+          "symbols": [
+            "candidateOrderToBoard"
+          ]
+        },
+        {
+          "path": "order-manager-web/shopify-preview.js",
+          "symbols": [
+            "renderOrderDetail"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/worker.js",
+          "symbols": [
+            "ORDER_SUMMARIES_QUERY",
+            "SHOPIFY_PREVIEW_ORDER_DETAIL_QUERY"
+          ]
+        }
       ],
-      "tools": ["completion-repair", "docs-check"],
-      "verify": ["npm run repo -- completion dry-run --help", "npm run docs:check"],
-      "stop": ["Stop before changing Shopify scopes, protected-customer-data use, bounded board payloads, or production authority."]
+      "tools": [
+        "completion-repair",
+        "docs-check"
+      ],
+      "verify": [
+        "npm run repo -- completion dry-run --help",
+        "npm run docs:check"
+      ],
+      "stop": [
+        "Stop before changing Shopify scopes, protected-customer-data use, bounded board payloads, or production authority."
+      ]
     },
     {
       "id": "kanban-ui",
       "description": "Shared Kanban rendering, cards, drag-and-drop, board columns, production workload and optional shared-run planning",
-      "taskTypes": ["change", "diagnosis", "design"],
-      "keywords": ["kanban", "card", "drag", "drop", "column", "detail modal", "renderer", "board", "target date", "targetDate", "finish by", "due date", "preview frame", "recognition card", "garments left", "production planner", "today's run", "shared run"],
-      "paths": ["renderer.js", "index.html", "order-manager-web/renderer.js", "order-manager-web/order-card-presentation.js", "order-manager-web/order-card-presentation.css", "order-manager-web/production-workload.js", "order-manager-web/production-planner.js", "order-manager-web/production-planner-model.js", "order-manager-proxy/production-run.mjs"],
-      "symbols": ["renderBoard", "openDetail", "updateBoardMove", "ProductionPlannerModel", "createProductionRunService"],
-      "errors": ["card reverts", "detail overlay does not open", "board is blank"],
+      "taskTypes": [
+        "change",
+        "diagnosis",
+        "design"
+      ],
+      "keywords": [
+        "kanban",
+        "card",
+        "drag",
+        "drop",
+        "column",
+        "detail modal",
+        "renderer",
+        "board",
+        "target date",
+        "targetDate",
+        "finish by",
+        "due date",
+        "preview frame",
+        "recognition card",
+        "garments left",
+        "production planner",
+        "today's run",
+        "shared run"
+      ],
+      "paths": [
+        "renderer.js",
+        "index.html",
+        "order-manager-web/renderer.js",
+        "order-manager-web/order-card-presentation.js",
+        "order-manager-web/order-card-presentation.css",
+        "order-manager-web/production-workload.js",
+        "order-manager-web/production-planner.js",
+        "order-manager-web/production-planner-model.js",
+        "order-manager-proxy/production-run.mjs"
+      ],
+      "symbols": [
+        "renderBoard",
+        "openDetail",
+        "updateBoardMove",
+        "ProductionPlannerModel",
+        "createProductionRunService"
+      ],
+      "errors": [
+        "card reverts",
+        "detail overlay does not open",
+        "board is blank"
+      ],
       "read": [
         {
           "path": "docs/official-docs/workflows/order-ingestion-kanban.md",
@@ -400,22 +581,105 @@
         }
       ],
       "inspect": [
-        {"path": "renderer.js", "symbols": ["renderBoard", "openDetail"]},
-        {"path": "order-manager-web/web-shim.js", "symbols": ["updateBoardMove"]},
-        {"path": "order-manager-web/order-card-presentation.js", "symbols": ["decorate", "refreshPreview"]}
+        {
+          "path": "renderer.js",
+          "symbols": [
+            "renderBoard",
+            "openDetail"
+          ]
+        },
+        {
+          "path": "order-manager-web/web-shim.js",
+          "symbols": [
+            "updateBoardMove"
+          ]
+        },
+        {
+          "path": "order-manager-web/order-card-presentation.js",
+          "symbols": [
+            "decorate",
+            "refreshPreview"
+          ]
+        },
+        {
+          "path": "order-manager-web/order-actions.js",
+          "symbols": [
+            "attach",
+            "open"
+          ]
+        },
+        {
+          "path": "order-manager-web/order-action-model.js",
+          "symbols": [
+            "copyField",
+            "copyFields"
+          ]
+        }
       ],
-      "tools": ["verify-phase2"],
-      "verify": ["node --check renderer.js", "npm run verify:phase2"],
-      "stop": ["Stop before changing canonical production stages or legacy/candidate source isolation."]
+      "tools": [
+        "verify-phase2"
+      ],
+      "verify": [
+        "node --check renderer.js",
+        "npm run verify:phase2"
+      ],
+      "stop": [
+        "Stop before changing canonical production stages or legacy/candidate source isolation."
+      ]
     },
     {
       "id": "order-detail-workbench",
       "description": "Order Detail reliability, digital-traveler redesign, artwork and gang-sheet workflow, readiness semantics, mobile hierarchy, and accessibility",
-      "taskTypes": ["design", "planning", "change", "diagnosis", "accessibility"],
-      "keywords": ["order detail", "detail workbench", "digital traveler", "operator journey", "artwork approval", "gang sheet", "production readiness", "next action", "handoff", "re-entry", "interruption", "changes since last view", "cross-order notes", "detail focus trap", "mobile detail hierarchy"],
-      "paths": ["renderer.js", "order-manager-web/index.html", "order-manager-web/detail-overlay-enhancements.js", "order-manager-web/accessibility-hardening.js", "order-manager-web/order-detail-split.css", "order-manager-web/web-shim.js", "order-manager-proxy/worker.js"],
-      "symbols": ["openDetail", "closeDetail", "mergeCanonicalDetail", "hydrateCanonicalDetail", "syncNotesContext", "focusableElements", "window.api.updateName", "defaultProductionState"],
-      "errors": ["notes saved to wrong order", "production ready is incorrect", "detail controls are stale", "focus escapes detail", "customer names cannot be changed"],
+      "taskTypes": [
+        "design",
+        "planning",
+        "change",
+        "diagnosis",
+        "accessibility"
+      ],
+      "keywords": [
+        "order detail",
+        "detail workbench",
+        "digital traveler",
+        "operator journey",
+        "artwork approval",
+        "gang sheet",
+        "production readiness",
+        "next action",
+        "handoff",
+        "re-entry",
+        "interruption",
+        "changes since last view",
+        "cross-order notes",
+        "detail focus trap",
+        "mobile detail hierarchy"
+      ],
+      "paths": [
+        "renderer.js",
+        "order-manager-web/index.html",
+        "order-manager-web/detail-overlay-enhancements.js",
+        "order-manager-web/accessibility-hardening.js",
+        "order-manager-web/order-detail-split.css",
+        "order-manager-web/web-shim.js",
+        "order-manager-proxy/worker.js"
+      ],
+      "symbols": [
+        "openDetail",
+        "closeDetail",
+        "mergeCanonicalDetail",
+        "hydrateCanonicalDetail",
+        "syncNotesContext",
+        "focusableElements",
+        "window.api.updateName",
+        "defaultProductionState"
+      ],
+      "errors": [
+        "notes saved to wrong order",
+        "production ready is incorrect",
+        "detail controls are stale",
+        "focus escapes detail",
+        "customer names cannot be changed"
+      ],
       "read": [
         {
           "path": "docs/official-docs/future-plans/order-detail-digital-traveler-redesign-plan.md",
@@ -431,24 +695,130 @@
         }
       ],
       "inspect": [
-        {"path": "renderer.js", "symbols": ["openDetail", "closeDetail"]},
-        {"path": "order-manager-web/detail-overlay-enhancements.js", "symbols": ["mergeCanonicalDetail", "hydrateCanonicalDetail", "syncNotesContext"]},
-        {"path": "order-manager-web/accessibility-hardening.js", "symbols": ["focusableElements"]},
-        {"path": "order-manager-web/web-shim.js", "symbols": ["window.api.updateName"]},
-        {"path": "order-manager-proxy/worker.js", "symbols": ["defaultProductionState"]}
+        {
+          "path": "renderer.js",
+          "symbols": [
+            "openDetail",
+            "closeDetail"
+          ]
+        },
+        {
+          "path": "order-manager-web/detail-overlay-enhancements.js",
+          "symbols": [
+            "mergeCanonicalDetail",
+            "hydrateCanonicalDetail",
+            "syncNotesContext"
+          ]
+        },
+        {
+          "path": "order-manager-web/accessibility-hardening.js",
+          "symbols": [
+            "focusableElements"
+          ]
+        },
+        {
+          "path": "order-manager-web/web-shim.js",
+          "symbols": [
+            "window.api.updateName"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/worker.js",
+          "symbols": [
+            "defaultProductionState"
+          ]
+        }
       ],
-      "tools": ["verify-phase2", "docs-check"],
-      "verify": ["node --check renderer.js", "node --check order-manager-web/detail-overlay-enhancements.js", "node --check order-manager-web/accessibility-hardening.js", "node --check order-manager-web/web-shim.js", "node --check order-manager-proxy/worker.js", "npm run verify:phase2", "npm run docs:check"],
-      "stop": ["Stop before approving shop workflow semantics, migrating the production schema, changing Shopify commerce authority, or weakening Legacy/Shopify/provider isolation without owner approval."]
+      "tools": [
+        "verify-phase2",
+        "docs-check"
+      ],
+      "verify": [
+        "node --check renderer.js",
+        "node --check order-manager-web/detail-overlay-enhancements.js",
+        "node --check order-manager-web/accessibility-hardening.js",
+        "node --check order-manager-web/web-shim.js",
+        "node --check order-manager-proxy/worker.js",
+        "npm run verify:phase2",
+        "npm run docs:check"
+      ],
+      "stop": [
+        "Stop before approving shop workflow semantics, migrating the production schema, changing Shopify commerce authority, or weakening Legacy/Shopify/provider isolation without owner approval."
+      ]
     },
     {
       "id": "etsy-integration",
       "description": "Etsy Seller App OAuth, bounded receipt proof, provider shadow, synthetic shared-board pilot, production state, webhooks, and staged rollout",
-      "taskTypes": ["planning", "implementation", "diagnosis", "security"],
-      "keywords": ["etsy", "seller app", "pkce", "etsy oauth", "etsy receipt", "etsy preview", "catalog preview", "preview override", "synthetic Etsy order", "order.paid", "second commerce source", "provider adapter"],
-      "paths": ["order-manager-proxy/worker.js", "order-manager-proxy/migrations/0004_etsy_connection_probe.sql", "order-manager-proxy/migrations/0005_provider_order_shadow.sql", "order-manager-proxy/migrations/0006_provider_pilot_idempotency.sql", "order-manager-proxy/migrations/0007_etsy_webhook_delivery.sql", "order-manager-proxy/migrations/0008_etsy_catalog_previews.sql", "order-manager-web/web-shim.js", "renderer.js", "docs/official-docs/future-plans/etsy-order-source-integration-plan.md", "docs/official-docs/runbooks/etsy-webhook-setup-and-verification.md"],
-      "symbols": ["handleEtsyConnect", "handleEtsyOauthCallback", "handleEtsyStatus", "handleEtsyTestRead", "handleEtsyCatalogPreviewSync", "handleEtsyCatalogPreviewReadTicket", "handleEtsyCatalogPreviewRead", "normalizeEtsyOrderContract", "handleEtsyShadowSync", "handleEtsyWebhook", "processEtsyWebhookDelivery", "reconcileEtsyPaidReceipts", "handleEtsyWebhookStatus", "handleEtsySyntheticOrder", "providerBoardDto", "handleProviderOrderDetailGet", "handleProviderProductionPatch", "candidateOrderToBoard", "sourceBadgeMarkup"],
-      "errors": ["ETSY_NOT_CONFIGURED", "ETSY_OAUTH_STATE_INVALID", "ETSY_NOT_CONNECTED", "ETSY_SCOPE_MISSING", "ETSY_PREVIEW_LISTINGS_REQUIRED", "ETSY_PREVIEW_LISTING_LIMIT", "ETSY_PREVIEW_IMAGE_DOWNLOAD_FAILED", "ETSY_SHADOW_TARGET_REQUIRED", "ETSY_SHADOW_TARGET_INVALID", "ETSY_WEBHOOK_NOT_CONFIGURED", "ETSY_WEBHOOK_SIGNATURE_INVALID", "ETSY_WEBHOOK_TIMESTAMP_STALE", "ETSY_WEBHOOK_SHOP_INVALID", "ETSY_WEBHOOK_RESOURCE_INVALID", "ETSY_WEBHOOK_ID_CONFLICT"],
+      "taskTypes": [
+        "planning",
+        "implementation",
+        "diagnosis",
+        "security"
+      ],
+      "keywords": [
+        "etsy",
+        "seller app",
+        "pkce",
+        "etsy oauth",
+        "etsy receipt",
+        "etsy preview",
+        "catalog preview",
+        "preview override",
+        "synthetic Etsy order",
+        "order.paid",
+        "second commerce source",
+        "provider adapter"
+      ],
+      "paths": [
+        "order-manager-proxy/worker.js",
+        "order-manager-proxy/migrations/0004_etsy_connection_probe.sql",
+        "order-manager-proxy/migrations/0005_provider_order_shadow.sql",
+        "order-manager-proxy/migrations/0006_provider_pilot_idempotency.sql",
+        "order-manager-proxy/migrations/0007_etsy_webhook_delivery.sql",
+        "order-manager-proxy/migrations/0008_etsy_catalog_previews.sql",
+        "order-manager-web/web-shim.js",
+        "renderer.js",
+        "docs/official-docs/future-plans/etsy-order-source-integration-plan.md",
+        "docs/official-docs/runbooks/etsy-webhook-setup-and-verification.md"
+      ],
+      "symbols": [
+        "handleEtsyConnect",
+        "handleEtsyOauthCallback",
+        "handleEtsyStatus",
+        "handleEtsyTestRead",
+        "handleEtsyCatalogPreviewSync",
+        "handleEtsyCatalogPreviewReadTicket",
+        "handleEtsyCatalogPreviewRead",
+        "normalizeEtsyOrderContract",
+        "handleEtsyShadowSync",
+        "handleEtsyWebhook",
+        "processEtsyWebhookDelivery",
+        "reconcileEtsyPaidReceipts",
+        "handleEtsyWebhookStatus",
+        "handleEtsySyntheticOrder",
+        "providerBoardDto",
+        "handleProviderOrderDetailGet",
+        "handleProviderProductionPatch",
+        "candidateOrderToBoard",
+        "sourceBadgeMarkup"
+      ],
+      "errors": [
+        "ETSY_NOT_CONFIGURED",
+        "ETSY_OAUTH_STATE_INVALID",
+        "ETSY_NOT_CONNECTED",
+        "ETSY_SCOPE_MISSING",
+        "ETSY_PREVIEW_LISTINGS_REQUIRED",
+        "ETSY_PREVIEW_LISTING_LIMIT",
+        "ETSY_PREVIEW_IMAGE_DOWNLOAD_FAILED",
+        "ETSY_SHADOW_TARGET_REQUIRED",
+        "ETSY_SHADOW_TARGET_INVALID",
+        "ETSY_WEBHOOK_NOT_CONFIGURED",
+        "ETSY_WEBHOOK_SIGNATURE_INVALID",
+        "ETSY_WEBHOOK_TIMESTAMP_STALE",
+        "ETSY_WEBHOOK_SHOP_INVALID",
+        "ETSY_WEBHOOK_RESOURCE_INVALID",
+        "ETSY_WEBHOOK_ID_CONFLICT"
+      ],
       "read": [
         {
           "path": "docs/official-docs/future-plans/etsy-order-source-integration-plan.md",
@@ -460,27 +830,120 @@
         }
       ],
       "inspect": [
-        {"path": "order-manager-proxy/worker.js", "symbols": ["handleEtsyConnect", "handleEtsyOauthCallback", "handleEtsyShadowSync", "handleEtsyWebhook", "processEtsyWebhookDelivery", "reconcileEtsyPaidReceipts", "handleEtsyWebhookStatus", "handleEtsySyntheticOrder", "providerBoardDto", "handleProviderOrderDetailGet", "handleProviderProductionPatch"]},
-        {"path": "order-manager-proxy/migrations/0004_etsy_connection_probe.sql", "symbols": ["etsy_oauth_sessions", "etsy_connections"]},
-        {"path": "order-manager-proxy/migrations/0005_provider_order_shadow.sql", "symbols": ["provider_order_projection", "provider_production_state", "provider_mutation_requests", "provider_production_events"]},
-        {"path": "order-manager-proxy/migrations/0006_provider_pilot_idempotency.sql", "symbols": ["result_json"]},
-        {"path": "order-manager-proxy/migrations/0007_etsy_webhook_delivery.sql", "symbols": ["etsy_webhook_deliveries"]},
-        {"path": "order-manager-proxy/migrations/0008_etsy_catalog_previews.sql", "symbols": ["etsy_catalog_preview_blobs", "etsy_catalog_preview_mappings"]},
-        {"path": "order-manager-web/web-shim.js", "symbols": ["candidateOrderToBoard", "processBatch"]},
-        {"path": "renderer.js", "symbols": ["sourceBadgeMarkup", "makeCard", "openDetail"]}
+        {
+          "path": "order-manager-proxy/worker.js",
+          "symbols": [
+            "handleEtsyConnect",
+            "handleEtsyOauthCallback",
+            "handleEtsyShadowSync",
+            "handleEtsyWebhook",
+            "processEtsyWebhookDelivery",
+            "reconcileEtsyPaidReceipts",
+            "handleEtsyWebhookStatus",
+            "handleEtsySyntheticOrder",
+            "providerBoardDto",
+            "handleProviderOrderDetailGet",
+            "handleProviderProductionPatch"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/migrations/0004_etsy_connection_probe.sql",
+          "symbols": [
+            "etsy_oauth_sessions",
+            "etsy_connections"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/migrations/0005_provider_order_shadow.sql",
+          "symbols": [
+            "provider_order_projection",
+            "provider_production_state",
+            "provider_mutation_requests",
+            "provider_production_events"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/migrations/0006_provider_pilot_idempotency.sql",
+          "symbols": [
+            "result_json"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/migrations/0007_etsy_webhook_delivery.sql",
+          "symbols": [
+            "etsy_webhook_deliveries"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/migrations/0008_etsy_catalog_previews.sql",
+          "symbols": [
+            "etsy_catalog_preview_blobs",
+            "etsy_catalog_preview_mappings"
+          ]
+        },
+        {
+          "path": "order-manager-web/web-shim.js",
+          "symbols": [
+            "candidateOrderToBoard",
+            "processBatch"
+          ]
+        },
+        {
+          "path": "renderer.js",
+          "symbols": [
+            "sourceBadgeMarkup",
+            "makeCard",
+            "openDetail"
+          ]
+        }
       ],
-      "tools": ["verify-phase2"],
-      "verify": ["node --check order-manager-proxy/worker.js", "npm run verify:phase2", "npm run docs:check"],
-      "stop": ["Stop before real-receipt enrollment, enabling automatic board enrollment, write scopes, or mixed-source supplier batching unless the owner has authorized that external step. Webhook subscription remains an owner-performed portal action using the exact deployed callback."]
+      "tools": [
+        "verify-phase2"
+      ],
+      "verify": [
+        "node --check order-manager-proxy/worker.js",
+        "npm run verify:phase2",
+        "npm run docs:check"
+      ],
+      "stop": [
+        "Stop before real-receipt enrollment, enabling automatic board enrollment, write scopes, or mixed-source supplier batching unless the owner has authorized that external step. Webhook subscription remains an owner-performed portal action using the exact deployed callback."
+      ]
     },
     {
       "id": "shopify-data-plane",
       "description": "Shopify canonical production metadata, D1 projection, R2 assets, webhooks, and reconciliation",
-      "taskTypes": ["change", "diagnosis", "architecture", "security"],
-      "keywords": ["shopify", "d1", "r2", "metafield", "projection", "webhook", "reconciliation", "asset manifest", "candidate"],
-      "paths": ["order-manager-proxy/worker.js", "order-manager-proxy/migrations", "order-manager-web/web-shim.js"],
-      "symbols": ["production_state_v1", "mutation_requests", "asset_manifests"],
-      "errors": ["BOARD_NOT_INITIALIZED", "VERSION_CONFLICT", "SYNC_PENDING"],
+      "taskTypes": [
+        "change",
+        "diagnosis",
+        "architecture",
+        "security"
+      ],
+      "keywords": [
+        "shopify",
+        "d1",
+        "r2",
+        "metafield",
+        "projection",
+        "webhook",
+        "reconciliation",
+        "asset manifest",
+        "candidate"
+      ],
+      "paths": [
+        "order-manager-proxy/worker.js",
+        "order-manager-proxy/migrations",
+        "order-manager-web/web-shim.js"
+      ],
+      "symbols": [
+        "production_state_v1",
+        "mutation_requests",
+        "asset_manifests"
+      ],
+      "errors": [
+        "BOARD_NOT_INITIALIZED",
+        "VERSION_CONFLICT",
+        "SYNC_PENDING"
+      ],
       "read": [
         {
           "path": "docs/official-docs/architecture/shopify-primary-data-plane.md",
@@ -488,21 +951,68 @@
         }
       ],
       "inspect": [
-        {"path": "order-manager-proxy/worker.js", "symbols": ["BOARD_NOT_INITIALIZED", "VERSION_CONFLICT"]},
-        {"path": "order-manager-proxy/migrations/0001_redis_free.sql", "symbols": ["order_projection"]}
+        {
+          "path": "order-manager-proxy/worker.js",
+          "symbols": [
+            "BOARD_NOT_INITIALIZED",
+            "VERSION_CONFLICT"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/migrations/0001_redis_free.sql",
+          "symbols": [
+            "order_projection"
+          ]
+        }
       ],
-      "tools": ["verify-phase2"],
-      "verify": ["node --check order-manager-proxy/worker.js", "npm run verify:phase2"],
-      "stop": ["Stop before final cutover, broader Shopify permissions, live S&S, or permanent Redis retirement."]
+      "tools": [
+        "verify-phase2"
+      ],
+      "verify": [
+        "node --check order-manager-proxy/worker.js",
+        "npm run verify:phase2"
+      ],
+      "stop": [
+        "Stop before final cutover, broader Shopify permissions, live S&S, or permanent Redis retirement."
+      ]
     },
     {
       "id": "blanks-batching",
       "description": "Candidate and legacy blank-apparel batching, SKU aggregation, S&S submission, and ordered state",
-      "taskTypes": ["change", "diagnosis", "operations"],
-      "keywords": ["blanks", "batch", "s&s", "sku", "supplier", "in s&s cart", "ordered", "purchase order"],
-      "paths": ["order-manager-web/blanks-batches.js", "order-manager-web/cart-garment-model.js", "order-manager-web/cart-garment-view.js", "order-manager-web/cart-garment-view.css", "order-manager-proxy/worker.js"],
-      "symbols": ["batches/commit", "process-batch"],
-      "errors": ["unknown supplier result", "invalid sku", "batch submit"],
+      "taskTypes": [
+        "change",
+        "diagnosis",
+        "operations"
+      ],
+      "keywords": [
+        "blanks",
+        "batch",
+        "s&s",
+        "sku",
+        "supplier",
+        "in s&s cart",
+        "ordered",
+        "purchase order"
+      ],
+      "paths": [
+        "order-manager-web/blanks-batches.js",
+        "order-manager-web/cart-garment-model.js",
+        "order-manager-web/cart-garment-view.js",
+        "order-manager-web/cart-garment-view.css",
+        "order-manager-proxy/worker.js",
+        "order-manager-proxy/supplier-submission.mjs",
+        "order-manager-web/supplier-result-model.js",
+        "order-manager-web/supplier-results.js"
+      ],
+      "symbols": [
+        "batches/commit",
+        "process-batch"
+      ],
+      "errors": [
+        "unknown supplier result",
+        "invalid sku",
+        "batch submit"
+      ],
       "read": [
         {
           "path": "docs/official-docs/workflows/blanks-batching.md",
@@ -514,21 +1024,79 @@
         }
       ],
       "inspect": [
-        {"path": "order-manager-web/blanks-batches.js", "symbols": ["saveBatchForOrders"]},
-        {"path": "order-manager-proxy/worker.js", "symbols": ["/order-manager/v1/batches/commit"]}
+        {
+          "path": "order-manager-web/blanks-batches.js",
+          "symbols": [
+            "saveBatchForOrders"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/worker.js",
+          "symbols": [
+            "/order-manager/v1/batches/commit"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/supplier-submission.mjs",
+          "symbols": [
+            "consolidateSupplierEvidence",
+            "claimSupplierAttempt"
+          ]
+        },
+        {
+          "path": "order-manager-web/supplier-results.js",
+          "symbols": [
+            "show"
+          ]
+        }
       ],
-      "tools": ["verify-phase2", "ss-feedback-simulator"],
-      "verify": ["npm run verify:phase2", "npm run repo -- simulate ss-feedback -- --scenario random"],
-      "stop": ["Stop before enabling live supplier ordering or changing supplier authentication/payload contracts."]
+      "tools": [
+        "verify-phase2",
+        "ss-feedback-simulator"
+      ],
+      "verify": [
+        "npm run verify:phase2",
+        "npm run repo -- simulate ss-feedback -- --scenario random"
+      ],
+      "stop": [
+        "Stop before enabling live supplier ordering or changing supplier authentication/payload contracts."
+      ]
     },
     {
       "id": "web-shopify-port",
       "description": "Embedded web client, source adapter, Shopify Admin iframe, browser storage, responsive behavior, and Pages bundle",
-      "taskTypes": ["change", "diagnosis", "build"],
-      "keywords": ["web", "shopify admin", "iframe", "web shim", "storage browser", "mobile", "pages", "cors", "clipboard", "paste mockup"],
-      "paths": ["order-manager-web", "scripts/prepare-cloudflare-pages-upload.sh"],
-      "symbols": ["window.api", "setPreviewActive", "installEmbeddedTouchContainment"],
-      "errors": ["window.api is undefined", "mobile detail cannot scroll", "CORS", "Could not read an image from the clipboard"],
+      "taskTypes": [
+        "change",
+        "diagnosis",
+        "build"
+      ],
+      "keywords": [
+        "web",
+        "shopify admin",
+        "iframe",
+        "web shim",
+        "storage browser",
+        "mobile",
+        "pages",
+        "cors",
+        "clipboard",
+        "paste mockup"
+      ],
+      "paths": [
+        "order-manager-web",
+        "scripts/prepare-cloudflare-pages-upload.sh"
+      ],
+      "symbols": [
+        "window.api",
+        "setPreviewActive",
+        "installEmbeddedTouchContainment"
+      ],
+      "errors": [
+        "window.api is undefined",
+        "mobile detail cannot scroll",
+        "CORS",
+        "Could not read an image from the clipboard"
+      ],
       "read": [
         {
           "path": "docs/official-docs/workflows/web-shopify-porting.md",
@@ -536,22 +1104,69 @@
         }
       ],
       "inspect": [
-        {"path": "order-manager-web/web-shim.js", "symbols": ["window.api"]},
-        {"path": "order-manager-web/shopify-preview.js", "symbols": ["setPreviewActive"]},
-        {"path": "renderer.js", "symbols": ["pasteManualMockupFromClipboard", "setupManualMockupControls", "uploadManualMockupFiles"]}
+        {
+          "path": "order-manager-web/web-shim.js",
+          "symbols": [
+            "window.api"
+          ]
+        },
+        {
+          "path": "order-manager-web/shopify-preview.js",
+          "symbols": [
+            "setPreviewActive"
+          ]
+        },
+        {
+          "path": "renderer.js",
+          "symbols": [
+            "pasteManualMockupFromClipboard",
+            "setupManualMockupControls",
+            "uploadManualMockupFiles"
+          ]
+        }
       ],
-      "tools": ["verify-phase2", "cloudflare-bundle", "cloudflare-deploy"],
-      "verify": ["npm run verify:phase2", "npm run prepare:cloudflare", "npm run repo -- deploy cloudflare -- --production"],
-      "stop": ["Stop before changing CORS allowlists, Shopify scopes, or browser-visible secrets."]
+      "tools": [
+        "verify-phase2",
+        "cloudflare-bundle",
+        "cloudflare-deploy"
+      ],
+      "verify": [
+        "npm run verify:phase2",
+        "npm run prepare:cloudflare",
+        "npm run repo -- deploy cloudflare -- --production"
+      ],
+      "stop": [
+        "Stop before changing CORS allowlists, Shopify scopes, or browser-visible secrets."
+      ]
     },
     {
       "id": "shopify-detail-scope-failure",
       "description": "Known Shopify rich-detail failure where an existing order is rendered as 404 or [object Object]",
-      "taskTypes": ["diagnosis", "permissions"],
-      "keywords": ["shopify detail", "scope", "access denied", "fulfillment orders", "object object"],
-      "paths": ["order-manager-proxy/worker.js", "order-manager-web/web-shim.js", "order-manager-proxy/shopify.app.toml"],
-      "symbols": ["fulfillmentOrders", "apiErrorMessage"],
-      "errors": ["404 - [object Object]", "ACCESS_DENIED", "ORDER_NOT_FOUND"],
+      "taskTypes": [
+        "diagnosis",
+        "permissions"
+      ],
+      "keywords": [
+        "shopify detail",
+        "scope",
+        "access denied",
+        "fulfillment orders",
+        "object object"
+      ],
+      "paths": [
+        "order-manager-proxy/worker.js",
+        "order-manager-web/web-shim.js",
+        "order-manager-proxy/shopify.app.toml"
+      ],
+      "symbols": [
+        "fulfillmentOrders",
+        "apiErrorMessage"
+      ],
+      "errors": [
+        "404 - [object Object]",
+        "ACCESS_DENIED",
+        "ORDER_NOT_FOUND"
+      ],
       "read": [
         {
           "path": "docs/official-docs/runbooks/troubleshooting.md",
@@ -559,21 +1174,56 @@
         }
       ],
       "inspect": [
-        {"path": "order-manager-proxy/worker.js", "symbols": ["fulfillmentOrders"]},
-        {"path": "order-manager-web/web-shim.js", "symbols": ["apiErrorMessage"]}
+        {
+          "path": "order-manager-proxy/worker.js",
+          "symbols": [
+            "fulfillmentOrders"
+          ]
+        },
+        {
+          "path": "order-manager-web/web-shim.js",
+          "symbols": [
+            "apiErrorMessage"
+          ]
+        }
       ],
-      "tools": ["verify-phase2"],
-      "verify": ["npm run verify:phase2", "Open a recent known production order after any scope release"],
-      "stop": ["Changing Shopify scopes requires an app release and merchant approval; a Worker/Pages deploy cannot grant them."]
+      "tools": [
+        "verify-phase2"
+      ],
+      "verify": [
+        "npm run verify:phase2",
+        "Open a recent known production order after any scope release"
+      ],
+      "stop": [
+        "Changing Shopify scopes requires an app release and merchant approval; a Worker/Pages deploy cannot grant them."
+      ]
     },
     {
       "id": "idempotency-key-rejection",
       "description": "Admin block or board mutation rejected because a fallback idempotency key contains invalid characters",
-      "taskTypes": ["diagnosis", "mutation", "shopify-extension"],
-      "keywords": ["idempotency", "admin block", "fallback key", "gid slash"],
-      "paths": ["order-manager-proxy/extensions/printmo-production-status/src/production-client.mjs", "order-manager-proxy/worker.js"],
-      "symbols": ["idempotencyKey", "IDEMPOTENCY_KEY_REQUIRED"],
-      "errors": ["A valid idempotency key is required", "IDEMPOTENCY_KEY_REQUIRED"],
+      "taskTypes": [
+        "diagnosis",
+        "mutation",
+        "shopify-extension"
+      ],
+      "keywords": [
+        "idempotency",
+        "admin block",
+        "fallback key",
+        "gid slash"
+      ],
+      "paths": [
+        "order-manager-proxy/extensions/printmo-production-status/src/production-client.mjs",
+        "order-manager-proxy/worker.js"
+      ],
+      "symbols": [
+        "idempotencyKey",
+        "IDEMPOTENCY_KEY_REQUIRED"
+      ],
+      "errors": [
+        "A valid idempotency key is required",
+        "IDEMPOTENCY_KEY_REQUIRED"
+      ],
       "read": [
         {
           "path": "docs/official-docs/runbooks/troubleshooting.md",
@@ -581,19 +1231,52 @@
         }
       ],
       "inspect": [
-        {"path": "order-manager-proxy/extensions/printmo-production-status/src/production-client.mjs", "symbols": ["idempotencyKey"]},
-        {"path": "order-manager-proxy/worker.js", "symbols": ["IDEMPOTENCY_KEY_REQUIRED"]}
+        {
+          "path": "order-manager-proxy/extensions/printmo-production-status/src/production-client.mjs",
+          "symbols": [
+            "idempotencyKey"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/worker.js",
+          "symbols": [
+            "IDEMPOTENCY_KEY_REQUIRED"
+          ]
+        }
       ],
-      "tools": ["verify-phase2"],
-      "verify": ["Run proxy tests/build", "Save one changed Admin-block field and confirm one revision advance"],
-      "stop": ["Releasing extension JavaScript requires a Shopify app release; Worker deployment alone is insufficient."]
+      "tools": [
+        "verify-phase2"
+      ],
+      "verify": [
+        "Run proxy tests/build",
+        "Save one changed Admin-block field and confirm one revision advance"
+      ],
+      "stop": [
+        "Releasing extension JavaScript requires a Shopify app release; Worker deployment alone is insufficient."
+      ]
     },
     {
       "id": "codex-browser-gpu-crash",
       "description": "Codex Desktop Browser or Chrome startup exits caused by a Chromium GPU crash and persistent transient browser caches",
-      "taskTypes": ["diagnosis", "recovery", "tooling"],
-      "keywords": ["codex desktop", "browser skill", "chrome skill", "in-app browser", "gpu process", "shader cache", "browser cache", "reinstall codex", "browser crash"],
-      "paths": ["docs/official-docs/runbooks/troubleshooting.md"],
+      "taskTypes": [
+        "diagnosis",
+        "recovery",
+        "tooling"
+      ],
+      "keywords": [
+        "codex desktop",
+        "browser skill",
+        "chrome skill",
+        "in-app browser",
+        "gpu process",
+        "shader cache",
+        "browser cache",
+        "reinstall codex",
+        "browser crash"
+      ],
+      "paths": [
+        "docs/official-docs/runbooks/troubleshooting.md"
+      ],
       "symbols": [],
       "errors": [
         "Recoverable Chromium child process gone",
@@ -607,7 +1290,10 @@
         }
       ],
       "inspect": [],
-      "tools": ["route", "docs-check"],
+      "tools": [
+        "route",
+        "docs-check"
+      ],
       "verify": [
         "Confirm fresh Codex session logs contain no GPU crash/launch-failure pair",
         "Complete one bounded in-app Browser load and one lightweight Chrome connection check",
@@ -621,11 +1307,27 @@
     {
       "id": "troubleshooting",
       "description": "Known symptoms, misleading clues, safe diagnostic checks, and confirmed recovery",
-      "taskTypes": ["diagnosis"],
-      "keywords": ["error", "failure", "freeze", "broken", "troubleshoot", "diagnose", "recovery"],
-      "paths": ["docs/official-docs/runbooks/troubleshooting.md"],
+      "taskTypes": [
+        "diagnosis"
+      ],
+      "keywords": [
+        "error",
+        "failure",
+        "freeze",
+        "broken",
+        "troubleshoot",
+        "diagnose",
+        "recovery"
+      ],
+      "paths": [
+        "docs/official-docs/runbooks/troubleshooting.md"
+      ],
       "symbols": [],
-      "errors": ["404 - [object Object]", "assets || []).forEach is not a function", "A valid idempotency key is required"],
+      "errors": [
+        "404 - [object Object]",
+        "assets || []).forEach is not a function",
+        "A valid idempotency key is required"
+      ],
       "read": [
         {
           "path": "docs/official-docs/runbooks/troubleshooting.md",
@@ -633,18 +1335,42 @@
         }
       ],
       "inspect": [],
-      "tools": ["route"],
+      "tools": [
+        "route"
+      ],
       "verify": [],
-      "stop": ["Do not mutate data merely because a UI surface appears empty; establish the fault boundary first."]
+      "stop": [
+        "Do not mutate data merely because a UI surface appears empty; establish the fault boundary first."
+      ]
     },
     {
       "id": "build-and-setup",
       "description": "Development setup, Electron packaging, Cloudflare Pages preparation, and targeted verification",
-      "taskTypes": ["setup", "build", "verification"],
-      "keywords": ["setup", "install", "build", "package", "electron builder", "cloudflare pages", "npm start"],
-      "paths": ["package.json", "scripts/create-desktop-config.js", "scripts/prepare-cloudflare-pages-upload.sh"],
+      "taskTypes": [
+        "setup",
+        "build",
+        "verification"
+      ],
+      "keywords": [
+        "setup",
+        "install",
+        "build",
+        "package",
+        "electron builder",
+        "cloudflare pages",
+        "npm start"
+      ],
+      "paths": [
+        "package.json",
+        "scripts/create-desktop-config.js",
+        "scripts/prepare-cloudflare-pages-upload.sh"
+      ],
       "symbols": [],
-      "errors": ["electron-builder", "permission denied", "OIDC_ISSUER and OIDC_CLIENT_ID are required"],
+      "errors": [
+        "electron-builder",
+        "permission denied",
+        "OIDC_ISSUER and OIDC_CLIENT_ID are required"
+      ],
       "read": [
         {
           "path": "docs/official-docs/runbooks/dev-setup-and-build.md",
@@ -655,17 +1381,50 @@
           "anchor": "automated-and-syntax-verification-commands"
         }
       ],
-      "inspect": [{"path": "package.json", "symbols": ["prepare:cloudflare", "verify:phase2"]}],
-      "tools": ["docs-check", "desktop-config", "cloudflare-bundle", "cloudflare-deploy"],
-      "verify": ["npm run docs:check"],
-      "stop": ["Stop if packaging would require introducing secrets into the client bundle."]
+      "inspect": [
+        {
+          "path": "package.json",
+          "symbols": [
+            "prepare:cloudflare",
+            "verify:phase2"
+          ]
+        }
+      ],
+      "tools": [
+        "docs-check",
+        "desktop-config",
+        "cloudflare-bundle",
+        "cloudflare-deploy"
+      ],
+      "verify": [
+        "npm run docs:check"
+      ],
+      "stop": [
+        "Stop if packaging would require introducing secrets into the client bundle."
+      ]
     },
     {
       "id": "feature-progression",
       "description": "New feature proposals, active implementation continuation, graduation, and durable knowledge promotion",
-      "taskTypes": ["planning", "implementation", "documentation"],
-      "keywords": ["feature", "plan", "progress", "continue", "partially implemented", "graduation", "roadmap", "knowledge promotion"],
-      "paths": ["docs/official-docs/future-plans", "docs/official-docs/runbooks/doc-governance.md"],
+      "taskTypes": [
+        "planning",
+        "implementation",
+        "documentation"
+      ],
+      "keywords": [
+        "feature",
+        "plan",
+        "progress",
+        "continue",
+        "partially implemented",
+        "graduation",
+        "roadmap",
+        "knowledge promotion"
+      ],
+      "paths": [
+        "docs/official-docs/future-plans",
+        "docs/official-docs/runbooks/doc-governance.md"
+      ],
       "symbols": [],
       "errors": [],
       "read": [
@@ -679,18 +1438,46 @@
         }
       ],
       "inspect": [],
-      "tools": ["docs-check"],
-      "verify": ["npm run docs:check"],
-      "stop": ["Stop if a proposal contradicts a shipped invariant or requires owner-gated external changes."]
+      "tools": [
+        "docs-check"
+      ],
+      "verify": [
+        "npm run docs:check"
+      ],
+      "stop": [
+        "Stop if a proposal contradicts a shipped invariant or requires owner-gated external changes."
+      ]
     },
     {
       "id": "candidate-cutover",
       "description": "Migration, parity, acceptance, security gates, and owner-approved Shopify-primary cutover",
-      "taskTypes": ["migration", "deployment", "acceptance", "operations"],
-      "keywords": ["cutover", "migration", "parity", "acceptance", "redis retirement", "go no-go"],
-      "paths": ["scripts/run-shadow-migration.js", "scripts/run-parity-check.js", "order-manager-proxy/wrangler.jsonc"],
-      "symbols": ["migration_ledger", "reconciliation_checkpoints"],
-      "errors": ["MIGRATION_UPSTREAM_ENABLED", "overwriteChangedOrders"],
+      "taskTypes": [
+        "migration",
+        "deployment",
+        "acceptance",
+        "operations"
+      ],
+      "keywords": [
+        "cutover",
+        "migration",
+        "parity",
+        "acceptance",
+        "redis retirement",
+        "go no-go"
+      ],
+      "paths": [
+        "scripts/run-shadow-migration.js",
+        "scripts/run-parity-check.js",
+        "order-manager-proxy/wrangler.jsonc"
+      ],
+      "symbols": [
+        "migration_ledger",
+        "reconciliation_checkpoints"
+      ],
+      "errors": [
+        "MIGRATION_UPSTREAM_ENABLED",
+        "overwriteChangedOrders"
+      ],
       "read": [
         {
           "path": "docs/official-docs/runbooks/shopify-candidate-cutover.md",
@@ -698,19 +1485,52 @@
         }
       ],
       "inspect": [
-        {"path": "scripts/run-shadow-migration.js", "symbols": ["--confirm-shop"]},
-        {"path": "scripts/run-parity-check.js", "symbols": ["parityStatus"]}
+        {
+          "path": "scripts/run-shadow-migration.js",
+          "symbols": [
+            "--confirm-shop"
+          ]
+        },
+        {
+          "path": "scripts/run-parity-check.js",
+          "symbols": [
+            "parityStatus"
+          ]
+        }
       ],
-      "tools": ["migration", "parity", "verify-phase2"],
-      "verify": ["npm run verify:phase2"],
-      "stop": ["Owner approval is required for migration overwrite, final cutover, live S&S, and Redis deletion."]
+      "tools": [
+        "migration",
+        "parity",
+        "verify-phase2"
+      ],
+      "verify": [
+        "npm run verify:phase2"
+      ],
+      "stop": [
+        "Owner approval is required for migration overwrite, final cutover, live S&S, and Redis deletion."
+      ]
     },
     {
       "id": "repository-tools",
       "description": "Discover, promote, document, and safely run reusable repository commands",
-      "taskTypes": ["tooling", "automation", "documentation"],
-      "keywords": ["script", "tool", "command", "automation", "dry run", "repo tool", "reusable"],
-      "paths": ["scripts", "docs/official-docs/reference/tool-registry.md"],
+      "taskTypes": [
+        "tooling",
+        "automation",
+        "documentation"
+      ],
+      "keywords": [
+        "script",
+        "tool",
+        "command",
+        "automation",
+        "dry run",
+        "repo tool",
+        "reusable"
+      ],
+      "paths": [
+        "scripts",
+        "docs/official-docs/reference/tool-registry.md"
+      ],
       "symbols": [],
       "errors": [],
       "read": [
@@ -719,17 +1539,48 @@
           "anchor": "registered-commands"
         }
       ],
-      "inspect": [{"path": "scripts/repo-tool.js", "symbols": ["routeQuery", "runRegisteredCommand"]}],
-      "tools": ["route", "docs-check"],
-      "verify": ["npm run repo -- tools", "npm run docs:check"],
-      "stop": ["Do not promote a one-off task artifact unless it encodes durable repository knowledge or a recurring procedure."]
+      "inspect": [
+        {
+          "path": "scripts/repo-tool.js",
+          "symbols": [
+            "routeQuery",
+            "runRegisteredCommand"
+          ]
+        }
+      ],
+      "tools": [
+        "route",
+        "docs-check"
+      ],
+      "verify": [
+        "npm run repo -- tools",
+        "npm run docs:check"
+      ],
+      "stop": [
+        "Do not promote a one-off task artifact unless it encodes durable repository knowledge or a recurring procedure."
+      ]
     },
     {
       "id": "documentation-system",
       "description": "Living-documentation architecture, retrieval design, knowledge lifecycle, governance, and adoption",
-      "taskTypes": ["documentation", "architecture", "governance"],
-      "keywords": ["living docs", "documentation system", "context routing", "knowledge lifecycle", "fresh agent", "token efficiency"],
-      "paths": ["AGENTS.md", "docs/official-docs", "scripts/check-docs.js"],
+      "taskTypes": [
+        "documentation",
+        "architecture",
+        "governance"
+      ],
+      "keywords": [
+        "living docs",
+        "documentation system",
+        "context routing",
+        "knowledge lifecycle",
+        "fresh agent",
+        "token efficiency"
+      ],
+      "paths": [
+        "AGENTS.md",
+        "docs/official-docs",
+        "scripts/check-docs.js"
+      ],
       "symbols": [],
       "errors": [],
       "read": [
@@ -743,19 +1594,51 @@
         }
       ],
       "inspect": [
-        {"path": "docs/official-docs/retrieval-manifest.json", "symbols": ["schemaVersion"]},
-        {"path": "scripts/check-docs.js", "symbols": ["validateManifest"]}
+        {
+          "path": "docs/official-docs/retrieval-manifest.json",
+          "symbols": [
+            "schemaVersion"
+          ]
+        },
+        {
+          "path": "scripts/check-docs.js",
+          "symbols": [
+            "validateManifest"
+          ]
+        }
       ],
-      "tools": ["route", "docs-check"],
-      "verify": ["npm run docs:check"],
-      "stop": ["Do not turn ordinary task recaps or obvious code behavior into permanent knowledge."]
+      "tools": [
+        "route",
+        "docs-check"
+      ],
+      "verify": [
+        "npm run docs:check"
+      ],
+      "stop": [
+        "Do not turn ordinary task recaps or obvious code behavior into permanent knowledge."
+      ]
     },
     {
       "id": "domain-language",
       "description": "Repository terminology, semantic boundaries, identifiers, and source-of-truth distinctions",
-      "taskTypes": ["orientation", "diagnosis", "architecture"],
-      "keywords": ["glossary", "meaning", "difference", "authority", "gid", "order name", "projection", "manifest"],
-      "paths": ["docs/official-docs/reference/domain-glossary.md"],
+      "taskTypes": [
+        "orientation",
+        "diagnosis",
+        "architecture"
+      ],
+      "keywords": [
+        "glossary",
+        "meaning",
+        "difference",
+        "authority",
+        "gid",
+        "order name",
+        "projection",
+        "manifest"
+      ],
+      "paths": [
+        "docs/official-docs/reference/domain-glossary.md"
+      ],
       "symbols": [],
       "errors": [],
       "read": [
@@ -765,16 +1648,27 @@
         }
       ],
       "inspect": [],
-      "tools": ["route"],
+      "tools": [
+        "route"
+      ],
       "verify": [],
       "stop": []
     },
     {
       "id": "legacy-history",
       "description": "Explicit historical research into quarantined and obsolete documentation",
-      "taskTypes": ["history"],
-      "keywords": ["legacy docs", "historical", "obsolete", "archived plan"],
-      "paths": ["docs/official-docs/legacy"],
+      "taskTypes": [
+        "history"
+      ],
+      "keywords": [
+        "legacy docs",
+        "historical",
+        "obsolete",
+        "archived plan"
+      ],
+      "paths": [
+        "docs/official-docs/legacy"
+      ],
       "symbols": [],
       "errors": [],
       "read": [
@@ -786,7 +1680,9 @@
       "inspect": [],
       "tools": [],
       "verify": [],
-      "stop": ["Never revive a deprecated pattern without verifying it against live code and current architecture."]
+      "stop": [
+        "Never revive a deprecated pattern without verifying it against live code and current architecture."
+      ]
     },
     {
       "id": "supplier-inventory-sync",

@@ -56,6 +56,12 @@
   display: none;
 }
 
+@media (min-width: 901px) {
+  .card-a11y-move-controls {
+    display: none;
+  }
+}
+
 .card-a11y-move-controls button:focus-visible,
 [role="dialog"] button:focus-visible,
 [role="dialog"] input:focus-visible,
@@ -97,6 +103,37 @@
   }
 }
 /* S&S submission reports are shared across desktop and embedded mobile. */
+.ss-submission-dialog [hidden] { display: none !important; }
+.ss-submission-dialog .ss-submission-table { min-width: 0; table-layout: fixed; }
+.ss-submission-dialog .ss-submission-table th:first-child { width: 38%; }
+.ss-submission-dialog .ss-submission-table th:nth-child(2) { width: 13%; }
+.ss-submission-dialog .ss-submission-table th:nth-child(3) { width: 17%; }
+.ss-submission-dialog .ss-line-item, .ss-submission-dialog .ss-line-feedback { min-width: 0; overflow-wrap: anywhere; }
+.ss-line-item .ss-line-status { margin-bottom: 8px; }
+.ss-quantity-detail { display: block; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+.ss-submission-dialog h3 { margin: 24px 0 10px; font-size: 1rem; }
+.ss-line-orders, .ss-move-note, .ss-ordering-note { color: #475569; font-size: .8125rem; }
+.ss-line-orders { display: block; margin-top: 6px; }
+.ss-submission-body > details { margin-top: 20px; }
+.ss-submission-body summary { min-height: 44px; padding: 10px 0; cursor: pointer; font-weight: 600; }
+.ss-submission-body button, .ss-result-actions a { min-height: 44px; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #1765c1; font: inherit; cursor: pointer; }
+.ss-submission-body button:hover, .ss-result-actions a:hover { background: #eff6ff; }
+.ss-submission-body button:focus-visible, .ss-result-actions a:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
+.ss-submission-body button:disabled { cursor: default; color: #526174; background: #f1f5f9; }
+.ss-result-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 16px 0 8px; }
+.ss-result-actions a { display: inline-flex; align-items: center; box-sizing: border-box; text-decoration: none; }
+.ss-result-actions #ss-submission-open-supplier { color: #fff; background: #1765c1; border-color: #1765c1; }
+.ss-next-step { max-width: 70ch; color: #334155; line-height: 1.5; }
+.ss-ordering-note { grid-column: 1 / -1; margin: 4px 0; }
+.ss-submission-table td { font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) {
+  .ss-submission-dialog .ss-submission-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .ss-submission-dialog .ss-submission-table tbody, .ss-submission-dialog .ss-submission-table { display: block; }
+  .ss-submission-dialog .ss-submission-table tr { display: grid; grid-template-columns: 1fr 1fr; padding: 8px 0; border-bottom: 1px solid #dbe2ec; }
+  .ss-submission-dialog .ss-submission-table td { border: 0; padding: 8px 12px; }
+  .ss-submission-dialog .ss-submission-table td:first-child, .ss-submission-dialog .ss-submission-table td:last-child { grid-column: 1 / -1; }
+  .ss-submission-dialog .ss-submission-table td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 4px; color: #475569; font-weight: 600; }
+}
 .ss-last-result {
   grid-column: 1 / -1;
   justify-self: end;

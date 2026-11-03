@@ -433,6 +433,7 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
     printsStatus: Number(production.printsStatus || 0),
     blanksOrdered: Number(production.blanksOrdered ?? (production.stage === "blanks_ordered" ? 1 : 0)),
     printsOrdered: Number(production.printsOrdered || 0),
+    printsOnSavedSheet: Boolean(production.printsOnSavedSheet),
     displayFinancialStatus: order.commerce?.financialStatus || "",
     displayFulfillmentStatus: order.commerce?.fulfillmentStatus || "",
     source: order.source || null,
@@ -1195,7 +1196,8 @@ window.api.updateReady = async (...args) => {
   let payload = null;
   // full object or partial object already
   if (args[0] && typeof args[0] === "object" && !Array.isArray(args[0])) {
-    payload = { ...args[0] };
+    payload = args[0].provider && args[0].orderKey && args[1] && typeof args[1] === 'object'
+      ? { name: args[0], ...args[1] } : { ...args[0] };
   } else if (typeof args[0] === "string") {
     const [blanksStatus, printsStatus, blanksOrdered, printsOrdered] = args.slice(1);
     if (args[1] && typeof args[1] === "object" && !Array.isArray(args[1])) {
@@ -1221,7 +1223,9 @@ window.api.updateReady = async (...args) => {
     if ("blanksOrdered" in patch) metadataPatch.blanks_ordered = patch.blanksOrdered;
     if ("printsStatus" in patch) metadataPatch.prints_status = patch.printsStatus;
     if ("printsOrdered" in patch) metadataPatch.prints_ordered = patch.printsOrdered;
-    if ("blanksOrdered" in patch && candidate.status === "blanks") {
+    if ("printsOnSavedSheet" in patch) metadataPatch.prints_on_saved_sheet = patch.printsOnSavedSheet;
+    if ("stage" in patch) metadataPatch.stage = patch.stage;
+    if (!("stage" in patch) && "blanksOrdered" in patch && candidate.status === "blanks") {
       const recentlyConfirmed = candidate._batchConfirmedAt && Date.now() - candidate._batchConfirmedAt < 10000;
       if (!recentlyConfirmed || Number(patch.blanksOrdered)) {
         metadataPatch.stage = Number(patch.blanksOrdered) ? "blanks_ordered" : "blanks_cart";
@@ -1237,10 +1241,12 @@ window.api.updateReady = async (...args) => {
 
 window.api.updateProgress = async (a, b) => {
   const payload = (a && typeof a === "object") ? a : { name: a, progress: b };
+  const reference = payload.provider && payload.orderKey ? { provider: payload.provider, orderKey: payload.orderKey } : payload.name;
+  if (!isShopifyCandidateView() && reference && typeof reference === 'object') throw new Error('The order source changed. Review the order before saving.');
   if (isShopifyCandidateView()) {
     const metadataPatch = { printed_count: Number(payload.progress || 0) };
     if (payload.stage === "print" || payload.stage === "completed") metadataPatch.stage = payload.stage;
-    return updateCandidateOrder(payload.name, metadataPatch);
+    return updateCandidateOrder(reference, metadataPatch);
   }
   return apiFetch("/order-manager/v1/legacy/queue/mutate", {
     method: "POST",
@@ -1273,14 +1279,18 @@ window.api.updatePrintableItem = async (name, itemId, included) => {
 
 window.api.deleteOrder = async (a) => {
   const payload = (a && typeof a === "object") ? a : { name: a };
-  if (isShopifyCandidateView()) {
-    const now = new Date().toISOString();
-    return updateCandidateOrder(payload.name, { archived_at: now });
-  }
-  return apiFetch("/order-manager/v1/legacy/queue/item", {
-    method: "DELETE",
-    body: JSON.stringify({ orderName: payload.name }),
-  });
+  if (!isShopifyCandidateView()) throw new Error('The order source changed. Review the order before removing it.');
+  const key = String(payload.orderKey || '');
+  if (payload.provider !== 'etsy' || !/^etsy:[^:\s]+:[^:\s]+$/.test(key))
+    throw new Error('Only Etsy orders can be removed from the board.');
+  const reference = { provider: 'etsy', orderKey: key };
+  const order = candidateByName(reference);
+  if (order._provider !== 'etsy' || String(order._orderKey || order._gid) !== key
+    || (order.canonical?.source?.provider && order.canonical.source.provider !== 'etsy'))
+    throw new Error('Only Etsy orders can be removed from the board.');
+  if (order._historyReadOnly || order._capabilities?.productionWrite !== true
+    || String(order.displayFulfillmentStatus).toUpperCase() === 'FULFILLED') throw new Error('This order is read-only.');
+  return updateCandidateOrder(reference, { archived_at: new Date().toISOString() });
 };
 
 window.api.updateBundleStatus = async (bundleName, status) => {
@@ -1302,26 +1312,40 @@ window.api.updateBundleStatus = async (bundleName, status) => {
   });
 };
 
+const pendingSupplierIntents = new Map();
 window.api.processBatch = async (orderIds) => {
   const names = Array.isArray(orderIds) ? orderIds : [];
   if (!isShopifyCandidateView() && names.some(value => value && typeof value === 'object'))
-    throw new Error('The order source changed. Review the selection before submitting.');
+    throw Object.assign(new Error('The order source changed. Review the selection before submitting.'), { supplierRequestSent: false });
   if (isShopifyCandidateView()) {
     const orders = names.map(candidateByName);
     const providers = new Set(orders.map(order => order._provider));
     if (providers.size !== 1) {
-      throw new Error("Submit Shopify and Etsy Build Order cards as separate S&S batches.");
+      throw Object.assign(new Error("Submit Shopify and Etsy Build Order cards as separate S&S batches."), { supplierRequestSent: false });
     }
     const isEtsyBatch = providers.has("etsy");
-    const result = await apiFetch(isEtsyBatch ? "/order-manager/v1/provider-batches/commit" : "/order-manager/v1/batches/commit", {
+    const selection = JSON.stringify(orders.map(candidateIdentity).sort());
+    const intent = pendingSupplierIntents.get(selection) || { idempotencyKey: newIdempotencyKey('batch'), inFlight: false };
+    if (intent.inFlight) throw Object.assign(new Error('This submission is already running. No second request was sent.'), { code: 'BATCH_REQUEST_IN_FLIGHT', supplierRequestSent: false });
+    pendingSupplierIntents.set(selection, intent);
+    intent.inFlight = true;
+    const idempotencyKey = intent.idempotencyKey;
+    let result;
+    try { result = await apiFetch(isEtsyBatch ? "/order-manager/v1/provider-batches/commit" : "/order-manager/v1/batches/commit", {
       method: "POST",
       body: JSON.stringify({
-        ...(isEtsyBatch ? { orderKeys: orders.map((order) => order._orderKey) } : { orderIds: orders.map((order) => order._gid) }),
-        idempotencyKey: newIdempotencyKey("batch"),
+        ...(isEtsyBatch ? { orderKeys: orders.map((order) => order._orderKey).sort() } : { orderIds: orders.map((order) => order._gid).sort() }),
+        idempotencyKey,
       }),
-    });
+    }); } catch (error) {
+      const saved = error.details?.report;
+      // Retain the same intent key after a potentially dispatched unknown result.
+      if (saved?.preflightFailed || saved?.outcome === 'rejected') pendingSupplierIntents.delete(selection);
+      throw error;
+    } finally { intent.inFlight = false; }
+    if (result?.outcome !== 'unknown') pendingSupplierIntents.delete(selection);
     const resultByOrderId = new Map((result?.orderResults || []).map(order => [order.orderId, order]));
-    const acceptedOrders = resultByOrderId.size
+    const acceptedOrders = result?.autoAdvanceAllowed === false ? [] : resultByOrderId.size
       ? orders.filter(order => resultByOrderId.get(order._gid || order._orderKey)?.outcome === "confirmed")
       : result?.outcome === "confirmed" ? orders : [];
     const now = Date.now();

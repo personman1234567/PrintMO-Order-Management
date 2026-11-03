@@ -54,6 +54,8 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Main Electron Process | `node --check main.js` | Silent exit code 0 |
 | Preload Script | `node --check preload.js` | Silent exit code 0 |
 | Desktop Renderer | `node --check renderer.js` | Silent exit code 0 |
+| Supplier order result and reviewed board movement | `node --test order-manager-proxy/supplier-submission.test.mjs scripts/supplier-results.test.js scripts/supplier-results.browser.test.js scripts/cart-garment-model.test.js` | Native order references/errors, missing versus zero quantity, identifier matching, exact service exclusion, same-attempt idempotency, narrowly protected unresolved demand, preserved historical records and desktop/mobile reporting use synthetic data with no real supplier or order mutations. Gateway response-field precedence has its own `scripts/supplier-response-contract.test.js` in the gateway checkout. |
+| Shared order Actions | `node --test scripts/order-action-model.test.js scripts/order-action-integration.test.js scripts/order-actions.browser.test.js` | Source IDs, canonical nulls, per-line variants/services, completeness, pickup/missing contact, native menu exceptions, keyboard/touch, clipboard outcomes and source-scoped removal use synthetic fixtures only. Browser checks require installed Edge/Chrome; no live order mutations. |
 | Board move responsiveness and production workload | `node --test scripts/board-interactions.test.js` | Rapid move acknowledgments and failures preserve the latest intent, partial bundles retain confirmed members, current DTOs reconcile by identity, deferred refresh runs once, membership-affecting drops retain batch review, and delayed drop handoffs cannot be consumed by status mutations. Garments left counts full printable quantities across providers/bundles without subtracting progress, excludes completed/fulfilled work, changes with queue membership, and distinguishes unavailable from empty totals. Garment types combine sizes/colors and pocket tees, preserve unclassified items and sum to the same total. |
 | Manual mockup clipboard recovery | `node --test scripts/manual-mockup-clipboard.test.js` | Unsupported/denied direct reads, native file/item-list paste, supported MIME preference, order-switch races, text rejection, upload failures and history/provider restrictions pass |
 | Optional production planner model | `node --test scripts/production-planner.test.js` | Full printable quantities, provider/bundle identity, whole-order search/run selection, type/style/color/size grouping, recorded placement combinations, and independent material/print readiness pass |
@@ -61,6 +63,7 @@ Run these targeted CLI commands to verify syntax integrity without side effects:
 | Garment recognition summary | `node --test scripts/garment-summary.test.js scripts/print-placements.test.js` | Color aliases, size grouping, placement association, distinct print areas, wearer-side sleeves, supplied vector views, seam contrast, neutral fallbacks, safe SVG assets, manual invoice links, canonical preservation, input bounds, cross-order rejection and conflict reconciliation pass |
 | Preview state settlement | `node --test scripts/mockup-preview-state.test.js` | Confirmed empty and failed lookups, overlapping queue pages, detail refresh races, current DTO reconciliation, Etsy without a mapping, pending private/catalog assets, and the 250-order bulk cap pass |
 | Mobile order recognition | `node --test scripts/mobile-order-recognition.test.js scripts/mobile-order-workspace.test.js` | Explicit front association, canonical/detail composite preservation, internal-property hiding, failed-image fallback, private hydration settlement, exact delivery labels, partial summaries, mobile-only rows and return behavior pass. Inspect 320px/393px containment and compare desktop against the pre-change baseline. |
+| Mobile order detail | `node --test scripts/mobile-detail-summary.test.js` | Authoritative total and zero money, current null precedence, payment/fulfillment/delivery distinctions, incomplete aggregates and exact asset links pass. In a synthetic local fixture, inspect 320px/393px containment, preview switching/enlargement, full ledger, Charges & payment, More/Production destinations and Back. Compare the whole desktop detail after mobile-to-desktop resize; controls and combined proofs must return to their original containers. |
 | Additive front asset isolation | `node --test order-manager-proxy/mobile-order-recognition.test.mjs order-manager-proxy/draft-orders.test.mjs` | Purpose survives upload/promotion, PNG/WebP previews remain outside canonical rank-one/detail/gallery selections, current-line association is required, delivery projection remains bounded, and optional previews cannot consume the canonical upload quota. Prepared deadline/fallback checks also run in `prepared-order-links.test.mjs` and `prepared-recipient.test.mjs`. |
 | Optional Order List Browsing | `npm run verify:order-list` | Stable provider identities, six canonical stages, individual bundle counts, active/history exclusion, material milestones, printable eligibility, target dates, combined search/filter counts, deterministic sorts, unknown money, and separate attention/accounting/cached supplier summaries pass |
 | Cloudflare Worker Proxy | `node --check order-manager-proxy/worker.js` | Silent exit code 0 |
@@ -153,6 +156,15 @@ Items visual finish (2026-10-07): 72 focused synthetic browser assertions passed
 ---
 
 ## Build and Packaging Verification
+
+The supplier cross-repository HTTP gate in `supplier-submission.test.mjs` runs
+when `PRINTMO_SUPPLIER_GATEWAY_FIXTURE` points to the gateway checkout's
+`scripts/fixtures/supplier-commit-app.js`. It starts the actual Express handler
+on loopback with mocked S&S transport, then exercises the Shopify Worker parser,
+D1 persistence and UI model. Without the checkout path that one gate is skipped;
+run it explicitly before releasing a supplier error-contract change. The fixture
+also replaces a response with synthetic HTML to verify bounded diagnostics and
+continued ambiguity protection. It makes no live supplier/customer requests.
 
 | Target | Command | Verification Artifact |
 |---|---|---|

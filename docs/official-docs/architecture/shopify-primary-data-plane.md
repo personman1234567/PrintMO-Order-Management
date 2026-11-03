@@ -26,22 +26,42 @@
 
 ## Current Release Boundary
 
-Current Order Manager production deployment on 2026-10-31:
+Current Order Manager production deployment on 2026-11-03:
 
-- D1 migration: `0014_mobile_order_recognition.sql`, applied once at `2026-10-31 17:10:05 UTC`; no migrations remain pending. The 358 manifests, 598 asset links and 62 draft files retained their existing rows with empty `preview_kind` defaults.
-- Worker version: `eeb5fa6f-fc32-4a69-a546-e88f549b90d6`, verified active at `https://order-manager-proxy.printmobusiness.workers.dev`.
-- Pages deployment: `3611787d.print-mo-order-manager.pages.dev`, production release marker `1793466752930` at `https://print-mo-order-manager.pages.dev`.
-- Scope: Order Manager migration, Worker and Pages only. All Shopify/Designer changes from this task remain local and undeployed, including the Designer preview Worker, website frontend and every theme. New website submissions therefore do not yet emit the additive front preview; existing combined-image fallbacks remain supported.
+- Gateway commit: `9ca1e811eef02508f97082963f0b7cc178917aa9`, the reviewed six-file fast-forward from main `c0ca1e3`. Render service `srv-d07v58adbo4c738s2mag` manually deployed it as `dep-dbkkga6c6qcc73an2260` and reached Live. Auto-Deploy remains Off; build/start remain `npm install` / `node index.js`.
+- Worker version: `552b52ba-67e0-446f-b651-8b372969ebcc` at `https://order-manager-proxy.printmobusiness.workers.dev`, deployed with `--keep-vars`. Readback confirmed all bindings unchanged and `SS_TEST_ORDER=1`.
+- Pages deployment: `a236a888.print-mo-order-manager.pages.dev`, production release `1793672768608` at `https://print-mo-order-manager.pages.dev`. Both entry-point markers and 63 referenced assets matched the exact tested artifact on production and the immutable deployment.
+- D1 schema remains at `0015_supplier_submission_safety.sql`. Explicit owner approvals appended retry-resolution audits only for `ssb-c9df41fc34b5a509fabe003c` and `ssb-2e9c28952a54305f4337a84b`. Original outcomes, requests, responses and timestamps remain unchanged. No migration, hold purge, supplier POST or customer-order test mutation was performed.
+- Immediate rollback references: gateway `c0ca1e3e78a8b1eb9e345260af5e27f358c7e096` / Render `dep-dbkifd7b9u1s73e4ub60`; Worker `11b4cfd3-ff7c-4b9a-9a94-afed79040411`; Pages `a1df44b4.print-mo-order-manager.pages.dev` / `1793665005128`. A code rollback must preserve both append-only owner-resolution audits; it does not reverse business history.
 
-Verification distinguishes local behavior from release delivery. Local fixture tests,
-Phase 1/2 and browser checks at 320px/393px passed, including desktop combined-image
-preservation and mobile-to-desktop restoration. Production served-byte verification
-matched both HTML files and six runtime assets to the published artifact. Public
-browser rendering passed without authenticated order data. Authenticated post-release
-mobile/desktop smoke checks, including real delivery labels and image fallback, remain
-**incomplete**: Shopify's iframe stayed at `about:blank`, then Computer Use stopped
-because it could not confidently establish the current browser URL. No browser retry
-or customer-record test mutation followed that stop.
+The supplier restoration removes historical-overlap bans for known completed
+placements and retires the retry-review override with `410`, preserving its audit
+records. Same-key replay, atomic in-flight claims and genuine transport uncertainty
+remain protected. The client retains its intent key during an ambiguous request;
+completed intent can end normally. Current blocked selections and old saved
+evidence are separate. The gateway now selects documented SKU fields by explicit
+priority and preserves missing quantity versus zero, without guessing SKU aliases.
+Native errors and the exact artwork-service exclusion remain intact.
+
+Material status controls use 184px/44px triggers, official Material SVG chevrons
+and selected checks, separate Materials/Printing groups, and a native top-layer
+popover with collision/scroll bounds. First Escape closes the menu; second Escape
+closes detail. Status persistence, independent physical readiness, safe Undo,
+receiving warnings, source restrictions and existing right-click behavior remain.
+PDF export and automatic residual supplier retries remain deferred.
+
+Verification: gateway full suite, 53 backend tests (18 supplier cases), 26 focused
+supplier/adapter tests, whole-modal desktop/phone browser checks, Phase 1/2, syntax,
+docs and packaging passed. Render checkout/startup and exact live commit were
+verified. Both Pages shell markers and all 62 referenced production JS/CSS hashes
+matched the tested artifact. Unauthenticated Worker and gateway read routes returned
+401. No live supplier order was placed/cancelled for testing; authenticated operator
+acceptance of an actual submission remains unverified. Native Popover API support
+is required and was verified in Chromium.
+
+The Designer preview Worker, Shopify website/themes and Shopify extension were not
+deployed. The owner's separate gateway working tree was preserved; publication used
+an isolated fresh-main checkout.
 
 The board retains per-line printable-piece eligibility and includes Shopify `closedAt` alongside cancellation and exact `FULFILLED`
 source-driven: each removes the order from active-board projection reads

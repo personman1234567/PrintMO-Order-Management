@@ -86,6 +86,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./production-artwork-workspace.css" />
   <link rel="stylesheet" href="./garment-costs.css">
   <link rel="stylesheet" href="./order-list-foundation.css" />
+  <link rel="stylesheet" href="./order-actions.css" />
   <link rel="stylesheet" href="./dashboard-controls.css" />
   <link rel="stylesheet" href="./dashboard-motion.css" />
   <link rel="stylesheet" href="./dashboard-shell.css" />
@@ -93,6 +94,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./order-card-presentation.css" />
   <link rel="stylesheet" href="./cart-garment-view.css" />
   <link rel="stylesheet" href="./mobile-order-workspace.css" />
+  <link rel="stylesheet" href="./mobile-order-detail.css" />
 </head>
 <body data-active-tab="pipeline" data-active-view="orders" data-order-source="shopify" data-board-load-state="loading">
   <header class="app-header">
@@ -362,8 +364,11 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           <ul id="summary-list"></ul>
           <div id="cart-total">Total items: 0</div>
           <button id="clear-picked">Clear</button>
-          <button id="order-submit">Add to S&S Cart</button>
+          <button id="order-submit">Place S&amp;S order</button>
+          <p class="ss-ordering-note">This submits an S&amp;S order. The cancel/add-back step happens manually on S&amp;S.</p>
           <button id="ss-last-result" class="ss-last-result hidden" type="button">View last S&amp;S result</button>
+          <button id="ss-build-review" class="ss-last-result hidden" type="button">Select orders for a board move…</button>
+          <p id="ss-build-attention" class="ss-submit-status" role="status" hidden></p>
           <p id="ss-submit-status" class="ss-submit-status" role="status" aria-live="polite"></p>
         </div>
       </div>
@@ -553,23 +558,29 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                 <section id="detail-production-card" class="detail-section print-station-card">
                   <div class="production-section-header">
                     <div>
-                      <h3>Production progress</h3>
+                      <h3>Materials</h3>
                       <span id="production-status-pill" class="production-status-pill" aria-live="polite">Materials not marked ready</span>
                     </div>
-                    <span id="progress-text">0 / 0 pieces printed</span>
-                  </div>
-                  <div id="progress-section" class="production-progress-panel">
-                    <div id="progress-bar-container" class="print-progress-bar-bg" aria-hidden="true">
-                      <div id="progress-bar" class="print-progress-bar-fill"></div>
-                    </div>
-                    <div class="print-action-buttons" id="progress-row">
-                      <button id="progress-plus1" class="btn-primary-action" type="button">+1 Print</button>
-                      <button id="progress-custom" class="btn-secondary-action" type="button">Custom amount</button>
-                    </div>
-                    <span id="progress-save-status" class="detail-save-status" role="status" aria-live="polite"></span>
                   </div>
 
                   <div id="ready-controls" class="readiness-sequences" aria-label="Production readiness">
+                    <div id="material-status-tracking" class="material-status-tracking" hidden>
+                      <!-- Material Symbols Outlined 20px / weight 400: https://raw.githubusercontent.com/google/material-design-icons/master/symbols/web/expand_more/materialsymbolsoutlined/expand_more_20px.svg -->
+                      <div class="material-status-row" data-material="prints">
+                        <span class="material-status-label">Prints</span>
+                        <button id="material-prints-button" class="material-status-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="material-status-menu"><span class="material-status-value">Not recorded</span><svg class="material-status-chevron" xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" aria-hidden="true" focusable="false"><path d="M480-333 240-573l51-51 189 189 189-189 51 51-240 240Z"/></svg></button>
+                      </div>
+                      <div class="material-status-row" data-material="blanks">
+                        <span class="material-status-label">Blanks</span>
+                        <button id="material-blanks-button" class="material-status-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="material-status-menu"><span class="material-status-value">Not recorded</span><svg class="material-status-chevron" xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" aria-hidden="true" focusable="false"><path d="M480-333 240-573l51-51 189 189 189-189 51 51-240 240Z"/></svg></button>
+                      </div>
+                      <div id="material-status-menu" class="material-status-menu" popover="manual" role="menu" aria-labelledby="material-status-menu-title" hidden>
+                        <div id="material-status-menu-title" class="material-status-menu-title">Print status</div>
+                        <div id="material-status-options"></div>
+                      </div>
+                      <p class="material-status-help">In hand means physical materials are available. Artwork approval is tracked separately.</p>
+                      <div class="material-status-feedback"><span id="material-status-feedback" role="status" aria-live="polite"></span><button id="material-status-undo" type="button" hidden>Undo</button></div>
+                    </div>
                     <fieldset class="readiness-sequence" data-readiness-sequence="blanks">
                       <legend>Blanks</legend>
                       <label class="production-step" data-step="blanks-ordered">
@@ -613,6 +624,17 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                     <div class="readiness-save-row">
                       <span id="detail-save-status" class="detail-save-status" role="status" aria-live="polite"></span>
                       <button id="ready-apply" class="hidden production-apply" type="button">Save status changes</button>
+                    </div>
+                  </div>
+                  <div class="material-printing-group">
+                    <div class="production-section-header"><h3>Printing</h3><span id="progress-text">0 / 0 pieces printed</span></div>
+                    <div id="progress-section" class="production-progress-panel">
+                      <div id="progress-bar-container" class="print-progress-bar-bg" aria-hidden="true"><div id="progress-bar" class="print-progress-bar-fill"></div></div>
+                      <div class="print-action-buttons" id="progress-row">
+                        <button id="progress-plus1" class="btn-primary-action" type="button">+1 Print</button>
+                        <button id="progress-custom" class="btn-secondary-action" type="button">Custom amount</button>
+                      </div>
+                      <span id="progress-save-status" class="detail-save-status" role="status" aria-live="polite"></span>
                     </div>
                   </div>
                 </section>
@@ -984,28 +1006,38 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       <div class="ss-submission-heading">
         <span id="ss-submission-indicator" class="ss-submission-indicator" aria-hidden="true"></span>
         <div>
-          <p id="ss-submission-eyebrow" class="ss-submission-eyebrow">S&amp;S submission</p>
           <h2 id="ss-submission-title">Submission result</h2>
         </div>
       </div>
       <button id="ss-submission-close" class="ss-submission-close" type="button" aria-label="Close S&S submission result">&times;</button>
     </header>
-    <div class="ss-submission-body">
+    <div class="ss-submission-body" id="ss-result-content">
       <p id="ss-submission-summary" class="ss-submission-summary"></p>
-      <div class="ss-submission-stats" aria-label="Submission summary">
-        <div><span>Orders accepted</span><strong id="ss-submission-orders">0 / 0</strong></div>
-        <div><span>Garment lines</span><strong id="ss-submission-lines">0 accepted</strong></div>
-        <div><span>S&amp;S order</span><strong id="ss-submission-order-number">Not created</strong></div>
-      </div>
-      <div class="ss-submission-table-wrap" role="region" aria-label="S&S line results" tabindex="0">
+      <p id="ss-submission-next-step" class="ss-next-step" hidden></p>
+      <div id="ss-submission-warning" class="ss-submission-warning hidden" role="note"></div>
+      <div class="ss-result-actions"><a id="ss-submission-open-supplier" href="https://www.ssactivewear.com/myaccount/orders" target="_blank" rel="noopener noreferrer">Open S&amp;S Order History</a><button id="ss-submission-review" type="button" hidden>Move listed orders to In S&amp;S Cart…</button></div>
+      <p id="ss-submission-move-note" class="ss-move-note" hidden>This updates only the listed board stages. Use List selection to choose a subset.</p>
+      <ul id="ss-submission-native-errors" hidden></ul>
+      <section id="ss-submission-exceptions" aria-labelledby="ss-submission-exceptions-title">
+      <h3 id="ss-submission-exceptions-title">Needs attention</h3>
+      <div class="ss-submission-table-wrap" role="region" aria-label="Garments needing review" tabindex="0">
         <table class="ss-submission-table">
           <thead>
-            <tr><th scope="col">Status</th><th scope="col">PrintMO order</th><th scope="col">Item</th><th scope="col">Requested</th><th scope="col">Accepted</th><th scope="col">Why</th></tr>
+            <tr><th scope="col">Item / customer orders</th><th scope="col">Requested units</th><th scope="col">S&amp;S reported units</th><th scope="col">Supplier message / item review</th></tr>
           </thead>
           <tbody id="ss-submission-lines-body"></tbody>
         </table>
       </div>
-      <div id="ss-submission-warning" class="ss-submission-warning hidden" role="note"></div>
+      </section>
+      <details id="ss-submission-accepted"><summary id="ss-submission-accepted-count">Reported accepted garments</summary>
+        <div class="ss-submission-table-wrap" role="region" aria-label="Reported accepted garments" tabindex="0"><table class="ss-submission-table">
+          <thead><tr><th scope="col">Item / customer orders</th><th scope="col">Requested units</th><th scope="col">S&amp;S reported units</th><th scope="col">Supplier message / item review</th></tr></thead>
+          <tbody id="ss-submission-accepted-body"></tbody>
+        </table></div>
+      </details>
+      <p id="ss-submission-no-lines">S&amp;S did not return item-level evidence for this report.</p>
+      <details id="ss-submission-excluded" hidden><summary>Service charges excluded from purchasing</summary><ul id="ss-submission-excluded-list"></ul></details>
+      <details class="ss-submission-details"><summary>Response details</summary><p id="ss-submission-recorded"></p><p>S&amp;S order reference: <span id="ss-submission-order-number"></span></p><div id="ss-submission-extra"></div></details>
     </div>
     <footer class="ss-submission-footer">
       <div class="ss-submission-reference">
@@ -1013,7 +1045,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         <code id="ss-submission-reference"></code>
       </div>
       <button id="ss-submission-copy" type="button">Copy reference</button>
-      <button id="ss-submission-done" class="ss-submission-done" type="button">Done</button>
+      <button id="ss-submission-done" class="ss-submission-done" type="button">Close</button>
     </footer>
   </section>
 </div>
@@ -1229,6 +1261,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./order-board-model.js"></script>
   <script src="./order-garment-summary.js"></script>
   <script src="./order-card-presentation.js"></script>
+  <script src="./supplier-result-model.js"></script>
+  <script src="./supplier-results.js"></script>
   <script src="./renderer.js"></script>
   <script src="./previous-orders.js"></script>
   <script src="./draft-orders.js"></script>
@@ -1246,6 +1280,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./shopify-embedded-mobile.js"></script>
   <script src="./order-list-workflows.js"></script>
   <script src="./order-list-foundation.js"></script>
+  <script src="./order-action-model.js"></script>
+  <script src="./order-actions.js"></script>
   <script src="./dashboard-controls.js"></script>
   <script src="./dashboard-shell.js"></script>
   <script src="./production-workload.js"></script>
@@ -1256,5 +1292,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./mobile-order-model.js"></script>
   <script src="./mobile-order-recognition.js"></script>
   <script src="./mobile-order-workspace.js"></script>
+  <script src="./mobile-detail-summary.js"></script>
+  <script src="./mobile-order-detail.js"></script>
 </body>
 </html>

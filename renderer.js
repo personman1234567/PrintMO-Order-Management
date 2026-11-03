@@ -180,7 +180,7 @@ function hasSupplierSku(li) {
 }
 
 function isGarmentItem(li) {
-  return !isPrintItem(li) && hasSupplierSku(li);
+  return !isPrintItem(li) && hasSupplierSku(li) && String(li?.sku || li?.supplierSku || '').trim() !== 'PM-ART-BG-REMOVE';
 }
 
 function printablePieceTotal(order) {
@@ -894,12 +894,14 @@ function patchLocalOrders(orderNames, patcher) {
  * @returns {Set<string>} Statuses requiring a repaint.
  */
 function removeLocalOrders(orderNames) {
-  const names = new Set((orderNames || []).filter(Boolean));
+  const names = new Set((orderNames || []).filter(value => typeof value === 'string'));
+  const identities = new Set((orderNames || []).filter(value => value && typeof value === 'object')
+    .map(value => JSON.stringify([value.provider, String(value.orderKey)])));
   const touchedStatuses = new Set();
-  if (!names.size) return touchedStatuses;
+  if (!names.size && !identities.size) return touchedStatuses;
 
   allOrders = allOrders.filter(order => {
-    if (!names.has(order.name)) return true;
+    if (!names.has(order.name) && !identities.has(boardOrderIdentity(order))) return true;
     touchedStatuses.add(order.status || 'received');
     return false;
   });
@@ -1217,7 +1219,7 @@ function makeCard(o, style = 'default') {
     card.innerHTML = `
       <div class="card-header"><span class="cust-name">${custName}</span>${sourceBadgeMarkup(o)}</div>
       <div class="card-body picked-body">
-        <div class="counts"><strong>${apparel}</strong></div>
+        <div class="counts"><strong>${apparel}</strong> garments</div>
       </div>
     `;
     requestAnimationFrame(() => {
@@ -1266,7 +1268,7 @@ function makeCard(o, style = 'default') {
     e.stopPropagation();
     await removeOrderFromBoard(o);
   });
-  card.appendChild(del);
+  if (window.OrderActionModel?.canRemoveFromBoard(o)) card.appendChild(del);
 
   // drag handlers
   card.addEventListener('dragstart', e => {
@@ -1290,15 +1292,19 @@ function makeCard(o, style = 'default') {
   });
 
   window.OrderCardPresentation?.decorate(card, o, { apparel, prints, other, style });
+  if (o._candidate) window.OrderActions?.attach(card, window.OrderBoardModel?.orderKey(o));
   return card;
 }
 
 async function removeOrderFromBoard(order) {
-  if (!order || order._historyReadOnly) return;
+  if (!window.OrderActionModel?.canRemoveFromBoard(order)) return;
   if (!confirm(order._candidate ? `Remove ${order.name} from the board?` : `Delete ${order.name}?`)) return;
-  await window.api.deleteOrder(order.name);
-  const touchedStatuses = removeLocalOrders([order.name]);
-  if (detailOrder?.name === order.name) closeDetail();
+  const reference = order._candidate
+    ? { provider: order._provider || 'shopify', orderKey: String(order._orderKey || order._gid) }
+    : order.name;
+  await window.api.deleteOrder(reference);
+  const touchedStatuses = removeLocalOrders([reference]);
+  if (detailOrder && (order._candidate ? boardOrderIdentity(detailOrder) === boardOrderIdentity(order) : detailOrder.name === order.name)) closeDetail();
   await renderBoardFromLocalState(touchedStatuses);
 }
 
@@ -1322,7 +1328,7 @@ function makeBundleCard(name, orders, style = 'pipeline') {
     orders.forEach(o => (o.items || []).forEach(it => {
       if (isGarmentItem(it)) apparel += it.qty;
     }));
-    bodyHtml = `<div class="counts"><strong>${apparel}</strong></div>`;
+    bodyHtml = `<div class="counts"><strong>${apparel} garments</strong></div>`;
   }
   card.innerHTML = `
     <div class="card-header"><span class="cust-name">${name}</span></div>
@@ -3366,6 +3372,7 @@ function getProductionProgressCoordinator() {
   productionProgressCoordinator = window.OrderDetailState.createProgressSaveCoordinator({
     commit: (order, progress, stage) => window.api.updateProgress({
       name: order.name,
+      ...(order._candidate ? { provider: order._provider || 'shopify', orderKey: String(order._orderKey || order._gid) } : {}),
       progress,
       ...(stage ? { stage } : {})
     }),
@@ -3695,6 +3702,10 @@ function setupDropZones() {
 let lastSupplierSubmissionReport = null;
 
 function normalizedSupplierSubmissionReport(value, fallbackMessage = '') {
+  if (window.SupplierResultModel) {
+    const result = window.SupplierResultModel.normalize(value);
+    return { ...result, summary: result.summary || fallbackMessage || 'Review the supplier result.' };
+  }
   const source = value && typeof value === 'object' ? value : {};
   const outcome = ['confirmed', 'partial', 'rejected', 'unknown'].includes(source.outcome)
     ? source.outcome
@@ -3737,10 +3748,15 @@ function supplierSubmissionReportFromError(error) {
     || error?.payload?.report;
   if (report) return normalizedSupplierSubmissionReport(report, error?.message);
   const rejected = error?.code === 'SUPPLIER_REJECTED' || Number(error?.status) === 422;
+  const blocked = ['BATCH_REVIEW_REQUIRED', 'BATCH_RECONCILIATION_REQUIRED', 'SUPPLIER_ATTENTION_REQUIRED'].includes(error?.code);
+  const notSent = blocked || error?.supplierRequestSent === false || ['BATCH_IDEMPOTENCY_CONFLICT', 'INVALID_BATCH_STAGE', 'INVALID_PROVIDER_BATCH_STAGE', 'BATCH_HAS_NO_SUPPLIER_SKUS'].includes(error?.code);
   return normalizedSupplierSubmissionReport({
     outcome: rejected ? 'rejected' : 'unknown',
+    submissionAction: blocked ? 'blocked' : notSent ? 'not_sent' : 'attempted',
+    supplierRequestSent: !notSent,
+    actionMessage: notSent ? error?.message || 'No new S&S request was sent.' : null,
     summary: error?.message || String(error || 'S&S submission failed.'),
-    batchId: error?.payload?.error?.details?.batchId || null,
+    batchId: error?.details?.batchId || error?.payload?.error?.details?.batchId || null,
     rejectedLines: rejected ? [{ reason: error?.message || 'S&S rejected the submission.' }] : []
   });
 }
@@ -3753,90 +3769,15 @@ function supplierOutcomePresentation(outcome, preflightFailed = false) {
   return { title: 'Result needs reconciliation', lineLabel: 'confirmed', status: 'S&S returned an uncertain result. Do not retry yet.' };
 }
 
-function appendSupplierResultRow(body, result) {
-  const row = document.createElement('tr');
-  const statusCell = document.createElement('td');
-  const status = document.createElement('span');
-  status.className = `ss-line-status ${result.status === 'preflight' ? 'rejected' : result.status}`;
-  status.textContent = result.status === 'accepted' ? 'Accepted' : result.status === 'rejected' ? 'Rejected' : result.status === 'preflight' ? 'Not sent' : 'Unknown';
-  statusCell.appendChild(status);
-
-  const orderCell = document.createElement('td');
-  orderCell.textContent = (result.orderNames || []).join(', ') || 'Selected batch';
-  const itemCell = document.createElement('td');
-  itemCell.className = 'ss-line-item';
-  const itemName = document.createElement('span');
-  itemName.className = 'ss-line-item-name';
-  itemName.textContent = (result.itemNames || []).join(', ') || (result.sku ? 'Supplier item' : 'Selected batch');
-  const sku = document.createElement('code');
-  sku.className = 'ss-line-sku';
-  sku.textContent = result.sku || 'No line identifier returned';
-  itemCell.append(itemName, sku);
-  const requestedCell = document.createElement('td');
-  requestedCell.textContent = result.requestedQty ?? '—';
-  const acceptedCell = document.createElement('td');
-  acceptedCell.textContent = result.acceptedQty ?? (['rejected', 'preflight'].includes(result.status) ? '0' : '—');
-  const feedbackCell = document.createElement('td');
-  feedbackCell.className = 'ss-line-feedback';
-  feedbackCell.textContent = result.reason || (result.status === 'accepted' ? 'Accepted by S&S.' : 'No line-level feedback was returned.');
-  row.append(statusCell, orderCell, itemCell, requestedCell, acceptedCell, feedbackCell);
-  body.appendChild(row);
-}
-
 function showSupplierSubmissionReport(value) {
   const report = normalizedSupplierSubmissionReport(value);
   lastSupplierSubmissionReport = report;
-  const overlay = document.getElementById('ss-submission-overlay');
-  const dialog = document.getElementById('ss-submission-dialog');
-  const presentation = supplierOutcomePresentation(report.outcome, report.preflightFailed);
-  if (!overlay || !dialog) return false;
-
-  dialog.dataset.outcome = report.outcome;
-  document.getElementById('ss-submission-title').textContent = presentation.title;
-  document.getElementById('ss-submission-summary').textContent = report.summary;
-  document.getElementById('ss-submission-orders').textContent = `${report.acceptedOrderCount} / ${report.orderCount}`;
-  document.getElementById('ss-submission-lines').textContent = `${report.acceptedLines.length} ${presentation.lineLabel}`;
-  document.getElementById('ss-submission-order-number').textContent = report.supplierOrderNumbers.join(', ')
-    || (report.outcome === 'unknown' ? 'Not confirmed' : 'Not created');
-  document.getElementById('ss-submission-reference').textContent = report.batchId || report.poNumber || 'Unavailable';
-
-  const body = document.getElementById('ss-submission-lines-body');
-  body.replaceChildren();
-  report.acceptedLines.forEach(line => appendSupplierResultRow(body, { ...line, status: 'accepted' }));
-  report.rejectedLines.forEach(line => appendSupplierResultRow(body, { ...line, acceptedQty: 0, status: report.preflightFailed ? 'preflight' : 'rejected' }));
-  if (!body.childElementCount) {
-    appendSupplierResultRow(body, {
-      status: report.preflightFailed ? 'preflight' : report.outcome === 'unknown' ? 'unknown' : report.outcome === 'rejected' ? 'rejected' : 'accepted',
-      reason: report.summary
-    });
-  }
-
-  const warning = document.getElementById('ss-submission-warning');
-  if (report.preflightFailed) {
-    warning.textContent = 'No order request was sent to S&S. You can retry after the issue clears.';
-    warning.classList.remove('hidden');
-  } else if (report.outcome === 'unknown') {
-    warning.textContent = 'Do not submit this batch again yet. Check your S&S cart for these items and order history for an unexpected purchase. The reference below identifies this Order Manager attempt; it is not an S&S order number.';
-    warning.classList.remove('hidden');
-  } else if (report.outcome === 'partial') {
-    warning.textContent = 'Only fully accepted PrintMO orders moved to In S&S Cart. Orders containing rejected garments remain in Build Order.';
-    warning.classList.remove('hidden');
-  } else if (Array.isArray(report.metadataRepairRequired) && report.metadataRepairRequired.length) {
-    warning.textContent = 'S&S accepted the order, but one or more board cards still need an automatic status repair. Do not submit the batch again.';
-    warning.classList.remove('hidden');
-  } else if (Array.isArray(report.priceWarnings) && report.priceWarnings.length) {
-    warning.textContent = 'S&S accepted the submission, but the estimated price was incomplete. Verify the total in S&S.';
-    warning.classList.remove('hidden');
-  } else {
-    warning.textContent = '';
-    warning.classList.add('hidden');
-  }
-
-  document.getElementById('ss-last-result')?.classList.remove('hidden');
-  overlay.classList.remove('hidden');
-  return true;
+  if (window.SupplierResults) return window.SupplierResults.show(report);
+  // Keep the native reference visible if the dedicated report UI failed to load.
+  const status = document.getElementById('ss-submit-status');
+  if (status) status.textContent = `${report.supplierOrderNumbers.length ? `S&S returned order ${report.supplierOrderNumbers.join(', ')}. ` : ''}${report.summary} The result view is unavailable. Review S&S Order History before sending these garments again.`;
+  return false;
 }
-
 function closeSupplierSubmissionReport() {
   document.getElementById('ss-submission-overlay')?.classList.add('hidden');
 }
@@ -3883,6 +3824,7 @@ window.showOrderManagerSupplierError = error => showSupplierSubmissionReport(sup
 
 function setupSupplierSubmissionReport() {
   const overlay = document.getElementById('ss-submission-overlay');
+  window.SupplierResults?.init();
   document.getElementById('ss-submission-close')?.addEventListener('click', closeSupplierSubmissionReport);
   document.getElementById('ss-submission-done')?.addEventListener('click', closeSupplierSubmissionReport);
   document.getElementById('ss-last-result')?.addEventListener('click', () => {
@@ -3947,10 +3889,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.warn('⚠️ #order-submit button not found');
   } else {
     submitBtn.addEventListener('click', async () => {
-      const toOrder = allOrders
-        .filter(x => x.status === 'toOrder' && orderIsVisibleOnOperationalBoard(x))
+      const buildOrders = allOrders.filter(x => x.status === 'toOrder' && orderIsVisibleOnOperationalBoard(x));
+      const heldCount = buildOrders.filter(order => window.SupplierResults?.submissionBlocked(order)).length;
+      const toOrder = buildOrders
+        .filter(order => !window.SupplierResults?.submissionBlocked(order))
         .map(x => x.name);
       if (!toOrder.length) {
+        if (heldCount) {
+          document.getElementById('ss-submit-status').textContent = `${heldCount} orders need their saved S&S result checked before another submission.`;
+          if (lastSupplierSubmissionReport) showSupplierSubmissionReport(lastSupplierSubmissionReport);
+          return;
+        }
         return alert('Drag some cards into “Drag cards here” first.');
       }
 
@@ -3964,10 +3913,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const { report } = await submitOrderManagerSupplierOrders(toOrder);
         const presentation = supplierOutcomePresentation(report.outcome, report.preflightFailed);
         submitBtn.textContent = report.outcome === 'partial' ? 'Review result' : 'Submitted';
-        if (submitStatus) submitStatus.textContent = presentation.status;
+        if (submitStatus) submitStatus.textContent = `${presentation.status}${heldCount ? ` ${heldCount} orders requiring review were not submitted.` : ''}`;
 
         setTimeout(() => {
-          submitBtn.textContent = 'Add to S&S Cart';
+          submitBtn.textContent = 'Place S&S order';
         }, 3000);
 
       } catch (err) {
@@ -3975,9 +3924,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         const reportShown = showSupplierSubmissionReport(report);
         if (!reportShown) alert(report.summary);
         submitBtn.textContent = 'Review result';
-        if (submitStatus) submitStatus.textContent = supplierOutcomePresentation(report.outcome, report.preflightFailed).status;
+        if (submitStatus) submitStatus.textContent = report.supplierRequestSent === false
+          ? 'No new S&S request was sent. Review the previous attempt or the issue shown.'
+          : supplierOutcomePresentation(report.outcome, report.preflightFailed).status;
         setTimeout(() => {
-          submitBtn.textContent = 'Add to S&S Cart';
+          submitBtn.textContent = 'Place S&S order';
         }, 3000);
       } finally {
         submitBtn.disabled = false;

@@ -29,6 +29,17 @@ test('manual and missing costs stay excluded; prints and reduced quantities do n
   assert.equal(estimate.exclusions[0].exclusionReason, 'Manual item');
   assert.equal(estimate.lines.length, 3);
 });
+
+test('artwork service charges are excluded while physical PM SKU garments retain costs', async () => {
+  const service = createGarmentCostService({ shopKey: 'artwork-service-exclusion', isPrint,
+    readOrder: async id => ({ id, items: [shirt('art', 1, { sku: 'PM-ART-BG-REMOVE', variantId: 'service' }),
+      shirt('physical', 2, { sku: 'PM-SHIRT', catalogCost: { amount: '4.00', currencyCode: 'USD', sku: 'PM-SHIRT' } })] }),
+    graphql: async () => { assert.fail('Service charges must not request supplier garment costs'); }
+  });
+  const [value] = await service.estimates(['one']);
+  assert.equal(value.garmentMinor, 800);
+  assert.deepEqual(value.lines.map(line => line.lineId), ['physical']);
+});
 test('zero costs are complete; incompatible currencies are excluded', () => {
   const zero = estimateGarments({ id: 'order', items: [shirt('a', 2)] }, new Map([[`variant:${variantId}`, { amount: '0.00', currencyCode: 'USD' }]]), isPrint);
   assert.equal(zero.status, 'complete'); assert.equal(zero.supplierMinor, 0);

@@ -375,7 +375,8 @@
     } catch (error) {
       // Fall through to the local conservative rule.
     }
-    return !isPrintLineItem(item) && Boolean(cleanText(item?.sku));
+    return !isPrintLineItem(item) && Boolean(cleanText(item?.sku))
+      && cleanText(item?.sku || item?.supplierSku) !== 'PM-ART-BG-REMOVE';
   }
 
   function orderParts(orderName) {

@@ -348,17 +348,20 @@ test('a held drop keeps its ghost and source suppression until the matching pain
 test('detail removal preserves confirmation and history protection', async () => {
   let allow = false;
   const calls = [];
+  const order = { name: 'fixture', _candidate: true, _provider: 'etsy', _orderKey: 'etsy:fixture:1' };
   const context = vm.createContext({ confirm: () => allow,
     window: { api: { deleteOrder: async name => calls.push(['remove', name]) } },
-    detailOrder: { name: 'fixture' }, closeDetail: () => calls.push(['close']),
+    detailOrder: order, closeDetail: () => calls.push(['close']),
     removeLocalOrders: names => { calls.push(['local', ...names]); return ['received']; },
     renderBoardFromLocalState: async statuses => calls.push(['paint', ...statuses]) });
+  vm.runInContext(section(renderer, 'function boardOrderIdentity', 'function boardMoveSnapshot'), context);
   vm.runInContext(section(renderer, 'async function removeOrderFromBoard', 'function makeBundleCard'), context);
-  await context.removeOrderFromBoard({ name: 'fixture', _candidate: true });
+  await context.removeOrderFromBoard(order);
   assert.equal(calls.length, 0);
   allow = true;
-  await context.removeOrderFromBoard({ name: 'fixture', _candidate: true, _historyReadOnly: true });
+  await context.removeOrderFromBoard({ ...order, _historyReadOnly: true });
   assert.equal(calls.length, 0);
-  await context.removeOrderFromBoard({ name: 'fixture', _candidate: true });
-  assert.deepEqual(calls, [['remove', 'fixture'], ['local', 'fixture'], ['close'], ['paint', 'received']]);
+  await context.removeOrderFromBoard(order);
+  const reference = { provider: 'etsy', orderKey: 'etsy:fixture:1' };
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['remove', reference], ['local', reference], ['close'], ['paint', 'received']]);
 });

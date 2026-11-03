@@ -25,7 +25,8 @@ async function run() {
     .replace("'./draft-orders.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'draft-orders.mjs')).href))
     .replace("'./garment-costs.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'garment-costs.mjs')).href))
     .replace("'./production-run.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'production-run.mjs')).href))
-    .replace("'./prepared-order-drafts.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'prepared-order-drafts.mjs')).href));
+    .replace("'./prepared-order-drafts.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'prepared-order-drafts.mjs')).href))
+    .replace("'./supplier-submission.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'supplier-submission.mjs')).href));
   const worker = (await import(`data:text/javascript;base64,${Buffer.from(workerSource).toString('base64')}`)).default;
   const secret = 'phase1-test-secret';
   const now = Math.floor(Date.now() / 1000);

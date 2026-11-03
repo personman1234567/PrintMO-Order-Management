@@ -1,4 +1,5 @@
 // Catalog-derived estimates only. Never use customer sale prices as costs.
+import { isSupplierService } from './supplier-submission.mjs';
 export const COST_TTL_MS = 300000;
 const catalogCache = new Map();
 const pendingCatalog = new Map();
@@ -14,7 +15,7 @@ export function estimateGarments(order, costs, isPrint, now = new Date().toISOSt
     const totals = { garmentMinor: 0, shelfMinor: 0, supplierMinor: 0 };
     const lines = [];
     for (const item of order.items || []) {
-        if (isPrint(item)) continue;
+        if (isPrint(item) || isSupplierService(item)) continue;
         const quantity = Number(item.currentQuantity ?? item.quantity ?? item.qty ?? 0);
         if (!Number.isSafeInteger(quantity) || quantity <= 0) continue;
         const sku = String(order.provider === 'etsy' ? item.supplierSku || '' : item.sku || '').trim();
@@ -119,10 +120,10 @@ export function createGarmentCostService({ readOrder, graphql, isPrint, shopKey 
             // Native orders return current catalog costs with their lines, avoiding
             // a separate Shopify round trip for every garment variant.
             if (order.provider !== 'etsy') for (const item of order.items || []) {
-                if (!isPrint(item) && Object.hasOwn(item, 'catalogCost'))
+                if (!isPrint(item) && !isSupplierService(item) && Object.hasOwn(item, 'catalogCost'))
                     costs.set(`variant:${item.variantId || ''}`, item.catalogCost);
             }
-            const keys = [...new Set((order.items || []).filter(item => !isPrint(item)
+            const keys = [...new Set((order.items || []).filter(item => !isPrint(item) && !isSupplierService(item)
                 && Number(item.currentQuantity ?? item.quantity ?? item.qty ?? 0) > 0).map(item => {
                 const sku = String(order.provider === 'etsy' ? item.supplierSku || '' : item.sku || '').trim();
                 return !sku ? null : order.provider === 'etsy' ? `sku:${sku}` : `variant:${item.variantId || ''}`;

@@ -213,8 +213,9 @@ async function run() {
     .replace("'./draft-orders.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'draft-orders.mjs')).href))
     .replace("'./garment-costs.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'garment-costs.mjs')).href))
     .replace("'./production-run.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'production-run.mjs')).href))
-    .replace("'./prepared-order-drafts.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'prepared-order-drafts.mjs')).href));
-  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql', '0007_etsy_webhook_delivery.sql', '0008_etsy_catalog_previews.sql', '0009_etsy_preview_refresh_and_supplier_skus.sql', '0010_tultex_shelf_allocation.sql', '0011_shelf_physical_reservations.sql', '0012_draft_artwork.sql', '0013_production_planning.sql', '0014_mobile_order_recognition.sql']
+    .replace("'./prepared-order-drafts.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'prepared-order-drafts.mjs')).href))
+    .replace("'./supplier-submission.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'supplier-submission.mjs')).href));
+  const schema = ['0001_redis_free.sql', '0002_designer_asset_metadata.sql', '0003_asset_blob_links.sql', '0004_etsy_connection_probe.sql', '0005_provider_order_shadow.sql', '0006_provider_pilot_idempotency.sql', '0007_etsy_webhook_delivery.sql', '0008_etsy_catalog_previews.sql', '0009_etsy_preview_refresh_and_supplier_skus.sql', '0010_tultex_shelf_allocation.sql', '0011_shelf_physical_reservations.sql', '0012_draft_artwork.sql', '0013_production_planning.sql', '0014_mobile_order_recognition.sql', '0015_supplier_submission_safety.sql']
     .map(file => fs.readFileSync(path.join(root, 'order-manager-proxy', 'migrations', file), 'utf8'))
     .join('\n');
   const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
@@ -2307,40 +2308,38 @@ async function run() {
         idempotencyKey: 'mutation-archive-1'
       })
     }), env);
-    assert.equal(archiveMutation.status, 200);
+    assert.equal(archiveMutation.status, 403);
     const archiveJson = await archiveMutation.json();
-    assert.equal(archiveJson.production.archivedBy, 'shopify:partner-1', 'archive actor must come from authenticated identity');
-    assert.notEqual(archiveJson.production.archivedAt, 'untrusted-client-time', 'archive timestamp must be server-stamped');
+    assert.equal(archiveJson.error.code, 'ORDER_REMOVAL_NOT_ALLOWED');
     assert.equal(
       (await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active,
-      0,
-      'handoff completion must remove the order from the active board'
+      1,
+      'a Shopify board-removal request must preserve the active order'
     );
 
     const reopenMutation = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
       method: 'PATCH',
       headers,
       body: JSON.stringify({
-        expectedVersion: 4,
+        expectedVersion: 3,
         patch: { archived_at: null },
         idempotencyKey: 'mutation-reopen-1'
       })
     }), env);
-    assert.equal(reopenMutation.status, 200);
+    assert.equal(reopenMutation.status, 403);
     const reopenJson = await reopenMutation.json();
-    assert.equal(reopenJson.production.archivedAt, null);
-    assert.equal(reopenJson.production.archivedBy, null);
+    assert.equal(reopenJson.error.code, 'ORDER_REMOVAL_NOT_ALLOWED');
     assert.equal(
       (await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active,
       1,
-      'reopening must return the order to the active board'
+      'an unsupported Shopify archive edit must leave the order unchanged'
     );
 
     const resetForBatch = await worker.fetch(new Request(`https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
       method: 'PATCH',
       headers,
       body: JSON.stringify({
-        expectedVersion: 5,
+        expectedVersion: 3,
         patch: { stage: 'to_order' },
         idempotencyKey: 'mutation-reset-batch-stage-1'
       })
@@ -2540,7 +2539,7 @@ async function run() {
         })
       }
     ), env);
-    assert.equal(fulfilledArchiveMutation.status, 200);
+    assert.equal(fulfilledArchiveMutation.status, 403, 'Shopify removal remains forbidden after fulfillment');
     const fulfilledReopenMutation = await worker.fetch(new Request(
       `https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`, {
         method: 'PATCH', headers,
@@ -2551,7 +2550,7 @@ async function run() {
         })
       }
     ), env);
-    assert.equal(fulfilledReopenMutation.status, 200);
+    assert.equal(fulfilledReopenMutation.status, 403, 'this action does not restore Shopify archive history');
     assert.equal(
       (await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active,
       0,
@@ -2665,7 +2664,7 @@ async function run() {
         })
       }
     ), env);
-    assert.equal(cancelledArchiveMutation.status, 200, 'a production mutation must preserve source-driven cancellation inactivity');
+    assert.equal(cancelledArchiveMutation.status, 403, 'Shopify removal remains forbidden after cancellation');
 
     const cancelledReopenMutation = await worker.fetch(new Request(
       `https://worker.test/order-manager/v1/orders/${encodeURIComponent(shopifyNode().id)}/production`,
@@ -2678,8 +2677,8 @@ async function run() {
         })
       }
     ), env);
-    assert.equal(cancelledReopenMutation.status, 200, 'clearing PrintMO archive state must remain available for a cancelled order');
-    assert.equal((await cancelledReopenMutation.json()).production.archivedAt, null);
+    assert.equal(cancelledReopenMutation.status, 403, 'the board action must not restore archived Shopify records');
+    assert.equal((await cancelledReopenMutation.json()).error.code, 'ORDER_REMOVAL_NOT_ALLOWED');
     assert.equal(
       (await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active,
       0,
@@ -2708,7 +2707,7 @@ async function run() {
     const patchProduction = (patch, key, version = productionState.revision) => worker.fetch(new Request(productionUrl, {
       method: 'PATCH', headers, body: JSON.stringify({ expectedVersion: version, idempotencyKey: key, patch })
     }), env);
-    assert.equal((await patchProduction({ archived_at: null }, 'closed-cannot-reopen')).status, 200);
+    assert.equal((await patchProduction({ archived_at: null }, 'closed-cannot-reopen')).status, 403);
     assert.equal((await env.ORDER_DB.prepare('SELECT active FROM order_projection WHERE order_gid = ?').bind(shopifyNode().id).first()).active, 0);
     fixtureShopifyClosedAt = null;
 
@@ -3473,12 +3472,20 @@ async function run() {
       && accessibilityJs.includes("config.rootElement.setAttribute('aria-modal', mobileDrillIn ? 'false' : 'true')"),
     'mobile Order Detail must isolate the covered board without making the global mobile command surface inert'
   );
+  const supplierResultsSource = fs.readFileSync(path.join(root, 'order-manager-web', 'supplier-results.js'), 'utf8');
   assert(
     webHtml.includes('id="ss-submission-overlay"')
       && webHtml.includes('id="ss-submission-lines-body"')
+      && webHtml.includes('src="./supplier-results.js"')
       && sharedRenderer.includes('supplierSubmissionReportFromError')
       && sharedRenderer.includes("result?.acceptedOrderNames")
-      && sharedRenderer.includes('result.itemNames')
+      && supplierResultsSource.includes("line.itemNames.join(', ')")
+      && supplierResultsSource.includes("line.orderNames.join(', ')")
+      && supplierResultsSource.includes("line.reportedAcceptedQty ?? 'Not reported'")
+      && supplierResultsSource.includes('line.issues.map(issue => issue.reason || issue.message)')
+      && supplierResultsSource.includes('value.textContent = text')
+      && supplierResultsSource.includes('view.exceptions.forEach(line => row(exceptionBody, line))')
+      && supplierResultsSource.includes('view.accepted.forEach(line => row(acceptedBody, line))')
       && webShim.includes('/order-manager/v1/batches/latest')
       && accessibilityJs.includes("root: '#ss-submission-overlay'"),
     'S&S submission feedback must retain a persistent, keyboard-contained line-result report and move only accepted orders'
