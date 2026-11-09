@@ -20,6 +20,21 @@
 .production-planner-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; border-bottom: 1px solid #E2E8F0; }
 .production-planner-heading h2 { margin: 0; font: 700 20px/26px system-ui, sans-serif; color: #0F172A; }
 .production-planner-heading p { margin: 4px 0 0; font-size: 12px; color: #475569; }
+.production-planner-heading > div { flex: 1; min-width: 0; }
+.production-planner-heading { flex-wrap: wrap; }
+#production-run-checklist { width: min(1000px, calc(100vw - 40px)); height: min(92dvh, 1000px); max-width: none; max-height: none; margin: auto; padding: 0; border: 0; border-radius: 12px; color: #17212f; background: white; overflow: hidden; font: 14px/20px system-ui, sans-serif; }
+#production-run-checklist[open] { display: flex; flex-direction: column; }
+#production-run-checklist::backdrop { background: rgb(15 23 42 / .4); }
+#production-run-checklist header { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 16px; border-bottom: 1px solid #cbd5e1; }
+#production-run-checklist header > div { flex: 1 1 240px; min-width: 0; }
+#production-run-checklist h2 { margin: 0; font-size: 18px; line-height: 24px; }
+#production-run-checklist header p { margin: 4px 0 0; font-size: 12px; }
+#production-run-checklist button { min-height: 44px; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; background: white; color: #17212f; font: inherit; cursor: pointer; }
+#production-run-checklist button:disabled { color: #64748b; cursor: default; }
+#production-run-checklist [data-print]:not(:disabled) { background: #1765c1; border-color: #1765c1; color: white; }
+#production-run-checklist :focus-visible { outline: 2px solid #1765c1; outline-offset: 2px; }
+#production-run-checklist [data-checklist-status] { flex: 0 0 auto; padding: 8px 16px; margin: 0; font-size: 12px; }
+#production-run-checklist iframe { display: block; width: 100%; flex: 1 1 auto; min-height: 0; border: 0; background: white; }
 .production-planner-toolbar { display: flex; flex: 0 0 auto; align-items: end; flex-wrap: wrap; gap: 12px 16px; padding: 12px 24px; border-bottom: 1px solid #E2E8F0; }
 .production-planner-toolbar label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; min-width: 0; }
 .production-planner-toolbar select, .production-planner-toolbar input { max-width: 100%; padding: 8px; border: 1px solid #CBD5E1; border-radius: 6px; background: #FFF; color: #334155; }
@@ -67,6 +82,7 @@
 #production-planner [data-clear-run] { border: 0; padding-inline: 0; }
 .production-planner-empty { padding: 12px 0; color: #475569; }
 @media (max-width: 760px) {
+  #production-run-checklist { width: 100%; height: 100dvh; margin: 0; border-radius: 0; }
   #production-planner { width: 100%; height: 100dvh; margin: 0; border-radius: 0; }
   .production-planner-heading { padding: 12px 16px; }
   .production-planner-toolbar { padding: 8px 16px 12px; gap: 8px 12px; }

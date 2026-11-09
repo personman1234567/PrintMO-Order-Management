@@ -7,12 +7,31 @@
   let hoverTimer, flyoutExitTimer, flyoutTrigger = null;
   const editableTarget = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
   const nativeTarget = 'a, img, svg, video, audio, canvas, input, textarea, select, button, label, [contenteditable]:not([contenteditable="false"])';
+  const menuItems = '[role="menuitem"], [role="menuitemradio"]';
   const el = (tag, text, className) => {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
     if (className) node.className = className;
     return node;
   };
+  const iconPaths = {
+    copy: 'M6 5V2h8v9h-3M2 5h9v9H2z',
+    move: 'M2 5h11m-3-3 3 3-3 3M14 11H3m3-3-3 3 3 3',
+    prints: 'M5 2h8v10H5zM2 5v9h8M7 5h4M7 8h4',
+    blanks: 'm5 2-4 3 2 3 2-1v7h6V7l2 1 2-3-4-3c0 3-6 3-6 0Z',
+    count: 'M6 2 4 14M12 2l-2 12M2 6h12M1 10h12',
+    date: 'M3 3h10v11H3zM5 1v4M11 1v4M3 7h10M6 10h1M9 10h1',
+    notes: 'M3 2h7l3 3v9H3zM10 2v3h3M5 8h6M5 11h5',
+    remove: 'M2 3h12v3H2zM3 6v8h10V6M6 9h4',
+    back: 'm7 3-5 5 5 5M2 8h12'
+  };
+  function actionIcon(name) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false'); svg.classList.add('order-action-icon');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', iconPaths[name]); svg.append(path); return svg;
+  }
   const mobile = () => matchMedia('(max-width: 600px)').matches;
   const snapshot = () => window.getOrderManagerBoardSnapshot?.() || [];
   const resolve = key => snapshot().find(order => model.orderKey(order) === key);
@@ -22,7 +41,7 @@
     const cached = details.get(model.orderKey(order));
     return cached?.stamp === stamp(order) ? cached.detail : null;
   };
-  function announce(message, error = false) {
+  function announce(message, error = false, { persist = false } = {}) {
     if (!status) {
       status = el('p', '', 'order-action-status');
       status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
@@ -31,13 +50,13 @@
     status.textContent = message; status.hidden = !message;
     status.classList.toggle('is-error', error);
     if (context && error) {
-      const panel = page ? submenu : primary;
+      const panel = page ? submenu.querySelector('.order-action-scroll') : primary;
       let feedback = panel.querySelector('.order-action-feedback');
       if (!feedback) { feedback = el('p', '', 'order-action-feedback'); feedback.setAttribute('role', 'status'); panel.append(feedback); }
       feedback.textContent = message; position();
     }
     clearTimeout(announce.timer);
-    if (!error) announce.timer = setTimeout(() => { status.hidden = true; }, 5000);
+    if (!error && !persist) announce.timer = setTimeout(() => { status.hidden = true; }, 5000);
   }
   const writable = order => Boolean(document.body.dataset.orderSource === 'shopify' && order?._candidate && !order._historyReadOnly
     && order._capabilities?.productionWrite !== false
@@ -54,7 +73,14 @@
       : 'No printable pieces are selected. Review printable pieces in order details.' };
   }
   const countAllowed = order => countState(order).enabled;
-  function focusFirst(panel) { panel.querySelector('[role="menuitem"]')?.focus(); }
+  function editorState(order, kind) {
+    const api = kind === 'targetDate' ? 'updateTargetDate' : 'updateNotes';
+    const enabled = writable(order) && typeof window.api?.[api] === 'function'
+      && typeof window.OrderDetailEditors?.edit === 'function';
+    return { enabled, reason: enabled ? '' : !writable(order) ? 'This order is read-only.'
+      : 'The editor is unavailable. Refresh the app and try again.' };
+  }
+  function focusFirst(panel) { (panel.querySelector('[role="menuitemradio"][aria-checked="true"]') || panel.querySelector(menuItems))?.focus(); }
   function position() {
     if (!context || !menu) return;
     menu.classList.toggle('is-mobile', mobile());
@@ -79,7 +105,9 @@
       submenu.dataset.side = left ? 'left' : 'right';
       submenu.style.left = `${left ? -subWidth - gap : main.width + gap}px`;
       const trigger = flyoutTrigger?.getBoundingClientRect() || main;
-      submenu.style.top = `${Math.max(12, Math.min(trigger.top, height - submenu.offsetHeight - 12)) - main.top}px`;
+      const top = Math.max(12, Math.min(trigger.top, height - submenu.offsetHeight - 12));
+      submenu.style.top = `${top - main.top}px`;
+      submenu.style.transformOrigin = `${left ? 'right' : 'left'} ${Math.max(0, Math.min(submenu.offsetHeight, trigger.top + trigger.height / 2 - top))}px`;
     }
   }
   function close(restore = true) {
@@ -101,19 +129,30 @@
     if (animate && !mobile() && menu.dataset.input !== 'keyboard' && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
       flyoutExitTimer = setTimeout(() => { submenu.hidden = true; }, 80);
     } else submenu.hidden = true;
-    if (restore) trigger?.focus();
+    if (restore || submenu.contains(document.activeElement)) trigger?.focus({ preventScroll: true });
   }
   function cancelHoverClose() { clearTimeout(hoverTimer); hoverTimer = null; }
   function scheduleHoverClose() {
     clearTimeout(hoverTimer);
-    hoverTimer = setTimeout(() => { hoverTimer = null; if (context && page && !mobile()) panelBack(false, true); }, 140);
+    hoverTimer = setTimeout(() => {
+      hoverTimer = null;
+      if (menu.dataset.input === 'keyboard' && submenu.contains(document.activeElement)) return;
+      if (context && page && !mobile()) panelBack(false, true);
+    }, 140);
   }
-  function action(label, callback, { enabled = true, reason = '', panel = primary, danger = false } = {}) {
+  function action(label, callback, { enabled = true, reason = '', panel = primary, danger = false, checked = null, icon = '', value = '', state = '' } = {}) {
     const button = el('button', undefined, danger ? 'order-action-item is-danger' : 'order-action-item');
-    button.type = 'button'; button.setAttribute('role', 'menuitem'); button.tabIndex = -1;
-    button.append(el('span', label));
+    button.type = 'button'; button.setAttribute('role', checked === null ? 'menuitem' : 'menuitemradio'); button.tabIndex = -1;
+    if (checked !== null) button.setAttribute('aria-checked', String(checked));
+    if (icon) { button.classList.add('has-icon'); button.append(actionIcon(icon)); }
+    button.append(el('span', label, 'order-action-label'));
+    if (value) {
+      const current = el('span', value, 'order-action-value'); current.dataset.state = state;
+      button.classList.add('has-value'); button.append(current);
+      button.setAttribute('aria-label', `${label}: ${value}${reason ? `. ${reason}` : ''}`);
+    }
     button.setAttribute('aria-disabled', String(!enabled));
-    if (reason) button.append(el('small', reason));
+    if (reason) button.append(el('small', reason, 'order-action-reason'));
     button.addEventListener('click', event => {
       event.stopPropagation();
       if (button.getAttribute('aria-disabled') === 'true') return;
@@ -123,25 +162,35 @@
   }
   function showSub(kind, focus = true) {
     const order = resolve(context?.key);
-    if (!order || busy()) return;
+    if (!order || busy() || primary.querySelector(`[data-submenu="${kind}"]`)?.getAttribute('aria-disabled') === 'true') return;
     cancelHoverClose(); clearTimeout(flyoutExitTimer);
     if (page === kind && !submenu.hidden && submenu.dataset.state === 'open') { if (focus) focusFirst(submenu); return; }
     flyoutTrigger = primary.querySelector(`[data-submenu="${kind}"]`);
-    page = kind; submenu.replaceChildren(); submenu.hidden = false;
+    if (!focus && submenu.contains(document.activeElement)) flyoutTrigger?.focus({ preventScroll: true });
+    const content = el('div', undefined, 'order-action-scroll');
+    page = kind; submenu.replaceChildren(content); submenu.hidden = false;
     submenu.dataset.state = 'open';
     primary.hidden = mobile();
-    submenu.setAttribute('aria-label', kind === 'copy' ? 'Copy order information' : 'Move production stage');
-    if (mobile()) { const back = action('Back', () => panelBack(), { panel: submenu }); back.classList.add('order-action-back'); }
+    const material = Object.hasOwn(model.MATERIAL_OPTIONS, kind);
+    submenu.setAttribute('aria-label', material ? `${kind === 'prints' ? 'Prints' : 'Blanks'} status` : kind === 'copy' ? 'Copy order information' : 'Move production stage');
+    if (mobile()) { const back = action('Back', () => panelBack(), { panel: content, icon: 'back' }); back.classList.add('order-action-back'); }
     if (kind === 'copy') {
       for (const field of window.OrderActionModel.copyFields(order, { detail: loaded(order) })) {
-        action(field.label, () => copy(field.id), { ...field, panel: submenu });
+        action(field.label, () => copy(field.id), { ...field, panel: content });
+      }
+    } else if (material) {
+      const current = model.materialForOrder(order, kind);
+      if (mobile()) content.append(el('p', `${kind === 'prints' ? 'Prints' : 'Blanks'} status`, 'order-action-heading'));
+      for (const [value, label] of model.MATERIAL_OPTIONS[kind]) {
+        action(label, () => void setMaterial(kind, value), { panel: content, checked: current.value === value,
+          enabled: writable(order) && typeof window.api?.updateReady === 'function' });
       }
     } else {
       const choices = window.OrderManagerViews?.actions([context.key]) || [];
       for (const item of choices.filter(item => item.value.startsWith('move:') && !item.hidden)) {
-        action(item.label, () => move(item.value), { ...item, panel: submenu });
+        action(item.label, () => move(item.value), { ...item, panel: content });
       }
-      if (!choices.length) action('Stage actions unavailable', () => {}, { enabled: false, reason: 'Refresh the app and try again.', panel: submenu });
+      if (!choices.length) action('Stage actions unavailable', () => {}, { enabled: false, reason: 'Refresh the app and try again.', panel: content });
     }
     primary.querySelectorAll('[data-submenu]').forEach(button => button.setAttribute('aria-expanded', String(button === flyoutTrigger)));
     position(); if (focus) focusFirst(submenu);
@@ -193,6 +242,25 @@
     } catch (error) { announce(error.message || 'The stage move failed. Review the order and try again.', true); }
     finally { pending = false; }
   }
+  async function setMaterial(kind, value) {
+    const saved = context, order = resolve(saved?.key);
+    if (!order || !writable(order) || busy() || typeof window.api?.updateReady !== 'function') return;
+    if (model.materialForOrder(order, kind).value === value) { close(); return; }
+    const patch = model.materialPatch(kind, value, order);
+    const reference = { provider: order._provider, orderKey: order._orderKey || order._gid };
+    const label = model.MATERIAL_OPTIONS[kind].find(option => option[0] === value)[1];
+    const number = window.OrderActionModel.copyField(order, 'orderNumber');
+    const target = number.enabled ? number.text : 'Order';
+    close(); pending = true;
+    document.body.dataset.orderActionSaving = 'true';
+    announce(`${target} · Saving ${kind} status…`, false, { persist: true });
+    try {
+      // The source-aware adapter owns CAS, serialization and the shared board repaint.
+      await window.api.updateReady(reference, patch);
+      announce(`${target} · ${kind === 'prints' ? 'Prints' : 'Blanks'}: ${label}.`);
+    } catch (error) { announce(`${target} · Status was not saved. ${error?.message || 'Try again.'}`, true); }
+    finally { pending = false; delete document.body.dataset.orderActionSaving; }
+  }
   async function editCount() {
     const order = resolve(context?.key);
     if (!order || !countAllowed(order) || busy()) return;
@@ -208,6 +276,32 @@
     if (!countAllowed(order)) { announce('Printed count is unavailable for the current order state.', true); return; }
     const control = document.getElementById('progress-custom');
     if (control && !control.disabled) { control.click(); document.getElementById('progress-input')?.focus(); }
+  }
+  async function editDetail(kind) {
+    const order = resolve(context?.key);
+    if (!order || busy() || !editorState(order, kind).enabled) return;
+    const view = document.body.dataset.activeView;
+    close();
+    const open = window.openOrderManagerDetail || window.openDetail;
+    if (typeof open !== 'function' || open(order) === false) return;
+    const ready = window.OrderActionsDetailReady;
+    const stillActive = () => writable(order) && document.body.dataset.activeView === view
+      && window.OrderActionsDetailReady === ready
+      && document.getElementById('detail-overlay')?.classList.contains('visible')
+      && (typeof detailOrder === 'undefined' || detailOrder === order);
+    try {
+      const hydration = typeof ready === 'function' ? await ready(order) : null;
+      if (!stillActive()) return;
+      if (hydration?.ok !== true) {
+        announce('Current order detail could not load. Use Retry in the order before editing.', true);
+        return;
+      }
+      if (!editorState(order, kind).enabled || !window.OrderDetailEditors.edit(kind, order)) {
+        announce('This editor is unavailable for the current order. Review its details before editing.', true);
+      } else announce('');
+    } catch (error) {
+      if (stillActive()) announce(`The editor could not open. ${error?.message || 'Retry loading the order.'}`, true);
+    }
   }
   async function remove() {
     const order = resolve(context?.key);
@@ -238,6 +332,7 @@
       else if (!hoverTimer) scheduleHoverClose();
     });
     menu.addEventListener('click', event => event.stopPropagation());
+    menu.addEventListener('pointerdown', () => { menu.dataset.input = 'pointer'; cancelHoverClose(); });
     document.addEventListener('pointerdown', event => { if (context && !menu.contains(event.target) && !context.opener?.contains(event.target)) close(false); }, true);
     document.addEventListener('keydown', event => {
       if (!context) return;
@@ -250,7 +345,7 @@
       if (event.key === 'Tab') { close(); return; }
       if (!menu.contains(document.activeElement)) return;
       const panel = document.activeElement.closest('[role="menu"]');
-      const items = [...panel.querySelectorAll('[role="menuitem"]')];
+      const items = [...panel.querySelectorAll(menuItems)];
       let index = items.indexOf(document.activeElement);
       if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
         event.preventDefault();
@@ -278,17 +373,32 @@
     primary.hidden = false; primary.replaceChildren(heading); submenu.hidden = true;
     primary.dataset.state = 'open';
     const number = window.OrderActionModel.copyField(order, 'orderNumber');
-    heading.textContent = `${order._provider === 'etsy' ? 'Etsy' : 'Shopify'} ${number.enabled ? number.text : 'order'}`;
-    const copyButton = branch('Copy', 'copy');
+    const identity = el('span', undefined, 'order-action-heading-title');
+    identity.append(el('strong', number.enabled ? number.text : 'Order'), el('span', order._provider === 'etsy' ? 'Etsy' : 'Shopify', 'order-action-heading-source'));
+    heading.replaceChildren(identity);
+    const customer = model.summarize(order)?.customer;
+    if (customer && customer !== 'Name unavailable') heading.append(el('span', customer, 'order-action-heading-customer'));
+    const copyButton = branch('Copy', 'copy', { icon: 'copy' });
     copyButton.dataset.copyTrigger = 'true'; copyButton.setAttribute('aria-haspopup', 'menu'); copyButton.setAttribute('aria-expanded', 'false');
     const choices = window.OrderManagerViews?.actions([key]) || [];
     const moves = choices.filter(item => item.value.startsWith('move:') && !item.hidden);
     const moveEnabled = writable(order) && moves.some(item => item.enabled);
-    branch('Move production stage\u2026', 'move', { enabled: moveEnabled,
+    branch('Move production stage\u2026', 'move', { icon: 'move', enabled: moveEnabled,
       reason: moveEnabled ? '' : !writable(order) ? 'This order is read-only.' : moves[0]?.reason || 'Stage actions are unavailable. Refresh the app and try again.' });
+    primary.append(el('hr'));
+    for (const kind of ['prints', 'blanks']) {
+      const material = model.materialForOrder(order, kind);
+      const enabled = writable(order) && typeof window.api?.updateReady === 'function';
+      branch(kind === 'prints' ? 'Prints' : 'Blanks', kind, { icon: kind, value: material.label, state: material.value, enabled,
+        reason: enabled ? '' : !writable(order) ? 'This order is read-only.' : 'Status actions are unavailable. Refresh the app and try again.' });
+    }
+    primary.append(el('hr'));
+    action(order.targetDate ? 'Edit target date\u2026' : 'Set target date\u2026', () => void editDetail('targetDate'),
+      { ...editorState(order, 'targetDate'), icon: 'date' });
+    action('Edit shop instructions\u2026', () => void editDetail('notes'), { ...editorState(order, 'notes'), icon: 'notes' });
     const count = countState(order);
-    if (count.visible) action('Edit printed count\u2026', () => void editCount(), count);
-    if (writable(order) && window.OrderActionModel.canRemoveFromBoard(order)) { primary.append(el('hr')); action('Remove from board\u2026', () => void remove(), { danger: true }); }
+    if (count.visible) action('Edit printed count\u2026', () => void editCount(), { ...count, icon: 'count' });
+    if (writable(order) && window.OrderActionModel.canRemoveFromBoard(order)) { primary.append(el('hr')); action('Remove from board\u2026', () => void remove(), { danger: true, icon: 'remove' }); }
     menu.hidden = false; opener?.setAttribute('aria-expanded', 'true');
     try { menu.showPopover(); } catch { /* Fixed-position fallback uses the same menu. */ }
     position(); focusFirst(primary);

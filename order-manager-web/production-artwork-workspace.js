@@ -19,6 +19,7 @@
     return label.charAt(0).toUpperCase() + label.slice(1);
   };
   const identity = file => `${file.assetId || file.url}|${file.side || ''}`;
+  const referenceOnly = file => Boolean(state.order?.artworkReferences?.[identity(file)]);
   const nameOf = file => file.name || file.filename || 'Design file';
   const displayName = name => name.replace(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}_/i, '');
   const write = (node, copy) => { if (node && node.textContent !== copy) node.textContent = copy; };
@@ -36,7 +37,8 @@
   }
   function canLeave(nextOrder) {
     if (!state.key || nextOrder?._gid === state.key) return true;
-    if (state.busy) {
+    if (state.busy || state.referenceSaving) {
+      if (state.referenceSaving) { notice('Wait for the artwork change to finish before leaving this order.', true); return false; }
       notice('Finish or cancel the upload before leaving this order.', true);
       $('production-cancel-upload')?.focus();
       return false;
@@ -94,7 +96,8 @@
     const dark = el('input'); dark.type = 'checkbox';
     dark.onchange = () => frame.classList.toggle('dark-background', dark.checked);
     background.append(dark, el('span', 'Dark preview background'));
-    inspector.append(heading, frame, background, el('p', fileMeta(file), 'production-selected-meta'));
+    inspector.append(heading, el('p', referenceOnly(file) ? 'Reference only - retained for comparison.' : 'Production file', 'production-file-use'),
+      frame, background, el('p', fileMeta(file), 'production-selected-meta'));
     const fullName = el('details', undefined, 'production-filename-details');
     fullName.append(el('summary', 'Full filename'), el('p', nameOf(file)));
     inspector.append(fullName);
@@ -123,12 +126,41 @@
       finally { download.disabled = false; write(download, 'Download'); }
     };
     actions.append(download);
+    if (file.assetId && canEdit(state.order)) {
+      const use = el('button', referenceOnly(file) ? 'Restore to production' : 'Keep as reference', 'production-use-action');
+      use.type = 'button'; use.disabled = Boolean(state.referenceSaving || state.busy);
+      use.onclick = async () => {
+        if (state.referenceSaving || state.busy) return;
+        const key = state.key, keep = !referenceOnly(file);
+        state.referenceSaving = true; use.disabled = true;
+        notice('Saving artwork use.');
+        try {
+          const result = await window.api.setArtworkReference(key, file.assetId, file.side, keep);
+          if (state.key !== key) return;
+          state.order.artworkReferences = { ...result.production.artworkReferences };
+          if (keep) $('production-references').open = false;
+          state.selected = keep ? identity(state.files.find(entry => !referenceOnly(entry)) || {}) : identity(file);
+          renderFiles();
+          notice(keep ? 'Original kept in References. It is hidden from the production list.' : 'File restored to the production list.');
+          ($('production-selected-title') || $('production-references-summary')).focus({ preventScroll: true });
+        } catch (error) {
+          if (state.key === key) notice(`Artwork change not confirmed. Refresh this order before retrying. ${error.message || ''}`, true);
+        } finally {
+          if (state.key === key) {
+            state.referenceSaving = false;
+            const currentUse = inspector.querySelector('.production-use-action');
+            if (currentUse) currentUse.disabled = state.busy;
+          }
+        }
+      };
+      actions.append(use);
+    }
     if (file.removable && canEdit(state.order)) {
       const menu = el('details', undefined, 'production-file-menu');
       const summary = el('summary', 'More actions');
       const remove = el('button', 'Remove file'); remove.type = 'button';
       remove.onclick = async () => {
-        if (state.busy || !confirm(`Remove "${nameOf(file)}" from this order?`)) return;
+        if (state.busy || state.referenceSaving || !confirm(`Remove "${nameOf(file)}" from this order?`)) return;
         const key = state.key;
         remove.disabled = true;
         try {
@@ -152,31 +184,44 @@
   }
   function renderFiles() {
     const previousFocus = document.activeElement?.dataset.productionFile;
+    const production = state.files.filter(file => !referenceOnly(file));
+    const references = state.files.filter(referenceOnly);
+    const referenceGroup = $('production-references');
+    referenceGroup.hidden = !references.length;
+    write($('production-references-summary'), `References (${references.length})`);
+    if (!production.some(file => identity(file) === state.selected)
+        && (!referenceGroup.open || !references.some(file => identity(file) === state.selected))) {
+      state.selected = identity(production[0] || {});
+    }
+    const rowFor = file => {
+      const row = el('button', undefined, 'production-file-row'); row.type = 'button';
+      row.dataset.productionFile = identity(file);
+      row.setAttribute('aria-pressed', String(state.selected === identity(file)));
+      const useLabel = referenceOnly(file) ? 'Reference only' : 'Production file';
+      row.setAttribute('aria-label', `${nameOf(file)}, ${useLabel}, ${fileMeta(file)}${file.assignmentStatus === 'needs_review' ? ', needs reassignment' : ''}`);
+      const thumb = el('span', undefined, 'production-file-thumbnail'); preview(thumb, file);
+      const copy = el('span', undefined, 'production-file-copy');
+      const name = el('strong', displayName(nameOf(file))); name.title = nameOf(file);
+      copy.append(name, el('span', `${useLabel} - ${fileMeta(file)}`));
+      if (file.assignmentStatus === 'needs_review') copy.append(el('span', 'Needs reassignment', 'production-assignment-warning'));
+      row.append(thumb, copy);
+      row.onclick = () => { state.selected = identity(file); renderFiles(); showInspector({ focus: true }); };
+      return row;
+    };
     for (const [side, suffix] of [['front', 'front'], ['back', 'back'], ['', 'extras']]) {
-      const files = state.files.filter(file => (file.side || '') === side);
+      const files = production.filter(file => (file.side || '') === side);
       const group = $(`design-group-${suffix}`);
       group.classList.toggle('hidden', !files.length);
       write(group.querySelector('.design-group-count'), String(files.length));
       group.querySelector('.design-group-title').setAttribute('aria-label', `${placement(side)}, ${files.length} ${files.length === 1 ? 'file' : 'files'}`);
       const list = $(`design-${suffix}-list`);
-      list.replaceChildren(...files.map(file => {
-        const row = el('button', undefined, 'production-file-row'); row.type = 'button';
-        row.dataset.productionFile = identity(file);
-        row.setAttribute('aria-pressed', String(state.selected === identity(file)));
-        row.setAttribute('aria-label', `${nameOf(file)}, ${fileMeta(file)}${file.assignmentStatus === 'needs_review' ? ', needs reassignment' : ''}`);
-        const thumb = el('span', undefined, 'production-file-thumbnail'); preview(thumb, file);
-        const copy = el('span', undefined, 'production-file-copy');
-        const name = el('strong', displayName(nameOf(file))); name.title = nameOf(file);
-        copy.append(name, el('span', fileMeta(file)));
-        if (file.assignmentStatus === 'needs_review') copy.append(el('span', 'Needs reassignment', 'production-assignment-warning'));
-        row.append(thumb, copy);
-        row.onclick = () => { state.selected = identity(file); renderFiles(); showInspector({ focus: true }); };
-        return row;
-      }));
+      list.replaceChildren(...files.map(rowFor));
     }
-    $('detail-designs-placeholder').classList.toggle('hidden', state.files.length > 0);
-    $('detail-designs-placeholder').textContent = canEdit(state.order) ? 'No design files attached. Add a design to prepare this order.' : 'No design files attached.';
-    write($('design-files-count'), `${state.files.length} ${state.files.length === 1 ? 'file' : 'files'}`);
+    $('production-reference-list').replaceChildren(...references.map(rowFor));
+    $('detail-designs-placeholder').classList.toggle('hidden', production.length > 0);
+    $('detail-designs-placeholder').textContent = references.length ? 'No production files selected. Retained files are in References below.'
+      : canEdit(state.order) ? 'No design files attached. Add a design to prepare this order.' : 'No design files attached.';
+    write($('design-files-count'), `${production.length} production${references.length ? ` / ${references.length} reference` : ''}`);
     showInspector();
     if (previousFocus) Array.from(panel.querySelectorAll('[data-production-file]')).find(node => node.dataset.productionFile === previousFocus)?.focus({ preventScroll: true });
   }
@@ -193,6 +238,7 @@
       releasePending();
       state = { key: order._gid, order, files: [], selected: '', pending: [], saved: [], busy: false, placement: 'front' };
       notice('');
+      $('production-references').open = false;
     }
     state.order = order;
     const entries = [...(order.assets || []), ...buckets.front, ...buckets.back, ...buckets.extras];
@@ -234,7 +280,7 @@
     panel.setAttribute('aria-busy', String(state.busy));
   }
   function stage(order, files) {
-    if (!canEdit(order) || state.busy) return;
+    if (!canEdit(order) || state.busy || state.referenceSaving) return;
     const selected = Array.from(files || []);
     const invalid = selected.some(file => !/\.(svg|png|jpe?g|webp)$/i.test(file.name) || file.size <= 0 || file.size > 50 * 1024 * 1024);
     if (!selected.length) return;
@@ -290,6 +336,12 @@
     }
   }
   $('production-add-design').onclick = () => $('manual-design-file-input').click();
+  $('production-references').addEventListener('toggle', () => {
+    if (!$('production-references').open && state.files.some(file => referenceOnly(file) && identity(file) === state.selected)) {
+      state.selected = identity(state.files.find(file => !referenceOnly(file)) || {});
+      renderFiles();
+    }
+  });
   $('production-pending-placement').onchange = event => { state.placement = event.target.value; renderPending(); };
   $('production-upload-submit').onclick = upload;
   $('production-cancel-upload').onclick = () => controller?.abort();

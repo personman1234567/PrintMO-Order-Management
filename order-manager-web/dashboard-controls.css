@@ -35,6 +35,11 @@ body[data-order-source="shopify"] #supplies-actions-toggle:focus-visible,
 body[data-order-source="shopify"] #supplies-actions-popover :focus-visible { outline: 2px solid var(--dashboard-accent); outline-offset: 2px; }
 
 /* Use the same tab treatment, with counts rendered as metadata rather than pills. */
+body[data-order-source="shopify"] .print-delivery-controls { display: flex; align-items: center; gap: 10px; padding: 6px 12px; flex-shrink: 0; border-bottom: 1px solid #e2e8f0; background: #fff; font-size: 13px; color: #475569; }
+.print-delivery-controls { display: none; }
+.print-delivery-controls[hidden] { display: none !important; }
+body[data-order-source="shopify"] .print-delivery-controls select { min-width: 0; max-width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #334155; font: inherit; }
+body[data-order-source="shopify"] .print-delivery-controls select:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
 body[data-order-source="shopify"] .panel > .panel-header { background: #F5F9FF; }
 body[data-order-source="shopify"] .panel.pipeline .panel-header {
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -157,3 +162,26 @@ body[data-order-source="shopify"] .shopify-board-card .time-ago-pill { padding: 
   body[data-order-source="shopify"] .pipeline-card .card-header .source-badge-group,
   body[data-order-source="shopify"] .pipeline-card .card-header .time-ago-pill { grid-column: 1 / -1; }
 }
+/* Receiving review belongs to shipment search and the scrollable manifest. */
+#blanks-receive-lookup { display: grid; gap: 6px; padding: 0 18px 14px; }
+#blanks-receive-lookup[hidden], #blanks-receive-allocation-review[hidden], #blanks-receive-clear-filters[hidden] { display: none !important; }
+#blanks-receive-lookup > label { color: #334155; font-size: 12px; font-weight: 600; }
+#blanks-receive-search { box-sizing: border-box; width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: white; color: #0f172a; font: inherit; }
+#blanks-receive-lookup .blanks-receive-attention-toggle { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
+#blanks-receive-attention-only { width: 20px; height: 20px; min-height: 20px; flex: 0 0 20px; margin: 0; padding: 0; accent-color: #1765c1; }
+#blanks-receive-results { color: #475569; font-size: 12px; line-height: 18px; }
+#blanks-receive-allocation-review { margin: 0 0 14px; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; background: #f8fafc; }
+#blanks-receive-allocation-review h3 { margin: 0; font-size: 14px; line-height: 20px; }
+#blanks-receive-allocation-review p { margin: 6px 0 10px; color: #475569; font-size: 12px; line-height: 18px; }
+#blanks-receive-allocation-review button, #blanks-receive-clear-filters { min-height: 44px; white-space: normal; }
+#blanks-receive-confirm-full:not(:disabled) { color: white; background: #1765c1; border-color: #1765c1; }
+#blanks-receive-overlay .manual-add-actions button { min-height: 44px; height: auto; white-space: normal; }
+#blanks-receive-overlay .blanks-receive-allocation { display: grid; grid-column: 1 / -1; gap: 8px; padding: 12px; border: 1px solid #f0c36a; border-radius: 8px; background: #fffbeb; }
+#blanks-receive-overlay .blanks-receive-allocation.is-confirmed { border-color: #cbd5e1; background: #f8fafc; }
+#blanks-receive-overlay .blanks-receive-allocation label { display: grid; grid-template-columns: minmax(0, 1fr) 80px; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+#blanks-receive-overlay .blanks-receive-allocation input { box-sizing: border-box; width: 100%; min-height: 44px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; color: #0f172a; background: white; font: inherit; }
+#blanks-receive-overlay .blanks-receive-allocation button { justify-self: start; min-height: 44px; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; color: #17212f; background: white; font: inherit; cursor: pointer; }
+#blanks-receive-overlay .blanks-receive-allocation input:focus-visible, #blanks-receive-overlay .blanks-receive-allocation button:focus-visible { outline: 2px solid #1765c1; outline-offset: 2px; }
+#blanks-receive-allocation-feedback:empty { display: none; }
+.blanks-receive-attention-reason { display: block; color: #92400e; font-size: 12px; line-height: 18px; }
+@media (max-width: 900px) { #blanks-receive-search, #blanks-receive-overlay .blanks-receive-allocation input { font-size: 16px; } }

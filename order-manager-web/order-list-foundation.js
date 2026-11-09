@@ -140,7 +140,7 @@
     cells[3].replaceChildren(text('strong', `${row.quantities.garments} garments`), text('span', `${row.quantities.prints} print items`, 'order-list-muted'));
     if (row.quantities.other) cells[3].append(text('span', `${row.quantities.other} other items`, 'order-list-muted'));
     if (row.partial) cells[3].append(text('small', 'Counts may be incomplete', 'order-list-warning-text'));
-    cells[4].replaceChildren(pill(row.materials.blanks.label, row.materials.blanks.ready ? 'ready' : row.materials.blanks.ordered ? 'warning' : 'neutral'));
+    cells[4].replaceChildren(pill(row.materials.blanks.label, row.materials.blanks.tone));
     if (row.accounting) {
       const allocation = row.accounting.lines?.some(line => line.allocationPending);
       cells[4].append(text('small', `${row.accounting.accountedGarments}/${row.accounting.expectedGarments} supplier garments received`, 'order-list-muted order-list-extra-fact'));
@@ -151,7 +151,7 @@
       supplier.title = `${row.supplier.observedAt ? `Checked ${new Date(row.supplier.observedAt).toLocaleString()}. ` : ''}Carrier delivery does not confirm garment check-in.`;
       cells[4].append(supplier);
     }
-    cells[5].replaceChildren(pill(row.materials.prints.label, row.materials.prints.ready ? 'ready' : row.materials.prints.ordered ? 'warning' : 'neutral'));
+    cells[5].replaceChildren(pill(row.materials.prints.label, row.materials.prints.tone));
     const progress = text('div', '', 'order-list-progress');
     if (row.progress.printable > 0) {
       const bar = document.createElement('progress'); bar.max = row.progress.printable; bar.value = row.progress.printed;

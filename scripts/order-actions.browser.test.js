@@ -8,7 +8,7 @@ const { spawn } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 const edge = process.env.PRINTMO_BROWSER_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const assets = ['order-board-model.js', 'order-action-model.js', 'order-actions.js', 'order-actions.css', 'accessibility-hardening.css'];
+const assets = ['order-board-model.js', 'order-action-model.js', 'order-actions.js', 'order-actions.css', 'accessibility-hardening.css', 'dashboard-motion.js'];
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/order-actions.css"><link rel="stylesheet" href="/accessibility-hardening.css">
 <style>*{box-sizing:border-box}body{margin:20px;font:16px system-ui}article{position:relative;padding:20px;margin:12px;border:1px solid #cbd5e1;max-width:580px}.native a,.native input,.native button{margin:4px}.native{display:flex;flex-wrap:wrap;gap:8px}</style></head>
 <body data-order-source="shopify"><h1>Synthetic order actions fixture</h1>
@@ -17,7 +17,7 @@ const fixture = `<!doctype html><html><head><meta charset="utf-8"><meta name="vi
 <article id="second" class="card" tabindex="0"><span>Second synthetic order</span></article><article id="history" class="card" tabindex="0"><span>Read-only synthetic order</span></article><article id="etsy" class="card" tabindex="0"><span>Etsy synthetic order</span></article>
 <article id="move-fixture" class="card"><span>Synthetic directional controls</span><div class="card-a11y-move-controls"><button id="move-back" type="button" data-move-direction="back">Move back</button><button id="move-forward" type="button" data-move-direction="forward">Move forward</button></div></article>
 <section id="detail-overlay" hidden><button id="progress-custom">Custom amount</button><input id="progress-input" aria-label="Printed count"></section>
-<script src="/order-board-model.js"></script><script src="/order-action-model.js"></script>
+<script src="/order-board-model.js"></script><script src="/order-action-model.js"></script><script src="/dashboard-motion.js"></script>
 <script>
 window.orders = ['a','b','history'].map((id,index)=>({_candidate:true,_provider:'shopify',_orderKey:'shopify:'+id,
  name:'#'+(100+index)+' – Synthetic person',productionStage:'print',_historyReadOnly:id==='history',_capabilities:{productionWrite:true},
@@ -26,6 +26,8 @@ window.orders = ['a','b','history'].map((id,index)=>({_candidate:true,_provider:
 orders.push({...orders[1],_provider:'etsy',_orderKey:'etsy:fixture:1',canonical:{...orders[1].canonical,source:{provider:'etsy',displayNumber:'ETSY-1'}}});
 window.selectedKeys = [OrderBoardModel.orderKey(orders[0])]; window.reviewCalls=[];window.removeCalls=[];window.archivedKeys=[];
 window.fixturePrintableTotal=2;window.getOrderManagerBoardSnapshot=()=>orders;window.printablePieceTotal=()=>fixturePrintableTotal;window.orderIsVisibleOnOperationalBoard=()=>true;
+window.materialCalls=[];window.materialFailure=false;window.materialWait=false;
+window.api={updateReady:(reference,patch)=>dashboardMotion.trackSave(async()=>{materialCalls.push({reference,patch});if(materialWait)await new Promise(resolve=>window.materialResolve=resolve);if(materialFailure)throw Error('Synthetic save unavailable');const order=orders.find(o=>o._provider===reference.provider&&o._orderKey===reference.orderKey);const local={...patch};if(local.stage){local.productionStage=local.stage;delete local.stage;}Object.assign(order,local);document.dispatchEvent(new Event('printmo:board-updated'));})};
 window.OrderManagerViews={workflowState:()=>({busy:false}),actions:()=>[{value:'move:received',label:'Move to Pipeline',enabled:true}],
  reviewOrders:async(keys,value)=>{reviewCalls.push({keys,value});return {results:keys.map(key=>({key,outcome:'saved'}))};}};
 window.removeOrderFromBoard=async order=>{removeCalls.push(OrderBoardModel.orderKey(order));if(confirm('Remove '+order.name+' from the board?'))archivedKeys.push(OrderBoardModel.orderKey(order));};
@@ -106,7 +108,7 @@ test('actual browser: shared order actions preserve native behavior, target iden
     const open = async id => {
       await evaluate(`(()=>{const card=document.getElementById('${id}');if(innerWidth<=600)card.querySelector('.order-action-trigger').click();else card.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:80,clientY:200}));})()`); await flush();
     };
-    const clickItem = async label => { await evaluate(`(()=>{const item=[...document.querySelectorAll('#order-action-menu [role="menuitem"]')].find(node=>!node.closest('[hidden]')&&node.querySelector('span').textContent.startsWith(${JSON.stringify(label)}));if(!item)throw new Error('Missing item '+${JSON.stringify(label)});item.click();})()`); await flush(); };
+    const clickItem = async label => { await evaluate(`(()=>{const item=[...document.querySelectorAll('#order-action-menu [role="menuitem"], #order-action-menu [role="menuitemradio"]')].find(node=>!node.closest('[hidden]')&&node.querySelector('span').textContent.startsWith(${JSON.stringify(label)}));if(!item)throw new Error('Missing item '+${JSON.stringify(label)});item.click();})()`); await flush(); };
     const key = async (value, modifiers = 0) => {
       const code = { Enter: 13, F10: 121, Escape: 27, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Home: 36, End: 35 }[value] || 0;
       await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: value, code: value, modifiers, windowsVirtualKeyCode: code, ...(value === 'Enter' ? { text: '\r' } : {}) });
@@ -114,6 +116,56 @@ test('actual browser: shared order actions preserve native behavior, target iden
     };
     const isOpen = () => evaluate('OrderActions.isOpen()');
     const primaryItemState = label => evaluate(`(()=>{const item=[...document.querySelector('.order-action-panel').querySelectorAll('[role="menuitem"]')].find(node=>node.querySelector('span')?.textContent.startsWith(${JSON.stringify(label)}));return item?{disabled:item.getAttribute('aria-disabled')==='true',reason:item.querySelector('small')?.textContent.trim()||''}:null;})()`);
+
+    const selectedBeforeMaterials=await evaluate('JSON.stringify(selectedKeys)');
+    await open('second');
+    assert.equal(await evaluate('document.querySelectorAll(".order-action-panel:not(.order-action-submenu) .order-action-icon").length'),7,'primary commands, including date and instructions, have consistent icon landmarks');
+    assert.equal(await evaluate('document.querySelector("[data-submenu=prints] .order-action-label").textContent'),'Prints');
+    assert.equal(await evaluate('document.querySelector("[data-submenu=prints] .order-action-value").textContent'),'Not recorded');
+    assert.equal(await evaluate('document.querySelector("[data-submenu=prints]").getAttribute("aria-label")'),'Prints: Not recorded');
+    await clickItem('Prints');
+    assert.deepEqual(await evaluate('[...document.querySelectorAll(".order-action-submenu [role=menuitemradio]")].map(n=>n.textContent)'),['Not recorded','On saved sheet','Ordered','In hand']);
+    assert.equal(await evaluate('document.activeElement.getAttribute("aria-checked")'),'true');
+    await clickItem('Not recorded');
+    assert.equal(await evaluate('materialCalls.length'),0,'current choice never writes');
+    for(const [kind,values] of [['Prints',['On saved sheet','Ordered','In hand','Not recorded']],['Blanks',['In S&S cart','Ordered','In hand','Not recorded']]]){
+      for(const label of values){
+        await open('second');await clickItem(kind);await clickItem(label);
+        assert.equal(await isOpen(),false);
+        assert.deepEqual(await evaluate('materialCalls.at(-1).reference'),{provider:'shopify',orderKey:'shopify:b'});
+        assert.equal(await evaluate(`OrderBoardModel.materialForOrder(orders[1],${JSON.stringify(kind==='Prints'?'prints':'blanks')}).label`),label);
+      }
+    }
+    assert.equal(await evaluate('JSON.stringify(selectedKeys)'),selectedBeforeMaterials,'material changes target only the clicked order');
+    assert.equal(await evaluate('detailOrder'),null,'status changes do not open Detail');
+    await evaluate("orders[1].productionStage='print';materialFailure=true");
+    await open('second');await clickItem('Prints');await clickItem('Ordered');
+    assert.equal(await evaluate('OrderBoardModel.materialForOrder(orders[1],"prints").label'),'Not recorded');
+    assert.match(await evaluate('document.querySelector(".order-action-status").textContent'),/Status was not saved.*Synthetic save unavailable/);
+    await evaluate('materialFailure=false;materialWait=true');
+    await open('second');await clickItem('Prints');await clickItem('On saved sheet');
+    await evaluate('new Promise(resolve=>setTimeout(resolve,300))');
+    assert.equal(await evaluate('document.getElementById("dashboard-save-feedback").hidden'),true,'menu owns its one specific save confirmation');
+    assert.match(await evaluate('document.querySelector(".order-action-status").textContent'),/#101.*Saving prints status/);
+    assert.equal(await evaluate('document.body.dataset.orderActionSaving'),'true');
+    await open('first');assert.equal(await isOpen(),false,'a pending save blocks duplicate commands');
+    await evaluate('materialResolve();materialWait=false');await flush();
+    assert.equal(await evaluate('document.body.dataset.orderActionSaving'),undefined);
+    assert.equal(await evaluate('document.getElementById("dashboard-save-feedback").hidden'),true);
+    assert.match(await evaluate('document.querySelector(".order-action-status").textContent'),/#101.*Prints: On saved sheet/);
+    await open('second');await clickItem('Prints');
+    assert.equal(await evaluate('document.activeElement.textContent'),'On saved sheet');
+    await key('End');assert.equal(await evaluate('document.activeElement.textContent'),'In hand');
+    await key('Home');assert.equal(await evaluate('document.activeElement.textContent'),'Not recorded');
+    await key('ArrowDown');assert.equal(await evaluate('document.activeElement.textContent'),'On saved sheet');
+    await key('Escape');await key('Escape');
+    await open('history');assert.equal((await primaryItemState('Prints')).disabled,true);assert.equal((await primaryItemState('Blanks')).disabled,true);await key('Escape');
+    await open('etsy');await clickItem('Prints');await clickItem('In hand');
+    assert.deepEqual(await evaluate('materialCalls.at(-1).reference'),{provider:'etsy',orderKey:'etsy:fixture:1'});
+    await open('second');await clickItem('Prints');
+    await evaluate("document.body.dataset.orderSource='legacy'");await flush();
+    assert.equal(await isOpen(),false,'source switching dismisses material choices');
+    await evaluate("document.body.dataset.orderSource='shopify'");await flush();
 
     await open('first'); await clickItem('Copy'); await clickItem('Order number');
     assert.equal(await evaluate('clipboardCalls.at(-1)'), '#100');
@@ -218,7 +270,8 @@ test('actual browser: shared order actions preserve native behavior, target iden
 
     const selected = await evaluate('JSON.stringify(selectedKeys)');
     await evaluate(`document.querySelector('#second > span').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:1590,clientY:890}))`); await flush();
-    assert.equal(await evaluate('document.querySelector(".order-action-heading").textContent'), 'Shopify #101');
+    assert.equal(await evaluate('document.querySelector(".order-action-heading-title strong").textContent'), '#101');
+    assert.equal(await evaluate('document.querySelector(".order-action-heading-customer").textContent'), 'Synthetic person');
     assert.equal(await evaluate('(()=>{const r=document.getElementById("order-action-menu").getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;})()'), true, 'context menu clamps near bottom-right edge');
     await clickItem('Move production stage'); await clickItem('Move to Pipeline');
     assert.deepEqual(await evaluate('reviewCalls.at(-1).keys'), [await evaluate('OrderBoardModel.orderKey(orders[1])')]);
@@ -258,6 +311,15 @@ test('actual browser: shared order actions preserve native behavior, target iden
     await pointer(1500, 850); await waitHover();
     assert.equal(await evaluate('document.querySelector(".order-action-submenu").hidden'), true, 'leaving Copy and flyout closes child after grace period');
     assert.equal(await isOpen(), true, 'hover exit retains primary context menu');
+    await evaluate('document.querySelector("[data-submenu=prints]").focus()');await key('ArrowRight');
+    await pointer(1500,840);await waitHover();
+    assert.equal(await evaluate('document.querySelector(".order-action-submenu").hidden'),false,'incidental mouse movement does not hide the keyboard-focused child');
+    assert.equal(await evaluate('document.activeElement.closest(".order-action-submenu")!==null'),true);
+    const movePoint=await evaluate('(()=>{const r=document.querySelector("[data-submenu=move]").getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};})()');
+    await pointer(movePoint.x,movePoint.y);await waitHover();
+    assert.equal(await evaluate('document.querySelector("[data-submenu=move]").getAttribute("aria-expanded")'),'true');
+    assert.equal(await evaluate('document.activeElement.dataset.submenu'),'move','deliberate pointer branch switching returns focus to the visible new branch');
+    await key('ArrowLeft');
     await evaluate('document.querySelector("[data-copy-trigger]").focus()'); await key('ArrowRight');
     assert.equal(await evaluate('document.querySelector(".order-action-submenu").hidden'), false, 'keyboard Right opens immediately');
     assert.equal(await evaluate('document.querySelector(".order-action-submenu").getAnimations().some(animation=>animation.playState==="running")'), false, 'keyboard flyout has no running entrance motion');
@@ -270,10 +332,11 @@ test('actual browser: shared order actions preserve native behavior, target iden
     await cdp.send('Emulation.setEmulatedMedia', { features: [] });
     await key('Escape');
 
-    for (const width of [1600, 393]) {
+    for (const width of [1600, 393, 320]) {
       await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
       await flush();
       assert.equal(await evaluate('getComputedStyle(document.querySelector("#first .order-action-trigger")).display === "none"'), width > 600, 'desktop Actions hidden; mobile Actions retained');
+      if(screenshots){await open('second');const shot=await cdp.send('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(screenshots,`order-primary-actions-${width}.png`),Buffer.from(shot.data,'base64'));await key('Escape');}
       await open('first'); await clickItem('Copy');
       const bounds = await evaluate('(()=>{const r=document.getElementById("order-action-menu").getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:innerWidth,height:innerHeight};})()');
       assert.ok(bounds.left >= 0 && bounds.right <= bounds.width + 1 && bounds.top >= 0 && bounds.bottom <= bounds.height + 1, `menu contained at ${width}px: ${JSON.stringify(bounds)}`);
@@ -295,8 +358,36 @@ test('actual browser: shared order actions preserve native behavior, target iden
         const target = path.join(screenshots, `order-actions-${width}.png`); await fs.writeFile(target, Buffer.from(shot.data, 'base64')); t.diagnostic(`Screenshot: ${target}`);
       }
       await key('Escape'); assert.equal(await isOpen(), true); await key('Escape'); assert.equal(await isOpen(), false);
+      await open('second'); await clickItem('Prints');
+      await evaluate('Promise.all(document.getElementById("order-action-menu").getAnimations({subtree:true}).map(animation=>animation.finished.catch(()=>{})))');
+      assert.equal(await evaluate('document.querySelector(".order-action-submenu").getAttribute("aria-label")'),'Prints status');
+      assert.equal(await evaluate('[...document.querySelectorAll(".order-action-panel")].filter(panel=>!panel.hidden).every(panel=>{const r=panel.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+1&&r.top>=0&&r.bottom<=innerHeight+1&&panel.scrollWidth<=panel.clientWidth+1;})'),true,`material flyout stays contained at ${width}px`);
+      assert.equal(await evaluate('[...document.querySelectorAll(".order-action-submenu [role=menuitemradio]")].every(n=>n.getBoundingClientRect().height>=44)'),true);
+      assert.equal(await evaluate('document.querySelectorAll(".order-action-submenu [aria-checked=true]").length'),1);
+      if(width===1600&&screenshots){
+        const point=await evaluate('(()=>{const n=[...document.querySelectorAll(".order-action-submenu [role=menuitemradio]")].find(n=>n.textContent==="Ordered"),r=n.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};})()');
+        await pointer(point.x,point.y);
+        const clip=await evaluate('(()=>{const panels=[...document.querySelectorAll(".order-action-panel")].filter(p=>!p.hidden).map(p=>p.getBoundingClientRect()),left=Math.min(...panels.map(r=>r.left))-16,top=Math.min(...panels.map(r=>r.top))-16;return {x:left,y:top,width:Math.max(...panels.map(r=>r.right))-left+16,height:Math.max(...panels.map(r=>r.bottom))-top+16,scale:1};})()');
+        const shot=await cdp.send('Page.captureScreenshot',{format:'png',clip});await fs.writeFile(path.join(screenshots,'menu-polish-desktop.png'),Buffer.from(shot.data,'base64'));
+        assert.equal(await evaluate('document.querySelector("[data-submenu=prints]").getAttribute("aria-expanded")'),'true');
+        assert.equal(await evaluate('getComputedStyle(document.querySelector("[data-copy-trigger]")).backgroundColor'),'rgba(0, 0, 0, 0)','unrelated focused Copy has no stale highlight');
+        assert.equal(await evaluate('document.querySelector(".order-action-submenu [aria-checked=true]").textContent'),'On saved sheet','saved choice stays checked while another option is hovered');
+      }
+      if(screenshots){const shot=await cdp.send('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(screenshots,`order-material-actions-${width}.png`),Buffer.from(shot.data,'base64'));}
+      if(width<600){await clickItem('Back');await clickItem('Blanks');await clickItem('In S&S cart');assert.equal(await evaluate('orders[1].productionStage'),'blanks_cart');}
+      else {await key('Escape');await key('Escape');}
     }
     await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+    for(const [width,height] of [[700,260],[601,300],[320,300]]){
+      await cdp.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:width<600});await flush();
+      await open('second');await clickItem('Copy');
+      await evaluate('Promise.all(document.getElementById("order-action-menu").getAnimations({subtree:true}).map(a=>a.finished.catch(()=>{})))');
+      assert.equal(await evaluate('[...document.querySelectorAll(".order-action-panel")].filter(p=>!p.hidden).every(p=>{const r=p.getBoundingClientRect();return r.left>=11&&r.right<=innerWidth-11&&r.top>=11&&r.bottom<=innerHeight-11;})'),true,`short viewport retains both panels at ${width}x${height}`);
+      assert.equal(await evaluate('getComputedStyle(document.querySelector(".order-action-scroll")).overflowY'),'auto');
+      await key('End');assert.equal(await evaluate('document.activeElement.querySelector(".order-action-label").textContent'),'Email');
+      assert.equal(await evaluate('(()=>{const r=document.activeElement.getBoundingClientRect(),s=document.querySelector(".order-action-scroll").getBoundingClientRect();return r.top>=s.top&&r.bottom<=s.bottom+1;})()'),true,'last option remains reachable in the scroll surface');
+      await key('Escape');await key('Escape');
+    }
     for (const width of [1600, 901, 900, 393]) {
       await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
       await evaluate('document.getElementById("move-forward").focus()'); await flush();

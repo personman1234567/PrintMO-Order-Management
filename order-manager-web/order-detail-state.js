@@ -111,6 +111,12 @@
     adoptNumber('printsStatus');
     adoptNumber('blanksOrdered');
     adoptNumber('printsOrdered');
+    if (Object.prototype.hasOwnProperty.call(production, 'printsOnSavedSheet')) {
+      order.printsOnSavedSheet = Boolean(production.printsOnSavedSheet);
+    }
+    if (Object.prototype.hasOwnProperty.call(production, 'artworkReferences')) {
+      order.artworkReferences = { ...production.artworkReferences };
+    }
     return order;
   }
 

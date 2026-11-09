@@ -434,6 +434,7 @@ function candidateOrderToBoard(order = {}, { register = true } = {}) {
     blanksOrdered: Number(production.blanksOrdered ?? (production.stage === "blanks_ordered" ? 1 : 0)),
     printsOrdered: Number(production.printsOrdered || 0),
     printsOnSavedSheet: Boolean(production.printsOnSavedSheet),
+    artworkReferences: { ...production.artworkReferences },
     displayFinancialStatus: order.commerce?.financialStatus || "",
     displayFulfillmentStatus: order.commerce?.fulfillmentStatus || "",
     source: order.source || null,
@@ -851,6 +852,8 @@ function applyCandidateProduction(order, production = {}, { publish = true } = {
   if ("blanksStatus" in production) order.blanksStatus = Number(production.blanksStatus || 0);
   if ("printsStatus" in production) order.printsStatus = Number(production.printsStatus || 0);
   if ("printsOrdered" in production) order.printsOrdered = Number(production.printsOrdered || 0);
+  if ("printsOnSavedSheet" in production) order.printsOnSavedSheet = Boolean(production.printsOnSavedSheet);
+  if ("artworkReferences" in production) order.artworkReferences = { ...production.artworkReferences };
   if ("blanksOrdered" in production || production.stage) order.blanksOrdered = Number(production.blanksOrdered ?? (production.stage === "blanks_ordered" ? 1 : 0));
   order.canonical.production = { ...order.canonical.production, ...production, version };
   if (publish) window.mergeOrderManagerProduction?.(order, previousStatus);
@@ -869,6 +872,8 @@ function candidateProductionMatchesPatch(production = {}, patch = {}) {
     blanks_ordered: "blanksOrdered",
     prints_status: "printsStatus",
     prints_ordered: "printsOrdered",
+    prints_on_saved_sheet: "printsOnSavedSheet",
+    artwork_references: "artworkReferences",
   };
   return Object.entries(patch).every(([patchKey, expected]) => {
     const productionKey = fields[patchKey];
@@ -878,7 +883,7 @@ function candidateProductionMatchesPatch(production = {}, patch = {}) {
       return Object.entries(expected).every(([id, value]) => value === null
         ? !Object.hasOwn(actual || {}, id) : JSON.stringify(actual?.[id]) === JSON.stringify(value));
     }
-    if (patchKey === 'print_eligibility') {
+    if (patchKey === 'print_eligibility' || patchKey === 'artwork_references') {
       return Object.entries(expected).every(([id, value]) => value === null
         ? !Object.hasOwn(actual || {}, id) : actual?.[id] === value);
     }
@@ -892,6 +897,15 @@ async function performCandidateOrderUpdate(name, patch, options = {}) {
   const identity = { provider: order._provider, orderKey: order._orderKey || order._gid };
   if (!patch || Object.keys(patch).length === 0) return true;
   const checkWorkflowBaseline = () => {
+    if (options.shopifyOnly && (!isShopifyCandidateView() || order._provider !== 'shopify'
+        || order._historyReadOnly || order._capabilities?.productionWrite === false)) {
+      throw Object.assign(new Error('Return to the active Shopify board and review this order.'), { code: 'WORKFLOW_CHANGED' });
+    }
+    if (options.requireSavedSheet && (!order.printsOnSavedSheet || Number(order.printsOrdered)
+        || Number(order.printsStatus) || ['completed'].includes(order.productionStage)
+        || order.displayFulfillmentStatus === 'FULFILLED')) {
+      throw Object.assign(new Error('Print status changed. Review this order before marking it ordered.'), { code: 'SAVED_SHEET_CHANGED' });
+    }
     if (!options.workflowBaseline) return;
     const baseline = options.workflowBaseline;
     if ((baseline.stage !== undefined && order.productionStage !== baseline.stage)
@@ -1237,6 +1251,30 @@ window.api.updateReady = async (...args) => {
     method: "POST",
     body: JSON.stringify({ orderName: name, patch }),
   });
+};
+
+// Per-order CAS and the existing mutation queue protect mixed and concurrently edited batches.
+// This records an order placed elsewhere; it never calls a supplier endpoint.
+window.api.markSavedSheetPrintsOrdered = async references => {
+  if (!isShopifyCandidateView() || !Array.isArray(references)) throw new Error('Review saved-sheet orders on the Shopify board.');
+  const unique = new Map(references.map(ref => [JSON.stringify([ref?.provider, ref?.orderKey]), ref]));
+  const results = [];
+  for (const reference of unique.values()) {
+    try {
+      await updateCandidateOrder(reference, { prints_ordered: 1, prints_on_saved_sheet: false },
+        { shopifyOnly: true, requireSavedSheet: true });
+      results.push({ reference, outcome: 'saved' });
+    } catch (error) {
+      results.push({ reference, outcome: error.code === 'SAVED_SHEET_CHANGED' ? 'changed' : 'failed', message: error.message });
+    }
+  }
+  return { results };
+};
+
+window.api.setArtworkReference = async (orderId, assetId, side, referenceOnly) => {
+  if (!assetId || typeof referenceOnly !== 'boolean') throw new Error('Choose a design file and its production use.');
+  return updateCandidateOrder(orderId, { artwork_references: { [`${assetId}|${side || ''}`]: referenceOnly ? true : null } },
+    { shopifyOnly: true });
 };
 
 window.api.updateProgress = async (a, b) => {

@@ -79,7 +79,7 @@ The installed Order Manager app must have Shopify `read_products` as well as ord
 3. The Render gateway validates aggregated lines, adds server-held credentials/payment/shipping configuration, and posts to S&S **Orders**, without reading Redis. `SS_TEST_ORDER` is passed through unchanged; S&S documents test orders as created and cancelled, not a shopping-cart API operation. Optional per-SKU price lookups remain skipped in test mode. Responses can contain both created `Orders` and native `LineErrors`; order-number-only and summary-only success remain supported.
 4. The Worker normalizes every attempt as `confirmed`, `partial`, `rejected`, or `unknown`, stores the redacted report in `batches.response_json` and `supplier_attempts`, and exposes the latest report to the authenticated board.
 5. The supplier response is stored before production metadata advances. Customer orders with fully covered supplier requirements use the existing `blanks_cart` workflow stage; that stage name does not establish an automated S&S cart operation. Service charges do not count as supplier garments. Missing or unmatched line details are separate from order-placement success, and short shared SKUs are not allocated between customer orders by guess.
-6. A structured supplier `4xx` is a deterministic rejection rather than an ambiguous result. The board shows the human-readable product and variant, rejected SKU, requested quantity, affected order, and supplier reason when returned.
+6. Recognized native validation/line errors retain their deterministic rejection evidence. HTTP status alone is insufficient: authentication errors, missing confirmation and contradictory evidence must not be converted into a known rejection. The board shows the human-readable product and variant, rejected SKU, requested quantity, affected order, and supplier reason when returned.
 7. If the supplier confirms but metadata is incomplete, the response lists repair-required GIDs and nightly integrity reconciliation repairs them. The supplier order is never resent.
 8. The gateway marks whether an S&S order POST was attempted. An error known to occur before that POST is stored as failed and shown as safe to retry after the issue clears. A timeout, gateway `5xx`, or success-shaped response after the POST (or without a trustworthy attempt marker) is stored as `unknown`, displayed with its batch reference, and must not be blindly retried.
 
@@ -110,12 +110,32 @@ Same-key replay, concurrent claims and genuinely ambiguous outcomes stay guarded
 Generic 503, missing JSON/code, transport failure or contradictory evidence do
 not qualify. Existing historical records are not automatically reclassified.
 
-The prepared error diagnostic records only gateway HTTP status, media type,
-JSON/non-JSON/empty format, byte length and presence booleans for supplier
-status/message/dispatch fields. Raw HTML, customer bodies and credentials are
-not retained. The captured complete local HTTP fixture verifies the real
-gateway handler, Worker parser, Shopify commit persistence and UI; it does not
-explain or reproduce the original live response-body loss.
+Native supplier HTTP error statuses are preserved, including 503; a gateway
+failure keeps its own status. Commit JSON is serialized once. Gateway logs record
+an opaque response ID, batch reference, status, MIME, UTF-8 byte count and
+`serialized` / `finished` / `closed_early` events. The Worker retains the ID from
+`X-Order-Manager-Response-Id`, body format/length and supplier-field presence
+booleans; an interrupted body read records `failurePhase: body_read` and unknown
+length. Raw HTML, customer bodies and credentials are not retained. A Node
+`finished` event does not prove receipt by the Worker. The complete local HTTP
+fixture verifies the actual gateway handler, Worker parser, persistence and UI;
+it does not establish which hosted hop replaced the historical response.
+
+### Submission regression boundaries
+
+- Feedback/UI changes must not change purchase eligibility, intent lifetime,
+  supplier calls, payloads or flags without an explicit reviewed contract change.
+- `SS_TEST_ORDER=1` still reaches Orders; never infer a remote cart capability.
+- Placement, item attribution and internal board movement are separate facts.
+  Preserve official references/native errors even when SKU detail is unresolved.
+- Keep same-intent replay and atomic concurrent claims. Do not restore lifetime
+  holds based on completed historical placements or identifier-only warnings.
+- A blocked wrapper with zero commits did not dispatch. New response logging
+  cannot execute for that action, and missing metadata in its older report is not
+  evidence that the newly deployed logger failed. Diagnose before adding controls.
+
+See [the troubleshooting procedure](../runbooks/troubleshooting.md#supplier-503-followed-by-an-immediate-blocked-selection)
+and [the test map](../reference/test-map.md) before changing recovery behavior.
 
 The result leads with the official S&S order reference(s) and native supplier
 errors. Order placement and line attribution are separate facts: missing quantity
@@ -216,6 +236,10 @@ The receiving UI has two levels:
 2. **Receive Batches** is the shipment lookup and aggregate manifest workspace. Staff can link an outside S&S purchase to selected unbatched customer orders without placing another supplier order, edit shipment references, check in all remaining garments in one action when the delivery contains them all, adjust individual quantities for split deliveries with automatic save, and correct membership with **Add Orders**. Navigation waits for an in-flight receiving save instead of asking staff to discard a draft.
 
 Only physically checked, usable garment quantities are entered as received. A carrier delivery alone never updates received counts. Shared-SKU quantities are proposed oldest-first, but affected customer orders remain incomplete until staff confirms the per-order allocation. After a check-in or allocation confirmation newly completes orders, the workspace lists those orders and offers **Review** or **Move all newly complete**. The move action re-reads each order, excludes unpaid orders, and moves only the orders completed by that check-in. Ready to Print cards show a prints-pending blocker when `printsStatus` is false; the Worker rejects an increase in printed count until prints are marked ready.
+
+The shipment lookup offers **Needs receiving attention**, composed with the existing reference search. `receiving-review-model.js` derives the same visible reasons used for filtering: garments still to check in, pending allocation confirmation, and supplier delivery exceptions/canceled/not-found states. Counts above the list continue to cover all shipments; the results label names that scope and empty results offer **Clear filters**. Delivery status never establishes physical receipt.
+
+Inside a manifest, **Confirm all N full lines** confirms only saved, unconfirmed shared lines whose usable received quantity covers their entire consistent per-order demand. Edited allocation inputs and short lines remain in individual review. The operator confirms after physical counting/sorting. The browser re-reads the shipment and compares selected quantities/membership before making sequential existing allocation calls. It stops on an unconfirmed response, retains acknowledged successes and untouched input drafts, and requires Refresh before retrying. Receiving/navigation controls are disabled during that operation; it does not automatically move orders. Receiving tasks and the newly complete review live in the inner scroll owner, followed by shipment reference/delivery details, so mobile retains space for the manifest. This slice changes no supplier calls, receiving endpoints, or storage schema.
 
 **Add Orders** always requires an explicit checkbox selection. An unbatched In S&S Cart order is added and advanced to Ordered. An order already in another receiving batch is transferred in one Worker request: the source membership is removed, already-received quantity follows the order up to its expected quantity, the target is recalculated with a suggested allocation, and an emptied accidental batch is removed from the active index. Creating a second active manifest for an already-batched order returns `409 ORDER_ALREADY_BATCHED`.
 

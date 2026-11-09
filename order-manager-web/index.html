@@ -84,6 +84,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./order-detail-split.css" />
   <link rel="stylesheet" href="./shelf-allocation.css" />
   <link rel="stylesheet" href="./production-artwork-workspace.css" />
+  <link rel="stylesheet" href="./saved-sheet-prints.css" />
   <link rel="stylesheet" href="./garment-costs.css">
   <link rel="stylesheet" href="./order-list-foundation.css" />
   <link rel="stylesheet" href="./order-actions.css" />
@@ -262,6 +263,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         <label>Attention<select data-list-filter="attention"><option value="all">All orders</option><option value="needed">Needs attention</option><option value="handoff">Awaiting handoff</option></select></label>
         <label>Due date<select data-list-filter="target"><option value="all">All dates</option><option value="late">Overdue</option><option value="today">Today</option><option value="tomorrow">Tomorrow</option><option value="none">No date</option></select></label>
         <label>Priority<select data-list-filter="priority"><option value="all">All orders</option><option value="rush">Rush only</option></select></label>
+        <label>Delivery<select data-list-filter="delivery"><option value="all">All delivery</option><option value="pickup">Local pickup</option><option value="shipping">Shipping</option><option value="other">Other / unknown</option></select></label>
       </div>
       <div class="order-list-result-line"><button id="order-list-clear" type="button" hidden>Clear filters</button></div>
       <div id="order-list-scroll" class="order-list-scroll">
@@ -425,6 +427,12 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         <div class="production-stage" id="print-section">
           <div class="section-header print-stage-header">
             <h3>Ready To Print</h3>
+          </div>
+          <div class="print-delivery-controls" id="production-delivery-controls" hidden>
+            <label for="production-delivery-filter">Delivery</label>
+            <select id="production-delivery-filter" aria-label="Filter production orders by delivery" aria-controls="col-print">
+              <option value="all">All delivery</option><option value="pickup">Local pickup</option><option value="shipping">Shipping</option><option value="other">Other / unknown</option>
+            </select>
           </div>
           <div class="cards workflow-card-grid" id="col-print" role="tabpanel" aria-labelledby="print-view-to-print" data-empty-message="No orders waiting to be printed"></div>
         </div>
@@ -818,6 +826,11 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                         <div class="design-tiles" id="design-extras-list"></div>
                       </div>
                       <p id="detail-designs-placeholder" class="detail-assets-empty">No design files found</p>
+                      <details id="production-references" hidden>
+                        <summary id="production-references-summary" tabindex="0">References (0)</summary>
+                        <p>Originals kept for comparison. Open a file to download it or restore it to production.</p>
+                        <div id="production-reference-list"></div>
+                      </details>
                       </div>
                       <section id="production-file-inspector" aria-labelledby="production-selected-title" hidden></section>
                     </div>
@@ -1268,9 +1281,11 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./draft-orders.js"></script>
   <script src="./shopify-preview.js"></script>
   <script src="./dashboard-triage-enhancements.js"></script>
+  <script src="./receiving-review-model.js"></script>
   <script src="./blanks-batches.js"></script>
   <script src="./garment-costs.js"></script>
   <script src="./production-artwork-workspace.js"></script>
+  <script src="./saved-sheet-prints.js"></script>
   <script src="./detail-overlay-enhancements.js"></script>
   <script src="./shelf-allocation.js"></script>
   <script src="./shelf-inventory.js"></script>
@@ -1287,6 +1302,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./production-workload.js"></script>
   <script src="./cart-garment-model.js"></script>
   <script src="./production-planner-model.js"></script>
+  <script src="./production-run-checklist.js"></script>
   <script src="./production-planner.js"></script>
   <script src="./cart-garment-view.js"></script>
   <script src="./mobile-order-model.js"></script>

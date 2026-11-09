@@ -2800,6 +2800,38 @@ async function run() {
     const printedKoozies = await patchProduction({ printed_count: 10 }, 'koozie-complete');
     assert.equal((await printedKoozies.json()).production.stage, 'completed');
 
+    // Retain Designer originals through canonical, revisioned reference-use changes.
+    const retainedOriginal = canonicalDetailJson.production.assets.find(asset => !asset.manualUpload);
+    assert(retainedOriginal, 'fixture must include original Designer bytes');
+    // The earlier fixture links its shared blob as mockups; add an explicit synthetic design association.
+    await env.ORDER_DB.prepare(`INSERT OR IGNORE INTO asset_manifest_links
+      (asset_id, line_item_id, design_ref, role, side, source_key, created_at)
+      VALUES (?, '', 'retained-design-fixture', 'design', ?, 'designer:retained-fixture', ?)`)
+      .bind(retainedOriginal.assetId, retainedOriginal.side || '', '2026-11-05T00:00:00Z').run();
+    const referenceKey = `${retainedOriginal.assetId}|${retainedOriginal.side || ''}`;
+    const privateObjectCount = privateObjects.size;
+    const originalManifest = await env.ORDER_DB.prepare('SELECT * FROM asset_manifests WHERE id = ?').bind(retainedOriginal.assetId).first();
+    const referenceVersion = productionState.revision;
+    const retained = await patchProduction({ artwork_references: { [referenceKey]: true } }, 'artwork-retain-original');
+    assert.equal(retained.status, 200);
+    const retainedJson = await retained.json();
+    assert.equal(retainedJson.production.artworkReferences[referenceKey], true);
+    assert(retainedJson.production.assets.some(asset => asset.assetId === retainedOriginal.assetId));
+    assert.equal((await (await patchProduction({ artwork_references: { [referenceKey]: true } }, 'artwork-retain-original', referenceVersion)).json()).production.version,
+      retainedJson.production.version, 'same-key replay must not create another change');
+    const referenceReadback = await worker.fetch(new Request(productionUrl, { headers }), env);
+    assert.equal((await referenceReadback.json()).production.artworkReferences[referenceKey], true);
+    const referenceUnrelated = await patchProduction({ internal_notes: 'Keep original reference' }, 'artwork-reference-unrelated');
+    assert.equal((await referenceUnrelated.json()).production.artworkReferences[referenceKey], true);
+    assert.equal((await patchProduction({ artwork_references: { 'another-order-asset|front': true } }, 'artwork-cross-order')).status, 400);
+    assert.equal((await patchProduction({ artwork_references: { [referenceKey]: false } }, 'artwork-invalid-use')).status, 400);
+    assert.equal((await patchProduction({ artwork_references: { [referenceKey]: null } }, 'artwork-stale-restore', referenceVersion)).status, 409);
+    const restored = await patchProduction({ artwork_references: { [referenceKey]: null } }, 'artwork-restore-original');
+    assert.deepEqual((await restored.json()).production.artworkReferences, {});
+    assert.deepEqual(await env.ORDER_DB.prepare('SELECT * FROM asset_manifests WHERE id = ?').bind(retainedOriginal.assetId).first(), originalManifest,
+      'reference changes must not alter the asset manifest or remove original bytes');
+    assert.equal(privateObjects.size, privateObjectCount);
+
     assert(calls.some(call => call.target.endsWith('/admin/oauth/access_token')), 'Worker must exchange client credentials for a runtime token');
     assert(calls.some(call => call.target.includes('/graphql.json')), 'Worker must query Shopify GraphQL');
     assert(calls.some(call => String(call.options?.body || '').includes('PrintMOShopifyPreviewOrders')), 'preview must use the cost-bounded Shopify list query');

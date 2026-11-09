@@ -62,6 +62,14 @@ On the **Shopify board at desktop widths above 900px**, the middle panel becomes
 
 ---
 
+The candidate Production grid has a compact **Delivery** toolbar
+(`#production-delivery-controls`, `#production-delivery-filter`) above its cards.
+All delivery, Local pickup, Shipping and Other / unknown apply only to this grid,
+including the Printed tab. Tab counts reflect delivery filtering; the garment
+workload remains the entire To Print queue. List Filters also exposes Delivery.
+Mobile Print uses `.mw-delivery`, and each mobile area's Filters sheet retains
+its own delivery selection. Unknown methods are never inferred from an address.
+
 ## Collapsed Order Card Tile Specification
 
 The embedded Shopify/provider board uses `order-card-presentation.js` and
@@ -102,11 +110,19 @@ also expose the placement type without relying on rectangle size or color alone.
 
 When no mockup exists, Order Detail expands the same vectors for every garment/color group; an actual mockup always takes precedence. The `Print placements` disclosure below the preview links print lines to selected garments and a location, or records included/custom printing without a separate print line. Controls stay out of collapsed cards. Assignments persist in canonical `printPlacements`; manual links override automatic links for the same print item. Unknown or removed print lines never invent a placement. Conflicting edits retain the newer saved assignment and require review rather than automatic overwrite.
 
-Garment and print counts retain the original material icons, green when marked
-ordered or ready, with explicit `Not ordered`, `Ordered`, or `Ready` text beneath
-each quantity. The garment state uses `blanksOrdered`/`blanksStatus`; prints use
-`printsOrdered`/`printsStatus`. The two material states update independently,
-including reversal to a neutral icon, and ordering alone never implies readiness.
+Garment and print counts retain the original material icons, green only for
+`In hand`, with the exact Detail material state beneath each quantity. Blanks
+shows `Not recorded`, `In S&S cart`, `Ordered`, or `In hand`; prints shows
+`Not recorded`, `On saved sheet`, `Ordered`, or `In hand`. Cards, desktop List,
+mobile work-area rows and Detail share `OrderBoardModel.materialForOrder` and
+`MATERIAL_OPTIONS`. Physical availability takes precedence over Ordered, then
+saved-sheet preparation or the canonical blanks-cart stage. Intermediate card
+labels are amber; unrecorded states are neutral. Both materials remain visible
+on mobile Supplies rows alongside any receiving quantities. Receiving/allocation
+warnings remain independent. Saved-sheet changes invalidate retained board
+cards, including reversals; no detail fetch is needed to show these states.
+Legacy Redis retains its original presentation. Material states never establish
+artwork approval or production release.
 
 Loading uses the full-color approved mark with a separate SVG scan bar clipped
 over the list rows. An unclassified order with no preview uses a smaller muted
@@ -129,7 +145,17 @@ entrances or financial values. The shared renderer's per-asset updater calls
 Source labels and supplier/receiving statuses are plain metadata, without pill
 backgrounds. The production header stays white as part of the single card.
 The redundant prints-pending warning is omitted on the candidate board; material
-readiness remains visible beside its quantities. Candidate cards expose a card-wide right-click/keyboard menu, including artwork; only mobile retains the visible **Actions** control. The menu provides with a Copy submenu, reviewed production moves, eligible printed-count editing, and confirmed **Remove from board**. The existing detail removal remains available. Candidate removal archives PrintMO state without deleting the source order; Legacy deletion is excluded and no Undo is promised.
+readiness remains visible beside its quantities. Candidate cards expose a card-wide right-click/keyboard menu, including artwork; only mobile retains the visible **Actions** control. The menu provides a Copy submenu, reviewed production moves, **Prints** and **Blanks** status submenus, eligible printed-count editing, and confirmed **Remove from board**. Material branches display the current label; each submenu checks the saved choice with `menuitemradio`. Arrow keys navigate all choices, and mobile uses the existing Back/single-panel pattern. Selecting another state saves directly through the shared readiness adapter and refreshes the overview without opening Detail. The existing detail removal remains available. Candidate removal archives PrintMO state without deleting the source order; Legacy deletion is excluded and no Undo is promised.
+
+The shared Actions menu has an order/customer/source header, aligned 16px outline
+icons on primary commands and dividers around the material controls. Exact saved
+material values sit beside their labels, wrapping beneath at narrow phone widths.
+Neutral expanded-parent styling, a keyboard-only blue focus ring and persistent
+radio checks distinguish navigation from saved state. A bounded
+`.order-action-scroll` child preserves access in short viewports without removing
+the outer hover bridge. Slow material saves use a single order-specific status
+message through `data-order-action-saving`; generic dashboard save feedback stays
+suppressed for that action.
 
 An **Order Card** (`.pipeline-card`, `.card`) is the fundamental visual unit displayed in Kanban columns *before* a user clicks to open the Order Detail overlay.
 

@@ -296,6 +296,7 @@ const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint', 
 const PRINT_VIEWS = ['toPrint', 'printed'];
 let activeMobileTab = MOBILE_TABS[0];
 let activePrintView = PRINT_VIEWS[0];
+let activePrintDelivery = 'all';
 let isMobileViewport = false;
 let mobileMediaQuery = null;
 
@@ -479,9 +480,14 @@ function syncPrintViewUi() {
   if (!section || !container) return;
 
   section.dataset.printView = activePrintView;
+  const deliveryControls = document.getElementById('production-delivery-controls');
+  if (deliveryControls) deliveryControls.hidden = !isShopifyBoardView();
+  const deliverySelect = document.getElementById('production-delivery-filter');
+  if (deliverySelect) deliverySelect.value = activePrintDelivery;
+  const matchesDelivery = order => window.OrderBoardModel.matchesDelivery(order, activePrintDelivery);
   const counts = {
-    toPrint: visibleShopifyPrintOrders('toPrint').length,
-    printed: visibleShopifyPrintOrders('printed').length
+    toPrint: visibleShopifyPrintOrders('toPrint').filter(matchesDelivery).length,
+    printed: visibleShopifyPrintOrders('printed').filter(matchesDelivery).length
   };
 
   PRINT_VIEWS.forEach(view => {
@@ -503,6 +509,18 @@ function syncPrintViewUi() {
   container.dataset.emptyMessage = activePrintView === 'printed'
     ? 'No printed orders awaiting handoff'
     : 'No orders waiting to be printed';
+  if (activePrintDelivery !== 'all') container.dataset.emptyMessage = activePrintView === 'printed'
+    ? 'No printed orders match this delivery filter'
+    : 'No To Print orders match this delivery filter';
+}
+
+function setPrintDeliveryFilter(value) {
+  if (!isShopifyBoardView() || !window.OrderBoardModel.DELIVERY_FILTERS.some(option => option[0] === value)) return;
+  activePrintDelivery = value;
+  renderStatusColumn('print');
+  syncPrintViewUi();
+  const container = document.getElementById('col-print');
+  if (container) container.scrollTop = 0;
 }
 
 function setActivePrintView(view, { render = true } = {}) {
@@ -519,6 +537,7 @@ function setActivePrintView(view, { render = true } = {}) {
 }
 
 function initPrintTabs() {
+  document.getElementById('production-delivery-filter')?.addEventListener('change', event => setPrintDeliveryFilter(event.target.value));
   const tabIds = ['print-view-to-print', 'print-view-printed'];
   tabIds.forEach((id, index) => {
     const button = document.getElementById(id);
@@ -666,7 +685,9 @@ function candidateOrderRenderFingerprint(order) {
     printsStatus: Number(order.printsStatus || 0),
     blanksOrdered: Number(order.blanksOrdered || 0),
     printsOrdered: Number(order.printsOrdered || 0),
+    printsOnSavedSheet: Boolean(order.printsOnSavedSheet),
     displayFulfillmentStatus: order.displayFulfillmentStatus || '',
+    deliveryMethod: order.canonical?.commerce?.deliveryMethod || order.deliveryMethod || null,
     assets: (order.assets || []).map(candidateAssetRenderFingerprint)
   });
 }
@@ -775,6 +796,7 @@ function renderStatusColumn(status) {
     if (status !== 'print' || !order._candidate) return true;
     if (window.productionPlanner?.matchesOrder && !window.productionPlanner.matchesOrder(order)) return false;
     if (printViewForOrder(order) !== activePrintView) return false;
+    if (!window.OrderBoardModel.matchesDelivery(order, activePrintDelivery)) return false;
     return order.productionStage === 'completed'
       || String(order.displayFulfillmentStatus || '').toUpperCase() !== 'FULFILLED';
   });
@@ -923,7 +945,8 @@ async function renderBoardFromLocalState(statuses, { invalidateQueueLoads = true
 window.mergeOrderManagerProduction = (saved, previousStatus) => {
   if (document.body.dataset.orderSource !== 'shopify') return;
   const fields = ['_version', 'productionStage', 'status', 'bundle', 'notes', 'targetDate',
-    'progress', 'printEligibility', 'printPlacements', 'blanksStatus', 'printsStatus', 'blanksOrdered', 'printsOrdered'];
+    'progress', 'printEligibility', 'printPlacements', 'blanksStatus', 'printsStatus', 'blanksOrdered', 'printsOrdered',
+    'printsOnSavedSheet', 'artworkReferences'];
   const move = pendingBoardMoves.get(boardOrderIdentity(saved));
   if (move && (saved._version || 0) >= move.version) {
     move.confirmed = boardMoveSnapshot(saved);

@@ -199,13 +199,98 @@ test('material flags and printed progress never manufacture a stage transition o
   const summary = model.summarize(order('pending', 'print', { blanksOrdered: 1,
     blanksStatus: 1, printsOrdered: 1, printsStatus: 0, progress: 24 }), classifiers);
   assert.equal(summary.stage, 'print');
-  assert.equal(summary.materials.blanks.label, 'Ready');
+  assert.equal(summary.materials.blanks.label, 'In hand');
   assert.equal(summary.materials.prints.label, 'Ordered');
   assert.equal(summary.progress.percent, 100);
   assert.equal(model.progress({}, 0).percent, 0);
   const outOfSequence = model.materialState(0, 1);
   assert.equal(outOfSequence.ordered, false);
   assert.equal(outOfSequence.ready, true);
+});
+
+test('overview material states match Detail, preserve independent facts and update cached summaries', () => {
+  const fixture = order('materials', 'blanks_cart', { printsOnSavedSheet: true });
+  const expected = {
+    prints: ['Not recorded', 'On saved sheet', 'Ordered', 'In hand'],
+    blanks: ['Not recorded', 'In S&S cart', 'Ordered', 'In hand']
+  };
+  for (const kind of ['prints', 'blanks']) {
+    assert.deepEqual(model.MATERIAL_OPTIONS[kind].map(option => option[1]), expected[kind]);
+    for (const [value, label] of model.MATERIAL_OPTIONS[kind]) {
+      const state = { productionStage: kind === 'blanks' && value === 'cart' ? 'blanks_cart' : 'print',
+        printsOnSavedSheet: kind === 'prints' && value === 'sheet',
+        [`${kind}Ordered`]: value === 'ordered' ? 1 : 0, [`${kind}Status`]: value === 'hand' ? 1 : 0 };
+      const result = model.materialForOrder(state, kind);
+      assert.equal(result.label, label);
+      assert.equal(result.value, value);
+      assert.equal(result.ready, value === 'hand');
+      assert.equal(result.tone, value === 'hand' ? 'ready' : value === 'none' ? 'neutral' : 'warning');
+    }
+  }
+  let row = model.summarize(fixture, classifiers);
+  assert.equal(row.materials.blanks.label, 'In S&S cart');
+  assert.equal(row.materials.prints.label, 'On saved sheet');
+  assert.equal(row.materials.prints.ready, false);
+  fixture.printsStatus = '1'; fixture.blanksStatus = 1;
+  row = model.summarize(fixture, classifiers);
+  assert.equal(row.materials.blanks.label, 'In hand');
+  assert.equal(row.materials.prints.label, 'In hand');
+  assert.equal(row.materials.prints.ordered, false, 'shelf materials need no purchase record');
+  fixture.printsStatus = 0; fixture.printsOrdered = 1;
+  assert.equal(model.summarize(fixture, classifiers).materials.prints.label, 'Ordered', 'purchase takes precedence over an obsolete sheet mark');
+  fixture.printsOrdered = 0; fixture.printsOnSavedSheet = false;
+  assert.equal(model.summarize(fixture, classifiers).materials.prints.label, 'Not recorded');
+  assert.equal(model.summarize({ ...fixture, _candidate: false, blanksStatus: 1 }, classifiers).materials.blanks.label, 'Ready', 'Legacy keeps its existing presentation');
+});
+
+test('saved-sheet-only changes invalidate retained board cards', () => {
+  const fs = require('node:fs'), vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../renderer.js'), 'utf8');
+  const start = source.indexOf('function candidateOrderRenderFingerprint(');
+  const end = source.indexOf('\nfunction changedCandidateBoardStatuses(', start);
+  const context = vm.createContext({ candidateAssetRenderFingerprint: () => null });
+  vm.runInContext(source.slice(start, end), context);
+  const fixture = order('fingerprint');
+  const before = context.candidateOrderRenderFingerprint(fixture);
+  fixture.printsOnSavedSheet = true;
+  assert.notEqual(context.candidateOrderRenderFingerprint(fixture), before);
+  fixture.printsOnSavedSheet = false;
+  assert.equal(context.candidateOrderRenderFingerprint(fixture), before);
+});
+
+test('delivery filtering uses complete source facts and stays local to the selected mobile work area', () => {
+  const jobs = ['pickup', 'shipping', 'mixed', 'local-delivery', 'pickup-point', 'unknown'].map((kind, index) =>
+    order(`delivery-${index}`, 'completed', { canonical: { commerce: { deliveryMethod: { kind, complete: true } } } }));
+  jobs.push(order('incomplete', 'completed', { canonical: { commerce: { deliveryMethod: { kind: 'shipping', complete: false } } }, shippingAddress: { city: 'Example' } }));
+  jobs.push(order('pipeline-pickup', 'received', { canonical: { commerce: { deliveryMethod: { kind: 'pickup', complete: true } } } }));
+  const original = JSON.stringify(jobs), data = model.snapshot(jobs, classifiers), view = model.createViewState();
+  view.setStage('completed'); view.setFilters({ delivery: 'pickup' });
+  assert.deepEqual(view.browse(data).rows.map(row => row.key), [model.orderKey(jobs[0])]);
+  view.setFilters({ delivery: 'shipping' });
+  assert.deepEqual(view.browse(data).rows.map(row => row.key), [model.orderKey(jobs[1])]);
+  view.setFilters({ delivery: 'other' });
+  assert.equal(view.browse(data).shown, 5, 'mixed, local delivery, pickup-point and incomplete facts are not guessed as pickup or shipping');
+  view.setFilters({ delivery: 'not-a-filter' }); assert.equal(view.get().filters.delivery, 'other');
+  view.resetFilters(); assert.equal(view.browse(data).shown, jobs.length);
+  const areas = mobile.create();
+  areas.update('print', { stage: 'completed', filters: { delivery: 'pickup' } });
+  assert.equal(areas.browse('print', data).shown, 1);
+  assert.equal(areas.get('orders').filters.delivery, 'all');
+  assert.equal(areas.get('supplies').filters.delivery, 'all');
+  areas.clear('print'); assert.equal(areas.browse('print', data).shown, 7);
+  assert.equal(JSON.stringify(jobs), original, 'browsing never changes orders or fulfillment');
+});
+
+test('delivery-only updates invalidate a retained card so its filter membership refreshes', () => {
+  const fs = require('node:fs'), vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../renderer.js'), 'utf8');
+  const start = source.indexOf('function candidateOrderRenderFingerprint(');
+  const context = vm.createContext({ candidateAssetRenderFingerprint: () => null });
+  vm.runInContext(source.slice(start, source.indexOf('\nfunction changedCandidateBoardStatuses(', start)), context);
+  const fixture = order('delivery-refresh');
+  const before = context.candidateOrderRenderFingerprint(fixture);
+  fixture.canonical = { commerce: { deliveryMethod: { kind: 'pickup', complete: true } } };
+  assert.notEqual(context.candidateOrderRenderFingerprint(fixture), before);
 });
 
 test('confirmed snapshot updates replace derived progress and stage without another store', () => {
@@ -532,6 +617,8 @@ function queueRendererFixture() {
   context.publishOrderManagerBoardSnapshot = () => { context.published++; };
   context.renderBoardFromLocalState = statuses => { context.repaints.push([...statuses]); };
   vm.runInContext('let allOrders = [];', context);
+  context.pendingBoardMoves = new Map();
+  context.boardOrderIdentity = model.orderKey;
   vm.runInContext(renderer.slice(renderer.indexOf('function patchLocalOrders('), renderer.indexOf('/**\n * Remove orders', renderer.indexOf('function patchLocalOrders('))), context);
   const start = renderer.indexOf('window.mergeOrderManagerProduction =');
   vm.runInContext(renderer.slice(start, renderer.indexOf('\n};', start) + 3), context);
@@ -716,18 +803,22 @@ function motionFixture() {
   const reduced = { matches: false, addEventListener() {} };
   const document = { body, readyState: 'complete', createElement: tag => new Node(tag),
     addEventListener() {}, querySelectorAll: () => [] };
-  const context = vm.createContext({ document, clearTimeout() {},
+  const timers = new Map(); let timerId = 0;
+  const context = vm.createContext({ document, clearTimeout: id => timers.delete(id),
     MutationObserver: class { observe() {} },
-    window: { matchMedia: () => reduced, setTimeout: () => 1 } });
+    window: { matchMedia: () => reduced, setTimeout: (fn, delay) => { const id = ++timerId; timers.set(id, { fn, delay }); return id; } } });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../order-manager-web/dashboard-motion.js'), 'utf8'), context);
-  return { motion: context.window.dashboardMotion, body, reduced, feedback: body.children[0] };
+  return { motion: context.window.dashboardMotion, body, reduced, feedback: body.children[0],
+    showPending() { for (const [id, timer] of timers) if (timer.delay === 250) { timers.delete(id); timer.fn(); } } };
 }
 
 test('save feedback waits for the original task and preserves its result', async () => {
-  const { motion, feedback } = motionFixture();
+  const { motion, feedback, showPending } = motionFixture();
   let resolve;
   const response = { production: { version: 9 } };
   const pending = motion.trackSave(() => new Promise(done => { resolve = done; }));
+  assert.equal(feedback.hidden, true, 'quick saves do not flash feedback');
+  showPending();
   assert.equal(feedback.dataset.saveState, 'saving');
   assert.equal(feedback.querySelector('span').textContent, 'Saving changes…');
   resolve(response);
@@ -736,28 +827,32 @@ test('save feedback waits for the original task and preserves its result', async
 });
 
 test('mixed saves retain review feedback until every pending save settles', async () => {
-  const { motion, feedback } = motionFixture();
+  const { motion, feedback, showPending } = motionFixture();
   let reject, resolve;
   const error = new Error('Acknowledgment unavailable');
   const failure = motion.trackSave(() => new Promise((_done, fail) => { reject = fail; }));
   const success = motion.trackSave(() => new Promise(done => { resolve = done; }));
+  showPending();
   reject(error);
   await assert.rejects(failure, value => value === error);
   assert.equal(feedback.dataset.saveState, 'saving');
   resolve(true); await success;
   assert.equal(feedback.dataset.saveState, 'review');
   await motion.trackSave(async () => true);
-  assert.equal(feedback.dataset.saveState, 'saved');
+  assert.equal(feedback.hidden, true, 'a subsequent quick success stays quiet');
 });
 
 test('list workflows keep their own detailed result feedback without generic success notices', async () => {
-  const { motion, body, feedback } = motionFixture();
+  const { motion, body, feedback, showPending } = motionFixture();
   body.dataset.orderWorkflowSaving = 'true';
   await motion.trackSave(async () => true);
   assert.equal(feedback.hidden, true);
   delete body.dataset.orderWorkflowSaving;
-  await motion.trackSave(async () => true);
+  let resolve;
+  const pending = motion.trackSave(() => new Promise(done => { resolve = done; }));
+  showPending();
   assert.equal(feedback.hidden, false);
+  resolve(true); await pending;
 });
 
 test('keyboard and reduced-motion menu opens are immediate; pointer entries cancel on interruption', () => {
@@ -780,7 +875,7 @@ test('keyboard and reduced-motion menu opens are immediate; pointer entries canc
 
 test('motion feedback preserves real adapter serialization and stays pending through queued saves', async () => {
   const { context, jobs } = adapterFixture();
-  const { motion, feedback } = motionFixture();
+  const { motion, feedback, showPending } = motionFixture();
   context.window.dashboardMotion = motion;
   const releases = [];
   let active = 0, peak = 0;
@@ -791,6 +886,7 @@ test('motion feedback preserves real adapter serialization and stays pending thr
   };
   const first = context.window.api.updateBoardMove({ provider: 'shopify', orderKey: '2' }, { status: 'print' });
   const second = context.window.api.setBundle([jobs[1].name], 'Name path');
+  showPending();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(releases.length, 1); releases[0](); await first;
   await new Promise(resolve => setImmediate(resolve));

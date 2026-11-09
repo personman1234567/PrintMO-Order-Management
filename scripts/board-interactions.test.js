@@ -348,9 +348,9 @@ test('a held drop keeps its ghost and source suppression until the matching pain
 test('detail removal preserves confirmation and history protection', async () => {
   let allow = false;
   const calls = [];
-  const order = { name: 'fixture', _candidate: true, _provider: 'etsy', _orderKey: 'etsy:fixture:1' };
+  const order = { name: 'fixture', _candidate: true, _provider: 'etsy', _orderKey: 'etsy:fixture:1', _capabilities: { productionWrite: true } };
   const context = vm.createContext({ confirm: () => allow,
-    window: { api: { deleteOrder: async name => calls.push(['remove', name]) } },
+    window: { OrderActionModel: require('../order-manager-web/order-action-model'), api: { deleteOrder: async name => calls.push(['remove', name]) } },
     detailOrder: order, closeDetail: () => calls.push(['close']),
     removeLocalOrders: names => { calls.push(['local', ...names]); return ['received']; },
     renderBoardFromLocalState: async statuses => calls.push(['paint', ...statuses]) });

@@ -93,8 +93,16 @@ workflow actions; see the
 Individual candidate cards and rows expose **Actions**, also available by
 right-click on noninteractive surfaces. The shared menu offers **Copy** (source
 order number, operational customer name, complete canonical line items, shipping
-address and email), reviewed production-stage moves, eligible printed-count
-editing, and confirmed **Remove from board** for eligible Etsy orders only.
+address and email), reviewed production-stage moves, **Prints** and **Blanks**
+status submenus, **Set/Edit target date…**, **Edit shop instructions…**, eligible printed-count editing, and confirmed **Remove from
+board** for eligible Etsy orders only. Material branches show the current state;
+radio options share Detail's exact choices and `OrderBoardModel.materialPatch`.
+The current choice is a no-op. A different choice saves through `api.updateReady`
+using the clicked order's immutable provider/order identity and the existing
+serialized revision/idempotency path, which repaints cards and lists. Pending
+saves block duplicate commands; failures retain the saved state and show retry
+guidance. Read-only/history/fulfilled orders cannot change materials. Blanks
+choices retain Detail's canonical-stage effects; no supplier order is placed.
 Removal archives the Etsy production record without deleting or fulfilling its
 source order. Shopify/PrintMO orders and unknown sources cannot be removed by this
 action; the shared adapter and Worker enforce the same restriction. Existing
@@ -103,6 +111,31 @@ canonical facts, preserves per-line variants/services, and treats fresh nulls as
 unavailable rather than falling back to stale contact data. No menu-open fetch or
 new protected-data access occurs. Links, images, editable controls and selected
 text retain native menus; keyboard and mobile use the same visible Actions.
+
+Date and shop-instruction shortcuts open the clicked order through the normal
+detail path and await its existing canonical hydration promise once. They enter
+the current date editor or notes editor (the existing notes dialog on mobile),
+preserving drafts, cancel/save behavior and target-date conflict handling.
+`OrderDetailEditors` selects the section's current workspace after mobile
+relocation. Closed/replaced detail, source/view changes, failed hydration and
+read-only orders cannot enter an editor through a delayed shortcut. Opening the
+menu or entering an editor never saves a value.
+
+The shared menu uses monochrome primary-action icons, an order/customer/source
+header, and quiet dividers around the material pair. Material labels and exact
+saved values are separate; In hand alone uses green text. At narrow phone widths
+values wrap below their own label. An expanded parent has a neutral background,
+keyboard focus uses a blue ring, and saved material selection retains a check
+independently of hover. Keyboard and reduced-motion navigation stays immediate;
+pointer transitions retain 125ms entry and 80ms exit. Child menus have a bounded
+inner scroll surface while their outer hover bridge remains intact. Incidental
+pointer movement cannot hide a keyboard-focused child, and deliberate branch
+changes keep focus on a visible control.
+
+Material saves set `data-order-action-saving` while pending, so the shared
+dashboard feedback is suppressed in favor of one order-specific saving/result
+announcement. Saving feedback remains visible until settlement. Failures preserve
+the saved material state and report the target order; no extra mutation is made.
 
 The card accessibility **Move back** and **Move forward** buttons are mobile-only (through 900px).
 Desktop keeps reviewed Actions/keyboard movement and drag/drop; other Back
@@ -172,6 +205,13 @@ or In hand; reversing Ordered does not revive it. Blanks cart reuses the canonic
 stage. Not recorded clears manual tracking only, preserving supplier references,
 receiving/allocation facts and their warnings. No SQL migration or backfill applies.
 
+Candidate cards and desktop/mobile list rows display these same exact material
+states through `OrderBoardModel.materialForOrder`; Detail shares its options and
+precedence. Green card icons mean In hand only. Saved-sheet-only changes repaint
+retained cards from the cached board snapshot. Both materials remain visible in
+mobile Supplies even when receiving accounting is available; receiving warnings
+and quantities stay independent of the manually recorded milestone.
+
 The Shopify board keeps commerce fulfillment separate from PrintMO production state. Ready to Print has two internal views: **To Print** renders canonical `print` orders and **Printed** renders canonical `completed` orders. Completed but unfulfilled work remains in Printed for customer handoff. Exact Shopify `FULFILLED` or an archived order’s `closedAt` removes an order from every active dashboard section without rewriting its production stage. The preserved order appears in the lazy-loaded, view-only **Previous Orders** desktop menu or **History** mobile menu; the list contains no asset summaries, and complete detail/artwork loads only after an order is opened.
 
 Shopify archive, cancellation, and fulfillment are source-driven rather than operator production actions. When an authoritative summary reports `closedAt`, `cancelledAt`, or exact `FULFILLED`, the Worker keeps the D1 projection and production history but marks the projection inactive. Production edits, batch reconciliation, and clearing a PrintMO archive cannot reactivate it while Shopify continues to report any of those conditions. A fulfillment reversal restores the preserved stage when the order is otherwise active; cancelled orders remain outside this first history view.
@@ -186,9 +226,34 @@ Clicking the total opens `production-workload.js`'s garment-type popover. It rea
 
 **Today’s run** is one shared shop-scoped set of provider/order identities, stored in D1 rather than per-order production metadata. Authenticated `GET/PATCH /order-manager/v1/production-run` uses expected revision, actor-scoped idempotency, and add/remove/clear deltas. Concurrent add/remove can rebase once; clearing requires the latest revision. Only enrolled active To Print orders can be added. Selection checkboxes and bulk controls exist only inside the planner; closing without saving changes nothing. With no active queued run members and no local filter, the board reserves no additional space. Saved members leaving To Print stop contributing without a stage write. Refresh is bounded to twenty seconds while visible and also occurs on focus. A run never gates ordering, printing, fulfillment, artwork or target dates.
 
+**Print today’s run** in the planner refreshes the shared membership and opens a read-only checklist preview. It always includes all current To Print members in the saved run, independent of planner search, material, grouping, or board delivery filters. Missing/out-of-queue members are counted as excluded. Complete garment quantities and a successful run read are required. `production-run-checklist.js` produces a script-free document with provider/order identity, garment/color/size quantities, recorded placements, available item instructions and production notes, material status, target dates, and a Chicago generation timestamp/run revision. The mobile preview presents garment rows as readable blocks; printed output uses a compact table with repeating headings and paper checkboxes. Print uses the browser/device print options, including Save as PDF where supported. Changed run/order information disables printing until the preview is reopened. The checklist is a snapshot, contains no private artwork export or approval claim, and paper checks never mutate production state.
+
 Saving the nonzero printable piece total as `printedCount` from a `print` order sends `printed_count` and `stage: completed` in one versioned production patch. Lowering a completed order below its printable piece total sends `stage: print` in the same patch. The selected Ready to Print tab remains stable; count badges and an accessible status notice communicate the move.
 
 Legacy status values remain compatibility data for the Legacy Redis view only.
+
+### Delivery Filtering
+
+The production grid exposes a **Delivery** select for All delivery, Local pickup,
+Shipping, and Other / unknown. It applies to the currently selected To Print or
+Printed tab, filters individual orders before bundle grouping, and updates both
+tab counts. It does not filter Pipeline or Supplies, alter order state, fetch
+detail, or reduce the full To Print garment-workload metric. It combines with the
+existing production-planning filter. Empty results identify the delivery filter;
+All delivery restores the grid. Filter state survives tab switches in memory.
+
+`OrderBoardModel.deliveryKind` reads the complete normalized delivery method from
+the board snapshot. Only exact `pickup` and `shipping` kinds enter those filters.
+Incomplete, absent, mixed, local-delivery, pickup-point and other methods remain
+under All delivery or Other / unknown; addresses and titles never infer a method.
+Delivery changes invalidate retained cards so a refreshed order enters or leaves
+the filtered grid correctly.
+
+List Filters includes the same Delivery choices. On mobile, Print exposes a
+direct Delivery select, including Printed; the general Filters sheet includes it
+for every work area. Mobile query/filter state stays independent per work area,
+and counts reflect the selected filters. No saved order, purchase, production
+stage, fulfillment or delivery method is changed by browsing.
 
 ## Card and Detail Interactions
 

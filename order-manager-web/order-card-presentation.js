@@ -279,18 +279,12 @@
         quantity.append(number, document.createTextNode(` ${label}`));
         copy.append(quantity);
         if (kind !== 'other') {
-          const [orderedFlag, readyFlag] = kind === 'garments'
-            ? [order.blanksOrdered, order.blanksStatus]
-            : [order.printsOrdered, order.printsStatus];
-          const ordered = Boolean(Number(orderedFlag || 0));
-          const ready = Boolean(Number(readyFlag || 0));
-          const material = window.OrderBoardModel?.materialState(orderedFlag, readyFlag)
-            || { ordered, ready, label: ready ? 'Ready' : ordered ? 'Ordered' : 'Not ordered' };
-          fact.dataset.materialState = material.ready ? 'ready' : material.ordered ? 'ordered' : 'pending';
+          const material = window.OrderBoardModel.materialForOrder(order, kind === 'garments' ? 'blanks' : 'prints');
+          fact.dataset.materialState = material.value;
           const icon = document.createElement('img');
           icon.className = 'quantity-status-icon';
           icon.alt = '';
-          const asset = `${kind === 'garments' ? 'ApparelCount' : 'PrintCount'}${material.ordered || material.ready ? 'Green' : ''}.svg`;
+          const asset = `${kind === 'garments' ? 'ApparelCount' : 'PrintCount'}${material.ready ? 'Green' : ''}.svg`;
           icon.src = typeof window.getAssetPath === 'function' ? window.getAssetPath(asset) : `./Assets/${asset}`;
           const status = document.createElement('span');
           status.className = 'quantity-state';

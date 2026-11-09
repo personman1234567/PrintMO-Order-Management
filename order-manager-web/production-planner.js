@@ -36,6 +36,68 @@
     let run = { revision: 0, orders: [], updatedAt: null }, known = false, runError = '', busy = false;
     let filter = null, pendingMutation = null, fetchPromise = null, lastRead = 0, frame = 0, opener = null;
     let currentBrowse = { jobs: [], groups: [], total: 0 }, animation;
+    let checklistFingerprint = '', checklistLoading = false, previewLoaded = false;
+    const printRun = button('Print today’s run', openChecklist, 'production-planner-print');
+    $('.production-planner-heading').insertBefore(printRun, $('[data-close]'));
+    const checklist = document.createElement('dialog'); checklist.id = 'production-run-checklist';
+    checklist.setAttribute('aria-labelledby', 'production-run-checklist-title');
+    checklist.innerHTML = '<header><div><h2 id="production-run-checklist-title" tabindex="-1">Today’s run checklist</h2><p>All current To Print orders in the saved run</p></div><button type="button" data-print>Print</button><button type="button" data-back>Back to planner</button></header><p data-checklist-status role="status" aria-live="polite"></p><iframe title="Printable production run checklist"></iframe>';
+    document.body.append(checklist);
+    const printFrame = checklist.querySelector('iframe'), printButton = checklist.querySelector('[data-print]');
+    const printStatus = checklist.querySelector('[data-checklist-status]');
+    function runJobs() { const keys = runKeys(); return data().jobs.filter(job => keys.has(job.key)); }
+    function printFingerprint() {
+      const jobs = runJobs();
+      // Compare the facts on paper, so thumbnail/ticket hydration cannot invalidate a checklist.
+      return window.ProductionRunChecklist.render(jobs, {
+        generatedAt: '2000-01-01T00:00:00Z', revision: run.revision, excluded: run.orders.length - jobs.length
+      });
+    }
+    function updatePrintState() {
+      printRun.disabled = busy || checklistLoading || !known || Boolean(runError) || !available() || !runJobs().length;
+      if (checklist.open) {
+        const changed = checklistFingerprint !== printFingerprint();
+        printButton.disabled = !previewLoaded || changed || Boolean(runError) || !available();
+        if (changed) printStatus.textContent = 'Run or order information changed. Go back and reopen the checklist for a current copy.';
+        else if (runError || !available()) printStatus.textContent = 'Current run information is unavailable. Go back and refresh before printing.';
+      }
+    }
+    async function openChecklist() {
+      if (!candidate() || busy || checklistLoading) return;
+      checklistLoading = true; updatePrintState(); report('Preparing the saved run…');
+      try {
+        await refreshRun(true);
+        if (!candidate()) return;
+        if (!known || runError) throw new Error('Refresh the shared run before printing.');
+        if (!available()) throw new Error('Complete garment quantities are not available. Refresh orders before printing.');
+        const jobs = runJobs();
+        if (!jobs.length) throw new Error('Add orders to today’s run before printing.');
+        checklistFingerprint = printFingerprint(); printButton.disabled = true; previewLoaded = false;
+        printStatus.textContent = 'Loading preview…';
+        printFrame.onload = () => {
+          previewLoaded = true; printStatus.textContent = 'Snapshot ready. Print or save as PDF using your device’s print options.';
+          updatePrintState();
+        };
+        printFrame.srcdoc = window.ProductionRunChecklist.render(jobs, {
+          revision: run.revision, excluded: run.orders.length - jobs.length
+        });
+        checklist.showModal(); checklist.querySelector('h2').focus(); report('');
+      } catch (error) { report(error.message || 'The checklist could not load.', true); }
+      finally { checklistLoading = false; updatePrintState(); }
+    }
+    function closeChecklist() {
+      if (!checklist.open) return;
+      checklist.close();
+      if (dialog.open) printRun.focus();
+    }
+    checklist.querySelector('[data-back]').addEventListener('click', closeChecklist);
+    checklist.addEventListener('cancel', event => { event.preventDefault(); closeChecklist(); });
+    printButton.addEventListener('click', () => {
+      updatePrintState();
+      if (!candidate() || printButton.disabled) return;
+      try { printFrame.contentWindow.focus(); printFrame.contentWindow.print(); }
+      catch { printStatus.textContent = 'Printing is unavailable in this browser. Try opening Order Manager in a desktop browser.'; }
+    });
     const runKeys = () => new Set(run.orders.map(model.key));
     const dateLabel = order => window.OrderDetailState?.targetDatePresentation(order);
     function report(copy, error = false) { status.textContent = copy; status.dataset.error = String(error); }
@@ -72,6 +134,7 @@
       filterLabel.textContent = filter?.label || '';
       clearFilterButton.hidden = !filter;
       context.hidden = !candidate() || (runLink.hidden && !filter);
+      updatePrintState();
     }
     async function refreshRun(force = false) {
       if (!candidate() || document.hidden || !window.api?.getProductionRun) return;
@@ -132,6 +195,7 @@
       $('[data-retry]').hidden = !runError;
       $('[data-select-all]').disabled = !currentBrowse.jobs.length;
       $('[data-deselect]').disabled = !chosen.size;
+      updatePrintState();
     }
     function readiness(group) {
       return [[group.ready, 'blanks ready'], [group.waiting, 'blanks pending'], [group.unknown, 'status unknown']]
@@ -258,7 +322,7 @@
     document.addEventListener('click', event => { if (event.target.closest('#print-view-printed') && filter) { filter = null; updateContext(); } });
     new MutationObserver(() => {
       if (!candidate() || (document.body.dataset.activeView && document.body.dataset.activeView !== 'orders')) {
-        filter = null; close(); context.hidden = true;
+        filter = null; closeChecklist(); close(); context.hidden = true;
       } else schedule();
     }).observe(document.body, { attributes: true, attributeFilter: ['data-order-source', 'data-active-view'] });
     document.addEventListener('visibilitychange', () => { if (!document.hidden) void refreshRun(true); });

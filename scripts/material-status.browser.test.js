@@ -18,6 +18,9 @@ test('compact materials: saved statuses, shelf readiness, safe Undo and keyboard
   const html = await fs.readFile(path.join(root, 'order-manager-web/index.html'), 'utf8');
   const source = await fs.readFile(path.join(root, 'order-manager-web/detail-overlay-enhancements.js'), 'utf8');
   const component = source.slice(source.indexOf('  let materialMenu = null;'), source.indexOf('  function syncPrintPlacements('));
+  const listSource = await fs.readFile(path.join(root, 'order-manager-web/order-list-foundation.js'), 'utf8');
+  const listHelpers = listSource.slice(listSource.indexOf('  function text('), listSource.indexOf('  function detailOpen('));
+  const listRows = listSource.slice(listSource.indexOf('  function makeRow('), listSource.indexOf('  function reconcileRows('));
   assert(component.includes('async function saveMaterialStatus'));
   const markup = html.slice(html.indexOf('<section id="detail-production-card"'), html.indexOf('</section>', html.indexOf('<section id="detail-production-card"')) + '</section>'.length);
   const order = { name: '#SYNTHETIC', _candidate: true, _provider: 'shopify', _orderKey: 'fixture-order', productionStage: 'received', blanksStatus: 0, blanksOrdered: 0, printsStatus: 0, printsOrdered: 0, printsOnSavedSheet: false, blanksPo: ['SYN-HISTORY'] };
@@ -26,14 +29,30 @@ test('compact materials: saved statuses, shelf readiness, safe Undo and keyboard
   window.calls = []; window.failSave = false;
   window.api = { updateReady: async (reference, patch) => { window.calls.push({ reference, patch }); if(window.failSave) throw Error('Synthetic save unavailable'); } };
   window.closeCount=0; document.getElementById('detail-close').onclick=()=>{window.closeCount++;OrderDetailMaterialMenu.close();document.getElementById('detail-overlay').classList.add('hidden');};
-  const patchLocalOrders = () => new Set(); const renderBoardFromLocalState = async () => {}; const syncCanonicalProductionControls = () => {};
+  const patchLocalOrders = () => new Set(); const renderBoardFromLocalState = async () => window.renderOverview(); const syncCanonicalProductionControls = () => {};
+  const model = window.OrderBoardModel, headings = ['Order / Customer','Stage','Due / Age','Quantities','Blanks','Print materials / Progress','Payment / Total','Attention'];
+  const rowNodes = new Map(); let rowSequence=0, selected=[], busy=false, overviewRecord;
+  const paymentKey = value => String(value || 'UNKNOWN'); const humanStatus = value => String(value || 'Unknown');
+  ${listHelpers}
+  ${listRows}
+  window.renderOverview = () => {
+    const host = document.getElementById('fixture-outside'); host.classList.add('order-list-foundation');
+    let overview = document.getElementById('overview-fixture');
+    if(!overview){overview=document.createElement('section');overview.id='overview-fixture';overview.innerHTML='<h2>Order overview</h2><div id="fixture-card" style="width:248px;max-width:100%"></div><div class="order-list-scroll"><table class="order-list-table"><thead><tr>'+headings.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody id="fixture-rows"></tbody></table></div>';host.append(overview);}
+    const card=document.createElement('article');card.className='card pipeline-card';card.innerHTML='<div class="card-header"><span class="cust-name"></span></div><div class="card-body"><div class="counts"></div></div>';
+    window.OrderCardPresentation.decorate(card,currentDetailOrder,{apparel:8,prints:8,other:0,style:'pipeline'});
+    document.getElementById('fixture-card').replaceChildren(card);
+    const row=model.summarize({...currentDetailOrder,items:[],canonical:{commerce:{}}},{accountingForOrder:()=>({accountedGarments:3,expectedGarments:8,missingGarments:5,lines:[{allocationPending:true}]})});
+    overviewRecord ||= makeRow(row.key);renderRow(row,overviewRecord);document.getElementById('fixture-rows').append(overviewRecord.node);
+  };
   ${component}
   window.materialFixture = { order: () => currentDetailOrder, sync: syncMaterialStatuses, select: saveMaterialStatus, reset: () => {currentDetailOrder = ${JSON.stringify(order)}; materialUndo=null; window.calls=[]; syncMaterialStatuses();} };
-  wireMaterialStatuses(); syncMaterialStatuses(); window.fixtureReady = true;
+  wireMaterialStatuses(); syncMaterialStatuses(); window.renderOverview(); window.fixtureReady = true;
   </script><script src="/accessibility-hardening.js"></script></body></html>`;
   const server = http.createServer(async (req, res) => {
-    if (req.url === '/') { res.setHeader('Content-Type', 'text/html'); return res.end(fixture); }
-    if (['/order-detail-split.css','/desktop.css','/mobile.css','/accessibility-hardening.css','/accessibility-hardening.js'].includes(req.url)) { res.setHeader('Content-Type', req.url.endsWith('.js') ? 'text/javascript' : 'text/css'); return res.end(await fs.readFile(path.join(root, 'order-manager-web',req.url.slice(1)))); }
+    if (/^\/Assets\/(ApparelCount|PrintCount)(Green)?\.svg$/.test(req.url)) { res.setHeader('Content-Type','image/svg+xml'); return res.end(await fs.readFile(path.join(root,'order-manager-web',req.url.slice(1)))); }
+    if (req.url === '/') { res.setHeader('Content-Type', 'text/html'); return res.end(fixture.replace('<script>', '<script src="/order-board-model.js"></script><script src="/order-card-presentation.js"></script><link rel="stylesheet" href="/order-card-presentation.css"><link rel="stylesheet" href="/order-list-foundation.css"><script>')); }
+    if (['/order-board-model.js','/order-card-presentation.js','/order-card-presentation.css','/order-list-foundation.css','/order-detail-split.css','/desktop.css','/mobile.css','/accessibility-hardening.css','/accessibility-hardening.js'].includes(req.url)) { res.setHeader('Content-Type', req.url.endsWith('.js') ? 'text/javascript' : 'text/css'); return res.end(await fs.readFile(path.join(root, 'order-manager-web',req.url.slice(1)))); }
     res.statusCode = 404; res.end();
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -52,6 +71,8 @@ test('compact materials: saved statuses, shelf readiness, safe Undo and keyboard
     await evaluate('document.getElementById("material-prints-button").click();document.querySelector("[role=menuitemradio][aria-checked=true]").click()');
     assert.equal(await evaluate('calls.length'), 0, 'current choice must not write');
     await evaluate('materialFixture.select("prints","sheet")');
+    assert.equal(await evaluate('document.querySelector("[data-quantity-kind=prints] .quantity-state").textContent'), 'On saved sheet');
+    assert.equal(await evaluate('document.querySelector("#fixture-rows td:nth-child(6) .order-list-pill").textContent'), 'On saved sheet');
     assert.equal(await evaluate('calls[0].patch.printsOnSavedSheet'), true);
     assert.equal(await evaluate('document.getElementById("material-status-menu").hidden'), true);
     await evaluate('materialFixture.select("prints","ordered");');
@@ -64,6 +85,10 @@ test('compact materials: saved statuses, shelf readiness, safe Undo and keyboard
     assert.equal(await evaluate('materialFixture.order().printsOrdered'), 0, 'physical prints may be on hand without a purchase record');
     await evaluate('materialFixture.select("blanks","cart")');
     assert.equal(await evaluate('calls.at(-1).patch.stage'), 'blanks_cart');
+    assert.equal(await evaluate('document.querySelector("[data-quantity-kind=garments] .quantity-state").textContent'), 'In S&S cart');
+    assert.equal(await evaluate('document.querySelector("#fixture-rows td:nth-child(5) .order-list-pill").textContent'), 'In S&S cart');
+    assert.match(await evaluate('document.getElementById("fixture-rows").textContent'), /3\/8 supplier garments received/);
+    assert.match(await evaluate('document.getElementById("fixture-rows").textContent'), /Allocation needs review/);
     await evaluate('(async()=>{await materialFixture.select("blanks","none");await materialFixture.select("blanks","hand");})()');
     assert.equal(await evaluate('materialFixture.order().blanksStatus'), 1);
     assert.equal(await evaluate('materialFixture.order().blanksOrdered'), 0);
@@ -127,6 +152,32 @@ test('compact materials: saved statuses, shelf readiness, safe Undo and keyboard
     assert.equal(await evaluate('document.activeElement.id'), 'detail-close', 'Shift-Tab closes menu and restores the preceding detail control');
     await evaluate('materialFixture.order()._historyReadOnly=true;materialFixture.sync()');
     assert.equal(await evaluate('document.getElementById("material-prints-button").disabled'), true);
+    await evaluate('materialFixture.reset();renderOverview();document.getElementById("detail-overlay").hidden=true');
+    for (const [name, width, height] of [['desktop',1280,900],['phone',393,844],['narrow',320,844]]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor:1, mobile:width<900 });
+      for (const [blanks, prints, expectedBlanks, expectedPrints] of [
+        ['none','none','Not recorded','Not recorded'],['cart','sheet','In S&S cart','On saved sheet'],
+        ['ordered','ordered','Ordered','Ordered'],['hand','hand','In hand','In hand'],
+        ['cart','sheet','In S&S cart','On saved sheet']
+      ]) {
+        await evaluate(`(async()=>{await materialFixture.select('blanks',${JSON.stringify(blanks)});await materialFixture.select('prints',${JSON.stringify(prints)});})()`);
+        const facts = await evaluate(`({ card:[...document.querySelectorAll('#fixture-card .quantity-state')].map(n=>n.textContent),
+          list:[5,6].map(i=>document.querySelector('#fixture-rows td:nth-child('+i+') .order-list-pill').textContent),
+          detail:[document.getElementById('material-blanks-button'),document.getElementById('material-prints-button')].map(n=>n.querySelector('.material-status-value').textContent),
+          green:[...document.querySelectorAll('#fixture-card .quantity-status-icon')].every(n=>n.src.includes('Green')===${blanks==='hand'}),
+          labelsFit:[...document.querySelectorAll('#fixture-card .quantity-state')].every(n=>n.scrollWidth<=n.clientWidth+1) })`);
+        assert.deepEqual(facts.card,[expectedBlanks,expectedPrints]);
+        assert.deepEqual(facts.list,facts.card); assert.deepEqual(facts.detail,facts.card);
+        assert.equal(facts.green,true,'only physical availability uses green icons');
+        assert.equal(facts.labelsFit,true,'long material labels wrap within the existing card');
+      }
+      await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true,`${name} overview has no horizontal overflow`);
+      if(process.env.PRINTMO_MATERIAL_SCREENSHOTS){
+        const screenshot=await cdp.send('Page.captureScreenshot',{format:'png'});
+        await fs.writeFile(path.join(process.env.PRINTMO_MATERIAL_SCREENSHOTS,`material-overview-${name}.png`),Buffer.from(screenshot.data,'base64'));
+      }
+    }
   } finally {
     cdp?.close(); browser.kill(); await new Promise(resolve => server.close(resolve));
   }

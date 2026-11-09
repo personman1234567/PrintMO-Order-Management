@@ -71,9 +71,9 @@ test('partial item snapshots do not present unknown quantities as zero while cac
   const h = harness(); h.row.partial = true; h.row.quantities = { garments: 0, prints: 0 }; h.render();
   assert.match(h.record.detail.textContent, /Item quantities unavailable/);
   assert.doesNotMatch(h.record.detail.textContent, /0 garments|0 print items/);
-  assert.match(h.record.detail.textContent, /Blanks ordered/);
+  assert.match(h.record.detail.textContent, /Blanks: Ordered/);
   h.row.partial = false; h.row.quantities = { garments: 3, prints: 2 }; h.render();
-  assert.match(h.record.detail.textContent, /Blanks ordered/); assert.match(h.record.attention.children[0].textContent, /Cached data/);
+  assert.match(h.record.detail.textContent, /Blanks: Ordered/); assert.match(h.record.attention.children[0].textContent, /Cached data/);
 });
 
 test('Supplies and Print retain the existing text layout and can return to recognition rows', () => {

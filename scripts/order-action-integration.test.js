@@ -41,7 +41,8 @@ function fixture() {
     [renderer, 'async function removeOrderFromBoard(', '\nfunction makeBundleCard('],
     [shim, 'function candidateByName(', '\nfunction applyCandidateProduction('],
     [shim, 'window.api.deleteOrder =', '\nwindow.api.updateBundleStatus ='],
-    [shim, 'window.api.updateProgress =', '\nwindow.api.updateName =']
+    [shim, 'window.api.updateProgress =', '\nwindow.api.updateName ='],
+    [shim, 'window.api.updateReady =', '\n// Per-order CAS']
   ]) vm.runInContext(section(source, start, end), context);
   context.updateCandidateOrder = async (key, patch) => {
     const order = context.candidateByName(key);
@@ -56,6 +57,43 @@ function fixture() {
     fail: error => { failure = error; }
   };
 }
+
+test('material choices use Detail patches and exact provider identity through the readiness adapter', async () => {
+  const model = require('../order-manager-web/order-board-model');
+  for (const provider of ['shopify', 'etsy']) {
+    for (const kind of ['prints', 'blanks']) {
+      for (const [value] of model.MATERIAL_OPTIONS[kind]) {
+        const f = fixture(), target = f.orders.find(order => order._provider === provider);
+        Object.assign(target, { productionStage: 'print', blanksOrdered: 0, printsOrdered: 0,
+          blanksStatus: 0, printsStatus: 0, printsOnSavedSheet: true });
+        const before = JSON.stringify(target);
+        const patch = model.materialPatch(kind, value, target);
+        const other = kind === 'prints' ? 'blanks' : 'prints';
+        assert.equal(Object.hasOwn(patch, `${other}Ordered`), false);
+        assert.equal(Object.hasOwn(patch, `${other}Status`), false);
+        await f.context.window.api.updateReady(reference(target), patch);
+        const call = f.calls.canonical[0];
+        assert.deepEqual(call.reference, reference(target));
+        assert.deepEqual(call.target, reference(target));
+        assert.equal(f.calls.legacy.length, 0);
+        assert.equal(JSON.stringify(target), before, 'patch generation never mutates the cached order');
+        if (kind === 'prints') {
+          assert.equal(call.patch.prints_status, value === 'hand' ? 1 : 0);
+          assert.equal(call.patch.prints_ordered, value === 'ordered' ? 1 : 0);
+          assert.equal(call.patch.prints_on_saved_sheet, value === 'sheet');
+          assert.equal(Object.hasOwn(call.patch, 'stage'), false);
+        } else {
+          assert.equal(call.patch.blanks_status, value === 'hand' ? 1 : 0);
+          assert.equal(call.patch.blanks_ordered, value === 'ordered' ? 1 : 0);
+          assert.equal(call.patch.stage, value === 'cart' ? 'blanks_cart' : value === 'ordered' ? 'blanks_ordered' : undefined);
+        }
+      }
+    }
+  }
+  assert.deepEqual(model.materialPatch('blanks', 'none', { stage: 'blanks_cart' }), { blanksStatus: 0, blanksOrdered: 0, stage: 'received' });
+  assert.deepEqual(model.materialPatch('prints', 'hand', { printsOrdered: 1 }), { printsStatus: 1, printsOrdered: 1, printsOnSavedSheet: false });
+  assert.throws(() => model.materialPatch('prints', 'cart', {}), /valid material status/);
+});
 
 for (const provider of ['etsy']) {
   test(`confirmed ${provider} removal archives only its immutable identity despite a display-name collision`, async () => {

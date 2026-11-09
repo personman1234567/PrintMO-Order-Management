@@ -2594,7 +2594,21 @@ async function upstreamDataRequest(env, path, options = {}) {
     if (env.SHOPIFY_SHOP_DOMAIN) headers.set('X-Shopify-Shop-Domain', String(env.SHOPIFY_SHOP_DOMAIN).toLowerCase());
     if (options.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     const response = await fetch(`${upstreamBase}${path}`, { ...options, headers });
-    const text = await response.text();
+    const responseId = response.headers.get('X-Order-Manager-Response-Id');
+    const gatewayEvidence = {
+        httpStatus: response.status,
+        contentType: String(response.headers.get('Content-Type') || '').split(';')[0].slice(0, 80),
+        responseId: /^ssr-[a-f0-9-]{36}$/.test(responseId || '') ? responseId : null,
+        bodyFormat: 'unreadable', bodyBytes: null,
+        hasSupplierStatus: false, hasSupplierMessage: false, hasDispatchMarker: false
+    };
+    let text;
+    try { text = await response.text(); } catch {
+        const error = new Error('The gateway response ended before its body could be read.');
+        error.status = response.status >= 400 ? response.status : 502;
+        error.gatewayEvidence = { ...gatewayEvidence, failurePhase: 'body_read' };
+        throw error;
+    }
     let body = null;
     let bodyFormat = text ? 'json' : 'empty';
     try { body = text ? JSON.parse(text) : null; } catch { bodyFormat = 'non_json'; }
@@ -2604,8 +2618,7 @@ async function upstreamDataRequest(env, path, options = {}) {
         error.body = body;
         // Structural metadata only: never persist raw HTML, customer payloads or headers.
         error.gatewayEvidence = {
-            httpStatus: response.status,
-            contentType: String(response.headers.get('Content-Type') || '').split(';')[0].slice(0, 80),
+            ...gatewayEvidence,
             bodyFormat, bodyBytes: new TextEncoder().encode(text).length,
             hasSupplierStatus: typeof body?.upstreamHttpStatus === 'number',
             hasSupplierMessage: typeof body?.error?.message === 'string',
@@ -5556,6 +5569,7 @@ function defaultProductionState(actor = 'system') {
         stage: 'received',
         readiness: { blanksOrdered: false, blanksReady: false, printsOrdered: false, printsReady: false },
         printsOnSavedSheet: false,
+        artworkReferences: {},
         printedCount: 0,
         printEligibility: {},
         printPlacements: {},
@@ -5591,6 +5605,8 @@ function normalizeProductionState(value, actor = 'system') {
             printsReady: Boolean(readiness.printsReady)
         },
         printsOnSavedSheet: Boolean(input.printsOnSavedSheet) && !readiness.printsOrdered && !readiness.printsReady,
+        artworkReferences: Object.fromEntries(Object.entries(input.artworkReferences || {})
+            .filter(([key, value]) => /^[A-Za-z0-9_-]{1,160}\|[a-z0-9_-]{0,40}$/.test(key) && value === true).slice(0, 500)),
         printedCount: Math.min(Math.max(Number(input.printedCount) || 0, 0), 1000000),
         printEligibility: Object.fromEntries(Object.entries(input.printEligibility || {})
             .filter(([id, value]) => validPrintItemId(id) && typeof value === 'boolean').slice(0, 1000)),
@@ -5646,6 +5662,7 @@ function productionForClient(gid, state, compareDigest, assets = [], garmentCoun
         printsStatus: state.readiness.printsReady ? 1 : 0,
         printsOrdered: state.readiness.printsOrdered ? 1 : 0,
         printsOnSavedSheet: Boolean(state.printsOnSavedSheet),
+        artworkReferences: { ...state.artworkReferences },
         internalNotes: state.internalNotes,
         attention: state.attention,
         archivedAt: state.archivedAt,
@@ -5692,6 +5709,8 @@ function normalizeProductionPatch(patch) {
         prints_ordered: 'printsOrdered',
         printsOnSavedSheet: 'printsOnSavedSheet',
         prints_on_saved_sheet: 'printsOnSavedSheet',
+        artworkReferences: 'artworkReferences',
+        artwork_references: 'artworkReferences',
         attention: 'attention',
         archivedAt: 'archivedAt',
         archived_at: 'archivedAt'
@@ -5703,6 +5722,17 @@ function normalizeProductionPatch(patch) {
         normalized[target] = value;
     }
     if ('printPlacements' in normalized) normalizePrintPlacements(normalized.printPlacements, true);
+    if ('artworkReferences' in normalized) {
+        const references = normalized.artworkReferences;
+        if (!references || typeof references !== 'object' || Array.isArray(references)
+            || Object.keys(references).length > 500
+            || Object.entries(references).some(([key, value]) => !/^[A-Za-z0-9_-]{1,160}\|[a-z0-9_-]{0,40}$/.test(key)
+                || (value !== true && value !== null))) {
+            throw Object.assign(new Error('Artwork references require asset/placement identities and true or null.'), {
+                code: 'INVALID_ARTWORK_REFERENCE', status: 400
+            });
+        }
+    }
     if ('targetDate' in normalized && normalized.targetDate !== null && !validTargetDate(normalized.targetDate)) {
         throw Object.assign(new Error('Choose a valid target date, or clear the date.'), {
             code: 'INVALID_TARGET_DATE', status: 400
@@ -5774,6 +5804,17 @@ function applyProductionPatch(current, patch, actor, mutationId) {
     if ('printsStatus' in patch) next.readiness.printsReady = Boolean(Number(patch.printsStatus));
     if ('printsOrdered' in patch) next.readiness.printsOrdered = Boolean(Number(patch.printsOrdered));
     if ('printsOnSavedSheet' in patch) next.printsOnSavedSheet = Boolean(Number(patch.printsOnSavedSheet));
+    if ('artworkReferences' in patch) {
+        for (const [key, value] of Object.entries(patch.artworkReferences)) {
+            if (value === null) delete next.artworkReferences[key];
+            else next.artworkReferences[key] = true;
+        }
+        if (Object.keys(next.artworkReferences).length > 500) {
+            throw Object.assign(new Error('This order already has 500 reference files. Restore a reference before adding another.'), {
+                code: 'INVALID_ARTWORK_REFERENCE', status: 400
+            });
+        }
+    }
     if (next.readiness.printsOrdered || next.readiness.printsReady) next.printsOnSavedSheet = false;
     // Blanks Cart and Blanks Ordered are canonical substages. Keep the
     // compatibility readiness flag aligned so older render surfaces cannot
@@ -8367,6 +8408,16 @@ async function handleV1ProductionPatch(request, env, allowOrigin, reqAllowHeader
             });
         }
 
+        if ('artworkReferences' in patch) {
+            const linkedAssets = await d1AssetsForOrder(env, shop.id, gid);
+            const validReferences = new Set(linkedAssets.filter(asset => asset.role !== 'mockup')
+                .map(asset => `${asset.assetId}|${asset.side || ''}`));
+            if (Object.keys(patch.artworkReferences).some(key => !validReferences.has(key))) {
+                return v1Error({ code: 'INVALID_ARTWORK_REFERENCE',
+                    message: 'The design file is no longer attached to this order. Refresh the artwork before trying again.'
+                }, allowOrigin, reqAllowHeaders, 400);
+            }
+        }
         const nextState = applyProductionPatch(current.state, patch, actor, requestRow.id);
         garmentCount = validatePrintablePatch(current.countLineItems, current.state, patch, nextState);
         const saved = await setProductionMetafield(env, gid, nextState, current.compareDigest);

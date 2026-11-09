@@ -26,13 +26,19 @@
 
 ## Current Release Boundary
 
-Current Order Manager production deployment on 2026-11-03:
+Current Order Manager production deployment on 2026-11-05:
 
-- Gateway commit: `9ca1e811eef02508f97082963f0b7cc178917aa9`, the reviewed six-file fast-forward from main `c0ca1e3`. Render service `srv-d07v58adbo4c738s2mag` manually deployed it as `dep-dbkkga6c6qcc73an2260` and reached Live. Auto-Deploy remains Off; build/start remain `npm install` / `node index.js`.
-- Worker version: `552b52ba-67e0-446f-b651-8b372969ebcc` at `https://order-manager-proxy.printmobusiness.workers.dev`, deployed with `--keep-vars`. Readback confirmed all bindings unchanged and `SS_TEST_ORDER=1`.
+- Worker version `915764d1-2dc2-419a-ace5-eed0525f6ea3` adds retained artwork-reference classification through the existing canonical production patch. Its pre-feature bundle was byte-identical to the downloaded active `48caebb3-43a0-4c71-99af-84026b528e1c` source. All existing binding fingerprints match after deployment, including `SS_TEST_ORDER=1`; compatibility date, service targets and schema are unchanged. No migration or supplier request was needed.
+- Pages deployment `902107ad.print-mo-order-manager.pages.dev` serves release `1793901646332` on production. The registered native Windows production command built with the current real public Shopify client ID and verified the production marker. Both HTML entry points on production and the immutable deployment have that marker; all 65 referenced runtime assets match the built artifact. The three placement-editor files remain byte-identical to the preceding production release. No unrelated website/theme or Designer Worker was deployed.
+- Thirteen focused tests, Phase 1/2, syntax, docs and packaging passed. Authenticated Shopify read-only acceptance opened the saved-sheet review and verified the original/replacement artwork controls, then cancelled/closed both without saving. Live artwork classification and print-status writes remain intentionally unexercised; persistence, recovery, conflicts and partial retries are covered by synthetic tests. The existing broader board-removal fixture failure also reproduces in the unchanged baseline.
+
+Previous production deployment on 2026-11-03:
+
+- Gateway commit: `f6e61dc959785149d696d9a722b2091c3c12e894`, the isolated eight-file response-status/correlation correction from main `9ca1e81`. Render service `srv-d07v58adbo4c738s2mag` manually deployed it as `dep-dbl2o5u7bikc7387rsm0` and reached Live. Auto-Deploy remains Off; build/start remain `npm install` / `node index.js`.
+- Worker version: `48caebb3-43a0-4c71-99af-84026b528e1c` at `https://order-manager-proxy.printmobusiness.workers.dev`, deployed with `--keep-vars`. Readback confirmed all bindings unchanged and `SS_TEST_ORDER=1`. Native HTTP error status is preserved; response IDs and interrupted-body evidence survive the parser/persistence path. Gateway and Worker unauthenticated read checks returned JSON 401. Simulated complete, replaced plain-text and terminated responses passed through the actual handler/Worker/database path; no supplier request was used to verify production. The producing hop for the historical 16-byte plain-text 502 remains unknown, and no historical attempt was changed.
 - Pages deployment: `a236a888.print-mo-order-manager.pages.dev`, production release `1793672768608` at `https://print-mo-order-manager.pages.dev`. Both entry-point markers and 63 referenced assets matched the exact tested artifact on production and the immutable deployment.
-- D1 schema remains at `0015_supplier_submission_safety.sql`. Explicit owner approvals appended retry-resolution audits only for `ssb-c9df41fc34b5a509fabe003c` and `ssb-2e9c28952a54305f4337a84b`. Original outcomes, requests, responses and timestamps remain unchanged. No migration, hold purge, supplier POST or customer-order test mutation was performed.
-- Immediate rollback references: gateway `c0ca1e3e78a8b1eb9e345260af5e27f358c7e096` / Render `dep-dbkifd7b9u1s73e4ub60`; Worker `11b4cfd3-ff7c-4b9a-9a94-afed79040411`; Pages `a1df44b4.print-mo-order-manager.pages.dev` / `1793665005128`. A code rollback must preserve both append-only owner-resolution audits; it does not reverse business history.
+- D1 schema remains at `0015_supplier_submission_safety.sql`. Explicit owner approvals appended retry-resolution audits only for `ssb-c9df41fc34b5a509fabe003c`, `ssb-2e9c28952a54305f4337a84b` and, subsequently, `ssb-072a8d3549456f0da3350b8b` (`owner-retry-072a-20261103`, 19:09:54.212 UTC). Original outcomes, requests, responses, timestamps and commit counts remain unchanged. No migration, hold purge, supplier POST or customer-order test mutation was performed by the repair agent. The owner subsequently reported their own tests worked; this is user-reported recovery, not independent proof of the earlier hosted response-replacement mechanism.
+- Immediate backend rollback references: gateway `9ca1e811eef02508f97082963f0b7cc178917aa9` / Render `dep-dbkkga6c6qcc73an2260`; Worker `552b52ba-67e0-446f-b651-8b372969ebcc`. Pages was unchanged by the response-boundary correction. A code rollback must preserve all append-only owner-resolution audits; it does not reverse business history.
 
 The supplier restoration removes historical-overlap bans for known completed
 placements and retires the retry-review override with `410`, preserving its audit
@@ -110,10 +116,36 @@ The JSON metafield contains:
 - `readiness.blanksOrdered`, `readiness.blanksReady`, `readiness.printsOrdered`, and `readiness.printsReady`;
 - `printedCount`, `bundleId`, `batchRefs`, and `internalNotes`;
 - optional `printPlacements`, a bounded map of manual print-to-garment/location assignments;
+- optional `artworkReferences`, a bounded map of retained design asset/side identities;
 - optional `targetDate` (a valid calendar date in `YYYY-MM-DD` format, or `null`);
 - attention/archive fields and actor/timestamps.
 
 Allowed stages are `received`, `to_order`, `blanks_cart`, `blanks_ordered`, `print`, and `completed`.
+
+Local artwork-use controls keep reference designs in a closed **References**
+disclosure in Production. **Keep as reference** removes only that asset/side from
+the main production list; **Restore to production** reverses it. Downloads,
+original bytes, links, assignments and manifests remain intact. This is an
+operator classification, not artwork approval or automatic replacement matching.
+`artwork_references` patches merge individual `assetId|side` keys (true retains a
+reference, null restores production use), validate active design association to
+that Shopify order and use existing revision/CAS, idempotency and audit contracts.
+Older records default empty. This additive schema-v1 field requires no D1
+migration; any Worker rollback must preserve it once saved.
+
+The local **Saved-sheet prints** action in the workspace Menu reviews all active
+Shopify orders marked **On saved sheet**, independently of board filters. The
+operator can uncheck orders on another sheet before marking the selection
+**Ordered**. There is currently no persisted sheet identity or membership record;
+this is a reviewed status batch, not automatic inference of sheet contents.
+Each selected order uses its existing serialized, revisioned production write,
+sets only prints Ordered and clears its saved-sheet mark, and rechecks status
+after a conflict before retrying once. In-hand, already-ordered, completed,
+read-only and other-provider orders are excluded. Partial outcomes are shown per
+order; acknowledged successes are excluded from retries. Blanks, physical print
+readiness, production stage, commerce and supplier ordering remain independent.
+These controls were released on 2026-11-05; see the current release boundary above.
+
 `targetDate` is an internal shop finish-by day, interpreted in `America/Chicago`.
 It is an additive schema-v1 field: older records default to `null`, no backfill is
 required, and unrelated production saves preserve it. `target_date`/`targetDate`

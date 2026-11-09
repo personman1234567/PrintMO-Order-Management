@@ -60,6 +60,8 @@
   body[data-mobile-workspace="true"] .mw-subviews label { display: flex; gap: 10px; align-items: center; width: 100%; color: var(--mw-muted); font-size: 13px; }
   body[data-mobile-workspace="true"] .mw-subviews select { flex: 1; font-size: 14px; padding: 7px 10px; }
   body[data-mobile-workspace="true"] .mw-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; flex-shrink: 0; padding-bottom: 8px; }
+  body[data-mobile-workspace="true"] .mw-delivery { display: flex; align-items: center; gap: 10px; flex-shrink: 0; padding-bottom: 8px; color: var(--mw-muted); font-size: 13px; }
+  body[data-mobile-workspace="true"] .mw-delivery select { flex: 1; }
   body[data-mobile-workspace="true"] .mw-search { min-width: 0; }
   body[data-mobile-workspace="true"] .mw-search input { width: 100%; padding: 9px; }
   body[data-mobile-workspace="true"] .mw-toolbar > button { padding: 9px; font-size: 13px; }

@@ -41,6 +41,11 @@
   let newlyCompleteOrders = [];
   let newlyCompleteBatchId = '';
   let receiveSearch = '';
+  let receiveAttentionOnly = false;
+  let allocationSaveBusy = false;
+  let allocationNeedsRefresh = false;
+  let allocationFeedback = '';
+  const reviewModel = window.ReceivingReviewModel;
   let outsideOrderSelection = [];
   const batchDetailsById = new Map();
   const orderAccountingByName = new Map();
@@ -1470,6 +1475,8 @@
         <section id="blanks-receive-lookup" class="blanks-receive-lookup" aria-label="Find a shipment">
           <label for="blanks-receive-search">Find by S&amp;S order number, PO, or tracking</label>
           <input id="blanks-receive-search" type="search" autocomplete="off" placeholder="Enter shipment number">
+          <label class="blanks-receive-attention-toggle"><input id="blanks-receive-attention-only" type="checkbox"> <span id="blanks-receive-attention-label">Needs receiving attention</span></label>
+          <span id="blanks-receive-results" role="status" aria-live="polite"></span>
         </section>
         <section id="blanks-receive-create-panel" class="blanks-receive-order-picker" hidden aria-labelledby="blanks-receive-create-title">
           <h3 id="blanks-receive-create-title">Outside S&amp;S purchase</h3>
@@ -1515,10 +1522,17 @@
           </div>
         </section>
         <div class="manual-add-body">
+          <section id="blanks-receive-allocation-review" class="blanks-receive-order-picker" hidden aria-label="Confirm fully received allocations">
+            <h3>Fully received shared lines</h3>
+            <p>Confirm after counting and sorting the usable garments for each order. Short lines stay in individual review.</p>
+            <button id="blanks-receive-confirm-full" class="manual-add-action" type="button">Confirm all full lines</button>
+            <p id="blanks-receive-allocation-feedback" tabindex="-1" role="status" aria-live="polite"></p>
+          </section>
           <div id="blanks-receive-list" class="blanks-receive-list"></div>
           <div id="blanks-receive-empty" class="manual-add-empty" hidden>
             <strong>No S&amp;S batches yet</strong>
             <span>Mark an S&amp;S cart ordered or link a purchase made outside Order Manager.</span>
+            <button id="blanks-receive-clear-filters" class="manual-add-action" type="button" hidden>Clear filters</button>
           </div>
         </div>
       </div>
@@ -1543,6 +1557,19 @@
       receiveSearch = event.target.value.trim().toLowerCase();
       renderBatchList();
     });
+    overlay.querySelector('#blanks-receive-attention-only')?.addEventListener('change', event => {
+      receiveAttentionOnly = event.target.checked;
+      renderBatchList();
+    });
+    overlay.querySelector('#blanks-receive-clear-filters')?.addEventListener('click', () => {
+      receiveSearch = ''; receiveAttentionOnly = false;
+      document.getElementById('blanks-receive-search').value = '';
+      document.getElementById('blanks-receive-attention-only').checked = false;
+      renderBatchList(); document.getElementById('blanks-receive-search').focus();
+    });
+    overlay.querySelector('#blanks-receive-confirm-full')?.addEventListener('click', () => {
+      confirmFullAllocations().catch(error => console.error('Allocation confirmation failed', error));
+    });
     overlay.querySelector('#blanks-receive-add-cart')?.addEventListener('click', openOrderPicker);
     overlay.querySelector('#blanks-receive-order-cancel')?.addEventListener('click', closeOrderPicker);
     overlay.querySelector('#blanks-receive-order-confirm')?.addEventListener('click', assignSelectedOrdersToActiveBatch);
@@ -1554,6 +1581,10 @@
     overlay.querySelector('#blanks-receive-save')?.addEventListener('click', saveReceiving);
     overlay.addEventListener('click', handleReceiveClick);
     overlay.addEventListener('input', handleReceiveInput);
+    // Keep the shop-floor tasks in the scroll owner; shipment metadata follows the manifest.
+    const body = overlay.querySelector('.manual-add-body');
+    body.prepend(overlay.querySelector('#blanks-receive-ready'));
+    body.append(overlay.querySelector('#blanks-receive-reference'), overlay.querySelector('#blanks-receive-supplier-status'));
     document.addEventListener('keyup', event => {
       if (event.key === 'Escape' && isReceiveOverlayOpen()) closeReceiveOverlay();
     });
@@ -1713,7 +1744,7 @@
   }
 
   async function pollVisibleSupplierStatuses() {
-    if (receiveStatusPollBusy || document.getElementById('blanks-receive-overlay')?.classList.contains('hidden')) return;
+    if (allocationSaveBusy || receiveStatusPollBusy || document.getElementById('blanks-receive-overlay')?.classList.contains('hidden')) return;
     receiveStatusPollBusy = true;
     try {
       await loadBatchIndex();
@@ -1783,6 +1814,8 @@
     if (!window.api || typeof window.api.getBlanksBatch !== 'function') return null;
     const data = await window.api.getBlanksBatch(id);
     activeBatch = data?.batch || null;
+    allocationNeedsRefresh = false;
+    allocationFeedback = '';
     if (activeBatch?.id) {
       batchDetailsById.set(activeBatch.id, activeBatch);
       buildOrderAccounting();
@@ -1818,6 +1851,11 @@
     document.getElementById('blanks-receive-add-cart')?.classList.toggle('hidden', !isDetail);
     document.getElementById('blanks-receive-mark-all')?.classList.toggle('hidden', !isDetail);
     document.getElementById('blanks-receive-save')?.classList.toggle('hidden', !isDetail);
+    document.getElementById('blanks-receive-allocation-review').hidden = !isDetail;
+    if (!isDetail) {
+      document.getElementById('blanks-receive-supplier-status').hidden = true;
+      document.getElementById('blanks-receive-ready').hidden = true;
+    }
     syncSaveState();
     syncAddCartOrdersState();
   }
@@ -1845,11 +1883,19 @@
     syncStats(expected, received, missing);
 
     list.replaceChildren();
-    const filtered = batchIndex.filter(batch => [batch.supplierOrderNumber, batch.purchaseOrderNumber,
-      batch.trackingNumber, batch.label, batch.id].some(value => String(value || '').toLowerCase().includes(receiveSearch)));
+    const attentionCount = batchIndex.filter(batch => reviewModel.attentionReasons(batch).length).length;
+    document.getElementById('blanks-receive-attention-label').textContent = `Needs receiving attention (${attentionCount})`;
+    const filtered = batchIndex.filter(batch => (!receiveAttentionOnly || reviewModel.attentionReasons(batch).length)
+      && [batch.supplierOrderNumber, batch.purchaseOrderNumber, batch.trackingNumber, batch.label, batch.id]
+        .some(value => String(value || '').toLowerCase().includes(receiveSearch)));
+    document.getElementById('blanks-receive-results').textContent = `${filtered.length} of ${batchIndex.length} shipments shown · Totals above cover all shipments`;
     const hasBatches = filtered.length > 0;
     empty.hidden = hasBatches;
-    empty.querySelector('strong').textContent = batchIndex.length ? 'No matching shipments' : 'No S&S batches yet';
+    empty.querySelector('strong').textContent = batchIndex.length
+      ? receiveAttentionOnly && !receiveSearch ? 'No shipments need receiving attention' : 'No matching shipments' : 'No S&S batches yet';
+    empty.querySelector('span').textContent = batchIndex.length ? 'Clear filters to see all shipments.'
+      : 'Mark an S&S cart ordered or link a purchase made outside Order Manager.';
+    document.getElementById('blanks-receive-clear-filters').hidden = !receiveSearch && !receiveAttentionOnly;
     list.hidden = !hasBatches;
 
     filtered.forEach(batch => {
@@ -1875,6 +1921,7 @@
         <strong>${escapeHtml(batch.supplierOrderNumber ? `S&S ${batch.supplierOrderNumber}` : batch.label || batch.id)}</strong>
         <span>${batch.orderCount || 0} orders${batch.purchaseOrderNumber ? ` · PO ${escapeHtml(batch.purchaseOrderNumber)}` : ''}${batch.trackingNumber ? ` · Tracking ${escapeHtml(batch.trackingNumber)}` : ''}${created ? ` · ${escapeHtml(created)}` : ''}</span>
         ${delivery ? `<span class="blanks-supplier-delivery" data-state="${escapeHtml(batch.supplierStatus.state || 'pending')}">S&amp;S: ${escapeHtml(delivery)}</span>` : ''}
+        ${receiveAttentionOnly ? reviewModel.attentionReasons(batch).map(reason => `<span class="blanks-receive-attention-reason">${escapeHtml(reason)}</span>`).join('') : ''}
       </span>
       <span class="blanks-receive-batch-counts">
         <span>${received}/${expected}</span>
@@ -1914,6 +1961,7 @@
     renderNewlyComplete();
     syncDraftStats();
     syncAddCartOrdersState();
+    syncAllocationReview();
   }
 
   function renderSupplierStatusPanel() {
@@ -2134,7 +2182,7 @@
     });
     if (byOrder.size > 1 && Number(line.receivedQty) > 0) {
       const allocation = document.createElement('div');
-      allocation.className = 'blanks-receive-allocation';
+      allocation.className = `blanks-receive-allocation${line.allocationConfirmed ? ' is-confirmed' : ''}`;
       const title = document.createElement('strong');
       title.textContent = line.allocationConfirmed
         ? 'Allocation confirmed'
@@ -2163,7 +2211,39 @@
     return row;
   }
 
+  function reviewedFullAllocations() {
+    return reviewModel.fullAllocations(activeBatch).filter(entry => {
+      const row = Array.from(document.querySelectorAll('#blanks-receive-list .blanks-receive-line'))
+        .find(row => row.dataset.itemKey === entry.itemKey);
+      return row && Array.from(row.querySelectorAll('[data-allocation-order]'))
+        .every(input => Number(input.value) === entry.allocations[input.dataset.allocationOrder]);
+    });
+  }
+
+  function syncAllocationReview() {
+    const panel = document.getElementById('blanks-receive-allocation-review');
+    if (!panel) return;
+    const entries = reviewedFullAllocations();
+    panel.hidden = !activeBatch || (!entries.length && !allocationFeedback);
+    const button = document.getElementById('blanks-receive-confirm-full');
+    button.textContent = allocationSaveBusy ? 'Confirming allocations…'
+      : `Confirm all ${entries.length} full ${entries.length === 1 ? 'line' : 'lines'}`;
+    button.disabled = !entries.length || dirty || Boolean(receivingSavePromise) || allocationSaveBusy || allocationNeedsRefresh;
+    const feedback = document.getElementById('blanks-receive-allocation-feedback');
+    feedback.textContent = allocationFeedback || (dirty || receivingSavePromise ? 'Save receiving quantities before confirming allocations.' : '');
+    document.querySelectorAll('#blanks-receive-list [data-confirm-allocation]').forEach(control => {
+      control.disabled = allocationSaveBusy || allocationNeedsRefresh || dirty || Boolean(receivingSavePromise);
+    });
+  }
+
+  async function confirmFullAllocations() {
+    if (allocationSaveBusy || allocationNeedsRefresh || dirty || receivingSavePromise || !activeBatch?.id) return;
+    const entries = reviewedFullAllocations();
+    if (entries.length) await confirmAllocationEntries(entries);
+  }
+
   async function confirmManifestAllocation(button) {
+    if (allocationSaveBusy || allocationNeedsRefresh || receivingSavePromise) return;
     if (!activeBatch?.id || dirty) {
       showMoveNotice('Save the receiving quantities before confirming the allocation.');
       return;
@@ -2173,19 +2253,66 @@
     row.querySelectorAll('[data-allocation-order]').forEach(input => {
       allocations[input.dataset.allocationOrder] = Number(input.value);
     });
-    button.disabled = true;
+    await confirmAllocationEntries([{ itemKey: button.dataset.confirmAllocation, allocations }]);
+  }
+
+  async function confirmAllocationEntries(entries) {
+    const batchId = activeBatch.id;
+    const beforeConfirmation = activeBatch;
+    const drafts = Array.from(document.querySelectorAll('#blanks-receive-list .blanks-receive-line'))
+      .map(row => [row.dataset.itemKey, Array.from(row.querySelectorAll('[data-allocation-order]'))
+        .map(input => [input.dataset.allocationOrder, input.value])]);
+    const controls = Array.from(document.querySelectorAll('#blanks-receive-overlay button, #blanks-receive-overlay input, #blanks-receive-overlay select'))
+      .map(control => [control, control.disabled]);
+    allocationSaveBusy = true;
+    allocationFeedback = `Confirming ${entries.length} ${entries.length === 1 ? 'line' : 'lines'}…`;
+    controls.forEach(([control]) => { control.disabled = true; });
+    document.getElementById('blanks-receive-overlay').setAttribute('aria-busy', 'true');
+    syncAllocationReview();
+    let saved = 0;
     try {
-      const before = activeBatch;
-      const result = await window.api.confirmBlanksBatchAllocation(activeBatch.id, button.dataset.confirmAllocation, allocations);
-      activeBatch = result.batch;
-      batchDetailsById.set(activeBatch.id, activeBatch);
-      captureNewlyComplete(before, activeBatch);
+      if (entries.some(entry => entry.signature)) {
+        const fresh = await window.api.getBlanksBatch(batchId);
+        const signatures = new Map(reviewModel.fullAllocations(fresh?.batch).map(entry => [entry.itemKey, entry.signature]));
+        if (entries.some(entry => signatures.get(entry.itemKey) !== entry.signature)) {
+          throw new Error('This shipment changed. Refresh and review its current quantities.');
+        }
+        activeBatch = fresh.batch;
+      }
+      for (const entry of entries) {
+        const result = await window.api.confirmBlanksBatchAllocation(batchId, entry.itemKey, entry.allocations);
+        if (result?.batch?.id !== batchId) throw new Error('The saved allocation could not be confirmed.');
+        activeBatch = result.batch;
+        batchDetailsById.set(batchId, activeBatch);
+        saved++;
+      }
+      allocationFeedback = `${saved} ${saved === 1 ? 'line' : 'lines'} confirmed. Short or edited lines remain in individual review.`;
+    } catch (error) {
+      allocationNeedsRefresh = true;
+      allocationFeedback = `${saved} of ${entries.length} lines confirmed. Stopped at line ${saved + 1}; its save is not confirmed. Refresh before retrying. ${error?.message || error}`;
+    } finally {
+      allocationSaveBusy = false;
+      controls.forEach(([control, disabled]) => { control.disabled = disabled; });
+      document.getElementById('blanks-receive-overlay').removeAttribute('aria-busy');
+      captureNewlyComplete(beforeConfirmation, activeBatch);
+      draftReceived = new Map((activeBatch?.manifest || []).map(line => [line.itemKey, Number(line.receivedQty) || 0]));
       buildOrderAccounting();
       annotateAccountingCards();
+      renderDetailAccounting(detailAccountingOrderName || currentDetailOrderName());
       renderBatchDetail();
-    } catch (error) {
-      showMoveNotice(`Could not confirm allocation. ${error?.message || error}`);
-      button.disabled = false;
+      const savedKeys = new Set(entries.slice(0, saved).map(entry => entry.itemKey));
+      for (const [itemKey, values] of drafts) {
+        if (savedKeys.has(itemKey)) continue;
+        const row = Array.from(document.querySelectorAll('#blanks-receive-list .blanks-receive-line'))
+          .find(row => row.dataset.itemKey === itemKey);
+        row?.querySelectorAll('[data-allocation-order]').forEach(input => {
+          const draft = values.find(([name]) => name === input.dataset.allocationOrder);
+          if (draft) input.value = draft[1];
+        });
+      }
+      syncAllocationReview();
+      document.getElementById('blanks-receive-allocation-feedback')?.focus({ preventScroll: true });
+      try { await loadBatchIndex(); } catch { /* Keep the confirmed result; Refresh can reload the index. */ }
     }
   }
 
@@ -2222,6 +2349,7 @@
   }
 
   function handleReceiveInput(event) {
+    if (event.target.closest?.('[data-allocation-order]')) { syncAllocationReview(); return; }
     const input = event.target.closest?.('[data-receive-input]');
     if (!input) return;
     const row = input.closest('.blanks-receive-line');
@@ -2267,6 +2395,7 @@
     const save = document.getElementById('blanks-receive-save');
     if (save) save.disabled = !dirty;
     syncAddCartOrdersState();
+    syncAllocationReview();
   }
 
   function markAllManifestReceived() {
@@ -2412,7 +2541,7 @@
     if (!activeBatch || !dirty || !window.api || typeof window.api.updateBlanksBatchReceiving !== 'function') return true;
     receivingSavePromise = performReceivingSave();
     try { return await receivingSavePromise; }
-    finally { receivingSavePromise = null; }
+    finally { receivingSavePromise = null; syncAllocationReview(); }
   }
 
   async function performReceivingSave() {
@@ -2482,6 +2611,7 @@
   }
 
   async function saveDraftBeforeNavigation() {
+    if (allocationSaveBusy) return false;
     return !dirty && !receivingSavePromise ? true : saveReceiving();
   }
 

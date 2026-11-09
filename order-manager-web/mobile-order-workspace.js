@@ -21,6 +21,7 @@
     root.setAttribute('aria-labelledby', 'mobile-workspace-title');
     root.innerHTML = `<header class="mw-heading"><div><h1 id="mobile-workspace-title">Orders</h1><p class="mw-count"></p></div><button type="button" class="mw-refresh" aria-label="Refresh orders">${icon('M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 3M18 18A8 8 0 0 1 5 15')}<span>Refresh</span></button></header>
       <div class="mw-subviews" role="group" aria-label="Work area views"></div>
+      <label class="mw-delivery" hidden>Delivery<select aria-label="Filter Print orders by delivery"></select></label>
       <div class="mw-toolbar"><label class="mw-search"><span class="visually-hidden">Search this work area</span><input type="search" maxlength="120" placeholder="Search orders or customers" autocomplete="off"></label><button type="button" class="mw-select" aria-pressed="false">Select</button><button type="button" class="mw-filters" aria-haspopup="dialog">Filters</button></div>
       <div class="mw-tools"></div><div class="mw-selection" hidden></div>
       <div class="mw-feedback" role="status" aria-live="polite" hidden></div>
@@ -28,6 +29,9 @@
       <div class="mw-scroll" tabindex="-1"><div class="mw-rows" role="list" aria-label="Orders"></div><div class="mw-empty" hidden></div><div class="mw-more" hidden></div></div>`;
     document.getElementById('orders-view').prepend(root);
     const $ = selector => root.querySelector(selector);
+    const deliverySelect = $('.mw-delivery select');
+    for (const [value, label] of board.DELIVERY_FILTERS) { const option = el('option', label); option.value = value; deliverySelect.append(option); }
+    deliverySelect.addEventListener('change', () => changeView({ filters: { ...view().filters, delivery: deliverySelect.value } }));
     const scroll = $('.mw-scroll'), rows = $('.mw-rows'), search = $('.mw-search input'), feedback = $('.mw-feedback');
     const visibleRows = new Set();
     let visibilityFrame = 0, visibleSignature = '';
@@ -103,7 +107,8 @@
       guarded(() => {
         state.update(area, { ...patch, scrollTop: 0 }); resetSelection();
         if (patch.stage) navigation.navigateMobile(area, { subview: patch.stage, guarded: true });
-        render(false); scroll.scrollTop = 0; $('.mw-subviews select')?.focus({ preventScroll: true });
+        render(false); scroll.scrollTop = 0;
+        (patch.filters?.delivery ? deliverySelect : $('.mw-subviews select'))?.focus({ preventScroll: true });
       });
     }
     function syncArea() {
@@ -250,10 +255,12 @@
         const stage = el('span', row.stageLabel), date = el('span', row.target?.label || 'No date set', row.target?.tone ? `mw-date-${row.target.tone}` : '');
         if (row.target?.accessible) date.setAttribute('aria-label', row.target.accessible);
         record.meta.replaceChildren(stage, date);
-        const facts = area === 'supplies'
-          ? [`${row.quantities.garments} garments`, row.accounting ? `${row.accounting.accountedGarments}/${row.accounting.expectedGarments} received` : `Blanks ${row.materials.blanks.label.toLowerCase()}`]
-          : area === 'print' ? [`Blanks ${row.materials.blanks.label.toLowerCase()}`, `Prints ${row.materials.prints.label.toLowerCase()}`]
-            : [...(row.partial || recognition?.partial ? ['Item quantities unavailable'] : []), `Blanks ${row.materials.blanks.label.toLowerCase()}`, `Prints ${row.materials.prints.label.toLowerCase()}`];
+        const facts = [
+          ...(area === 'supplies' ? [`${row.quantities.garments} garments`] : []),
+          ...(row.partial || recognition?.partial ? ['Item quantities unavailable'] : []),
+          `Blanks: ${row.materials.blanks.label}`, `Prints: ${row.materials.prints.label}`,
+          ...(area === 'supplies' && row.accounting ? [`${row.accounting.accountedGarments}/${row.accounting.expectedGarments} received`] : [])
+        ];
         record.detail.textContent = facts.join(' · ');
         const warnings = board.indicators(row).filter(item => item.label !== 'Materials marked ready'
           && (area !== 'orders' || !['Needs blanks', 'No mockup'].includes(item.label)));
@@ -468,14 +475,17 @@
       const more = area === 'more';
       $('.mw-toolbar').hidden = more; $('.mw-rows').hidden = more; $('.mw-more').hidden = !more;
       $('.mw-count').textContent = more ? 'Other work areas' : '';
-      renderSubviews(snapshot); renderTools();
+      const result = more ? null : state.browse(area, snapshot);
+      renderSubviews(result ? { ...snapshot, counts: result.counts, total: result.matched } : snapshot); renderTools();
+      $('.mw-delivery').hidden = area !== 'print';
+      deliverySelect.value = more ? 'all' : view().filters.delivery;
+      deliverySelect.disabled = busy || Boolean(editor);
       if (more) {
         $('.mw-selection').hidden = true; $('.mw-empty').hidden = true;
         const host = $('.mw-more');
         if (!host.children.length) for (const [destination, label] of [['prepared', 'Prepared Orders'], ['drafts', 'Draft Orders'], ['inventory', 'Inventory'], ['previous', 'History'], ['storage', 'Storage Browser']]) host.append(button(label, () => navigation.navigateMobile('more', { destination })));
         publishVisibleRows(); return;
       }
-      const result = state.browse(area, snapshot);
       if (area === 'print' && view().stage === 'print' && window.productionPlanner?.matchesOrder) {
         result.rows = result.rows.filter(row => window.productionPlanner.matchesOrder(findOrder(row.key)));
         result.shown = result.rows.length;

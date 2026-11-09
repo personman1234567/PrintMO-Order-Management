@@ -63,11 +63,49 @@ normalization hid the native error. New reports retain both statuses, bounded
 message and original attempt time. An absent dispatch marker is null, not proof
 of a preflight failure.
 
+Current gateway responses preserve native supplier HTTP error statuses, including
+503. Commit responses carry `X-Order-Manager-Response-Id`; gateway structural logs
+record that ID, batch reference, status, MIME, byte count and serialization,
+finished-write or premature-close events. Worker `gatewayEvidence` preserves the
+ID when present and records interrupted body reads as `failurePhase: body_read`.
+A finished Node write does not prove delivery to the Worker. A missing ID does not
+identify the intermediary responsible for a replaced response. Generic 502 or
+truncated bodies remain uncertain; never infer a safe retry from status alone.
+
 Do not infer that 503 proves no purchase was created. Check exact supplier
 history and retain the original result. Only explicit owner approval can resolve
 a particular failed/unknown attempt's retry block through the append-only audit
 contract in the batching workflow. Never purge history, broadly unlock other
 attempts, or issue a supplier POST as a deployment check.
+
+For a new report of an immediate block:
+
+1. Match the displayed reference to `batches` and its `supplier_attempts` commit
+   count. Keep the current selection separate from the earlier failed request.
+   `prepared` plus zero commits is a wrapper, not another supplier failure.
+2. For an actually dispatched request, correlate original UTC time and opaque
+   response ID across native supplier evidence, gateway serialization/finish/close
+   logs, Worker MIME/byte/presence diagnostics and persisted report. Missing native
+   fields or a 16-byte plain-text 502 do not independently prove throttling.
+3. A verified exact native throttle follows the saved cooldown/new-intent contract.
+   Arbitrary 502, generic 503 and interrupted transport remain ambiguous. Preserve
+   known order references and native item errors; attribution uncertainty alone is
+   not placement uncertainty. Do not infer absence merely from no order number.
+4. If historical evidence was lost, review retained matching evidence and later
+   contradictions. Only an explicitly authorized, exact-snapshot append-only
+   resolution may release that particular old attempt. Keep its original request,
+   response, state, timestamps and commit count. Verify eligibility read-only;
+   prepared wrappers need no independent clear. Leave actual submission to the
+   operator. Do not purge holds, broaden permissions or automatically retry.
+
+Recovery evidence, 2026-11-03: the owner reported that their own tests worked after
+the response-boundary release and specifically authorized old-attempt resolution.
+The latter was independently verified as audit `owner-retry-072a-20261103` at
+19:09:54.212 UTC, with byte-identical original evidence, one unchanged commit and
+zero current retry blockers. This is a user-reported operational recovery, not an
+independent acceptance test or proof of which hosted hop produced the prior
+plain-text 502. Inventory causation was not established. Current release identities
+and rollback references are in [the release boundary](../architecture/shopify-primary-data-plane.md#current-release-boundary).
 
 ### A. Diagnosing Base64 Attachment Bloat
 - **Trap**: Uploading high-resolution PNG mockups encodes raw image files as multi-megabyte Base64 strings embedded directly inside `shopifyOrdersQueue` JSON objects.

@@ -45,10 +45,7 @@
   let materialSavePending = false;
   let materialUndo = null;
   let materialContextOrder = null;
-  const materialOptions = {
-    prints: [['none', 'Not recorded'], ['sheet', 'On saved sheet'], ['ordered', 'Ordered'], ['hand', 'In hand']],
-    blanks: [['none', 'Not recorded'], ['cart', 'In S&S cart'], ['ordered', 'Ordered'], ['hand', 'In hand']]
-  };
+  const materialOptions = window.OrderBoardModel.MATERIAL_OPTIONS;
 
   function materialSnapshot(order) {
     return {
@@ -62,26 +59,11 @@
   }
 
   function materialValue(kind, state) {
-    if (state[kind === 'prints' ? 'printsStatus' : 'blanksStatus']) return 'hand';
-    if (state[kind === 'prints' ? 'printsOrdered' : 'blanksOrdered']) return 'ordered';
-    if (kind === 'prints' && state.printsOnSavedSheet) return 'sheet';
-    if (kind === 'blanks' && state.stage === 'blanks_cart') return 'cart';
-    return 'none';
+    return window.OrderBoardModel.materialForOrder(state, kind).value;
   }
 
   function materialPatch(kind, value, state) {
-    if (kind === 'prints') return {
-      printsStatus: value === 'hand' ? 1 : 0,
-      printsOrdered: value === 'ordered' ? 1 : value === 'hand' ? state.printsOrdered : 0,
-      printsOnSavedSheet: value === 'sheet'
-    };
-    const patch = {
-      blanksStatus: value === 'hand' ? 1 : 0,
-      blanksOrdered: value === 'ordered' ? 1 : value === 'hand' ? state.blanksOrdered : 0
-    };
-    if (value === 'cart' || value === 'ordered') patch.stage = value === 'cart' ? 'blanks_cart' : 'blanks_ordered';
-    else if (value === 'none' && ['blanks_cart', 'blanks_ordered'].includes(state.stage)) patch.stage = 'received';
-    return patch;
+    return window.OrderBoardModel.materialPatch(kind, value, state);
   }
 
   function materialReference(order) {
@@ -2172,6 +2154,26 @@
     });
     if (options.focus) targetTab.focus();
   }
+
+  // Actions shortcuts enter the same editors and follow sections relocated on mobile.
+  window.OrderDetailEditors = Object.freeze({
+    edit(kind, order) {
+      if (!['targetDate', 'notes'].includes(kind) || order !== currentDetailOrder
+        || document.body.dataset.orderSource !== 'shopify' || !order?._candidate || order._historyReadOnly
+        || order._capabilities?.productionWrite === false || order.displayFulfillmentStatus === 'FULFILLED'
+        || !document.getElementById('detail-overlay')?.classList.contains('visible')) return false;
+      const isDate = kind === 'targetDate';
+      if (typeof window.api?.[isDate ? 'updateTargetDate' : 'updateNotes'] !== 'function') return false;
+      const control = document.getElementById(isDate ? 'target-date-edit' : 'detail-edit-notes-btn');
+      const section = document.getElementById(isDate ? 'target-date-section' : 'detail-notes-wrapper');
+      if (!control || control.disabled || control.hidden || !section || section.hidden) return false;
+      activateDetailTab(section.closest('.detail-tab-panel')?.id || 'tab-overview');
+      section.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+      control.click();
+      if (isDate) document.getElementById('target-date-input')?.focus();
+      return true;
+    }
+  });
 
   function wireDetailTabs() {
     const tablist = document.getElementById('detail-tabs-header');

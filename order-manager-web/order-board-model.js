@@ -13,6 +13,17 @@
   ].map(Object.freeze));
   const flag = value => Boolean(Number(value || 0));
   const quantity = value => Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+  const DELIVERY_FILTERS = Object.freeze([
+    ['all', 'All delivery'], ['pickup', 'Local pickup'], ['shipping', 'Shipping'], ['other', 'Other / unknown']
+  ].map(Object.freeze));
+  function deliveryKind(order) {
+    const method = order?.canonical?.commerce?.deliveryMethod || order?.deliveryMethod;
+    return method?.complete === true && typeof method.kind === 'string' ? method.kind : 'unknown';
+  }
+  function matchesDeliveryKind(kind, filter = 'all') {
+    return filter === 'all' || (filter === 'other' ? !['pickup', 'shipping'].includes(kind) : kind === filter);
+  }
+  const matchesDelivery = (order, filter = 'all') => matchesDeliveryKind(deliveryKind(order), filter);
 
   function orderKey(order) {
     const provider = String(order?._provider || order?.source?.provider || (order?._candidate ? 'shopify' : 'legacy')).toLowerCase();
@@ -34,6 +45,44 @@
     // Preserve the recorded milestones independently; do not infer approval.
     return Object.freeze({ ordered: flag(ordered), ready: flag(ready),
       label: flag(ready) ? 'Ready' : flag(ordered) ? 'Ordered' : 'Not ordered' });
+  }
+
+  const MATERIAL_OPTIONS = Object.freeze(Object.fromEntries(Object.entries({
+    prints: [['none', 'Not recorded'], ['sheet', 'On saved sheet'], ['ordered', 'Ordered'], ['hand', 'In hand']],
+    blanks: [['none', 'Not recorded'], ['cart', 'In S&S cart'], ['ordered', 'Ordered'], ['hand', 'In hand']]
+  }).map(([kind, options]) => [kind, Object.freeze(options.map(Object.freeze))])));
+
+  function materialForOrder(order, kind) {
+    const prints = kind === 'prints';
+    const ordered = flag(order?.[prints ? 'printsOrdered' : 'blanksOrdered']);
+    const ready = flag(order?.[prints ? 'printsStatus' : 'blanksStatus']);
+    const stage = order?.productionStage || order?.stage || order?.canonical?.production?.stage || stageForOrder(order);
+    // Match Detail's recorded milestone precedence; neither purchase nor a sheet
+    // establishes physical availability, artwork approval or production release.
+    const value = ready ? 'hand' : ordered ? 'ordered'
+      : prints && order?.printsOnSavedSheet ? 'sheet'
+      : !prints && stage === 'blanks_cart' ? 'cart' : 'none';
+    return Object.freeze({ ordered, ready, value,
+      label: MATERIAL_OPTIONS[kind].find(option => option[0] === value)[1],
+      tone: ready ? 'ready' : value === 'none' ? 'neutral' : 'warning' });
+  }
+
+  function materialPatch(kind, value, order) {
+    if (!MATERIAL_OPTIONS[kind]?.some(option => option[0] === value)) throw new Error('Choose a valid material status.');
+    const state = materialForOrder(order, kind);
+    if (kind === 'prints') return {
+      printsStatus: value === 'hand' ? 1 : 0,
+      printsOrdered: value === 'ordered' ? 1 : value === 'hand' ? Number(state.ordered) : 0,
+      printsOnSavedSheet: value === 'sheet'
+    };
+    const patch = {
+      blanksStatus: value === 'hand' ? 1 : 0,
+      blanksOrdered: value === 'ordered' ? 1 : value === 'hand' ? Number(state.ordered) : 0
+    };
+    const stage = order.productionStage || order.stage || order.canonical?.production?.stage || stageForOrder(order);
+    if (value === 'cart' || value === 'ordered') patch.stage = value === 'cart' ? 'blanks_cart' : 'blanks_ordered';
+    else if (value === 'none' && ['blanks_cart', 'blanks_ordered'].includes(stage)) patch.stage = 'received';
+    return patch;
   }
 
   function quantities(order, { isPrintItem = () => false, isGarmentItem = () => false } = {}) {
@@ -153,8 +202,8 @@
     const separator = name.includes(' – ') ? ' – ' : ' - ';
     const parts = name.split(separator);
     const materials = {
-      blanks: materialState(order.blanksOrdered, order.blanksStatus),
-      prints: materialState(order.printsOrdered, order.printsStatus)
+      blanks: order._candidate ? materialForOrder(order, 'blanks') : materialState(order.blanksOrdered, order.blanksStatus),
+      prints: order._candidate ? materialForOrder(order, 'prints') : materialState(order.printsOrdered, order.printsStatus)
     };
     const attention = order.canonical?.attention || order.canonical?.production?.attention || order.attention;
     const commerce = order.canonical?.commerce || {};
@@ -170,6 +219,7 @@
       key, stage, stageLabel: STAGES.find(value => value.id === stage)?.label || 'Unknown stage',
       number: parts[0] || 'Order', customer: parts.slice(1).join(separator) || 'Name unavailable',
       provider: String(order._provider || order.source?.provider || 'shopify').toLowerCase(),
+      deliveryKind: deliveryKind(order),
       synthetic: Boolean(order._synthetic), bundle: order.bundle || '', receivedAt: order.receivedAt || null,
       quantities: quantities(order, options), materials,
       progress: progress(order, printableTotal(order, options)),
@@ -206,7 +256,7 @@
     return { rows, counts, total: rows.length, identityErrors };
   }
 
-  const FILTER_DEFAULTS = Object.freeze({ source: 'all', blanks: 'all', prints: 'all', payment: 'all', attention: 'all', target: 'all', priority: 'all' });
+  const FILTER_DEFAULTS = Object.freeze({ source: 'all', blanks: 'all', prints: 'all', payment: 'all', attention: 'all', target: 'all', priority: 'all', delivery: 'all' });
   const SORTS = new Set(['newest', 'oldest', 'target', 'customer', 'rush']);
   const SEARCH_MAX_LENGTH = 120;
   // Literal local matching only: no regular-expression or query-language evaluation.
@@ -220,6 +270,7 @@
     return data.rows.filter(row => {
       if (query && !normalized(`${row.number} ${row.customer} ${row.bundle}`).includes(query)) return false;
       if (filters.source !== 'all' && filters.source !== row.provider) return false;
+      if (!matchesDeliveryKind(row.deliveryKind, filters.delivery)) return false;
       if (filters.blanks !== 'all' && row.materials.blanks.ready !== (filters.blanks === 'ready')) return false;
       if (filters.prints !== 'all' && row.materials.prints.ready !== (filters.prints === 'ready')) return false;
       if (filters.payment !== 'all' && filters.payment !== String(row.financialStatus || 'UNKNOWN').trim().replace(/\s+/g, '_').toUpperCase()) return false;
@@ -273,7 +324,8 @@
       setSort(value) { if (SORTS.has(value)) sort = value; return this.get(); },
       setFilters(value = {}) {
         const allowed = { source: ['all', 'shopify', 'etsy'], blanks: ['all', 'ready', 'not-ready'], prints: ['all', 'ready', 'not-ready'],
-          attention: ['all', 'needed', 'handoff'], target: ['all', 'late', 'today', 'tomorrow', 'none'], priority: ['all', 'rush'] };
+          attention: ['all', 'needed', 'handoff'], target: ['all', 'late', 'today', 'tomorrow', 'none'], priority: ['all', 'rush'],
+          delivery: DELIVERY_FILTERS.map(option => option[0]) };
         for (const key of Object.keys(FILTER_DEFAULTS)) {
           if (key === 'payment') { if (typeof value[key] === 'string' && (value[key] === 'all' || /^[A-Z_]+$/.test(value[key]))) filters[key] = value[key]; }
           else if (allowed[key]?.includes(value[key])) filters[key] = value[key];
@@ -323,6 +375,7 @@
     return { enabled: true, reason: '' };
   }
 
-  return Object.freeze({ STAGES, orderKey, stageForOrder, materialState, quantities,
+  return Object.freeze({ STAGES, MATERIAL_OPTIONS, orderKey, stageForOrder, materialState, materialForOrder, materialPatch, quantities,
+    DELIVERY_FILTERS, deliveryKind, matchesDelivery, matchesDeliveryKind,
     printableTotal, productionWorkload, progress, evaluateTriage, summarize, snapshot, indicators, browse, FILTER_DEFAULTS, SEARCH_MAX_LENGTH, normalizeSearchQuery, createViewState, readPreferences, savePreferences, reconcileSelection, actionEligibility });
 });

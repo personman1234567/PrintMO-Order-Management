@@ -40,7 +40,8 @@
     }
     // List workflows retain their detailed partial/unknown result region and
     // its existing live announcement instead of a second generic success toast.
-    suppressed ||= document.body?.dataset.orderWorkflowSaving === 'true';
+    suppressed ||= document.body?.dataset.orderWorkflowSaving === 'true'
+      || document.body?.dataset.orderActionSaving === 'true';
     pending++;
     try { return await task(); }
     catch (error) { failed = true; throw error; }

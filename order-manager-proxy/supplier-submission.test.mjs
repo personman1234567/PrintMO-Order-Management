@@ -67,11 +67,12 @@ test('complete captured throttle: actual Express HTTP -> Shopify Worker -> D1 ->
   {skip:!gatewayFixturePath},async()=>{
   const require=createRequire(import.meta.url),{createSupplierCommitFixture,fixtureGatewayKey}=require(gatewayFixturePath);
   const {db,env}=await setup(),gid='gid://shopify/Order/1';let nativeCalls=0,replaceBody=false;
+  const boundary=[];
   const app=createSupplierCommitFixture({nativeFetch:async(url,options)=>{
     assert.equal(String(url),'https://api.ssactivewear.com/v2/orders/');assert.equal(options.method,'POST');nativeCalls++;
     return Response.json({code:'503',message:'You are being throttled. Please wait 1 minute before your next request.'},
       {status:503,headers:{'Retry-After':'60','X-Rate-Limit-Remaining':'0'}});
-  }});
+  },boundaryLog:(_,event)=>boundary.push(event)});
   const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
   const origin=`http://127.0.0.1:${server.address().port}`;env.UPSTREAM_BASE=origin;env.ORDER_MANAGER_ADMIN_KEY=fixtureGatewayKey;
   await db.prepare(`INSERT INTO order_projection(shop_id,order_gid,display_name,stage,active,production_revision,production_json,commerce_json,created_at,updated_at)
@@ -80,7 +81,7 @@ test('complete captured throttle: actual Express HTTP -> Shopify Worker -> D1 ->
   const originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options)=>{
     assert(String(url).startsWith(origin+'/'));assert.equal(options.method,'POST');
-    if(replaceBody)return new Response('<html>private fixture payload must never persist</html>',{status:502,headers:{'Content-Type':'text/html'}});
+    if(replaceBody)return new Response('Bad Gateway     ',{status:502,headers:{'Content-Type':'text/plain'}});
     return originalFetch(url,options);
   };
   const submit=key=>worker.handleV1BatchCommit(new Request('https://fixture/commit',{method:'POST',body:JSON.stringify({orderIds:[gid],idempotencyKey:key})}),env,'*','',identity);
@@ -89,6 +90,11 @@ test('complete captured throttle: actual Express HTTP -> Shopify Worker -> D1 ->
     const report=(await first.json()).error.details.report;assert.equal(nativeCalls,1);assert.equal(report.failureKind,'rate_limited');
     assert.equal(report.supplierErrorCode,'503');assert.equal(report.upstreamHttpStatus,503);assert.equal(report.orderSubmissionAttempted,true);
     assert.equal(report.gatewayEvidence.bodyFormat,'json');assert.equal(report.gatewayEvidence.hasSupplierMessage,true);
+    assert.equal(report.gatewayEvidence.httpStatus,503);
+    assert.match(report.gatewayEvidence.responseId,/^ssr-[a-f0-9-]{36}$/);
+    const sent=boundary.find(event=>event.event==='finished');
+    assert.equal(sent.responseId,report.gatewayEvidence.responseId);
+    assert.equal(sent.bodyBytes,report.gatewayEvidence.bodyBytes);assert.equal(sent.status,503);
     const persisted=JSON.parse((await db.prepare('SELECT response_json FROM batches WHERE id=?').bind(report.batchId).first()).response_json);
     assert.equal(persisted.supplierMessage,report.supplierMessage);assert.equal(persisted.retryAt,report.retryAt);assert.equal(persisted.gatewayEvidence.hasDispatchMarker,true);
     const ui=require('../order-manager-web/supplier-result-model.js');
@@ -100,11 +106,43 @@ test('complete captured throttle: actual Express HTTP -> Shopify Worker -> D1 ->
     replaceBody=true;
     const ambiguous=(await(await submit('replaced-body-fixture')).json()).error.details.report;
     assert.equal(ambiguous.outcome,'unknown');assert.equal(ambiguous.failureKind,null);assert.equal(ambiguous.orderSubmissionAttempted,null);
-    assert.equal(ambiguous.gatewayEvidence.bodyFormat,'non_json');assert.equal(ambiguous.gatewayEvidence.contentType,'text/html');
+    assert.equal(ambiguous.gatewayEvidence.bodyFormat,'non_json');assert.equal(ambiguous.gatewayEvidence.contentType,'text/plain');
+    assert.equal(ambiguous.gatewayEvidence.bodyBytes,16);assert.equal(ambiguous.gatewayEvidence.responseId,null);
     const stored=JSON.parse((await db.prepare('SELECT response_json FROM batches WHERE id=?').bind(ambiguous.batchId).first()).response_json);
     assert.equal(stored.gatewayEvidence.hasDispatchMarker,false);assert.doesNotMatch(JSON.stringify(stored),/private fixture payload|<html>|synthetic-api-key/);
     assert.match(ui.presentation(stored).summary,/gateway returned HTTP 502/i);
     assert.equal((await submit('still-unknown-fixture')).status,409);assert.equal(nativeCalls,1,'ambiguity and cooldown never schedule automatic supplier POSTs');
+  }finally{globalThis.fetch=originalFetch;await new Promise(resolve=>server.close(resolve));}
+});
+
+test('terminated actual gateway response persists correlation and ambiguity without redispatch',
+  {skip:!gatewayFixturePath,timeout:3000},async()=>{
+  const require=createRequire(import.meta.url),{createSupplierCommitFixture,fixtureGatewayKey}=require(gatewayFixturePath);
+  const {db,env}=await setup(),gid='gid://shopify/Order/2',boundary=[];let nativeCalls=0,resolveClose;
+  const closed=new Promise(resolve=>{resolveClose=resolve;});
+  const app=createSupplierCommitFixture({terminateResponse:true,boundaryLog:(_,event)=>{boundary.push(event);if(event.event==='closed_early')resolveClose();},
+    nativeFetch:async()=>{nativeCalls++;return Response.json({code:503,message:'You are being throttled. Please wait 1 minute before your next request.'},{status:503});}});
+  const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
+  const origin=`http://127.0.0.1:${server.address().port}`;env.UPSTREAM_BASE=origin;env.ORDER_MANAGER_ADMIN_KEY=fixtureGatewayKey;
+  await db.prepare(`INSERT INTO order_projection(shop_id,order_gid,display_name,stage,active,production_revision,production_json,commerce_json,created_at,updated_at)
+    VALUES(1,?,'#synthetic-termination','to_order',1,0,?,?,?,?)`).bind(gid,JSON.stringify({stage:'to_order',revision:0}),
+      JSON.stringify({commerce:{lineItemsComplete:true,lineItems:[{id:'synthetic-line',sku:'B10259214',title:'Synthetic shirt',quantity:8}]}}),now,now).run();
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=(url,options)=>{assert(String(url).startsWith(origin+'/'));return originalFetch(url,options);};
+  const submit=key=>worker.handleV1BatchCommit(new Request('https://fixture/commit',{method:'POST',body:JSON.stringify({orderIds:[gid],idempotencyKey:key})}),env,'*','',identity);
+  try{
+    const report=(await(await submit('terminated-fixture-1')).json()).error.details.report;
+    assert.equal(nativeCalls,1);assert.equal(report.outcome,'unknown');assert.equal(report.failureKind,null);
+    assert.equal(report.orderSubmissionAttempted,null);assert.equal(report.gatewayEvidence.httpStatus,503);
+    assert.equal(report.gatewayEvidence.failurePhase,'body_read');assert.equal(report.gatewayEvidence.bodyBytes,null);
+    assert.equal(report.gatewayEvidence.bodyFormat,'unreadable');assert.match(report.gatewayEvidence.responseId,/^ssr-/);
+    const stored=JSON.parse((await db.prepare('SELECT response_json FROM batches WHERE id=?').bind(report.batchId).first()).response_json);
+    assert.equal(stored.gatewayEvidence.responseId,report.gatewayEvidence.responseId);
+    await closed;
+    assert(boundary.some(event=>event.event==='closed_early'&&event.responseId===report.gatewayEvidence.responseId));
+    assert(!boundary.some(event=>event.event==='finished'));
+    assert.doesNotMatch(JSON.stringify(boundary),/Synthetic shirt|being throttled|synthetic-account|synthetic-key/);
+    assert.equal((await submit('terminated-fixture-2')).status,409);assert.equal(nativeCalls,1);
   }finally{globalThis.fetch=originalFetch;await new Promise(resolve=>server.close(resolve));}
 });
 
