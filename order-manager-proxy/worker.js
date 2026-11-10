@@ -3659,6 +3659,12 @@ function mergeEtsyTransactions(receipt, transactions) {
     return Array.from(merged.values());
 }
 
+function etsyDeliveryMethod(fetchedAt = isoNow()) {
+    // Shop policy: every Etsy order ships, independent of shipment/readiness status.
+    return { kind: 'shipping', types: ['SHIPPING'], complete: true,
+        source: 'etsy-shipping-policy', fetchedAt };
+}
+
 function normalizeEtsyOrderContract({ providerAccountId, receipt, transactions = [], fetchedAt = isoNow() } = {}) {
     const accountId = etsyNumericIdentity(providerAccountId, 'shop ID');
     const receiptId = etsyNumericIdentity(receipt?.receipt_id, 'receipt ID');
@@ -3716,6 +3722,7 @@ function normalizeEtsyOrderContract({ providerAccountId, receipt, transactions =
             canceled,
             shipped,
             delivered: null,
+            deliveryMethod: etsyDeliveryMethod(fetchedAt),
             financialStatus: paid ? 'paid' : (status || 'unknown'),
             fulfillmentStatus: shipped ? 'shipped' : 'unshipped',
             currencyCode: total?.currencyCode || subtotal?.currencyCode || null,
@@ -6404,7 +6411,10 @@ function summarizeDeliveryMethods(connection, errors = [], fetchedAt = isoNow())
     const reason = unavailable ? 'unavailable' : !connection ? 'not-returned'
         : connection.pageInfo?.hasNextPage !== false ? 'incomplete'
             : !nodes.length ? 'not-assigned' : nodes.some(node => !kinds[node?.deliveryMethod?.methodType]) ? 'unknown-method' : null;
-    return { kind: reason ? 'unknown' : types.length > 1 ? 'mixed' : kinds[types[0]],
+    // Non-physical services do not add a delivery route. Keep the source types intact.
+    const physicalTypes = types.filter(type => type !== 'NONE');
+    const effectiveTypes = physicalTypes.length ? physicalTypes : types;
+    return { kind: reason ? 'unknown' : effectiveTypes.length > 1 ? 'mixed' : kinds[effectiveTypes[0]],
         types, complete: !reason, source: 'shopify-fulfillment-orders', fetchedAt,
         ...(reason ? { reason } : {}) };
 }
@@ -7544,6 +7554,9 @@ async function providerBoardDto(env, record) {
         id: record.orderKey,
         orderKey: record.orderKey,
         source,
+        // Apply shop policy to previously cached receipts as well as newly synced orders.
+        commerce: source.provider === 'etsy' ? { ...contract.commerce,
+            deliveryMethod: etsyDeliveryMethod(contract.sync?.fetchedAt || isoNow()) } : contract.commerce,
         production,
         productionRef: {
             authority: 'printmo-d1',

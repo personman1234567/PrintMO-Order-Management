@@ -189,7 +189,7 @@
     mobile.disabled = source.disabled;
     mobile.setAttribute('aria-busy', source.disabled ? 'true' : 'false');
     const label = mobile.querySelector('.mobile-refresh-label');
-    if (label) label.textContent = source.disabled ? 'Syncing' : 'Sync';
+    if (label) label.textContent = source.disabled ? 'Refreshing…' : 'Refresh';
   }
 
   function syncViewportMetrics() {

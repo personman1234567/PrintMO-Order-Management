@@ -33,6 +33,7 @@
     path.setAttribute('d', iconPaths[name]); svg.append(path); return svg;
   }
   const mobile = () => matchMedia('(max-width: 600px)').matches;
+  const touchSheet = () => context?.presenter === 'mobile';
   const snapshot = () => window.getOrderManagerBoardSnapshot?.() || [];
   const resolve = key => snapshot().find(order => model.orderKey(order) === key);
   const stamp = order => JSON.stringify([order?.canonical?.shopifyUpdatedAt, order?.canonical?.updatedAt, order?.canonical?.sourceUpdatedAt,
@@ -42,6 +43,7 @@
     return cached?.stamp === stamp(order) ? cached.detail : null;
   };
   function announce(message, error = false, { persist = false } = {}) {
+    if (touchSheet()) { window.MobileOrderActions.feedback(message, error); return; }
     if (!status) {
       status = el('p', '', 'order-action-status');
       status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
@@ -112,6 +114,15 @@
   }
   function close(restore = true) {
     if (!context) return;
+    if (touchSheet()) {
+      const saved = context;
+      window.MobileOrderActions.close(restore); context = null; page = '';
+      if (restore && (!saved.opener?.isConnected || !saved.opener.getClientRects().length)) {
+        const row = [...document.querySelectorAll('#mobile-order-workspace .mw-row')].find(node => node.dataset.orderKey === saved.key);
+        (row?.querySelector('.mw-row-actions') || document.querySelector('#mobile-order-workspace .mw-search input'))?.focus({ preventScroll: true });
+      }
+      return;
+    }
     const opener = context.opener;
     clearTimeout(hoverTimer); clearTimeout(flyoutExitTimer); hoverTimer = null;
     context = null; page = '';
@@ -217,12 +228,12 @@
     const order = resolve(context?.key);
     if (!order) { close(); announce('This order is no longer in the current view.', true); return; }
     const value = window.OrderActionModel.copyField(order, id, { detail: loaded(order) });
-    if (!value.enabled) { showSub('copy'); announce(value.reason, true); return; }
+    if (!value.enabled) { if (touchSheet()) window.MobileOrderActions.showPage('copy'); else showSub('copy'); announce(value.reason, true); return; }
     try {
       if (typeof navigator.clipboard?.writeText !== 'function') throw new Error('Clipboard access is unavailable.');
       // Keep the clipboard call inside this explicit user activation.
       await navigator.clipboard.writeText(value.text);
-      if (context === sourceContext) close();
+      if (context === sourceContext) { if (touchSheet()) window.MobileOrderActions.showPage(''); else close(); }
       announce('Copied.');
     } catch { announce('Could not copy. Try again, or open the order and copy the text manually.', true); }
   }
@@ -231,7 +242,9 @@
     if (!order || !writable(order) || busy()) return;
     const choice = window.OrderManagerViews?.actions([saved.key]).find(item => item.value === value);
     if (!choice?.enabled) { announce(choice?.reason || 'This stage move is unavailable.', true); return; }
-    close(); pending = true;
+    const inSheet = touchSheet();
+    if (inSheet) window.MobileOrderActions.suspend(); else close();
+    pending = true;
     try {
       const result = await window.OrderManagerViews.reviewOrders([saved.key], value, saved.opener);
       if (result) {
@@ -240,26 +253,36 @@
         announce(result.notice || outcomes.map(item => item.message || item.outcome).join(' ') || 'Review the action result.', unresolved.length > 0);
       }
     } catch (error) { announce(error.message || 'The stage move failed. Review the order and try again.', true); }
-    finally { pending = false; }
+    finally {
+      pending = false;
+      if (inSheet && context === saved) { window.MobileOrderActions.resume(); window.MobileOrderActions.refresh(); }
+    }
   }
   async function setMaterial(kind, value) {
     const saved = context, order = resolve(saved?.key);
     if (!order || !writable(order) || busy() || typeof window.api?.updateReady !== 'function') return;
-    if (model.materialForOrder(order, kind).value === value) { close(); return; }
+    if (model.materialForOrder(order, kind).value === value) { if (touchSheet()) window.MobileOrderActions.showPage(''); else close(); return; }
     const patch = model.materialPatch(kind, value, order);
     const reference = { provider: order._provider, orderKey: order._orderKey || order._gid };
     const label = model.MATERIAL_OPTIONS[kind].find(option => option[0] === value)[1];
     const number = window.OrderActionModel.copyField(order, 'orderNumber');
     const target = number.enabled ? number.text : 'Order';
-    close(); pending = true;
+    const inSheet = touchSheet();
+    if (!inSheet) close();
+    pending = true;
+    if (inSheet) window.MobileOrderActions.refresh();
     document.body.dataset.orderActionSaving = 'true';
     announce(`${target} · Saving ${kind} status…`, false, { persist: true });
     try {
       // The source-aware adapter owns CAS, serialization and the shared board repaint.
       await window.api.updateReady(reference, patch);
+      if (inSheet && context === saved) window.MobileOrderActions.showPage('');
       announce(`${target} · ${kind === 'prints' ? 'Prints' : 'Blanks'}: ${label}.`);
     } catch (error) { announce(`${target} · Status was not saved. ${error?.message || 'Try again.'}`, true); }
-    finally { pending = false; delete document.body.dataset.orderActionSaving; }
+    finally {
+      pending = false; delete document.body.dataset.orderActionSaving;
+      if (inSheet && context === saved) window.MobileOrderActions.refresh();
+    }
   }
   async function editCount() {
     const order = resolve(context?.key);
@@ -311,6 +334,57 @@
     catch (error) { announce(`Could not remove order: ${error.message || error}`, true); }
     finally { pending = false; }
   }
+  function sheetPage(kind = '') {
+    const order = resolve(context?.key);
+    if (!order?._candidate || document.body.dataset.orderSource !== 'shopify') return null;
+    const summary = model.summarize(order);
+    const number = window.OrderActionModel.copyField(order, 'orderNumber');
+    const base = { customer: summary?.customer || 'Order', number: number.enabled ? number.text : summary?.number || 'Order',
+      source: order._provider === 'etsy' ? 'Etsy' : 'PrintMO', busy: Boolean(busy()), groups: [] };
+    const unavailable = !writable(order) ? 'This order is read-only.' : 'Status actions are unavailable. Refresh the app and try again.';
+    const stateEnabled = writable(order) && typeof window.api?.updateReady === 'function';
+    const item = (id, label, run, options = {}) => ({ id, label, run, enabled: true, ...options });
+    const navigate = next => () => window.MobileOrderActions.showPage(next);
+    const moves = (window.OrderManagerViews?.actions([context.key]) || []).filter(choice => choice.value.startsWith('move:'));
+    if (kind === 'move') {
+      base.title = 'Stage';
+      const stage = model.stageForOrder(order), label = model.STAGES.find(value => value.id === stage)?.label || 'Unknown stage';
+      base.groups = [{ items: [
+        item('current-stage', label, () => window.MobileOrderActions.showPage(''), { checked: true, icon: 'stage' }),
+        ...moves.filter(choice => !choice.hidden).map(choice => item(choice.value, choice.label, () => void move(choice.value),
+          { enabled: writable(order) && choice.enabled, reason: choice.reason, checked: false, icon: 'stage' }))
+      ] }];
+    } else if (kind === 'prints' || kind === 'blanks') {
+      base.title = kind === 'prints' ? 'Prints' : 'Blanks';
+      const current = model.materialForOrder(order, kind);
+      base.groups = [{ items: model.MATERIAL_OPTIONS[kind].map(([value, label]) => item(kind + ':' + value, label,
+        () => void setMaterial(kind, value), { icon: kind, checked: current.value === value, enabled: stateEnabled, reason: stateEnabled ? '' : unavailable })) }];
+    } else if (kind === 'copy') {
+      base.title = 'Copy order details';
+      base.groups = [{ items: window.OrderActionModel.copyFields(order, { detail: loaded(order) }).map(field =>
+        item('copy:' + field.id, field.label, () => void copy(field.id), { enabled: field.enabled, reason: field.reason, icon: 'copy' })) }];
+    } else {
+      const stageEnabled = writable(order) && moves.some(choice => !choice.hidden && choice.enabled);
+      const statusItems = [item('move', 'Stage', navigate('move'), { icon: 'stage', branch: true, value: summary?.stageLabel || 'Unknown stage',
+        enabled: stageEnabled, reason: stageEnabled ? '' : !writable(order) ? 'This order is read-only.' : 'Stage actions are unavailable.' })];
+      for (const statusKind of ['blanks', 'prints']) {
+        statusItems.push(item(statusKind, statusKind === 'prints' ? 'Prints' : 'Blanks', navigate(statusKind),
+          { icon: statusKind, branch: true, value: model.materialForOrder(order, statusKind).label, enabled: stateEnabled, reason: stateEnabled ? '' : unavailable }));
+      }
+      const more = [
+        item('targetDate', 'Target date', () => void editDetail('targetDate'), { ...editorState(order, 'targetDate'), icon: 'date', branch: true, value: order.targetDate || 'No target set' }),
+        item('notes', 'Instructions', () => void editDetail('notes'), { ...editorState(order, 'notes'), icon: 'notes', branch: true }),
+        item('copy', 'Copy order details', navigate('copy'), { icon: 'copy', branch: true })
+      ];
+      const count = countState(order);
+      if (count.visible) more.unshift(item('count', 'Printed count', () => void editCount(), { ...count, icon: 'count', branch: true }));
+      base.groups = [{ items: statusItems }, { title: 'More actions', items: more }];
+      if (writable(order) && window.OrderActionModel.canRemoveFromBoard(order)) base.groups.push({ items: [
+        item('remove', 'Remove from board', () => void remove(), { icon: 'remove', danger: true })
+      ] });
+    }
+    return base;
+  }
   function setup() {
     if (menu) return;
     menu = el('div', undefined, 'order-action-menu'); menu.id = 'order-action-menu'; menu.hidden = true;
@@ -333,9 +407,9 @@
     });
     menu.addEventListener('click', event => event.stopPropagation());
     menu.addEventListener('pointerdown', () => { menu.dataset.input = 'pointer'; cancelHoverClose(); });
-    document.addEventListener('pointerdown', event => { if (context && !menu.contains(event.target) && !context.opener?.contains(event.target)) close(false); }, true);
+    document.addEventListener('pointerdown', event => { if (context && !touchSheet() && !menu.contains(event.target) && !context.opener?.contains(event.target)) close(false); }, true);
     document.addEventListener('keydown', event => {
-      if (!context) return;
+      if (!context || touchSheet()) return;
       menu.dataset.input = 'keyboard';
       cancelHoverClose(); clearTimeout(flyoutExitTimer);
       if (event.key === 'Escape') {
@@ -356,19 +430,25 @@
         event.preventDefault(); showSub(document.activeElement.dataset.submenu);
       } else if (event.key === 'ArrowLeft' && page) { event.preventDefault(); panelBack(); }
     }, true);
-    window.addEventListener('resize', () => { if (context) { close(); } });
-    window.addEventListener('blur', () => close(false));
-    document.addEventListener('printmo:board-updated', () => { if (context) close(); });
+    window.addEventListener('resize', () => { if (context && !touchSheet()) close(); });
+    window.addEventListener('blur', () => { if (!touchSheet()) close(false); });
+    document.addEventListener('printmo:board-updated', () => { if (touchSheet()) window.MobileOrderActions.refresh(); else if (context) close(); });
     new MutationObserver(records => {
       close(false);
       if (records.some(record => record.attributeName === 'data-order-source')) details.clear();
-    }).observe(document.body, { attributes: true, attributeFilter: ['data-order-source', 'data-active-view'] });
+    }).observe(document.body, { attributes: true, attributeFilter: ['data-order-source', 'data-active-view', 'data-mobile-area'] });
   }
-  function open(key, opener, point, { input = 'pointer' } = {}) {
+  function open(key, opener, point, { input = 'pointer', page: initialPage = '' } = {}) {
     if (document.body.dataset.orderSource !== 'shopify' || busy()) return;
     const order = resolve(key);
     if (!order?._candidate) return;
     setup(); close(false); context = { key, opener, point };
+    if (matchMedia('(max-width: 900px)').matches && window.MobileOrderActions) {
+      context.presenter = 'mobile'; opener?.setAttribute('aria-haspopup', 'dialog');
+      window.MobileOrderActions.open({ opener, getPage: sheetPage, onClose: () => close() }, initialPage);
+      return;
+    }
+    opener?.setAttribute('aria-haspopup', 'menu');
     menu.dataset.input = input;
     primary.hidden = false; primary.replaceChildren(heading); submenu.hidden = true;
     primary.dataset.state = 'open';

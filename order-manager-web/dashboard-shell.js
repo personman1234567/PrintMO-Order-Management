@@ -93,7 +93,7 @@
         // Menu takes the former Sync slot; the original refresh lives in the drawer.
         const view = document.body.dataset.activeView || 'orders';
         const target = mobile.matches ? document.getElementById('mobile-tab-bar')
-          : view === 'orders' ? document.querySelector(document.body.dataset.orderLayout === 'list'
+          : view === 'orders' ? document.getElementById('order-workspace-header') || document.querySelector(document.body.dataset.orderLayout === 'list'
             ? '.order-list-heading' : '.production-panel-header')
           : document.querySelector({ inventory: '.shelf-inventory-header', previous: '.previous-orders-header',
             storage: '.storage-header', drafts: '.draft-workspace-heading', prepared: '.prepared-workspace-heading' }[view] || '.production-panel-header');

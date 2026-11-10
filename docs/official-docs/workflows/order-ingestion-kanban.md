@@ -246,6 +246,13 @@ All delivery restores the grid. Filter state survives tab switches in memory.
 the board snapshot. Only exact `pickup` and `shipping` kinds enter those filters.
 Incomplete, absent, mixed, local-delivery, pickup-point and other methods remain
 under All delivery or Other / unknown; addresses and titles never infer a method.
+Shopify `NONE` fulfillment methods describe non-physical items and are neutral
+when physical methods are present: `PICK_UP` plus `NONE` is pickup, and `SHIPPING`
+plus `NONE` is shipping. Pickup plus shipping remains mixed; incomplete or denied
+fulfillment data remains unknown. An order containing only `NONE` stays no-delivery.
+Etsy orders always classify as shipping by shop policy, independently of shipment
+status. This policy applies during receipt normalization and board/detail reads,
+including previously cached receipts; it does not mark an order shipped.
 Delivery changes invalidate retained cards so a refreshed order enters or leaves
 the filtered grid correctly.
 

@@ -114,9 +114,31 @@ Supplies, Print and More navigation at viewport widths through 900px. Desktop
 keeps its existing Board/List presentation. This is a mobile arrangement of the
 same operational model, with no new canonical production stages.
 
-Orders rows lead with a 96px square, contained preview and garment/color/unit
-context. Prefer an explicitly associated front derivative; retain the combined
-proof when no derivative exists. Standalone art is labeled **Order artwork**;
+Orders rows place a large contained proof beside a narrow order-status rail,
+with customer and order/source identity above. Prefer the complete combined
+mockup; an explicitly associated front derivative remains a fallback. The rail
+shows order age since source creation, canonical stage in ink, and Prints as a
+compact outlined-sheet label/value component. Delivery sits beside order/source
+metadata; a 44px overflow button opens order actions from the header.
+Do not display garment/variant lists. Omit the blanks-cart material label only
+when it repeats the In S&S Cart stage; retain independent material milestones.
+The compact footer carries independent blanks milestones and an optional internal
+Target; Prints is not repeated there. Cache freshness belongs beside Refresh, not in each entry.
+Use a compact 128px-high contain frame for both square and wide proofs, with
+an 88–100px status rail and tighter row spacing. Preserve each image's intrinsic
+proportions without cropping. At 320px and 393px, allow natural text wrapping and
+retain the existing touch targets and shared detail/scroll-return behavior.
+Mobile order actions have a dedicated full-width bottom sheet through 900px.
+Stage, Blanks and Prints lead with current values. Choices replace the body with
+Back and a checked current choice; secondary date, instructions, copy, eligible
+printed count and provider-scoped removal retain existing commands and permissions.
+The header stays fixed above one scrollable body sized to the visible embedded
+viewport, including keyboard/short-height changes. Scrolling, blur, ordinary resize
+and board refresh do not dismiss it. Saving/error feedback stays in the sheet;
+material saves and stage review return to its overview. Desktop retains its
+separate context-menu presenter and flyouts.
+
+Standalone art is labeled **Order artwork**;
 catalog and schematic fallbacks remain distinguishable. Delivery method has its
 own icon and text before opening detail; unknown method reads **Check delivery**.
 Desktop and detail retain the existing combined proof and image selection.

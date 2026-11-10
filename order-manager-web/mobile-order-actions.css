@@ -1,0 +1,40 @@
+/* Dedicated mobile sheet; no desktop menu selectors or positioning rules. */
+@media (max-width: 900px) {
+  .mobile-order-actions[open] {
+    display: flex; flex-direction: column; position: fixed; inset: auto auto var(--moa-bottom, 0px) var(--moa-left, 0px);
+    box-sizing: border-box; width: var(--moa-width, 100%); max-width: none; height: var(--moa-height, 84dvh); max-height: none;
+    margin: 0; padding: 0; border: 0; border-radius: 16px 16px 0 0; overflow: hidden;
+    background: #fff; color: #334155; font: 14px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .mobile-order-actions::backdrop { background: rgb(15 23 42 / .38); }
+  .mobile-order-actions .moa-header { display: flex; align-items: flex-start; gap: 8px; padding: 16px 12px 12px 16px; flex-shrink: 0; }
+  .mobile-order-actions .moa-header-copy { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .mobile-order-actions .moa-caption { margin: 0 0 3px; font-size: 12px; color: #526174; }
+  .mobile-order-actions h2 { margin: 0; font-size: 20px; line-height: 1.25; font-weight: 650; color: #0f172a; }
+  .mobile-order-actions .moa-identity { margin: 4px 0 0; font-size: 13px; color: #526174; }
+  .mobile-order-actions button { font: inherit; cursor: pointer; touch-action: manipulation; box-sizing: border-box; }
+  .mobile-order-actions svg { display: block; width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+  .mobile-order-actions .moa-control { display: grid; place-items: center; width: 44px; min-width: 44px; height: 44px; padding: 10px; border: 0; border-radius: 6px; color: #0f172a; background: transparent; }
+  .mobile-order-actions .moa-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; touch-action: pan-y; padding: 0 16px calc(12px + env(safe-area-inset-bottom, 0px)); scrollbar-width: thin; scrollbar-color: #94a3b8 #f8fafc; }
+  .mobile-order-actions .moa-group + .moa-group { border-top: 1px solid #dbe2ec; margin-top: 12px; padding-top: 12px; }
+  .mobile-order-actions h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: #526174; }
+  .mobile-order-actions .moa-row { display: flex; align-items: center; gap: 12px; min-height: 52px; width: 100%; padding: 10px 4px; border: 0; border-bottom: 1px solid #e5eaf1; border-radius: 0; color: #0f172a; background: #fff; text-align: left; }
+  .mobile-order-actions .moa-row:last-child { border-bottom: 0; }
+  .mobile-order-actions .moa-row > svg:first-child { color: #1765c1; }
+  .mobile-order-actions .moa-row-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 1px; overflow-wrap: anywhere; }
+  .mobile-order-actions .moa-label { font-size: 15px; font-weight: 600; }
+  .mobile-order-actions .moa-value, .mobile-order-actions .moa-reason { font-size: 13px; color: #526174; }
+  .mobile-order-actions .moa-reason { font-size: 12px; margin-top: 3px; }
+  .mobile-order-actions .moa-chevron { width: 16px; height: 16px; transform: rotate(180deg); color: #526174; }
+  .mobile-order-actions .moa-row:disabled { cursor: default; }
+  .mobile-order-actions .moa-row:disabled .moa-label { color: #526174; }
+  .mobile-order-actions .moa-row:disabled > svg:first-child { color: #64748b; }
+  .mobile-order-actions .moa-row.is-current { background: #eff6ff; }
+  .mobile-order-actions .moa-row.is-danger, .mobile-order-actions .moa-row.is-danger > svg:first-child { color: #b42318; }
+  .mobile-order-actions :focus-visible { outline: 2px solid #1a73e8; outline-offset: -2px; }
+  .mobile-order-actions .moa-feedback { flex-shrink: 0; margin: 0; padding: 4px 16px 12px; color: #334155; font-size: 13px; }
+  .mobile-order-actions .moa-feedback.is-error { color: #b42318; }
+  .mobile-order-actions .moa-feedback[hidden] { display: none; }
+  .mobile-order-actions ::selection { color: #fff; background: #1a73e8; }
+  @media (hover: hover) { .mobile-order-actions button:not(:disabled):hover { background: #eff6ff; } }
+}

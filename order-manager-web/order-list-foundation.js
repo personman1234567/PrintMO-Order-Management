@@ -221,7 +221,7 @@
     elements.notice.textContent = `${result.shown} of ${latest.total} shown${extra}${loadState === 'error' && latest.total ? ' · Refresh failed; showing cached orders.' : ''}`;
     const empty = !result.shown;
     elements.empty.hidden = !empty;
-    elements.empty.textContent = latest.total ? 'No matching orders. Clear filters to see all active orders.'
+    elements.empty.textContent = document.body.dataset.orderQueueState === 'incomplete' ? 'Some orders could not load. Refresh to try again.' : loadState === 'partial' ? 'More orders are still loading…' : latest.total ? 'No matching orders. Clear filters to see all active orders.'
       : loadState === 'loading' ? 'Loading orders…' : loadState === 'error' ? 'Orders could not be loaded. Use Refresh to try again.' : 'No active orders.';
     reconcileRows(result, preserve);
     renderBusy();

@@ -34,10 +34,13 @@ Electron calls authenticated Worker endpoints. It does not directly own Redis or
 
 ## Embedded Web Client
 
+Mobile order actions use [mobile-order-actions.js](../../../order-manager-web/mobile-order-actions.js) and its scoped stylesheet for the sheet presenter; [order-actions.js](../../../order-manager-web/order-actions.js) owns shared command eligibility and mutations. Stable entries: `MobileOrderActions`, `sheetPage`.
+
 | Source | Ownership | Stable entry symbols/selectors |
 |---|---|---|
 | [index.html](../../../order-manager-web/index.html) | Shopify Admin/standalone shell and script ordering | App Bridge meta, `#orders-view` |
 | [renderer.js](../../../order-manager-web/renderer.js) | Prepared/minified shared renderer for web deployment | `renderBoard`, `openDetail`, `splitOrderAssets` |
+| [order-load-state.js](../../../order-manager-web/order-load-state.js), [order-load-state.css](../../../order-manager-web/order-load-state.css) | Contained initial loading, first-snapshot/complete milestones, refresh feedback and enumeration gating | `OrderManagerLoadUi`, `#order-startup`, `#order-refresh-controls` |
 | [web-shim.js](../../../order-manager-web/web-shim.js) | Source-aware `window.api`, candidate DTO mapping, canonical mutations, private-asset tickets | `window.api`, `updateBoardMove` |
 | [shopify-preview.js](../../../order-manager-web/shopify-preview.js) | Shopify-first source control, debug-only Legacy Redis switch, failure rollback, rich detail, production controls | `setPreviewActive`, `installLegacyDebugSourceControls` |
 | [storage-browser.js](../../../order-manager-web/storage-browser.js) | Browser storage and endpoint adapter | storage-backed `window.api` methods |
@@ -63,6 +66,8 @@ Electron calls authenticated Worker endpoints. It does not directly own Redis or
 | [wrangler.jsonc](../../../order-manager-proxy/wrangler.jsonc) | Worker, D1, R2, Durable Object, cron, and pre-cutover bindings | `ORDER_DB`, `R2_BUCKET`, `PREVIEWS` |
 | [production-client.mjs](../../../order-manager-proxy/extensions/printmo-production-status/src/production-client.mjs) | Shared Admin-block normalization, minimal patching, endpoint, auth, and error helpers | production-client exports |
 | `order-manager-proxy/extensions/printmo-production-status/` | Shopify Admin order-details production block | canonical production read/edit UI |
+
+Prepared direct checkout pricing is owned by [prepared-order-discounts.mjs](../../../order-manager-proxy/prepared-order-discounts.mjs) (`calculatePreparedBulk`, `verifyPreparedBulkTotals`, `PREPARED_BULK_POLICY`), called only by [prepared-order-links.mjs](../../../order-manager-proxy/prepared-order-links.mjs). It does not own ordinary storefront discounts.
 
 ## Repository Tooling
 

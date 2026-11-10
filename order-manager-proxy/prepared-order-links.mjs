@@ -4,6 +4,7 @@ import { selectedPreparedRecord, primaryPreparedTemplate, preparedSelection } fr
 import { mapConcurrent } from './prepared-publish-progress.mjs';
 import {recipientSizeGuides} from './prepared-size-guides.mjs';
 import {preparedColorOptions,recipientConfigurations} from './prepared-colors.mjs';
+import {calculatePreparedBulk, verifyPreparedBulkTotals, PREPARED_BULK_POLICY} from './prepared-order-discounts.mjs';
 const UPSTREAM = 'https://designer-preview-upload.printmobusiness.workers.dev';
 const customerUrl = (_env,id) => 'https://print-mo.com/pages/designer-studio?preparedOrder='+id;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -20,8 +21,9 @@ const checked = result => {
 };
 export const PREPARED_SCOPE_QUERY = 'query PreparedCheckoutScopes { currentAppInstallation { accessScopes { handle } } }';
 export const PREPARED_PRICE_QUERY = 'query PreparedCheckoutPrices($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id price product { handle } } } }';
-export const PREPARED_CHECKOUT_CREATE = `mutation PreparedCheckoutCreate($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id invoiceUrl } userErrors { field message } } }`;
-export const PREPARED_CHECKOUT_RECOVER = `query PreparedCheckoutRecover($query: String!) { draftOrders(first: 1, query: $query) { nodes { id invoiceUrl status } } }`;
+const PREPARED_CHECKOUT_TOTALS = 'subtotalPriceSet { presentmentMoney { amount currencyCode } } totalDiscountsSet { presentmentMoney { amount currencyCode } }';
+export const PREPARED_CHECKOUT_CREATE = `mutation PreparedCheckoutCreate($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id invoiceUrl ${PREPARED_CHECKOUT_TOTALS} } userErrors { field message } } }`;
+export const PREPARED_CHECKOUT_RECOVER = `query PreparedCheckoutRecover($query: String!) { draftOrders(first: 1, query: $query) { nodes { id invoiceUrl status ${PREPARED_CHECKOUT_TOTALS} } } }`;
 async function requireCheckoutAccess(env, deps) {
   const data = checked(await deps.graphql(env, PREPARED_SCOPE_QUERY, {}, 'PreparedCheckoutScopes'));
   if (!data.currentAppInstallation.accessScopes.some(scope => scope.handle === 'write_draft_orders')) fail('CHECKOUT_ACCESS_REQUIRED', 'Shopify needs draft checkout permission. Reopen Order Manager in Shopify and approve the updated app permissions, then retry.', 403);
@@ -207,7 +209,7 @@ export async function handlePreparedLinkRequest(request,env,deps,service,id,acti
     await writeJson(env.R2_BUCKET,key,recovered,{etagMatches:lease.etag});throw error;
   }
 }
-export function buildPreparedCheckoutLines(items,selections,orderId,snapshotId) {
+export function buildPreparedCheckoutLines(items,selections,orderId,snapshotId,allowEmpty=false) {
   const lines=[],chosen=[];
   if(!selections||typeof selections!=='object'||Array.isArray(selections))fail('QUANTITIES_REQUIRED','Choose your sizes and quantities.');
   for(const key of Object.keys(selections))if(!items.some(item=>item.id===key))fail('ORDER_CHANGED','The order changed. Reload this page before checkout.',409);
@@ -226,7 +228,7 @@ export function buildPreparedCheckoutLines(items,selections,orderId,snapshotId) 
       chosen.push({itemId:item.id,variantId,quantity});
     }
   }
-  if(!total)fail('QUANTITIES_REQUIRED','Choose at least one size and quantity to continue.');
+  if(!total&&!allowEmpty)fail('QUANTITIES_REQUIRED','Choose at least one size and quantity to continue.');
   if(lines.length>200)fail('ORDER_TOO_LARGE','This order has too many size and print combinations. Contact Print-MO to split it.');
   return {lines,chosen,total};
 }
@@ -284,8 +286,11 @@ async function recipientQuote(env,deps,service,document,body) {
   const loadedProducts=new Map(await Promise.all([...colorProducts].map(async([id,job])=>[id,await job])));
   const items=await enrich(env,deps,configuredService,edited.record,document.snapshot.items,loadedProducts);
   for(const item of items){const saved=document.snapshot.items.find(value=>value.id===item.id);const changed=configured.items.find(value=>value.id===item.id)?.variantId!==selected.items.find(value=>value.id===item.id)?.variantId;item.images=changed?[]:saved.images||[];}
-  const quoteId=await hash(JSON.stringify({snapshotId:body.snapshotId,designs:edited.designs,items,...(body.selection?{selection:body.selection}:{}),...(body.configurations?{configurations:body.configurations}:{})}));
-  return {...edited,items,quoteId};
+  const chosen=body.quantities===undefined?null:buildPreparedCheckoutLines(items,body.quantities,document.order.id,body.snapshotId,true);
+  const calculated=chosen?await calculatePreparedBulk(env,deps,chosen.lines,items):null;
+  const quoteId=await hash(JSON.stringify({policyVersion:PREPARED_BULK_POLICY,snapshotId:body.snapshotId,designs:edited.designs,items,
+    ...(chosen?{chosen:chosen.chosen,pricing:calculated.pricing}:{}),...(body.selection?{selection:body.selection}:{}),...(body.configurations?{configurations:body.configurations}:{})}));
+  return {...edited,items,quoteId,...(calculated?{pricing:calculated.pricing,checkoutInput:calculated.input}:{})};
 }
 async function checkout(request,env,deps,service,id,document,isQuote=false) {
   if(Number(request.headers.get('Content-Length'))>24*1024*1024)fail('REQUEST_TOO_LARGE','This order selection is too large.',413);
@@ -296,34 +301,41 @@ async function checkout(request,env,deps,service,id,document,isQuote=false) {
   for(const [itemId,values] of Object.entries(body.quantities||{}))if(!selectedIds.has(itemId)&&Object.values(values||{}).some(quantity=>Number(quantity)>0))fail('INVALID_SELECTION','An unselected option cannot be purchased. Review your order.');
   let quote=null;
   if(isQuote){
-    const key=await hash(JSON.stringify({shop:env.SHOPIFY_SHOP_DOMAIN,id,snapshotId:body.snapshotId,designs:body.designs,selection:body.selection,...(body.configurations?{configurations:body.configurations}:{})}));
+    const key=await hash(JSON.stringify({policyVersion:PREPARED_BULK_POLICY,shop:env.SHOPIFY_SHOP_DOMAIN,id,snapshotId:body.snapshotId,designs:body.designs,quantities:body.quantities,selection:body.selection,...(body.configurations?{configurations:body.configurations}:{})}));
     let job=quoteFlights.get(key);
     if(!job){job=recipientQuote(env,deps,service,document,body);if(quoteFlights.size<100)quoteFlights.set(key,job);}
     try{quote=await job}finally{if(quoteFlights.get(key)===job)quoteFlights.delete(key);}
-  }else if(body.designs||body.selection||body.configurations)quote=await recipientQuote(env,deps,service,document,body);
-  if(isQuote)return {quoteId:quote.quoteId,items:quote.items};
+  }else quote=await recipientQuote(env,deps,service,document,body);
+  if(isQuote)return {quoteId:quote.quoteId,items:quote.items,...(quote.pricing?{pricing:quote.pricing}:{})};
   if(!UUID.test(body.sessionId||''))fail('INVALID_SESSION','Reload this order, then try checkout again.');
-  if(quote&&body.quoteId!==quote.quoteId)fail('PRICE_CHANGED','The price or design changed. Return to the review and retry checkout.',409);
+  if(!quote.checkoutInput||body.quoteId!==quote.quoteId)fail('PRICE_CHANGED','The price, quantities or design changed. Refresh the order price and retry checkout.',409);
   const chosen=buildPreparedCheckoutLines(quote?.items||document.snapshot.items.filter(item=>selectedIds.has(item.id)),body.quantities,id,body.snapshotId);
   const files=recipientArtwork(document.snapshot.record,quote?.designs||{},body.artwork,new Set(chosen.chosen.map(value=>value.itemId)),body.previews,body.frontPreviews);
-  const checkoutId=await hash(JSON.stringify({id,snapshotId:body.snapshotId,sessionId:body.sessionId,chosen:chosen.chosen,...(quote?{quoteId:quote.quoteId,artworkHash:await hash(JSON.stringify(files))}:{})})),key=ROOT(env)+'checkouts/'+checkoutId+'.json';
+  const checkoutId=await hash(JSON.stringify({policyVersion:PREPARED_BULK_POLICY,id,snapshotId:body.snapshotId,sessionId:body.sessionId,chosen:chosen.chosen,...(quote?{quoteId:quote.quoteId,artworkHash:await hash(JSON.stringify(files))}:{})})),key=ROOT(env)+'checkouts/'+checkoutId+'.json';
   const existing=await readJson(env.R2_BUCKET,key);
-  if(existing?.value.state==='ready')return {checkoutUrl:existing.value.url};
+  if(existing?.value.state==='ready'&&existing.value.pricingVerified)return {checkoutUrl:existing.value.url};
   let progress=existing?.value;
   if(!progress?.draftId&&progress?.state==='pending'){
     const recovered=checked(await deps.graphql(env,PREPARED_CHECKOUT_RECOVER,{query:'tag:pm-prepared-'+checkoutId.slice(0,40)},'PreparedCheckoutRecover')).draftOrders.nodes[0];
-    if(recovered){if(recovered.status==='COMPLETED')fail('CHECKOUT_COMPLETE','This checkout has already been completed. Contact Print-MO if you need another order.',409);progress={...progress,draftId:recovered.id,url:recovered.invoiceUrl,completedUploads:[],state:'attaching'};}
+    if(recovered){if(recovered.status==='COMPLETED')fail('CHECKOUT_COMPLETE','This checkout has already been completed. Contact Print-MO if you need another order.',409);verifyPreparedBulkTotals(recovered,quote.pricing);progress={...progress,draftId:recovered.id,url:recovered.invoiceUrl,completedUploads:[],state:'attaching',pricingVerified:true};}
     else if(Date.now()-Date.parse(progress.startedAt)<120000)fail('CHECKOUT_PENDING','Shopify is preparing your checkout. Retry in a moment.',409);
   }
   if(!progress?.draftId){
-    const fresh=quote?.items||await enrich(env,deps,service,selectedPreparedRecord(document.snapshot.record,body.selection));
-    for(const item of document.snapshot.items){const current=fresh.find(value=>value.id===item.id);const changed=quote&&quote.record.items.find(value=>value.id===item.id)?.variantId!==document.snapshot.record.items.find(value=>value.id===item.id)?.variantId;for(const selection of chosen.chosen.filter(value=>value.itemId===item.id)){const old=item.variants.find(value=>value.id===selection.variantId),now=current.variants.find(value=>value.id===selection.variantId);if(!now||(!changed&&(!old||now.priceCents!==old.priceCents))||(!quote&&JSON.stringify(current.prints)!==JSON.stringify(item.prints)))fail('PRICE_CHANGED','This order’s products or prices have changed. Ask Print-MO to update your link before purchasing.',409);}}
     await requireCheckoutAccess(env,deps);
     const lease=await writeJson(env.R2_BUCKET,key,{state:'pending',startedAt:new Date().toISOString()},existing?{etagMatches:existing.etag}:{etagDoesNotMatch:'*'});if(!lease)fail('CHECKOUT_PENDING','Your checkout is already being prepared. Retry in a moment.',409);
-    const result=checked(await deps.graphql(env,PREPARED_CHECKOUT_CREATE,{input:{lineItems:chosen.lines,tags:['pm-prepared-checkout','pm-prepared-'+checkoutId.slice(0,40)],acceptAutomaticDiscounts:true,allowDiscountCodesInCheckout:true,customAttributes:[{key:'_preparedOrderId',value:id},{key:'_preparedConfigId',value:body.snapshotId}]}},'PreparedCheckoutCreate')).draftOrderCreate;
+    const result=checked(await deps.graphql(env,PREPARED_CHECKOUT_CREATE,{input:{...quote.checkoutInput,tags:['pm-prepared-checkout','pm-prepared-'+checkoutId.slice(0,40)],customAttributes:[{key:'_preparedOrderId',value:id},{key:'_preparedConfigId',value:body.snapshotId},{key:'_preparedPricingPolicy',value:PREPARED_BULK_POLICY}]}},'PreparedCheckoutCreate')).draftOrderCreate;
     if(result.userErrors?.length){await writeJson(env.R2_BUCKET,key,{state:'failed'});fail('CHECKOUT_REJECTED',result.userErrors.map(error=>error.message).join(' ').slice(0,500),422);}
     if(!result.draftOrder?.invoiceUrl)fail('CHECKOUT_PENDING','Shopify has not returned the checkout yet. Retry in a moment.',503);
-    progress={draftId:result.draftOrder.id,url:result.draftOrder.invoiceUrl,state:'attaching',completedUploads:[]};await writeJson(env.R2_BUCKET,key,progress);
+    progress={draftId:result.draftOrder.id,url:result.draftOrder.invoiceUrl,state:'attaching',completedUploads:[],pricingVerified:false};await writeJson(env.R2_BUCKET,key,progress);
+    verifyPreparedBulkTotals(result.draftOrder,quote.pricing);progress.pricingVerified=true;await writeJson(env.R2_BUCKET,key,progress);
+  }
+  if(!progress.pricingVerified){
+    // Creation may have succeeded just before the Worker or storage write stopped.
+    // Resume the known draft instead of stranding it or creating a duplicate.
+    const recovered=checked(await deps.graphql(env,PREPARED_CHECKOUT_RECOVER,{query:'tag:pm-prepared-'+checkoutId.slice(0,40)},'PreparedCheckoutRecover')).draftOrders.nodes[0];
+    if(!recovered||recovered.id!==progress.draftId)fail('CHECKOUT_PENDING','Shopify is confirming your checkout. Retry in a moment.',503);
+    if(recovered.status==='COMPLETED')fail('CHECKOUT_COMPLETE','This checkout has already been completed. Contact Print-MO if you need another order.',409);
+    verifyPreparedBulkTotals(recovered,quote.pricing);progress.pricingVerified=true;await writeJson(env.R2_BUCKET,key,progress);
   }
   if(quote){progress.recipientDesigns=quote.designs;await writeJson(env.R2_BUCKET,key,progress);}
   await transferProductionAssets(env,deps,service,{...document.snapshot,recipientFiles:files},checkoutId,progress.draftId,chosen.chosen,progress);

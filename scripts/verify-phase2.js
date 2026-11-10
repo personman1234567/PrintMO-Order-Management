@@ -1500,12 +1500,20 @@ async function run() {
     `).first();
     assert.equal(enrolledWebhookProjection.enrollment_state, 'active', 'the explicit rollout flag must promote eligible receipts');
     assert.equal(enrolledWebhookProjection.board_enrolled, 1);
+    // Reads apply Etsy shipping policy even to old contradictory cached receipts.
+    await env.ORDER_DB.prepare(`
+      UPDATE provider_order_projection SET commerce_json = json_set(commerce_json,
+        '$.commerce.deliveryMethod', json('{"kind":"pickup","complete":true}'))
+      WHERE order_key = 'etsy:98765:7005'
+    `).run();
     const enrolledWebhookBoard = await worker.fetch(
       new Request('https://worker.test/order-manager/v1/orders', { headers }),
       env
     );
     const enrolledWebhookCard = (await enrolledWebhookBoard.json()).data.find(order => order.orderKey === 'etsy:98765:7005');
     assert(enrolledWebhookCard, 'a flag-enabled eligible receipt must enter the shared board');
+    assert.equal(enrolledWebhookCard.commerce.deliveryMethod.kind, 'shipping', 'cached Etsy receipts always ship');
+    assert.equal(enrolledWebhookCard.commerce.deliveryMethod.complete, true);
     assert.equal(enrolledWebhookCard.capabilities.productionWrite, true, 'active real Etsy orders must use revisioned D1 production state');
     assert.equal(enrolledWebhookCard.commerce.lineItems[0].supplierSku, 'B10259505', 'the active provider board DTO must expose the resolved S&S SKU');
     const enrolledOrderKey = encodeURIComponent('etsy:98765:7005');
@@ -3453,7 +3461,7 @@ async function run() {
   assert(
     sharedRenderer.includes("const MOBILE_TABS = ['pipeline', 'blanksCart', 'blanksOrdered', 'readyToPrint', 'storage', 'history']")
       && sharedRenderer.includes("nextTab === 'history' ? 'previous' : 'orders'")
-      && sharedRenderer.includes("setBoardLoadState('error', boardLoadErrorPresentation(error))")
+      && sharedRenderer.includes("setBoardLoadState('error', presentation)") && sharedRenderer.includes("window.OrderManagerLoadUi?.fail(presentation)")
       && sharedRenderer.includes('setupBoardLoadRecovery()')
       && dashboardTriageSource.includes("boardState !== 'ready' || visible > 0"),
     'mobile navigation must reach Storage and History while failed board loads never masquerade as a genuine empty pipeline'

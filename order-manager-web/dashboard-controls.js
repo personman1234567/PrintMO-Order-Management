@@ -58,7 +58,8 @@
         homes.forEach((home, button) => { if (home.nextSibling !== button) home.after(button); });
         return;
       }
-      if (refresh.parentNode !== tools) tools.append(refresh);
+      const refreshHome = document.body.dataset.activeView === 'orders' ? document.getElementById('order-refresh-controls') || tools : tools;
+      if (refresh.parentNode !== refreshHome) refreshHome.append(refresh);
       if (mark.parentNode !== popover) popover.append(mark);
       if (manual.parentNode !== popover) popover.append(manual);
       // Cart users can still link a subset to a shipment instead of marking every cart order.

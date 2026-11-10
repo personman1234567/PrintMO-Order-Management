@@ -866,8 +866,9 @@
       Promise.resolve(window.refreshPreviousOrders()).catch(error => console.error('Previous orders refresh failed', error));
       return;
     }
-    const refresh = typeof window.refreshOrderManagerNow === 'function'
-      ? window.refreshOrderManagerNow()
+    const refresh = window.OrderManagerLoadUi?.refresh
+      ? window.OrderManagerLoadUi.refresh()
+      : typeof window.refreshOrderManagerNow === 'function' ? window.refreshOrderManagerNow()
       : typeof window.renderBoard === 'function' ? window.renderBoard() : null;
     Promise.resolve(refresh).catch(error => console.error('Order refresh failed', error));
   }

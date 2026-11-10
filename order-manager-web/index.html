@@ -88,6 +88,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./garment-costs.css">
   <link rel="stylesheet" href="./order-list-foundation.css" />
   <link rel="stylesheet" href="./order-actions.css" />
+  <link rel="stylesheet" href="./mobile-order-actions.css" />
   <link rel="stylesheet" href="./dashboard-controls.css" />
   <link rel="stylesheet" href="./dashboard-motion.css" />
   <link rel="stylesheet" href="./dashboard-shell.css" />
@@ -96,8 +97,9 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <link rel="stylesheet" href="./cart-garment-view.css" />
   <link rel="stylesheet" href="./mobile-order-workspace.css" />
   <link rel="stylesheet" href="./mobile-order-detail.css" />
+  <link rel="stylesheet" href="./order-load-state.css" />
 </head>
-<body data-active-tab="pipeline" data-active-view="orders" data-order-source="shopify" data-board-load-state="loading">
+<body data-active-tab="pipeline" data-active-view="orders" data-order-source="shopify" data-board-load-state="loading" data-order-startup="loading" data-order-queue-state="partial">
   <header class="app-header">
     <div class="app-brand">PrintMO Order Manager</div>
     <nav class="app-nav" aria-label="Primary navigation">
@@ -107,7 +109,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       <button class="app-nav-tab" type="button" data-view="inventory" aria-pressed="false">Inventory</button>
       <button class="app-nav-tab" type="button" data-view="previous" aria-pressed="false">Previous Orders</button>
       <button class="app-nav-tab" type="button" data-view="storage" aria-pressed="false">Storage Browser</button>
-      <button id="order-manager-refresh-btn" class="order-manager-refresh-btn" type="button" aria-label="Refresh orders and mockups">Refresh</button>
+      <button id="order-manager-refresh-btn" class="order-manager-refresh-btn" type="button" aria-label="Refresh orders and mockups"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 3M18 18a8 8 0 0 1-13-3"/></svg><span data-refresh-label>Refresh</span></button>
     </nav>
     <div class="order-workspace-tools">
       <span class="order-workspace-label">Orders</span>
@@ -162,6 +164,13 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     </nav>
   </div>
   <main class="app-content">
+  <section id="order-startup" role="status" aria-live="polite" aria-atomic="true">
+    <picture aria-hidden="true"><source media="(prefers-reduced-motion: reduce)" srcset="./Assets/prepared-order-robot-still.svg"><img src="./Assets/prepared-order-robot.svg" width="144" height="144" alt=""></picture>
+    <h1 id="order-startup-title">Loading your orders…</h1>
+    <p id="order-startup-message"></p>
+    <button id="order-startup-retry" type="button" hidden>Try again</button>
+  </section>
+  <p id="order-load-announcement" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
   <section id="shopify-preview-view" class="shopify-preview-view" aria-hidden="true" hidden>
     <div class="shopify-preview-shell">
       <header class="shopify-preview-header">
@@ -244,6 +253,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       </section>
   </div>
   <div id="orders-view" class="app-view">
+    <header id="order-workspace-header"><h1>Orders</h1><p id="order-refresh-status" aria-hidden="true"></p><div id="order-refresh-controls"></div></header>
     <section id="order-list-foundation" class="order-list-foundation" aria-labelledby="order-list-foundation-title" hidden>
       <header class="order-list-heading">
         <div class="order-list-heading-title"><h2 id="order-list-foundation-title">Orders</h2><span id="order-list-foundation-count"></span></div>
@@ -1266,6 +1276,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
        reuses the same cached order facts and reviewed mutation workflows. -->
   <!-- existing renderer logic -->
   <script src="./dashboard-motion.js"></script>
+  <script src="./order-load-state.js"></script>
   <script src="./web-shim.js"></script>
   <script src="./workspace-navigation.js"></script>
   <script src="./prepared-orders.js"></script>
@@ -1296,6 +1307,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   <script src="./order-list-workflows.js"></script>
   <script src="./order-list-foundation.js"></script>
   <script src="./order-action-model.js"></script>
+  <script src="./mobile-order-actions.js"></script>
   <script src="./order-actions.js"></script>
   <script src="./dashboard-controls.js"></script>
   <script src="./dashboard-shell.js"></script>

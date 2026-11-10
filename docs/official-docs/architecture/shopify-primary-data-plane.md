@@ -26,6 +26,31 @@
 
 ## Current Release Boundary
 
+Mobile image/status rail release on 2026-11-10:
+
+- Pages deployment `8bbe03d2.print-mo-order-manager.pages.dev` serves production release `1794344176177`. The registered command verified the canonical-host marker. Both entry-point markers and the four changed mobile asset hashes match the tested artifact on production and the immutable deployment.
+- The image-first rail includes compact 128px contain frames for square and dual-view proofs, order age, stage, delivery and independent material/target facts. Redundant cart labels, item lists and repeated cache footers are omitted. Only the four mobile runtime assets differed in the pre-release comparison.
+- Focused unit and synthetic 320px/393px browser checks, Phase 2, docs and packaging passed. Actual Shopify phone-app acceptance remains owner-tested. No Worker, database, supplier or live-order mutation occurred.
+
+Startup and in-app Refresh release on 2026-11-09:
+
+- Pages deployment `530fd924.print-mo-order-manager.pages.dev` serves production release `1794259755336`. Both entry points and 72 referenced/runtime/mascot assets match the tested artifact on production and the immutable deployment. The release command verified the production marker. The six modified preexisting runtime baselines were checked before publication, and the existing Prepared Orders controller/CSS were preserved.
+- Initial opening uses the contained walking PrintMO indicator and a still reduced-motion fallback. The stable Orders header/menu remains reachable; the opening view hides when navigating to independent workspaces. First useful data reveals the board without waiting for private images. Incomplete enumeration hides authoritative counts and gates whole-queue supplier actions. A real completed empty response remains distinguishable from failure.
+- Desktop Orders exposes Refresh beside Menu; mobile retains its work-area Refresh. Fresh reads coalesce repeated requests, queue behind active moves/checks, preserve loaded content/edit state, and report success or retained-data failure. Initial local repaints no longer terminate pagination; local updates interrupting a later read trigger a fresh-generation retry. Superseded reads cannot report completion.
+- The focused startup browser fixture, 86 owning board/list/mobile tests, six packaging tests, Phase 1/2, syntax, documentation and the layout detector passed. Browser fixtures use synthetic queues and exercise desktop, 393/320px and landscape sizes, reduced motion, failure/retry, progressive and confirmed-empty states, queued/restarted reads, retained edits/selection/scroll/focus and Legacy gate release. Authenticated Shopify live-data acceptance was not exercised. This was a Pages-only release; Worker, theme and business records were unchanged.
+
+Prepared Orders quantity-dialog release on 2026-11-09:
+
+- Pages deployment `3f34f2b1.print-mo-order-manager.pages.dev` serves production release `1794256302253`. Both HTML entry points and all 68 referenced runtime assets (including the lazy preparation controller) match the built artifact on production and the immutable deployment.
+- The dialog has a full-width responsive size grid, garment/color context, live total and separate compact action footer. One scrolling body and resize-aware input focus preserve usable fields/actions in constrained embedded viewports. Size-prefill persistence and customer-choice semantics are preserved.
+- Two independent same-model investigations established the inherited horizontal-form layout defect; browser evidence changed the initial stacked-mobile-footer recommendation to side-by-side actions. Six layout cases, keyboard contraction after focus, numeric bounds, unavailable saved sizes, Enter/Escape, customer choice, loading dismissal and error recovery passed with synthetic garments. Sixteen focused tests, Phase 1/2, syntax, documentation and the layout detector passed. Actual Shopify iOS keyboard/device acceptance was not exercised. This release changed Pages only; the delivery Worker remains `ed419c52-15ce-400a-8c08-49a9ca89c2d2`.
+
+Order Manager delivery-classification release on 2026-11-09:
+
+- Worker version `ed419c52-15ce-400a-8c08-49a9ca89c2d2` is active at 100% traffic. Shopify non-physical `NONE` fulfillment methods no longer turn pickup/shipping into mixed delivery. Etsy always classifies as shipping by shop policy, including cached board/detail receipts.
+- The downloaded live Worker is byte-identical to the tested bundle (SHA-256 `fe82321bb70d02c2bc53a9d7c3026cbc94627abad74f595fac361d0b079afa85`). Its only executable differences from the preceding live bundle are these delivery rules. All 30 binding definitions and the compatibility date match the pre-release snapshot; deployment used `--keep-vars`.
+- Eleven focused tests, Phase 1/2, syntax, docs and Worker dry-run passed. The unauthenticated board route still returns 401. Authenticated live board rendering was not exercised; existing Shopify summaries update through the normal refresh path. No Pages/theme/Designer release or order-state mutation was needed. Immediate Worker rollback version: `915764d1-2dc2-419a-ace5-eed0525f6ea3`.
+
 Current Order Manager production deployment on 2026-11-05:
 
 - Worker version `915764d1-2dc2-419a-ace5-eed0525f6ea3` adds retained artwork-reference classification through the existing canonical production patch. Its pre-feature bundle was byte-identical to the downloaded active `48caebb3-43a0-4c71-99af-84026b528e1c` source. All existing binding fingerprints match after deployment, including `SS_TEST_ORDER=1`; compatibility date, service targets and schema are unchanged. No migration or supplier request was needed.

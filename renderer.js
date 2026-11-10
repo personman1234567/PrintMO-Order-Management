@@ -4,6 +4,8 @@ let allOrders = [];
 let renderTimer = null;
 let boardFetchGeneration = 0;
 let boardHasRendered = false;
+let boardEnumerationPending = false;
+let boardEnumerationComplete = false;
 const candidateBoardCards = new Map();
 const pendingBoardMoves = new Map();
 const pendingBoardChecks = new Map();
@@ -77,7 +79,9 @@ function flushDeferredBoardRefresh() {
     boardRefreshFrame = 0;
     if (boardInteractionBusy()) return;
     boardRefreshDeferred = false;
-    void renderBoard().catch(error => console.warn('Deferred board refresh failed', error));
+    const refresh = window.OrderManagerLoadUi?.manualRequested && typeof window.refreshOrderManagerNow === 'function'
+      ? window.refreshOrderManagerNow() : renderBoard();
+    void Promise.resolve(refresh).catch(error => console.warn('Deferred board refresh failed', error));
   });
 }
 
@@ -3469,19 +3473,25 @@ async function renderBoard(options = {}) {
     boardRefreshDeferred = true;
     return { rendered: false, deferred: true, statuses: [] };
   }
+  const restartPendingRead = useLocalOrders && boardEnumerationPending && boardEnumerationComplete;
   let statusesToRender = normalizeBoardStatuses(statuses);
   let renderedAnySnapshot = false;
   const renderedStatuses = new Set();
   if (useLocalOrders) {
     // A local mutation or asset hydration is newer than any queue read that
     // started before it. Prevent that older response from repainting stale data.
-    boardFetchGeneration += 1;
-    if (invalidateQueueLoads && typeof window.api.invalidateQueueLoads === 'function') {
+    // Initial pagination merges acknowledged writes in the adapter; keep it alive
+    // while local preview or production facts repaint the first visible page.
+    if (!boardEnumerationPending || boardEnumerationComplete) boardFetchGeneration += 1;
+    if ((!boardEnumerationPending || boardEnumerationComplete) && invalidateQueueLoads && typeof window.api.invalidateQueueLoads === 'function') {
       window.api.invalidateQueueLoads();
     }
+    if (restartPendingRead) boardRefreshDeferred = true;
   } else {
     const fetchGeneration = ++boardFetchGeneration;
     const allowProgressivePaint = isShopifyBoardView() && !boardHasRendered;
+    boardEnumerationPending = true;
+    window.OrderManagerLoadUi?.begin();
     if (!boardHasRendered) {
       setBoardLoadState('loading', {
         title: 'Loading orders',
@@ -3511,6 +3521,10 @@ async function renderBoard(options = {}) {
       pruneCandidateBoardCards();
       boardHasRendered = true;
       renderedAnySnapshot = true;
+      if (allowProgressivePaint) {
+        window.OrderManagerLoadUi?.snapshot({ loaded: nextOrders.length, hasMore });
+        if (hasMore) setBoardLoadState('partial');
+      }
       refreshOpenBundleModal();
       window.orderManagerPerformanceDebug?.log?.("board-snapshot-painted", {
         generation: fetchGeneration,
@@ -3535,7 +3549,10 @@ async function renderBoard(options = {}) {
       });
     } catch (error) {
       if (fetchGeneration === boardFetchGeneration) {
-        setBoardLoadState('error', boardLoadErrorPresentation(error));
+        boardEnumerationPending = false;
+        const presentation = boardLoadErrorPresentation(error);
+        setBoardLoadState('error', presentation);
+        window.OrderManagerLoadUi?.fail(presentation);
       }
       throw error;
     }
@@ -3543,7 +3560,10 @@ async function renderBoard(options = {}) {
       return { rendered: false, stale: true, statuses: [] };
     }
     applyQueueSnapshot(nextOrders);
+    boardEnumerationPending = false;
+    boardEnumerationComplete = true;
     setBoardLoadState('ready');
+    window.OrderManagerLoadUi?.complete();
     if (!allowProgressivePaint) void hydrateManualMockupsForOrders(allOrders, { refresh: true });
     return {
       rendered: renderedAnySnapshot,
@@ -3556,7 +3576,8 @@ async function renderBoard(options = {}) {
   pruneCandidateBoardCards();
   boardHasRendered = true;
   refreshOpenBundleModal();
-  setBoardLoadState('ready');
+  if (!isShopifyBoardView() || !boardEnumerationPending && boardEnumerationComplete) setBoardLoadState('ready');
+  if (restartPendingRead) flushDeferredBoardRefresh();
   return { rendered: true, stale: false, statuses: statusesToRender };
 }
 

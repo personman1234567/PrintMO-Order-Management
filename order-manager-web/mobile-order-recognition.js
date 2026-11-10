@@ -33,14 +33,13 @@
     const replacement = manual.find(asset => asset._previewState !== 'failed' && imageUrl(asset.url));
     if (replacement) return { url: imageUrl(replacement.url), kind: 'mockup', state: 'ready', identity: identity(replacement), side: replacement.side || '' };
     const front = validFront(order);
-    if (front && front._previewState !== 'failed' && imageUrl(front.url)) {
-      return { url: imageUrl(front.url), kind: 'front', state: 'ready', identity: identity(front), side: 'front' };
-    }
     const assets = assetsFor(order);
     const mockups = assets.filter(asset => asset.role === 'mockup' || /(?:^|[/_-])side\.(?:png|jpe?g|webp)(?:$|\?)/i.test(asset.name || asset.filename || asset.url || ''));
     const catalog = (order?.items || []).map(item => item.catalogPreview).filter(Boolean);
     const artwork = assets.filter(asset => asset.role === 'design');
-    for (const [kind, choices] of [['mockup', [...manual, ...mockups]], ['artwork', artwork], ['catalog', catalog]]) {
+    // The wide phone proof preserves the complete combined mockup; an associated
+    // front derivative remains a fallback when no combined proof is available.
+    for (const [kind, choices] of [['mockup', [...manual, ...mockups]], ['front', front ? [front] : []], ['artwork', artwork], ['catalog', catalog]]) {
       const asset = choices.find(value => value._previewState !== 'failed' && imageUrl(value.url));
       if (asset) return { url: imageUrl(asset.url), kind, state: 'ready', identity: identity(asset), side: asset.side || '' };
     }

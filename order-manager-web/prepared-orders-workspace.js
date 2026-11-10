@@ -326,30 +326,60 @@ import { createPreparedPreviewRenderer } from './prepared-preview-renderer.mjs';
     dialog.addEventListener('close', redrawWhenActive);
   }
   async function garmentQuantities(item) {
-    const dialog = openDialog('Sizes & quantities', 'prepared-details-dialog'), status = node('p', 'Loading sizes…', 'prepared-help');
-    dialog.append(node('p', 'Optional. Enter known quantities, or leave them for your customer to choose.', 'prepared-help'), status);
+    const dialog = openDialog('Sizes & quantities', 'prepared-details-dialog prepared-quantity-dialog');
+    const initialFocus = document.activeElement, form = node('form', undefined, 'prepared-quantity-form');
+    const body = node('div', undefined, 'prepared-quantity-body'), context = node('p', undefined, 'prepared-quantity-context');
+    context.append(node('strong', garmentName(item)));
+    const color = typeof item.color === 'string' ? item.color : item.optionLabel;
+    if (color) context.append(node('span', color));
+    const help = node('p', 'Enter known quantities, or let your customer choose. Use 0 for sizes you do not need.', 'prepared-help');
+    help.id = 'prepared-quantity-help-' + crypto.randomUUID(); dialog.setAttribute('aria-describedby', help.id);
+    const status = node('p', 'Loading sizes…', 'prepared-help'); status.setAttribute('role', 'status');
+    body.append(context, help, status); form.append(body); dialog.append(form);
     try {
       const detail = await getProduct(item.productId); if (!dialog.isConnected || !dialog.open) return;
       const reference = detail.variants.find(variant => variant.id === item.variantId);
       const variants = detail.variants.filter(variant => configurationOf(variant) === (reference ? configurationOf(reference) : item.optionLabel));
       const offered = [...new Set(variants.map(variant => variant.selectedOptions.find(option => /^size$/i.test(option.name))?.value || ''))];
-      const values = { ...(item.sizeQty || {}) }, inputs = new Map(), form = node('form'), grid = node('div', undefined, 'prepared-color-options'); status.remove();
+      const values = { ...(item.sizeQty || {}) }, inputs = new Map(), grid = node('div', undefined, 'prepared-quantity-grid'); status.remove();
       for (const size of [...new Set([...offered, ...Object.keys(values).filter(size => values[size] > 0)])]) {
         const label = node('label', undefined, 'prepared-field'), input = node('input'); input.type = 'number'; input.min = '0'; input.max = '9999'; input.step = '1'; input.inputMode = 'numeric'; input.value = String(values[size] || 0); input.required = true;
         input.setAttribute('aria-label', (size || 'One size') + ' quantity'); label.append(node('span', size || 'One size'), input); inputs.set(size, input);
-        if (!offered.includes(size)) label.append(node('span', 'Not offered on this garment. Clear this quantity or choose another garment.', 'prepared-help'));
+        if (!offered.includes(size)) {
+          label.classList.add('prepared-quantity-unavailable');
+          const warning = node('span', 'Not offered on this garment. Set to 0 or choose another garment.', 'prepared-help');
+          warning.id = 'prepared-quantity-warning-' + crypto.randomUUID(); input.setAttribute('aria-describedby', warning.id); label.append(warning);
+        }
         grid.append(label);
       }
-      const feedback = node('p', '', 'prepared-help'); feedback.setAttribute('role', 'alert');
-      const apply = button('Apply quantities', () => {} , true); apply.type = 'submit';
-      form.append(grid, feedback, apply, textButton('Let customer choose sizes', () => { item.sizeQty = {}; markDirty(); dialog.close(); renderDetail(); }));
+      const feedback = node('p', '', 'prepared-quantity-feedback'); feedback.setAttribute('role', 'alert');
+      const footer = node('footer', undefined, 'prepared-quantity-footer'), summary = node('p', undefined, 'prepared-quantity-summary');
+      const total = node('output'); total.setAttribute('aria-live', 'polite'); total.setAttribute('aria-atomic', 'true');
+      summary.append(node('span', 'Total quantity'), total);
+      const updateTotal = () => {
+        const valid = [...inputs.values()].every(input => input.validity.valid);
+        const count = [...inputs.values()].reduce((sum, input) => sum + (Number(input.value) || 0), 0);
+        total.textContent = valid ? count.toLocaleString() + (count === 1 ? ' garment' : ' garments') : 'Check quantities';
+      };
+      form.addEventListener('input', updateTotal); updateTotal();
+      const actions = node('div', undefined, 'prepared-quantity-actions');
+      const apply = button('Apply quantities', () => {}, true); apply.type = 'submit';
+      actions.append(textButton('Let customer choose', () => { item.sizeQty = {}; markDirty(); dialog.close(); renderDetail(); }), apply);
+      footer.append(summary, actions); body.append(grid, feedback); form.append(footer);
       form.addEventListener('submit', event => {
         event.preventDefault(); if (!form.reportValidity()) return;
         const next = Object.fromEntries([...inputs].map(([size, input]) => [size, Number(input.value)]).filter(([, quantity]) => quantity > 0));
-        if (Object.keys(next).some(size => !offered.includes(size))) { feedback.textContent = 'Clear quantities for sizes this garment does not offer before applying.'; return; }
+        if (Object.keys(next).some(size => !offered.includes(size))) { feedback.textContent = 'Set unavailable sizes to 0 before applying quantities.'; return; }
         item.sizeQty = next; markDirty(); dialog.close(); renderDetail();
       });
-      dialog.append(form);
+      const viewportObserver = new ResizeObserver(() => {
+        const active = document.activeElement;
+        if (grid.contains(active)) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      });
+      viewportObserver.observe(body);
+      dialog.addEventListener('close', () => viewportObserver.disconnect(), { once: true });
+      // Async loading should not leave keyboard users on Close or steal a moved focus.
+      if (document.activeElement === initialFocus) inputs.values().next().value?.focus();
     } catch (error) { showError(status, error, () => { dialog.close(); void garmentQuantities(item); }, 'Sizes could not load. Your saved quantities have not changed.'); }
   }
   function redrawWhenActive() { if (workspaceActive && record) renderDetail(); }

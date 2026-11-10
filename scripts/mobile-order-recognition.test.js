@@ -9,9 +9,9 @@ function order() {
     mobilePreview:{assetId:'front',role:'mobile-preview',previewKind:'mobile-front',side:'front',lineItemId:'shirt',designRef:'reference',url:'https://example.test/front.png'},
     canonical:{commerce:{lineItemsComplete:true}}};
 }
-test('mobile chooses explicit associated front while canonical composite is unchanged',()=>{
+test('mobile preserves the complete composite before an associated front derivative',()=>{
   const item=order(), before=JSON.stringify(item.assets);
-  assert.equal(recognition.describe(item).preview.url,'https://example.test/front.png');
+  assert.equal(recognition.describe(item).preview.url,'https://example.test/dual.png');
   assert.equal(JSON.stringify(item.assets),before);
   const source=fs.readFileSync('renderer.js','utf8');
   const block=source.slice(source.indexOf('function getFirstMockupUrl('),source.indexOf('function candidateMockupManifests('));
@@ -25,10 +25,10 @@ test('wrong line, wrong design, unspecified side and unassigned derivatives neve
     assert.equal(recognition.describe(item).preview.url,'https://example.test/dual.png');
   }
 });
-test('front failures fall back to composite, then a settled honest garment summary',()=>{
-  const item=order();recognition.markPreviewFailed(item,'front');
-  assert.equal(recognition.describe(item).preview.url,'https://example.test/dual.png');
-  recognition.markPreviewFailed(item,'composite');
+test('combined proof failures use an associated front, then a settled honest garment summary',()=>{
+  const item=order();recognition.markPreviewFailed(item,'composite');
+  assert.equal(recognition.describe(item).preview.url,'https://example.test/front.png');
+  recognition.markPreviewFailed(item,'front');
   const result=recognition.describe(item);
   assert.equal(result.preview.url,'');assert.equal(result.preview.kind,'garment');assert.equal(result.preview.state,'failed');
 });

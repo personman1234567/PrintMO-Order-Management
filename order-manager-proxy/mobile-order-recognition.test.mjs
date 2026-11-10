@@ -49,6 +49,29 @@ test('delivery uses exact typed methods, never pickup heuristics or fulfillment 
   assert.equal(worker.summarizeDeliveryMethods(changed).kind, 'shipping');
 });
 
+test('non-physical services do not turn physical delivery into mixed delivery', () => {
+  for (const [type, kind] of [['PICK_UP', 'pickup'], ['SHIPPING', 'shipping'], ['LOCAL', 'local-delivery']]) {
+    const result = worker.summarizeDeliveryMethods(connection(type, 'NONE'), [], timestamp);
+    assert.equal(result.kind, kind);
+    assert.equal(result.complete, true);
+    assert.deepEqual(result.types, ['NONE', type].sort());
+  }
+  assert.equal(worker.summarizeDeliveryMethods(connection('NONE')).kind, 'none');
+  assert.equal(worker.summarizeDeliveryMethods(connection('PICK_UP', 'SHIPPING', 'NONE')).kind, 'mixed');
+  assert.equal(worker.summarizeDeliveryMethods(connection('PICK_UP', 'NONE', null)).kind, 'unknown');
+  const truncated = connection('PICK_UP', 'NONE'); truncated.pageInfo.hasNextPage = true;
+  assert.equal(worker.summarizeDeliveryMethods(truncated).kind, 'unknown');
+});
+
+test('Etsy delivery is always shipping regardless of receipt shipment flags', () => {
+  for (const flags of [{}, { is_shipped: false }, { is_shipped: true }, { is_canceled: true }]) {
+    const order = worker.normalizeEtsyOrderContract({ providerAccountId: '123',
+      receipt: { receipt_id: '456', ...flags }, fetchedAt: timestamp });
+    assert.deepEqual(order.commerce.deliveryMethod, { kind: 'shipping', types: ['SHIPPING'],
+      complete: true, source: 'etsy-shipping-policy', fetchedAt: timestamp });
+  }
+});
+
 test('unknown, missing, null, truncated and denied delivery remain unknown', () => {
   const truncated = connection('PICK_UP'); truncated.pageInfo.hasNextPage = true;
   const noPageInfo = connection('SHIPPING'); delete noPageInfo.pageInfo;
@@ -64,7 +87,7 @@ test('unknown, missing, null, truncated and denied delivery remain unknown', () 
 test('summary carries delivery without fetching detail, and incomplete item facts stay independent', async () => {
   let requests = 0;
   const summary = await worker.normalizeShopifySummary({}, { id: gid, name: '#1084', createdAt: timestamp,
-    currencyCode: 'USD', fulfillmentOrders: connection('PICK_UP'),
+    currencyCode: 'USD', fulfillmentOrders: connection('PICK_UP', 'NONE'),
     lineItems: { nodes: [], pageInfo: { hasNextPage: false } } }, [], async () => { ++requests; throw Error('Unexpected detail read'); });
   assert.equal(requests, 0); assert.equal(summary.commerce.deliveryMethod.kind, 'pickup');
   assert.equal(summary.commerce.lineItemsComplete, true); assert.equal(summary.sync.partial, false);

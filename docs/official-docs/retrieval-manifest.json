@@ -1080,7 +1080,11 @@
         "pages",
         "cors",
         "clipboard",
-        "paste mockup"
+        "paste mockup",
+        "startup",
+        "loading orders",
+        "refresh button",
+        "walking robot"
       ],
       "paths": [
         "order-manager-web",
@@ -1089,7 +1093,8 @@
       "symbols": [
         "window.api",
         "setPreviewActive",
-        "installEmbeddedTouchContainment"
+        "installEmbeddedTouchContainment",
+        "OrderManagerLoadUi"
       ],
       "errors": [
         "window.api is undefined",
@@ -1104,6 +1109,12 @@
         }
       ],
       "inspect": [
+        {
+          "path": "order-manager-web/order-load-state.js",
+          "symbols": [
+            "OrderManagerLoadUi"
+          ]
+        },
         {
           "path": "order-manager-web/web-shim.js",
           "symbols": [

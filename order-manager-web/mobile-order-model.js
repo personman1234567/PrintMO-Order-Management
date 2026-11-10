@@ -43,6 +43,14 @@
       }
     });
   }
+  function orderAge(value, now = Date.now()) {
+    const created = typeof value === 'string' && value.trim() ? Date.parse(value) : NaN;
+    if (!Number.isFinite(created) || created > now) return { label: 'Unavailable', accessible: 'Order age unavailable' };
+    const minutes = Math.floor((now - created) / 60000);
+    const label = minutes < 1 ? 'Just now' : minutes < 60 ? `${minutes}m`
+      : minutes < 1440 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`;
+    return { label, accessible: `Order age ${label}. Created ${new Date(created).toISOString()}` };
+  }
   function progressInput(order, value, total) {
     if (!order || order._historyReadOnly || order._capabilities?.productionWrite === false) return { error: 'This order is read only.' };
     if (!['print', 'completed'].includes(board.stageForOrder(order))) return { error: 'This order is no longer in Print. Review its current stage.' };
@@ -52,5 +60,5 @@
     const count = Number(value), stage = board.stageForOrder(order);
     return { count, label: count === total ? 'Save and move to Printed' : stage === 'completed' ? 'Save and return to To Print' : 'Save quantity' };
   }
-  return Object.freeze({ AREAS, LOCAL_STAGES, SORT_KEY, create, progressInput });
+  return Object.freeze({ AREAS, LOCAL_STAGES, SORT_KEY, create, orderAge, progressInput });
 });

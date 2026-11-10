@@ -19,7 +19,7 @@
     const paths = { orders: 'M8 4h12v17H4V4h4m0-2h8v4H8zM8 11h8M8 16h5', supplies: 'm3 7 9-4 9 4v11l-9 4-9-4zM3 7l9 4 9-4M12 11v11', print: 'M7 8V3h10v5M7 17H3V8h18v9h-4M7 14h10v7H7zM17 11h1', more: 'M4 6h16M4 12h16M4 18h16' };
     const root = el('section', null, 'mobile-workspace'); root.id = 'mobile-order-workspace'; root.hidden = true;
     root.setAttribute('aria-labelledby', 'mobile-workspace-title');
-    root.innerHTML = `<header class="mw-heading"><div><h1 id="mobile-workspace-title">Orders</h1><p class="mw-count"></p></div><button type="button" class="mw-refresh" aria-label="Refresh orders">${icon('M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 3M18 18A8 8 0 0 1 5 15')}<span>Refresh</span></button></header>
+    root.innerHTML = `<header class="mw-heading"><div><h1 id="mobile-workspace-title">Orders</h1><p class="mw-count"></p><p class="mw-refresh-status" aria-hidden="true"></p></div><button type="button" class="mw-refresh" aria-label="Refresh orders">${icon('M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 3M18 18A8 8 0 0 1 5 15')}<span>Refresh</span></button></header>
       <div class="mw-subviews" role="group" aria-label="Work area views"></div>
       <label class="mw-delivery" hidden>Delivery<select aria-label="Filter Print orders by delivery"></select></label>
       <div class="mw-toolbar"><label class="mw-search"><span class="visually-hidden">Search this work area</span><input type="search" maxlength="120" placeholder="Search orders or customers" autocomplete="off"></label><button type="button" class="mw-select" aria-pressed="false">Select</button><button type="button" class="mw-filters" aria-haspopup="dialog">Filters</button></div>
@@ -165,16 +165,24 @@
       const previewMedia = el('span', null, 'mw-preview-media'), previewCaption = el('span', null, 'mw-preview-caption');
       previewButton.append(previewMedia); preview.append(previewButton, previewCaption); preview.hidden = true;
       const identity = el('div', null, 'mw-row-identity'), customer = el('strong'), number = el('span', null, 'mw-row-number'); identity.append(customer, number);
-      const garments = el('div', null, 'mw-row-garments'), delivery = el('div', null, 'mw-row-delivery'); garments.hidden = true; delivery.hidden = true;
+      const delivery = el('div', null, 'mw-row-delivery'); delivery.hidden = true;
       const meta = el('div', null, 'mw-row-meta'), detail = el('div', null, 'mw-row-detail'), attention = el('div', null, 'mw-row-attention');
+      const stage = el('span', null, 'mw-row-stage'), date = el('span', null, 'mw-row-target');
+      const age = el('div', null, 'mw-row-age'), ageValue = el('strong');
+      age.append(el('span', 'Order age'), ageValue);
+      const rail = el('div', null, 'mw-row-rail'); rail.hidden = true;
+      const prints = el('div', null, 'mw-row-prints'), printValue = el('span', null, 'mw-print-value');
+      const printLabel = el('span', null, 'mw-print-label');
+      printLabel.innerHTML = icon('M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6'); printLabel.append(el('span', 'Prints')); prints.append(printLabel, printValue);
+      meta.append(stage, date);
       open.append(identity, meta, detail, attention);
       const status = el('div', null, 'mw-row-status'); status.hidden = true;
       const action = button('Actions', () => openActions([row.key], action), 'mw-row-actions');
       const progress = button('', () => startProgress(row.key), 'mw-progress');
-      node.append(checkLabel, preview, open, action, progress, status);
+      node.append(checkLabel, preview, open, rail, action, progress, status);
       node.addEventListener('click', event => { if (!event.target.closest('button, input, label, form')) openOrder(row.key); });
       previewObserver?.observe(node);
-      return { node, checkLabel, check, open, customer, number, meta, detail, attention, action, progress, preview, previewButton, previewMedia, previewCaption, garments, delivery, status, signature: '', previewSignature: '' };
+      return { node, checkLabel, check, open, customer, number, meta, stage, date, age, ageValue, rail, detail, attention, action, progress, preview, previewButton, previewMedia, previewCaption, delivery, prints, printValue, status, signature: '', previewSignature: '' };
     }
     function renderPreview(row, record, recognition, order) {
       const preview = recognition?.preview || {};
@@ -187,7 +195,7 @@
       record.previewCaption.textContent = preview.kind === 'artwork' ? 'Order artwork' : preview.kind === 'catalog' ? 'Garment reference' : preview.kind === 'garment' ? 'Garment summary' : '';
       record.previewCaption.hidden = !record.previewCaption.textContent;
       if (preview.url && preview.state !== 'failed') {
-        const image = document.createElement('img'); image.alt = ''; image.width = 96; image.height = 96;
+        const image = document.createElement('img'); image.alt = '';
         image.loading = 'lazy'; image.decoding = 'async';
         image.addEventListener('load', () => {
           if (record.previewSignature === signature) record.previewMedia.dataset.state = 'ready';
@@ -212,17 +220,18 @@
     function renderRecognition(row, record, recognition, order) {
       const active = area === 'orders';
       record.node.classList.toggle('mw-row-recognition', active);
-      record.preview.hidden = !active; record.status.hidden = !active; record.garments.hidden = !active; record.delivery.hidden = !active;
+      record.preview.hidden = !active; record.status.hidden = !active || (!record.detail.textContent && !row.target); record.rail.hidden = !active; record.delivery.hidden = !active;
+      record.meta.hidden = active;
       if (!active) {
+        record.meta.append(record.stage, record.date);
         if (record.meta.parentNode !== record.open) record.open.append(record.meta, record.detail, record.attention);
-        record.garments.remove(); record.delivery.remove(); return;
+        else record.open.append(record.detail, record.attention);
+        record.delivery.remove(); record.prints.remove(); return;
       }
-      if (record.delivery.parentNode !== record.open) record.open.append(record.delivery, record.garments);
-      if (record.meta.parentNode !== record.status) { record.status.append(record.meta, record.detail); record.node.append(record.attention); }
-      const groups = (recognition?.garments || []).slice(0, 2);
-      record.garments.replaceChildren(...groups.map(item => el('span', `${item.qty > 0 ? `${item.qty} × ` : ''}${item.label}`, 'mw-garment-description')));
-      if (recognition?.moreLabel) record.garments.append(el('span', recognition.moreLabel, 'mw-garment-more'));
-      if (!groups.length) record.garments.append(el('span', recognition?.partial ? 'Garment details unavailable' : 'Open order for item details', 'mw-garment-more'));
+      record.number.append(record.delivery);
+      record.rail.append(record.age, record.stage, record.prints);
+      record.printValue.textContent = row.materials.prints.label; record.prints.dataset.state = row.materials.prints.value;
+      record.status.append(record.detail, record.date); record.node.append(record.attention);
       const delivery = recognition?.delivery || { kind: 'unknown', label: 'Delivery method unknown' };
       record.delivery.dataset.kind = delivery.kind;
       const deliveryPaths = {
@@ -237,33 +246,46 @@
       };
       const deliveryPath = deliveryPaths[delivery.kind] || deliveryPaths.unknown;
       record.delivery.innerHTML = icon(deliveryPath); record.delivery.append(el('span', delivery.label));
-      record.open.setAttribute('aria-label', `Open ${row.number}, ${row.customer}. ${delivery.label}. ${groups.map(item => `${item.qty > 0 ? `${item.qty} ` : ''}${item.label}`).join('. ')}`);
+      record.open.setAttribute('aria-label', `Open ${row.number}, ${row.customer}. ${row.stageLabel}. ${record.age.getAttribute('aria-label')}. ${delivery.label}.`);
       renderPreview(row, record, recognition, order);
     }
     function renderRow(row, record) {
       record.checkLabel.hidden = !selectionMode; record.check.checked = selected.has(row.key);
       record.check.setAttribute('aria-label', `Select ${row.number}, ${row.customer}`); record.check.disabled = busy;
       record.node.classList.toggle('is-selected', selected.has(row.key)); record.action.hidden = selectionMode;
+      record.node.classList.toggle('mw-row-selecting', selectionMode);
       const order = area === 'orders' ? findOrder(row.key) : null;
       const recognition = area === 'orders' ? window.MobileOrderRecognition?.describe?.(order) : null;
-      const signature = JSON.stringify([row, area, selectionMode, recognition]);
+      const age = area === 'orders' ? model.orderAge(row.receivedAt) : null;
+      const signature = JSON.stringify([row, area, selectionMode, recognition, age]);
       if (record.signature !== signature) {
         record.signature = signature;
         record.customer.textContent = row.customer; record.number.textContent = `${row.number} · ${row.provider === 'etsy' ? 'Etsy' : 'PrintMO'}${row.synthetic ? ' · TEST' : ''}`;
         if (row.rush) record.number.append(el('span', 'Rush', 'order-rush-marker'));
         record.open.setAttribute('aria-label', `Open ${row.number}, ${row.customer}`);
-        const stage = el('span', row.stageLabel), date = el('span', row.target?.label || 'No date set', row.target?.tone ? `mw-date-${row.target.tone}` : '');
-        if (row.target?.accessible) date.setAttribute('aria-label', row.target.accessible);
-        record.meta.replaceChildren(stage, date);
+        record.stage.textContent = row.stageLabel;
+        record.date.textContent = area === 'orders' ? (row.target?.label || '').replace(/^Overdue/, 'Past target').replace(/^Due/, 'Target') : row.target?.label || 'No date set';
+        record.date.className = `mw-row-target${row.target?.tone ? ` mw-date-${row.target.tone}` : ''}`;
+        record.date.hidden = area === 'orders' && !row.target;
+        record.date.setAttribute('aria-label', row.target?.accessible || record.date.textContent);
+        if (age) {
+          record.ageValue.textContent = age.label; record.age.setAttribute('aria-label', age.accessible);
+          record.age.classList.toggle('mw-age-unavailable', age.label === 'Unavailable');
+        }
         const facts = [
           ...(area === 'supplies' ? [`${row.quantities.garments} garments`] : []),
-          ...(row.partial || recognition?.partial ? ['Item quantities unavailable'] : []),
-          `Blanks: ${row.materials.blanks.label}`, `Prints: ${row.materials.prints.label}`,
+          ...(area !== 'orders' && (row.partial || recognition?.partial) ? ['Item quantities unavailable'] : []),
+          ...(area === 'orders' && row.stage === 'blanks_cart' && row.materials.blanks.value === 'cart' ? [] : [`Blanks: ${row.materials.blanks.label}`]),
+          ...(area === 'orders' ? [] : [`Prints: ${row.materials.prints.label}`]),
           ...(area === 'supplies' && row.accounting ? [`${row.accounting.accountedGarments}/${row.accounting.expectedGarments} received`] : [])
         ];
-        record.detail.textContent = facts.join(' · ');
+        record.detail.textContent = facts.join(' · '); record.detail.hidden = !facts.length;
+        record.action.textContent = area === 'orders' ? '' : 'Actions';
+        if (area === 'orders') record.action.innerHTML = icon('M5 12h.01M12 12h.01M19 12h.01');
+        record.action.setAttribute('aria-label', 'Order actions for ' + row.number + ', ' + row.customer);
+        record.action.setAttribute('aria-haspopup', 'dialog');
         const warnings = board.indicators(row).filter(item => item.label !== 'Materials marked ready'
-          && (area !== 'orders' || !['Needs blanks', 'No mockup'].includes(item.label)));
+          && (area !== 'orders' || !['Needs blanks', 'No mockup', 'Cached data'].includes(item.label)));
         if (row.bundle) warnings.push({ label: `Bundle: ${row.bundle}`, tone: 'neutral' });
         if (area === 'supplies' && row.supplier?.label) warnings.push({ label: `${row.supplier.label}${row.supplier.stale ? ' · check overdue' : ''}`, tone: row.supplier.stale ? 'warning' : 'neutral' });
         record.attention.replaceChildren(...warnings.map(item => el('span', item.label, `mw-indicator-${item.tone}`))); record.attention.hidden = !warnings.length;
@@ -492,13 +514,20 @@
       }
       currentRows = result.rows;
       search.disabled = busy || Boolean(editor);
-      $('.mw-refresh').disabled = busy || document.body.dataset.boardLoadState === 'loading';
-      $('.mw-refresh span').textContent = document.body.dataset.boardLoadState === 'loading' ? 'Loading' : 'Refresh';
+      const refreshing = Boolean(window.OrderManagerLoadUi?.busy);
+      $('.mw-refresh').disabled = busy || refreshing || document.body.dataset.boardLoadState === 'loading';
+      $('.mw-refresh').setAttribute('aria-busy', String(refreshing));
+      const refreshMessage = window.OrderManagerLoadUi?.message || '';
+      $('.mw-refresh-status').textContent = refreshMessage || (area === 'orders' && currentRows.some(row => row.stale) ? 'Some order data may be out of date.' : '');
+      // Refresh messages already have a shared live announcement; the aggregate
+      // freshness note is ordinary readable context, never a repeated card row.
+      $('.mw-refresh-status').setAttribute('aria-hidden', String(Boolean(refreshMessage)));
+      $('.mw-refresh span').textContent = refreshing ? (document.body.dataset.orderRefreshState === 'queued' ? 'Queued' : 'Refreshing…') : document.body.dataset.boardLoadState === 'loading' ? 'Loading' : 'Refresh';
       const keys = new Set(currentRows.map(row => row.key)); selected = new Set([...selected].filter(key => keys.has(key)));
       const filtersCount = Object.values(view().filters).filter(value => value !== 'all').length;
       $('.mw-filters').textContent = filtersCount ? `Filters (${filtersCount})` : 'Filters'; search.value = view().query;
       const loadState = document.body.dataset.boardLoadState;
-      $('.mw-count').textContent = !snapshot.total && loadState === 'loading' ? 'Loading orders…'
+      $('.mw-count').textContent = document.body.dataset.orderQueueState === 'incomplete' ? 'Order list incomplete' : document.body.dataset.orderQueueState === 'partial' ? 'Order list is still loading…' : !snapshot.total && loadState === 'loading' ? 'Loading orders…'
         : !snapshot.total && loadState === 'error' ? 'Orders unavailable'
           : `${result.shown} ${result.shown === 1 ? 'order' : 'orders'}${view().query || filtersCount ? ' matching' : ''}${snapshot.identityErrors ? ` · ${snapshot.identityErrors} unavailable` : ''}`;
       for (const [key, record] of records) if (!keys.has(key) && editor?.key !== key) { previewObserver?.unobserve(record.node); visibleRows.delete(key); record.node.remove(); records.delete(key); }
@@ -514,7 +543,7 @@
       renderSelection();
       const load = document.body.dataset.boardLoadState, empty = $('.mw-empty'); empty.hidden = result.shown > 0 || Boolean(editor);
         if (!empty.hidden) {
-        empty.replaceChildren(el('p', load === 'loading' ? 'Loading orders…' : load === 'error' ? (snapshot.total ? 'No cached orders match. Refresh failed.' : 'Orders could not be loaded.') : snapshot.total ? 'No orders match this view.' : 'No active orders.'));
+        empty.replaceChildren(el('p', ['loading', 'partial'].includes(load) ? 'Loading orders…' : load === 'error' ? (snapshot.total ? 'No cached orders match. Refresh failed.' : 'Orders could not be loaded.') : snapshot.total ? 'No orders match this view.' : 'No active orders.'));
         if (load === 'error') empty.append(button('Try again', refresh));
         else if (load === 'ready' && (view().query || filtersCount || (area === 'orders' && view().stage !== 'all'))) empty.append(button('Clear filters', () => { state.clear(area); navigation.navigateMobile(area, { subview: view().stage, guarded: true }); render(false); }));
       }
@@ -558,7 +587,7 @@
       if (enabled() && area === 'print' && window.productionPlanner?.filterLabel?.()) navigation.navigateMobile('print', { subview: 'print', guarded: true });
       schedule();
     });
-    for (const name of ['printmo:board-updated', 'printmo:blanks-accounting-updated', 'printmo:progress-save', 'printmo:mobile-recognition-updated']) document.addEventListener(name, schedule);
+    for (const name of ['printmo:refresh-status', 'printmo:board-updated', 'printmo:blanks-accounting-updated', 'printmo:progress-save', 'printmo:mobile-recognition-updated']) document.addEventListener(name, schedule);
     const detail = document.getElementById('detail-overlay');
     if (detail) new MutationObserver(restoreDetail).observe(detail, { attributes: true, attributeFilter: ['class', 'aria-hidden'] });
     new MutationObserver(updateEnabled).observe(document.body, { attributes: true, attributeFilter: ['data-order-source', 'data-board-load-state'] });

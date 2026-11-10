@@ -64,6 +64,41 @@ Pages deployments replace the entire web artifact. Before publishing from an iso
 
 ### Source-switched operational board
 
+#### Mobile order actions
+
+At widths through 900px, mobile-order-actions.js and its scoped stylesheet own
+the touch presenter while order-actions.js retains command eligibility and
+mutations. The full-width modal sheet uses visual viewport dimensions, a fixed
+customer header and one scrolling body. Stage, Blanks and Prints are first;
+checked choices replace the body in place. Material saves retain feedback and
+return to the overview; stage changes suspend the sheet for the existing review
+and resume it afterward. Target/instructions/count use existing hydrated detail
+editors, Copy retains field completeness checks, and removal remains Etsy-only.
+Ordinary refresh, scrolling and mobile viewport changes keep the sheet open.
+Source/work-area changes or crossing to desktop close it. Desktop context menus
+and hover flyouts keep their own presenter.
+
+#### Startup and refresh
+
+The Shopify board starts with an immediate content-area walking PrintMO indicator,
+not provisional zero counts or an uninitialized board. `order-load-state.js` owns
+shell readiness, first usable snapshot, queue completion and refresh feedback. The
+current shell and first useful snapshot reveal the workspace without waiting for
+private artwork. Remaining pages show Loading more orders; totals and whole-queue
+supplier actions stay unavailable until enumeration completes. Genuine empty
+states require a successful completed read. Reduced motion uses the still mascot;
+a failed opening replaces animation with contextual help and Try again.
+
+Orders has a visible desktop Refresh control beside Menu; the mobile work-area
+header retains its existing Refresh control. Both use the same fresh-data path.
+Refresh retains loaded content, scroll, focus, selections and edit buffers,
+coalesces repeated clicks, and shows completion or retained-data failure feedback.
+A move/check in flight queues refresh until it settles. A local repaint cannot
+finish first-page enumeration; an acknowledged local update interrupting a later
+read restarts it without allowing the obsolete response to report completion.
+Routine polling never reopens the startup cover. Source changes release owned
+queue gates, preserving the isolated Legacy controls.
+
 #### Prepared Orders preparation screen
 
 Recipient inline colors were deployed on 2026-10-30 after separate authorization for the shared Worker update. The additive `/public/:id/colors?item=:itemId&snapshotId=:snapshotId` read and explicit `configurations` request field require `PREPARED_RECIPIENT_COLORS_ENABLED=true`; omitted intent retains the existing quote contract. Options resolve only published editable items, preserve non-color/non-size configuration, honor hidden colors, and use canonical Shopify swatches/availability. Quotes and checkout validate the chosen reference variant against that product/configuration. Supplied flat mockups remain on the help path. `prepared-colors.test.mjs` covers the new contract and old-client/disabled behavior. The website flag defaults off; only unpublished Designer Testing 2 received the enabled UI. The deployed Worker version is `6da5920c-9a12-44f7-aeb2-4cc02359c361`; its previous version is `28373cd3-4a2b-492d-92b8-47cee3a7b47e`. Actual options/quote reads and the test-theme Navy proof/quantity transition passed; no cart, checkout, or publication write was exercised.
@@ -71,6 +106,12 @@ Recipient inline colors were deployed on 2026-10-30 after separate authorization
 Copy testing link is a separate action inside Link options and the saved-order menu. It preserves the same prepared-order ID and explicitly adds the current Designer Testing 2 theme parameter. Normal copies remain clean; the testing choice is never persisted on the publication or as the default. Clipboard fallback displays the actual selected URL.
 
 Complete published recipient presentation now opens without Shopify product reads; incomplete legacy data retains bounded deduplicated fallback. Fresh quotes use `prepared-price-products.mjs` to batch snapshot-member variants and current product/configuration metadata, without catalog media or all-color variant pagination. Current print prices are still resolved and checkout validates afresh. Only simultaneous identical quote requests coalesce; no completed-price cache can bypass current pricing or revocation checks.
+
+The quantity dialog uses a full-width responsive size grid, garment/color context,
+a live total and a separate action footer. One body scroller keeps the header and
+actions reachable inside keyboard-reduced Shopify Admin viewports. Unoffered saved
+sizes have an associated warning row. Close/Escape discards staged edits; Apply
+uses native whole-number validation, and Let customer choose clears all counts.
 
 Sizes & quantities is optional on each garment. Staff may prefill known counts or
 leave them for the customer. Counts are bounded whole numbers, saved independently
@@ -249,6 +290,52 @@ calibrated SVG/text exporter and attached to matching draft garment lines.
 SVG blob URLs must be expanded to source text before vector export. Shopify
 applies eligible discounts at checkout; review does not promise the separate
 storefront-cart bulk discount calculation.
+
+#### Prepared direct-checkout bulk pricing — deployed 2026-11-09
+
+Owner-approved coordinated release: Worker `ff3f288e-046b-471d-88f7-6577a6a3381d`
+is active at 100% and live theme `163682582776` serves
+`designer-entry.Bcy4nloc.js`. The deployed Worker exactly matches the verified
+bundle (SHA-256 `07ab08b000f41709253ffb48d6abaca92ba9c560bb22efa751a775039b224cde`);
+all 30 bindings and the compatibility date are unchanged. The public entry
+bytes match the local build and the Designer mounts in the published-theme browser.
+No draft/order creation, payment or actual Prepared checkout acceptance was exercised
+by this release verification. Immediate Worker rollback is
+`ed419c52-15ce-400a-8c08-49a9ca89c2d2`; the prior theme loader is retained locally.
+This supersedes the preceding automatic-discount delegation for this paired release.
+
+`prepared-order-discounts.mjs` owns policy `prepared-bulk-v1`. Actual membership
+in Shopify collection `482306556152` determines the eligible garment count;
+12/24/48/72 garments select 5/10/15/20 percent (100+ remains 20 percent). Only
+those garment lines and the print lines built from their validated snapshot
+batches receive percentage discounts. Excluded items and their printing stay
+full price. Browser flags, titles and print quantities cannot establish eligibility.
+
+Quantity-aware quotes call Shopify's non-persisting `draftOrderCalculate` and
+return gross, discount and net USD merchandise subtotals. The same server-verified
+base-price overrides and line discounts are used for draft creation. Automatic
+discounts, supplied codes and checkout code entry are disabled on these drafts.
+Shipping and tax remain checkout calculations. Direct checkout does not merge the
+storefront cart, and ordinary Add to cart/Designer discounts are unchanged.
+
+Quote/coalescing/checkout identities bind quantities, current commerce and policy.
+Creation and recovery must verify Shopify's subtotal/discount against the reviewed
+quote before handing off a URL. Interrupted post-create verification resumes the
+known draft instead of creating another one. Policy changes do not invalidate
+already-issued Shopify checkout URLs.
+
+Future releases must coordinate the website recipient and shared Order Manager Worker; a theme-only
+release cannot supply the new server calculation, and older clients must reload
+after the coordinated release. No Pages/editor or Designer backend release is
+needed. No live discount configuration, migration or app subscription is required.
+
+Owner acceptance after deployment: open a test Prepared Order containing an
+eligible garment with front/back printing; compare 11 versus 12, 23 versus 24,
+47 versus 48, 71 versus 72, and 99 versus 100 garments. Open the price breakdown
+and Continue to checkout. Merchandise subtotals/discounts must match, excluded
+items must remain full price, codes must be unavailable, and back/edit/retry must
+retain correct quantities. Stop before payment. Opening checkout creates an
+unpaid draft; already-open old checkout URLs must not be used as acceptance evidence.
 
 Recipient repair released to testing 2026-10-27: Worker
 `6da41ac2-13f3-48da-a8b3-3d6f5ca050a7`, Pages `e9320be1` (release
@@ -600,11 +687,18 @@ presentation rules below describe the mounted fallback board used by Legacy or
 the explicit `printmo_list_preview=0` rollback URL. Shared scrolling, source
 isolation and full-detail contracts continue to apply to both presentations.
 
-The Orders workspace uses `mobile-order-recognition.js` for square contained
-previews, bounded garment/color/unit summaries and delivery labels. An explicitly
-associated front derivative is separate from canonical `assets`; current line
-identity and design reference must agree. Staff replacements take priority.
-Existing combined proofs remain the fallback and the desktop/detail source.
+The Orders workspace uses `mobile-order-recognition.js` for large contained
+proofs beside a compact order-age, stage and delivery rail. It omits garment and
+variant text lists. Combined mockups take priority over associated front
+derivatives; staff replacements retain first priority. A derivative is separate
+from canonical `assets`; current line identity and design reference must agree.
+The desktop/detail source is unchanged. Order age uses the source-created
+`receivedAt` mapping; missing, invalid or future values remain unavailable.
+The footer omits the derived blanks-cart material label only when it repeats
+the cart stage, retains distinct materials and operational warnings, and shows
+an internal Target only when recorded. Per-order cache rows are omitted; the
+existing Refresh status reports when some displayed orders may be out of date,
+without replacing active refresh/error feedback or claiming every order stale.
 Unassigned files are order artwork, never evidence of a garment association.
 Visible mobile rows reuse the private batch hydration path, including requests
 queued while a batch is pending; they do not fetch detail per row.
