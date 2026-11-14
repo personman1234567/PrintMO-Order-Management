@@ -1,5 +1,5 @@
 import {SyncError,requireValue} from './core.mjs';
-import {shopifyToken,shopifyRead} from './clients.mjs';
+import {shopifyToken,shopifyRead,readSupplierGatewayBulk,supplierBatchSize,supplierSkuList,isSupplierDeferred} from './clients.mjs';
 import {discoverProduct,enrollBatch,SHOP} from './enrollment.mjs';
 import {acquireLease,releaseLease,saveJob,registerEntries,registeredCount,registryStatus,database,assertRegistryIdentity} from './registry.mjs';
 import {PRIORITY_SHARED_6400_SKUS} from './priority-shared-6400.mjs';
@@ -20,7 +20,7 @@ export async function inventoryService(request,env,deps){
   if(path==='/inventory/health'&&request.method==='GET'){
    const token=await shopifyToken(env,deps);const data=await shopifyRead(env,token,'query InventoryServiceHealth{currentAppInstallation{accessScopes{handle}}}',{},deps);
    const scopes=data.currentAppInstallation.accessScopes.map(s=>s.handle);
-   return respond({ok:true,service:SERVICE_VERSION,shop:SHOP,registryEnabled:env.INVENTORY_REGISTRY_ENABLED==='true',policyWriteAvailable:scopes.includes('write_products')||!!(env.SHOPIFY_POLICY_CLIENT_ID&&env.SHOPIFY_POLICY_CLIENT_SECRET),scopes});
+   return respond({ok:true,service:SERVICE_VERSION,shop:SHOP,registryEnabled:env.INVENTORY_REGISTRY_ENABLED==='true',supplierBatchSize:supplierBatchSize(env),policyWriteAvailable:scopes.includes('write_products')||!!(env.SHOPIFY_POLICY_CLIENT_ID&&env.SHOPIFY_POLICY_CLIENT_SECRET),scopes});
   }
   if(path==='/inventory/status'&&request.method==='GET')return respond(await registryStatus(env));
   if(path==='/inventory/export'&&request.method==='GET')return respond({entries:(await database(env).prepare('SELECT * FROM inventory_sync_variants ORDER BY variant_id').all()).results});
@@ -30,6 +30,19 @@ export async function inventoryService(request,env,deps){
    requireValue(product.variants.every(v=>!PRIORITY_SHARED_6400_SKUS.has(v.sku)),'HELD_SHARED_6400_SKU');
    return respond({id:product.id,handle:product.handle,title:product.title,status:product.status,
     alreadyRegistered:await registeredCount(env,product.variants.map(v=>v.id)),variants:product.variants.map(v=>({id:v.id,sku:v.sku}))});
+  }
+  if(path==='/inventory/prefetch'){
+   requireValue(/^gid:\/\/shopify\/Product\/\d+$/.test(input.productId),'INVALID_PRODUCT_SELECTOR');
+   requireValue(Array.isArray(input.entries)&&input.entries.length>0&&input.entries.length<=supplierBatchSize(env)
+    &&input.entries.every(e=>/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(e.id))
+    &&new Set(input.entries.map(e=>e.id)).size===input.entries.length,'INVALID_ENROLLMENT_BATCH');
+   supplierSkuList(input.entries.map(e=>e.sku));
+   lease=await acquireLease(env);requireValue(lease,'INVENTORY_BUSY');
+   const token=await shopifyToken(env,deps);
+   const d=await shopifyRead(env,token,'query InventoryPrefetchIdentity($ids:[ID!]!){nodes(ids:$ids){... on ProductVariant{id sku product{id status}}}}',{ids:input.entries.map(e=>e.id)},deps);
+   requireValue(Array.isArray(d.nodes)&&d.nodes.length===input.entries.length&&d.nodes.every((v,i)=>v?.id===input.entries[i].id&&v.sku===input.entries[i].sku&&v.product?.id===input.productId&&['ACTIVE','UNLISTED'].includes(v.product.status)),'PRODUCT_IDENTITY_CHANGED');
+   const source=await readSupplierGatewayBulk(env,input.entries.map(e=>e.sku),deps);
+   return respond({observedAt:source.observedAt,variants:input.entries.length});
   }
   requireValue(path==='/inventory/enroll','ENDPOINT_NOT_FOUND');
   lease=await acquireLease(env);requireValue(lease,'INVENTORY_BUSY');
@@ -46,6 +59,8 @@ export async function inventoryService(request,env,deps){
  }catch(e){
   const error=e instanceof SyncError?e.code:'INVENTORY_SERVICE_FAILED';
   if(lease&&path==='/inventory/enroll'&&input?.mode==='apply')await saveJob(env,'product:'+input.productId,'failed',null,error);
-  return Response.json({error},{status:error==='INVENTORY_BUSY'?409:422,headers:{'Cache-Control':'no-store'}});
+  const deferred=isSupplierDeferred(e),retryAfter=deferred?Math.max(60,e.retryAfterSeconds||60):e.retryAfterSeconds;
+  const headers={'Cache-Control':'no-store'};if(retryAfter)headers['Retry-After']=String(retryAfter);
+  return Response.json({error,...(retryAfter?{retryAfterSeconds:retryAfter}:{})},{status:error==='INVENTORY_BUSY'?409:deferred?503:422,headers});
  }finally{if(lease)await releaseLease(env,lease);}
 }

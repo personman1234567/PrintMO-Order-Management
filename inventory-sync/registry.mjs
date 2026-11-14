@@ -1,5 +1,5 @@
 import {SyncError,requireValue} from './core.mjs';
-import {shopifyToken} from './clients.mjs';
+import {shopifyToken,readSupplierGatewayBulk,supplierBatchSize,isSupplierDeferred} from './clients.mjs';
 import {runGuardedBatch} from './writer.mjs';
 import {PRIORITY_SHARED_6400_SKUS} from './priority-shared-6400.mjs';
 import {BATCH_SIZE} from './enrollment.mjs';
@@ -73,21 +73,42 @@ export async function runRegistrySchedule(env,deps={},scheduledTime=Date.now()){
  const started=now(),deadline=started+Number(env.INVENTORY_RUN_SECONDS||45)*1000;
  const summary={mode:'registry-refresh',variants:0,batches:0,writes:0,held:0,failures:0};
  try{
-  const token=await shopifyToken(env,deps);
+  const cooldown=await database(env).prepare("SELECT result_json FROM inventory_sync_jobs WHERE name='supplier-backoff'").first();
+  const retryAt=cooldown?.result_json ? JSON.parse(cooldown.result_json).retryAt : 0;
+  if(retryAt>now())return {...summary,deferred:true,retryAt};
+  if(retryAt)await saveJob(env,'supplier-backoff','ready',null,null,now());
+  const size=supplierBatchSize(env),token=await shopifyToken(env,deps);
+  let pending=[],snapshot=null;
   while(now()<deadline){
-   const rows=(await database(env).prepare('SELECT variant_id AS id,sku,missing_policy AS missingPolicy FROM inventory_sync_variants WHERE enabled=1 AND next_due_at<=? ORDER BY next_due_at,variant_id LIMIT ?').bind(now(),BATCH_SIZE).all()).results;
-   if(!rows.length)break;
+   if(!pending.length){
+    pending=(await database(env).prepare('SELECT variant_id AS id,sku,missing_policy AS missingPolicy FROM inventory_sync_variants WHERE enabled=1 AND next_due_at<=? ORDER BY next_due_at,variant_id LIMIT ?').bind(now(),size).all()).results;
+    snapshot=null;
+   }
+   if(!pending.length)break;
+   const rows=pending.splice(0,BATCH_SIZE);
    await renewLease(env,lease,now());
-   let error=null;
+   let error=null,defer=null;
    try{
-    const result=await (deps.runBatch||runGuardedBatch)({...env,SHOPIFY_ACCESS_TOKEN:token,PILOT_VARIANT_IDS:JSON.stringify(rows.map(r=>r.id)),PILOT_VARIANT_SKUS:JSON.stringify(rows.map(r=>r.sku)),PILOT_MISSING_SKU_POLICIES:JSON.stringify(rows.map(r=>r.missingPolicy))},deps);
+    if(size>BATCH_SIZE&&!snapshot)snapshot=await (deps.readSupplierBulk||readSupplierGatewayBulk)(env,[...rows,...pending].map(r=>r.sku),deps);
+    const result=await (deps.runBatch||runGuardedBatch)({...env,SHOPIFY_ACCESS_TOKEN:token,PILOT_VARIANT_IDS:JSON.stringify(rows.map(r=>r.id)),PILOT_VARIANT_SKUS:JSON.stringify(rows.map(r=>r.sku)),PILOT_MISSING_SKU_POLICIES:JSON.stringify(rows.map(r=>r.missingPolicy))},snapshot?{...deps,supplierSnapshot:snapshot}:deps);
     summary.writes+=result.writes||0;summary.held+=result.held||0;summary.variants+=rows.length;
-   }catch(e){error=e instanceof SyncError?e.code:'INVENTORY_BATCH_FAILED';summary.failures++;}
+   }catch(e){
+    error=e instanceof SyncError?e.code:'INVENTORY_BATCH_FAILED';summary.failures++;
+    if(isSupplierDeferred(e))defer=Math.max(60,e.retryAfterSeconds||60)*1000;
+    // A failed bulk source is never replaced by separate 25-SKU retries.
+    if(size>BATCH_SIZE&&!snapshot)pending=[];
+   }
    const checked=now();
    await database(env).batch(rows.map(r=>database(env).prepare(`UPDATE inventory_sync_variants SET next_due_at=?,last_error=?,
     last_success_at=CASE WHEN ? IS NULL THEN ? ELSE last_success_at END WHERE variant_id=?`)
-    .bind(checked+(error?60000:refreshInterval(env)),error,error,checked,r.id)));
+    .bind(checked+(error?(defer||60000):refreshInterval(env)),error,error,checked,r.id)));
    summary.batches++;
+   if(defer){
+    summary.deferred=true;summary.retryAt=checked+defer;
+    await saveJob(env,'supplier-backoff','deferred',{retryAt:summary.retryAt},error,checked);
+    break;
+   }
+   if(error&&size>BATCH_SIZE&&!snapshot)break;
   }
   await saveJob(env,'schedule',summary.failures?'partial':'verified',{...summary,elapsedMs:now()-started,scheduledTime},null,now());
   return summary;

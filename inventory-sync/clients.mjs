@@ -1,13 +1,13 @@
-import { SyncError, requireValue, skuList, normalizeInventory } from './core.mjs';
+import { SyncError, requireValue, uniqueStrings, skuList, normalizeInventory } from './core.mjs';
 
 // One retry only for throttling/server errors; no raw response body enters errors/logs.
-export async function requestJson(url, options = {}, { fetchImpl = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
+export async function requestJson(url, options = {}, { fetchImpl = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)), retryHttp = true, supplierErrors = false, now = Date.now } = {}) {
   for (let attempt = 0; attempt < 2; attempt++) {
     let response;
     // Workers reject redirect: 'error'. Manual mode also keeps credentials off redirected hosts.
     try { response = await fetchImpl(url, { ...options, redirect: 'manual', signal: AbortSignal.timeout(15000) }); }
     catch (error) { if (error instanceof SyncError) throw error; throw new SyncError('UPSTREAM_TRANSPORT_FAILED'); }
-    if ((response.status === 429 || response.status >= 500) && attempt === 0) {
+    if (retryHttp && (response.status === 429 || response.status >= 500) && attempt === 0) {
       const header = response.headers.get('Retry-After');
       const retry = header === null ? 0.5 : /^\d+$/.test(header) ? Number(header) : (Date.parse(header) - Date.now()) / 1000;
       if (!Number.isFinite(retry) || retry > 2) throw new SyncError('UPSTREAM_RETRY_DEFERRED');
@@ -15,7 +15,20 @@ export async function requestJson(url, options = {}, { fetchImpl = fetch, sleep 
       await sleep(Math.max(250, Number.isFinite(retry) ? retry * 1000 : 500));
       continue;
     }
-    if (!response.ok) throw new SyncError(`UPSTREAM_HTTP_${response.status}`, response.status);
+    if (!response.ok) {
+      let code = 'UPSTREAM_HTTP_' + response.status;
+      if (supplierErrors) {
+        try {
+          const data = await response.json();
+          if (/^UPSTREAM_[A-Z0-9_]+$|^INVALID_SUPPLIER_RESPONSE$|^SUPPLIER_(RATE_LIMITED|SOURCE_STALE)$/.test(data?.error || '')) code = data.error;
+        } catch { /* No raw supplier body enters errors or logs. */ }
+      }
+      const error = new SyncError(code, response.status);
+      const header = response.headers.get('Retry-After');
+      const seconds = header === null ? null : /^\d+$/.test(header) ? Number(header) : Math.ceil((Date.parse(header) - now()) / 1000);
+      if (Number.isFinite(seconds)) error.retryAfterSeconds = Math.max(1, seconds);
+      throw error;
+    }
     let data;try { data=await response.json(); } catch { throw new SyncError('UPSTREAM_INVALID_JSON'); }
     if(data.errors?.some(e=>e.extensions?.code==='THROTTLED')&&attempt===0){
       const cost=data.extensions?.cost,rate=cost?.throttleStatus?.restoreRate;
@@ -102,8 +115,45 @@ export async function readPilot(env, token, ids, deps) {
     && data.nodes.every((v, i) => v?.id === ids[i] && ['ACTIVE', 'UNLISTED'].includes(v.product?.status) && v.inventoryItem?.id), 'PILOT_VARIANT_MISSING_OR_INACTIVE');
   return data.nodes;
 }
+export function isSupplierDeferred(error) {
+  return /^(SUPPLIER_RATE_LIMITED|UPSTREAM_RETRY_DEFERRED|UPSTREAM_HTTP_(429|502|503))$/.test(error?.code || '')
+    || [429,502,503].includes(error?.status);
+}
+export const SUPPLIER_BATCH_SIZE = 250;
+export function supplierBatchSize(env) {
+  const size = Number(env.INVENTORY_SUPPLIER_BATCH_SIZE || 25);
+  requireValue(Number.isSafeInteger(size) && size >= 25 && size <= SUPPLIER_BATCH_SIZE && size % 25 === 0, 'INVALID_SUPPLIER_BATCH_SIZE');
+  return size;
+}
+export function supplierSkuList(skus) {
+  return uniqueStrings(skus, /^[A-Za-z0-9_-]{1,64}$/, SUPPLIER_BATCH_SIZE, 'INVALID_SKUS');
+}
+export function normalizeSupplierBatch(items, skus) {
+  supplierSkuList(skus);
+  requireValue(Array.isArray(items) && items.length <= skus.length
+    && items.every(item => item && skus.includes(item.sku))
+    && new Set(items.map(item => item.sku)).size === items.length, 'INVALID_SUPPLIER_RESPONSE');
+  const normalized = [];
+  for (let i = 0; i < skus.length; i += 25) {
+    const batch = skus.slice(i, i + 25);
+    normalized.push(...normalizeInventory(items.filter(item => batch.includes(item.sku)), batch));
+  }
+  return normalized;
+}
+export function supplierSlice(snapshot, skus) {
+  skuList(skus);
+  supplierSkuList(snapshot?.skus);
+  requireValue(skus.every(sku => snapshot.skus.includes(sku)), 'SUPPLIER_PREFETCH_SCOPE_MISMATCH');
+  const items = normalizeSupplierBatch(snapshot.items, snapshot.skus);
+  return { observedAt: snapshot.observedAt, items: items.filter(item => skus.includes(item.sku)) };
+}
 export async function readSupplierGateway(env, skus, deps) {
   skuList(skus);
+  if (deps?.supplierSnapshot) return supplierSlice(deps.supplierSnapshot, skus);
+  return readSupplierGatewayBulk(env, skus, deps);
+}
+export async function readSupplierGatewayBulk(env, skus, deps) {
+  supplierSkuList(skus);
   let url;
   try { url = new URL(env.SUPPLIER_INVENTORY_URL); } catch { throw new SyncError('SUPPLIER_GATEWAY_UNCONFIGURED'); }
   requireValue(url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash
@@ -113,6 +163,6 @@ export async function readSupplierGateway(env, skus, deps) {
   const data = await requestJson(url.href, { headers: {
     'X-Inventory-Read-Key': env.INVENTORY_READ_KEY,
     'X-Shopify-Shop-Domain': shopDomain(env), Accept: 'application/json'
-  } }, deps);
-  return { observedAt: data?.observedAt, items: normalizeInventory(data?.items, skus) };
+  } }, { ...deps, retryHttp: false, supplierErrors: true });
+  return { observedAt: data?.observedAt, skus: [...skus], items: normalizeSupplierBatch(data?.items, skus) };
 }

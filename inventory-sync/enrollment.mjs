@@ -58,6 +58,10 @@ export function validateVariants(variants, productId, verifiedDraftDuplicates = 
 }
 
 export function initializeMutation(variants, updates, observedAt, key) {
+ // Recheck at the write boundary as well as during planning; preflight or policy
+ // work must not extend a cached observation beyond the existing five minutes.
+ const age=Date.now()-Date.parse(observedAt);
+ requireValue(Number.isFinite(age)&&age>=-30000&&age<=300000,'INVALID_WRITE_OBSERVATION');
  const variables={location:SUPPLIER,key,input:{name:'available',reason:'correction',referenceDocumentUri:`printmo://supplier-inventory/enroll/${encodeURIComponent(observedAt)}`,quantities:updates}};
  const declarations=['$input:InventorySetQuantitiesInput!','$key:String!'];
  const operations=variants.map((v,i)=>{
@@ -101,8 +105,11 @@ export async function enrollBatch(env,input,deps){
   requireValue(Number.isSafeInteger(source)&&source>=0, 'SUPPLIER_SKU_MISSING_OR_UNKNOWN');
   const l=supplierLevel(v),current=l ? quantity(l,'available') : 0;
   const committed=v.inventoryItem.inventoryLevels.nodes.reduce((n,l)=>n+quantity(l,'committed'),0);
-  if(!v.inventoryItem.tracked) requireValue(committed===0 && current===0, 'UNTRACKED_ITEM_HAS_STOCK_OR_COMMITMENTS');
-  const target=!v.inventoryItem.tracked ? source : source<current ? source : Math.max(current,Math.max(0,source-committed));
+  requireValue(Number.isSafeInteger(committed)&&committed>=0,'SHOPIFY_COMMITMENTS_UNVERIFIED');
+  // Existing order commitments are reservations, not physical HQ supply. Apply
+  // the same conservative ceiling during first tracking as during later reopens.
+  if(!v.inventoryItem.tracked) requireValue(current===0,'UNTRACKED_ITEM_HAS_SUPPLIER_STOCK');
+  const target=source<current ? source : Math.max(current,Math.max(0,source-committed));
   return {id:v.id,sku:v.sku,source,target,current,tracked:v.inventoryItem.tracked,supplierActive:!!l?.isActive,committed};
  });
  const overselling=before.nodes.filter(v=>v.inventoryPolicy!=='DENY');

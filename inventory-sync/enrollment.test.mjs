@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {enrollBatch,validateVariants,SUPPLIER,HQ,SHOP} from './enrollment.mjs';
+import {enrollBatch,validateVariants,initializeMutation,SUPPLIER,HQ,SHOP} from './enrollment.mjs';
 import {checkScope,parseLiveEntries} from './enroll-cli.mjs';
 import {isUniqueSellableSku} from './clients.mjs';
 const productId='gid://shopify/Product/100';
 const levels=(id,a=0,c=0)=>({isActive:true,location:{id},quantities:[{name:'available',quantity:a},{name:'committed',quantity:c},{name:'on_hand',quantity:a+c}]});
-function fixture({tracked=false,available=0,committed=0,missing=false,failSeed=false,race=false,draftCopy=null,oversell=false}={}){
- const variant={id:'gid://shopify/ProductVariant/100',sku:'B123',inventoryPolicy:'DENY',availableForSale:true,sellableOnlineQuantity:0,product:{id:productId,status:'ACTIVE'},inventoryItem:{id:'gid://shopify/InventoryItem/100',tracked,duplicateSkuCount:0,inventoryLevels:{nodes:[levels(HQ),...(tracked?[levels(SUPPLIER,available,committed)]:[])],pageInfo:{hasNextPage:false}}}};
+function fixture({tracked=false,available=0,committed=0,hqCommitted=0,missing=false,failSeed=false,race=false,draftCopy=null,oversell=false}={}){
+ const variant={id:'gid://shopify/ProductVariant/100',sku:'B123',inventoryPolicy:'DENY',availableForSale:true,sellableOnlineQuantity:0,product:{id:productId,status:'ACTIVE'},inventoryItem:{id:'gid://shopify/InventoryItem/100',tracked,duplicateSkuCount:0,inventoryLevels:{nodes:[levels(HQ,0,hqCommitted),...(tracked?[levels(SUPPLIER,available,committed)]:[])],pageInfo:{hasNextPage:false}}}};
  if(oversell)variant.inventoryPolicy="CONTINUE";
  const env={SHOPIFY_SHOP_DOMAIN:SHOP,SHOPIFY_ACCESS_TOKEN:'test',SUPPLIER_LOCATION_ID:SUPPLIER,PROTECTED_LOCATION_IDS:JSON.stringify([HQ]),SS_SAFETY_BUFFER:'0',SUPPLIER_INVENTORY_URL:'https://example.com/order-manager/v1/supplier/ss/inventory',INVENTORY_READ_KEY:'test'};
  const requests=[];
@@ -27,7 +27,7 @@ function fixture({tracked=false,available=0,committed=0,missing=false,failSeed=f
   data.inventorySetQuantities={inventoryAdjustmentGroup:failSeed||stale?null:{id:'adjustment'},userErrors:failSeed?[{code:'OTHER'}]:stale?[{code:'CHANGE_FROM_QUANTITY_STALE'}]:[]};
   return Response.json({data});
  }};
- return {env,variant,deps,requests,input:{mode:'apply',productId,entries:[{id:variant.id,sku:variant.sku}]}};
+ return {env,variant,deps,requests,resume:()=>{failSeed=false;},input:{mode:'apply',productId,entries:[{id:variant.id,sku:variant.sku}]}};
 }
 test('enroll activates at zero then serially tracks and seeds physical-only quantities; HQ unchanged',async()=>{
  const f=fixture(),hq=structuredClone(f.variant.inventoryItem.inventoryLevels.nodes[0]);
@@ -100,4 +100,40 @@ test('shared-SKU verification blocks sellable copies, draft commitments, missing
  const committed=structuredClone(draft);committed.inventoryItem.inventoryLevels.nodes=[levels(HQ,0,1)];assert.equal(check(committed),false);
  assert.equal(check({...draft,inventoryItem:{}}),false);assert.equal(check(draft,true),false);
  const paginated=structuredClone(draft);paginated.inventoryItem.inventoryLevels.pageInfo.hasNextPage=true;assert.equal(check(paginated),false);
+});
+
+test('enrollment rechecks the observation at the final quantity mutation boundary',()=>{
+ for(const observedAt of ['invalid',new Date(Date.now()-300001).toISOString(),new Date(Date.now()+31000).toISOString()])
+  assert.throws(()=>initializeMutation([],[],observedAt,'test'),/INVALID_WRITE_OBSERVATION/);
+ assert.match(initializeMutation([],[],new Date().toISOString(),'test').query,/inventorySetQuantities/);
+});
+
+test('first tracking subtracts legacy HQ commitments and preserves every HQ quantity',async()=>{
+ const f=fixture({hqCommitted:7}),hq=structuredClone(f.variant.inventoryItem.inventoryLevels.nodes[0]);
+ const plan=await enrollBatch(f.env,{...f.input,mode:'plan'},f.deps);assert.equal(plan.rows[0].target,33);assert.equal(f.requests.filter(r=>r.query.startsWith('mutation')).length,0);
+ const r=await enrollBatch(f.env,f.input,f.deps);assert.equal(r.ready,true);assert.equal(r.rows[0].source,40);assert.equal(r.rows[0].committed,7);assert.equal(r.rows[0].current,33);
+ assert.deepEqual(f.variant.inventoryItem.inventoryLevels.nodes[0],hq);
+ const write=f.requests.find(r=>r.query.includes('InitializeSupplierInventory'));assert.deepEqual(write.variables.input.quantities,[{inventoryItemId:f.variant.inventoryItem.id,locationId:SUPPLIER,quantity:33,changeFromQuantity:0}]);
+});
+test('zero physical HQ with negative available and outstanding commitments can enroll without a HQ reset',async()=>{
+ const f=fixture();f.variant.inventoryItem.inventoryLevels.nodes[0]=levels(HQ,-7,7);const hq=structuredClone(f.variant.inventoryItem.inventoryLevels.nodes[0]);
+ const r=await enrollBatch(f.env,f.input,f.deps);assert.equal(r.rows[0].current,33);assert.deepEqual(f.variant.inventoryItem.inventoryLevels.nodes[0],hq);
+});
+test('commitments exceeding verified supplier stock initialize tracked available at zero',async()=>{
+ const f=fixture({hqCommitted:45}),hq=structuredClone(f.variant.inventoryItem.inventoryLevels.nodes[0]);const r=await enrollBatch(f.env,f.input,f.deps);
+ assert.equal(r.ready,true);assert.equal(r.rows[0].source,40);assert.equal(r.rows[0].current,0);assert.equal(f.variant.inventoryItem.tracked,true);assert.deepEqual(f.variant.inventoryItem.inventoryLevels.nodes[0],hq);
+});
+test('existing untracked supplier stock is still held rather than blindly reseeded',async()=>{
+ const f=fixture({hqCommitted:7});f.variant.inventoryItem.inventoryLevels.nodes.push(levels(SUPPLIER,2));
+ await assert.rejects(enrollBatch(f.env,f.input,f.deps),/UNTRACKED_ITEM_HAS_SUPPLIER_STOCK/);assert.equal(f.variant.inventoryItem.tracked,false);assert.equal(f.requests.filter(r=>r.query.startsWith('mutation')).length,0);
+});
+test('failed initialization with commitments stays conservative and resumes from live state',async()=>{
+ const f=fixture({hqCommitted:7,failSeed:true}),hq=structuredClone(f.variant.inventoryItem.inventoryLevels.nodes[0]);
+ await assert.rejects(enrollBatch(f.env,f.input,f.deps),/ENROLLMENT_WRITE_REJECTED/);assert.equal(f.variant.inventoryItem.tracked,true);assert.equal(f.variant.inventoryItem.inventoryLevels.nodes[1].quantities[0].quantity,0);
+ assert.equal(f.requests.filter(r=>r.query.includes('RestoreTracking')).length,0);assert.deepEqual(f.variant.inventoryItem.inventoryLevels.nodes[0],hq);
+ f.resume();const r=await enrollBatch(f.env,f.input,f.deps);assert.equal(r.ready,true);assert.equal(r.rows[0].current,33);assert.deepEqual(f.variant.inventoryItem.inventoryLevels.nodes[0],hq);
+});
+test('legacy commitments do not let missing supply become a zero initialization',async()=>{
+ const f=fixture({hqCommitted:7,missing:true}),hq=structuredClone(f.variant.inventoryItem.inventoryLevels.nodes[0]);await assert.rejects(enrollBatch(f.env,f.input,f.deps),/SUPPLIER_SKU_MISSING_OR_UNKNOWN/);
+ assert.equal(f.requests.filter(r=>r.query.startsWith('mutation')).length,0);assert.deepEqual(f.variant.inventoryItem.inventoryLevels.nodes[0],hq);
 });

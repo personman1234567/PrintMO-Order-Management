@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {loadEnvFile} from './cli.mjs';
 import {BATCH_SIZE} from './enrollment.mjs';
 import {requireValue,SyncError} from './core.mjs';
+import {supplierBatchSize,isSupplierDeferred} from './clients.mjs';
 import {PRIORITY_SHARED_6400_SKUS} from './priority-shared-6400.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 export const scopeHash=entries=>createHash('sha256').update(JSON.stringify(entries.map(({id,sku,missingPolicy,cohort})=>[id,sku,missingPolicy,cohort]))).digest('hex');
@@ -29,9 +30,39 @@ export function serviceClient(env,{fetchImpl=fetch,sleep=ms=>new Promise(r=>setT
    requireValue(r.headers.get('content-type')?.includes('application/json'),'INVENTORY_SERVICE_HTTP_'+r.status);
    const d=await r.json();if(r.ok)return d;
    if(d.error==='INVENTORY_BUSY'&&Date.now()<deadline){await sleep(1500);continue;}
-   throw new SyncError(d.error||'INVENTORY_SERVICE_FAILED');
+   const error=new SyncError(d.error||'INVENTORY_SERVICE_FAILED',r.status);
+   const retry=Number(r.headers.get('Retry-After')||d.retryAfterSeconds);
+   if(Number.isFinite(retry)&&retry>0)error.retryAfterSeconds=retry;
+   throw error;
   }
  };
+}
+// Prefetch only provider reads. Every apply/verify still resolves live Shopify
+// quantities, commitments, policy and protected locations in batches of 25.
+export async function enrollProductBatches(product,{execute,invoke,report,save=()=>{}}){
+ const health=await invoke('/inventory/health');
+ const size=supplierBatchSize({INVENTORY_SUPPLIER_BATCH_SIZE:health.supplierBatchSize||25});
+ for(let offset=0;offset<product.variants.length;offset+=size){
+  const group=product.variants.slice(offset,offset+size);
+  if(size>25)await invoke('/inventory/prefetch',{productId:product.id,entries:group});
+  for(let local=0;local<group.length;local+=BATCH_SIZE){
+   const index=(offset+local)/BATCH_SIZE,entries=group.slice(local,local+BATCH_SIZE);
+   const input={productId:product.id,entries,offset:offset+local,total:product.variants.length};
+   report.batches[index]={index};
+   if(!execute)report.batches[index].plan=await invoke('/inventory/enroll',{...input,mode:'plan'});
+   else{
+    try{report.batches[index].result=await invoke('/inventory/enroll',{...input,mode:'apply'});}
+    catch(e){
+     if(isSupplierDeferred(e))throw e;
+     requireValue(/^(ENROLLMENT_REQUEST_UNCERTAIN_REQUERY|ENROLLMENT_READBACK_CHANGED_REQUERY|SHOPIFY_QUANTITY_CHANGED|UPSTREAM_TRANSPORT_FAILED)$/.test(e.code||''),e.code||'ENROLLMENT_FAILED');
+     await invoke('/inventory/enroll',{...input,mode:'verify'});
+     report.batches[index].result=await invoke('/inventory/enroll',{...input,mode:'apply'});
+    }
+    requireValue(report.batches[index].result.ready,'ENROLLMENT_NOT_VERIFIED');
+   }
+   save();
+  }
+ }
 }
 export async function main(args=process.argv.slice(2)){
  if(!args.length||args.includes('--help')){console.log('Usage: npm run repo -- inventory enroll|sync PRODUCT [execute]\n       npm run repo -- inventory status|health\nDefault enrollment is a read-only plan. execute automatically disables overselling, tracks supplier inventory, verifies both locations and registers ongoing refresh. Repeating resumes from live state. No per-product deployment. Credentials: INVENTORY_SERVICE_URL and INVENTORY_ADMIN_KEY in root .env.');return 0;}
@@ -42,29 +73,15 @@ export async function main(args=process.argv.slice(2)){
  if(['status','health'].includes(command)){console.log(JSON.stringify(await invoke('/inventory/'+command),null,2));return 0;}
  requireValue(['enroll','sync'].includes(command)&&selector,'INVALID_ARGUMENT');
  const started=Date.now(),product=await invoke('/inventory/product',{selector});
- const batches=Array.from({length:Math.ceil(product.variants.length/BATCH_SIZE)},(_,i)=>product.variants.slice(i*BATCH_SIZE,(i+1)*BATCH_SIZE));
  const report={product:{id:product.id,handle:product.handle,title:product.title},mode:execute?'execute':'plan',startedAt:new Date(started).toISOString(),variantCount:product.variants.length,batches:[],status:'started'};
  const directory=path.join(root,'backups','inventory-enrollment');fs.mkdirSync(directory,{recursive:true});const file=path.join(directory,product.handle+'.json');const save=()=>fs.writeFileSync(file,JSON.stringify(report,null,2));save();
  try{
-  if(!execute)for(const [i,entries] of batches.entries()){
-   const input={productId:product.id,entries,offset:i*BATCH_SIZE,total:product.variants.length};
-   const plan=await invoke('/inventory/enroll',{...input,mode:'plan'});report.batches[i]={index:i,plan};save();
-  }
-  if(execute)for(const [i,entries] of batches.entries()){
-   const input={productId:product.id,entries,offset:i*BATCH_SIZE,total:product.variants.length};
-   try{(report.batches[i]??={index:i}).result=await invoke('/inventory/enroll',{...input,mode:'apply'});}
-   catch(e){
-    requireValue(/^(ENROLLMENT_REQUEST_UNCERTAIN_REQUERY|ENROLLMENT_READBACK_CHANGED_REQUERY|SHOPIFY_QUANTITY_CHANGED|UPSTREAM_HTTP_5|UPSTREAM_TRANSPORT_FAILED)/.test(e.code||''),e.code||'ENROLLMENT_FAILED');
-    await invoke('/inventory/enroll',{...input,mode:'verify'});
-    report.batches[i].result=await invoke('/inventory/enroll',{...input,mode:'apply'});
-   }
-   requireValue(report.batches[i].result.ready,'ENROLLMENT_NOT_VERIFIED');save();
-  }
+  await enrollProductBatches(product,{execute,invoke,report,save});
   const status=await invoke('/inventory/status');const resolved=execute?await invoke('/inventory/product',{selector:product.id}):product;
   if(execute)requireValue(resolved.alreadyRegistered===product.variants.length,'REGISTRY_READBACK_FAILED');
   report.status=execute?'verified':'planned';report.finishedAt=new Date().toISOString();save();
   const rows=report.batches.flatMap(b=>(b.result||b.plan).rows);
   console.log(JSON.stringify({status:report.status,product:product.handle,variants:rows.length,inStock:rows.filter(r=>r.current>0).length,sourceInStock:rows.filter(r=>r.source>0).length,policyChanges:report.batches.reduce((n,b)=>n+(b.result||b.plan).policyChanges,0),alreadyEnrolled:product.alreadyRegistered===product.variants.length,scheduled:status.scheduled,elapsedSeconds:Math.round((Date.now()-started)/1000),report:file}));return 0;
- }catch(e){report.status='blocked';report.error=e.code||'ENROLLMENT_FAILED';save();throw e;}
+ }catch(e){report.status='blocked';report.error=e.code||'ENROLLMENT_FAILED';if(e.retryAfterSeconds)report.retryAfterSeconds=e.retryAfterSeconds;save();throw e;}
 }
-if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url)main().then(c=>process.exitCode=c).catch(e=>{console.error(JSON.stringify({error:e.code||'ENROLLMENT_FAILED'}));process.exitCode=e instanceof SyncError?2:1;});
+if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url)main().then(c=>process.exitCode=c).catch(e=>{console.error(JSON.stringify({error:e.code||'ENROLLMENT_FAILED',...(e.retryAfterSeconds?{retryAfterSeconds:e.retryAfterSeconds}:{})}));process.exitCode=e instanceof SyncError?2:1;});

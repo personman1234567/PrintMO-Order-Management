@@ -618,15 +618,25 @@ test('expanded 25-variant batches stay within three requests and reject 26 befor
   await assert.rejects(runGuardedBatch({ ...batchEnv, PILOT_VARIANT_IDS: JSON.stringify([
     ...variants.map(v => v.id), 'gid://shopify/ProductVariant/26']) }, deps), /PILOT_VARIANT_SCOPE_INVALID/);
   assert.equal(calls.length, 0);
+  const observedAt = new Date().toISOString();
+  const snapshot = { skus: variants.map(v => v.sku), observedAt,
+    items: variants.map(v => ({ sku: v.sku, warehouses: [{ warehouseAbbr: 'IL', qty: 5, dropship: false }] })) };
+  assert.equal((await runGuardedBatch(batchEnv, { ...deps, supplierSnapshot: snapshot })).writes, 25);
+  assert.equal(calls.length, 2); // Only Shopify identity read and CAS mutation.
+  assert.equal(JSON.parse(calls.at(-1).options.body).variables.input.quantities.length, 25);
+  calls.length = 0;
+  await assert.rejects(runGuardedBatch(batchEnv, { ...deps, supplierSnapshot: { ...snapshot,
+    observedAt: new Date(Date.now() - 300001).toISOString() } }), /PILOT_BATCH_PARTIAL_FAILURE/);
+  assert.equal(calls.length, 1); // Stale prefetch never reaches the mutation.
 });
 
-test('expanded schedule completes past 49 requests including bounded HTTP retries', async () => {
+test('expanded schedule completes past 49 requests including bounded Shopify HTTP retries', async () => {
   let requests = 0;
   const attempted = new Set();
   const deps = { sleep: async () => {}, fetchImpl: async (url, options) => {
     requests++;
     const key = url + (options.body || '');
-    if (!attempted.has(key)) { attempted.add(key); return response({}, 500); }
+    if (url.includes('myshopify') && !attempted.has(key)) { attempted.add(key); return response({}, 500); }
     if (!url.includes('myshopify')) return response({ observedAt: new Date().toISOString(),
       items: new URL(url).searchParams.get('skus').split(',').map(sku => ({ sku,
         warehouses: [{ warehouseAbbr: 'IL', qty: 5, dropship: false }] })) });

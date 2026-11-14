@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import {DatabaseSync} from 'node:sqlite';
 import {registerEntries,registryStatus,runRegistrySchedule,acquireLease,renewLease,releaseLease} from './registry.mjs';
 import {inventoryService,SERVICE_VERSION} from './service.mjs';
-import {serviceClient} from './enroll-cli.mjs';
-import {requestJson} from './clients.mjs';
+import {serviceClient,enrollProductBatches} from './enroll-cli.mjs';
+import {requestJson,readSupplierGatewayBulk,supplierSlice,normalizeSupplierBatch,isSupplierDeferred} from './clients.mjs';
 import {SyncError} from './core.mjs';
 import {PRIORITY_SHARED_6400_SKUS} from './priority-shared-6400.mjs';
 
@@ -73,4 +73,99 @@ test('permanent client retries a busy lease and rejects unexpected HTML instead 
 test('Shopify throttling uses the returned cost budget and retries once',async()=>{
  let calls=0;const waits=[];const data=await requestJson('https://example.com',{}, {sleep:async ms=>waits.push(ms),fetchImpl:async()=>++calls===1?Response.json({errors:[{extensions:{code:'THROTTLED'}}],extensions:{cost:{requestedQueryCost:100,throttleStatus:{currentlyAvailable:0,restoreRate:50}}}}):Response.json({data:{ok:true}})});
  assert.equal(data.data.ok,true);assert.deepEqual(waits,[2000]);assert.equal(calls,2);
+});
+
+const inventoryRows=skus=>skus.map(sku=>({sku,warehouses:[{warehouseAbbr:'IL',qty:10,dropship:false}]}));
+test('bulk registry reads 250 SKUs then processes ten independent 25-variant batches',async()=>{
+ const f=fixture(),rows=entries(577),observedAt=new Date(1000000).toISOString();f.env.INVENTORY_SUPPLIER_BATCH_SIZE='250';
+ for(let i=0;i<rows.length;i+=25)await registerEntries(f.env,rows.slice(i,i+25),{now:1000000});
+ const reads=[],batches=[];
+ const deps={now:()=>1000000,readSupplierBulk:async(env,skus)=>{reads.push(skus);return {skus,observedAt,items:inventoryRows(skus)};},
+ runBatch:async(env,deps)=>{const skus=JSON.parse(env.PILOT_VARIANT_SKUS),snapshot=supplierSlice(deps.supplierSnapshot,skus);batches.push(skus);assert.ok(skus.length<=25);assert.equal(snapshot.items.length,skus.length);assert.equal(snapshot.observedAt,observedAt);return {writes:skus.length};}};
+ const summary=await runRegistrySchedule(f.env,deps);assert.equal(summary.variants,577);assert.equal(summary.writes,577);
+ assert.deepEqual(reads.map(r=>r.length),[250,250,77]);assert.equal(batches.length,24);assert.equal((await registryStatus(f.env,1000000)).awaitingFirstRefresh,0);f.sqlite.close();
+});
+test('bulk prefetch respects runtime budget and only completed 25-variant batches advance',async()=>{
+ const f=fixture(),rows=entries(275);f.env.INVENTORY_SUPPLIER_BATCH_SIZE='250';let current=1000000,reads=0;
+ for(let i=0;i<rows.length;i+=25)await registerEntries(f.env,rows.slice(i,i+25),{now:current});
+ const deps={now:()=>current,readSupplierBulk:async(env,skus)=>{reads++;return {skus,observedAt:new Date(current).toISOString(),items:inventoryRows(skus)};},runBatch:async()=>{current+=23000;return {writes:25};}};
+ assert.equal((await runRegistrySchedule(f.env,deps)).variants,50);assert.equal(reads,1);assert.equal((await registryStatus(f.env,current)).awaitingFirstRefresh,225);
+ assert.equal((await runRegistrySchedule(f.env,deps)).variants,50);assert.equal(reads,2);assert.equal((await registryStatus(f.env,current)).awaitingFirstRefresh,175);f.sqlite.close();
+});
+test('rate limits and gateway 502/503 stop the schedule and persist cooldown across cron invocations',async()=>{
+ for(const code of ['SUPPLIER_RATE_LIMITED','UPSTREAM_RETRY_DEFERRED','UPSTREAM_HTTP_502','UPSTREAM_HTTP_503']){
+  const f=fixture();f.env.INVENTORY_SUPPLIER_BATCH_SIZE='250';let current=1000000,reads=0,writes=0;
+  for(let i=0;i<300;i+=25)await registerEntries(f.env,entries(300).slice(i,i+25),{now:current});
+  const deps={now:()=>current,readSupplierBulk:async()=>{reads++;const e=new SyncError(code);e.retryAfterSeconds=120;throw e;},runBatch:async()=>{writes++;}};
+  const first=await runRegistrySchedule(f.env,deps);assert.equal(first.batches,1);assert.equal(first.deferred,true);assert.equal(first.retryAt,current+120000);
+  current+=60000;assert.equal((await runRegistrySchedule(f.env,deps)).deferred,true);assert.equal(reads,1);assert.equal(writes,0);
+  const status=await registryStatus(f.env,current);assert.equal(status.awaitingFirstRefresh,300);assert.equal(status.failed,25);
+  current+=60000;await runRegistrySchedule(f.env,deps);assert.equal(reads,2);f.sqlite.close();
+ }
+});
+test('legacy 25-SKU scheduler also stops on deferral while ordinary variant guards can continue',async()=>{
+ const f=fixture();for(let i=0;i<75;i+=25)await registerEntries(f.env,entries(75).slice(i,i+25),{now:1000000});let calls=0;
+ const summary=await runRegistrySchedule(f.env,{now:()=>1000000,runBatch:async()=>{calls++;throw new SyncError('UPSTREAM_HTTP_502');}});
+ assert.equal(calls,1);assert.equal(summary.deferred,true);f.sqlite.close();
+});
+test('supplier bulk response validates every row and keeps omissions absent in exact slices',async()=>{
+ const skus=entries(250).map(r=>r.sku),items=inventoryRows(skus.slice(0,249)),observedAt=new Date().toISOString();
+ const snapshot={skus,items,observedAt};assert.equal(normalizeSupplierBatch(items,skus).length,249);
+ assert.equal(supplierSlice(snapshot,[skus[249]]).items.length,0);assert.equal(supplierSlice(snapshot,[skus[0]]).observedAt,observedAt);
+ assert.throws(()=>supplierSlice(snapshot,['OTHER']),/SUPPLIER_PREFETCH_SCOPE_MISMATCH/);
+ assert.throws(()=>normalizeSupplierBatch([...items,items[0]],skus),/INVALID_SUPPLIER_RESPONSE/);
+ assert.throws(()=>normalizeSupplierBatch([...items,{...items[0],sku:'OTHER'}],skus),/INVALID_SUPPLIER_RESPONSE/);
+ assert.throws(()=>supplierSlice({...snapshot,items:[...items.slice(0,-1),{...items.at(-1),warehouses:[{warehouseAbbr:'IL',qty:-1,dropship:false}]}]},[skus[0]]),/INVALID_SUPPLIER_RESPONSE/);
+});
+test('supplier gateway propagates safe error codes and Retry-After without immediate retries',async()=>{
+ const env={SUPPLIER_INVENTORY_URL:'https://example.com/order-manager/v1/supplier/ss/inventory',INVENTORY_READ_KEY:'test',SHOPIFY_SHOP_DOMAIN:'429cc0-3.myshopify.com'};
+ for(const status of [429,502,503]){let calls=0;await assert.rejects(readSupplierGatewayBulk(env,['SKU'],{fetchImpl:async()=>{calls++;return Response.json({error:'SUPPLIER_RATE_LIMITED',private:'secret'},{status,headers:{'Retry-After':'90'}});}}),e=>e.code==='SUPPLIER_RATE_LIMITED'&&e.retryAfterSeconds===90&&!e.message.includes('secret'));assert.equal(calls,1);}
+ let calls=0;await assert.rejects(readSupplierGatewayBulk(env,entries(251).map(r=>r.sku),{fetchImpl:async()=>{calls++;}}),/INVALID_SKUS/);assert.equal(calls,0);
+});
+test('577-variant enrollment warms three bounded groups and retains 24 guarded apply calls',async()=>{
+ const product={id:'gid://shopify/Product/1',variants:entries(577)},calls=[],report={batches:[]};
+ const invoke=async(endpoint,input)=>{calls.push({endpoint,input});if(endpoint==='/inventory/health')return {supplierBatchSize:250};if(endpoint==='/inventory/enroll')return {ready:true,rows:input.entries};return {};};
+ await enrollProductBatches(product,{execute:true,invoke,report});
+ assert.deepEqual(calls.filter(c=>c.endpoint==='/inventory/prefetch').map(c=>c.input.entries.length),[250,250,77]);
+ assert.equal(calls.filter(c=>c.input?.mode==='apply').length,24);assert.equal(report.batches.length,24);
+ assert.ok(calls.filter(c=>c.endpoint==='/inventory/enroll').every(c=>c.input.entries.length<=25));
+ assert.equal(calls.filter(c=>c.input?.mode==='verify').length,0);
+});
+test('enrollment preserves completed progress and stops on rate limiting or 502 without requery hammering',async()=>{
+ for(const code of ['SUPPLIER_RATE_LIMITED','UPSTREAM_RETRY_DEFERRED','UPSTREAM_HTTP_502','UPSTREAM_HTTP_503']){
+  const report={batches:[]},calls=[];
+  const invoke=async(endpoint,input)=>{calls.push({endpoint,input});if(endpoint==='/inventory/health')return {supplierBatchSize:250};if(input?.mode==='apply'){if(input.offset===25)throw new SyncError(code);return {ready:true};}return {};};
+  await assert.rejects(enrollProductBatches({id:'gid://shopify/Product/1',variants:entries(100)},{execute:true,invoke,report}),e=>e.code===code);
+  assert.equal(report.batches[0].result.ready,true);assert.equal(calls.filter(c=>c.input?.mode==='apply').length,2);assert.equal(calls.filter(c=>c.input?.mode==='verify').length,0);
+ }
+});
+test('uncertain enrollment write still receives one bounded verify/reapply using fresh server state',async()=>{
+ const calls=[];let failed=false;
+ const invoke=async(endpoint,input)=>{calls.push({endpoint,input});if(endpoint==='/inventory/health')return {};if(input?.mode==='apply'&&!failed){failed=true;throw new SyncError('ENROLLMENT_REQUEST_UNCERTAIN_REQUERY');}return {ready:true};};
+ await enrollProductBatches({id:'gid://shopify/Product/1',variants:entries(25)},{execute:true,invoke,report:{batches:[]}});
+ assert.deepEqual(calls.filter(c=>c.endpoint==='/inventory/enroll').map(c=>c.input.mode),['apply','verify','apply']);assert.equal(calls.filter(c=>c.endpoint==='/inventory/prefetch').length,0);
+});
+test('authenticated prefetch checks live product/SKU identities and never sends Shopify mutations',async()=>{
+ const f=fixture();f.env.INVENTORY_SUPPLIER_BATCH_SIZE='250';f.env.SUPPLIER_INVENTORY_URL='https://example.com/order-manager/v1/supplier/ss/inventory';f.env.INVENTORY_READ_KEY='test';
+ const rows=entries(250),productId='gid://shopify/Product/1';let supplierCalls=0,queries=0,mismatch=false;
+ const deps={fetchImpl:async(url,options)=>{if(String(url).includes('/supplier/')){supplierCalls++;assert.equal(new URL(url).searchParams.get('skus').split(',').length,250);return Response.json({observedAt:new Date().toISOString(),items:inventoryRows(rows.map(r=>r.sku))});}
+ const {query}=JSON.parse(options.body);assert.match(query,/^query InventoryPrefetchIdentity/);queries++;return Response.json({data:{nodes:rows.map((r,i)=>({...r,sku:mismatch&&i===0?'OTHER':r.sku,product:{id:productId,status:'ACTIVE'}}))}});}};
+ const request=()=>new Request('https://example.com/inventory/prefetch',{method:'POST',headers:{Authorization:'Bearer '+f.env.INVENTORY_ADMIN_KEY,'Content-Type':'application/json'},body:JSON.stringify({productId,entries:rows})});
+ assert.equal((await inventoryService(new Request('https://example.com/inventory/prefetch',{method:'POST'}),f.env,deps)).status,404);assert.equal(queries,0);
+ let response=await inventoryService(request(),f.env,deps);assert.equal(response.status,200);assert.equal((await response.json()).variants,250);assert.equal(supplierCalls,1);assert.equal((await registryStatus(f.env)).entries,0);
+ mismatch=true;response=await inventoryService(request(),f.env,deps);assert.equal(response.status,422);assert.equal((await response.json()).error,'PRODUCT_IDENTITY_CHANGED');assert.equal(supplierCalls,1);
+ const lease=await acquireLease(f.env);assert.ok(lease);await releaseLease(f.env,lease);f.sqlite.close();
+});
+test('enrollment client preserves rate-limit retry metadata without automatically replaying writes',async()=>{
+ let calls=0;const invoke=serviceClient({INVENTORY_ADMIN_KEY:'x'.repeat(40)},{fetchImpl:async()=>{calls++;return Response.json({error:'SUPPLIER_RATE_LIMITED',retryAfterSeconds:90},{status:422,headers:{'Retry-After':'90'}});}});
+ await assert.rejects(invoke('/inventory/enroll',{mode:'apply'}),e=>e.code==='SUPPLIER_RATE_LIMITED'&&e.retryAfterSeconds===90);assert.equal(calls,1);
+});
+
+test('gateway HTTP 502 defers even when its safe body reports a transport failure',async()=>{
+ const f=fixture(),rows=entries(25),productId='gid://shopify/Product/1';f.env.INVENTORY_SUPPLIER_BATCH_SIZE='250';f.env.SUPPLIER_INVENTORY_URL='https://example.com/order-manager/v1/supplier/ss/inventory';f.env.INVENTORY_READ_KEY='test';
+ const request=new Request('https://example.com/inventory/prefetch',{method:'POST',headers:{Authorization:'Bearer '+f.env.INVENTORY_ADMIN_KEY,'Content-Type':'application/json'},body:JSON.stringify({productId,entries:rows})});
+ const response=await inventoryService(request,f.env,{fetchImpl:async(url)=>String(url).includes('/supplier/')?Response.json({error:'UPSTREAM_TRANSPORT_FAILED'},{status:502}):Response.json({data:{nodes:rows.map(r=>({...r,product:{id:productId,status:'ACTIVE'}}))}})});
+ assert.equal(response.status,503);assert.equal(response.headers.get('Retry-After'),'60');const payload=await response.json();assert.equal(payload.error,'UPSTREAM_TRANSPORT_FAILED');
+ const invoke=serviceClient({INVENTORY_ADMIN_KEY:'x'.repeat(40)},{fetchImpl:async()=>Response.json(payload,{status:503,headers:{'Retry-After':'60'}})});
+ await assert.rejects(invoke('/inventory/prefetch',{}),e=>isSupplierDeferred(e)&&e.retryAfterSeconds===60);f.sqlite.close();
 });
