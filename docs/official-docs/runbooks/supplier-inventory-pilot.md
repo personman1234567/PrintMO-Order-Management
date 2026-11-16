@@ -84,6 +84,8 @@ Rollback: reduce the new Worker's supplier batch setting to 25 through an approv
 
 ## Supplier Garment Cost Sync
 
+**Verified rollout, 2026-11-16:** Render gateway 96cf617 was deployed first; Worker 341220ee-3961-46fa-a4d6-4c48cde4f67b is enabled for all enrolled entries. The full preview, 35-variant pilot, 11596-variant initial reconciliation and unchanged scheduled follow-up completed. 11506 costs matched; 90 missing/unusable prices preserved existing costs. Final stock failures were zero and oldest age was 694s. Detailed prices and recovery values are in ignored backups/inventory-costs.
+
 The optional cost sync uses the same 250-SKU gateway reads and updates Shopify **Cost per item** for enabled, enrolled S&S variants. It uses account customerPrice only, validates positive USD amounts to cents, and preserves the current cost on missing/invalid prices or currency mismatches. Retail prices, quantity/tracking/policy fields, HQ records, dropship exclusions and shared-SKU holds are outside the cost mutation. New enrollments join cost checking on their next scheduled refresh.
 
 Default mode is disabled. The existing authenticated service stores the selected mode and optional pilot product in its job state; switching cost mode does not pause stock refreshes. Commands:
