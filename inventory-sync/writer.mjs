@@ -66,11 +66,16 @@ async function readBatchPrerequisites(env, token, variants, supplierLocationId, 
   return { location: data.location, matches };
 }
 
-// The full five-minute catalog needs one Shopify read per batch. Expected SKU
-// identities are pinned at enrollment and checked against live variants and a
-// duplicate count in the same query; look up actual copies only when nonzero.
+// Read up to 125 scheduled identities together, but validate and write each original
+// 25-variant slice independently. This snapshot exists only within this cron run.
 async function readScheduledBatch(env, token, entries, supplierLocationId, deps) {
-  const variables = { ids: entries.map(entry => entry.id), locationId: supplierLocationId };
+  const group = deps?.shopifyReadGroup;
+  const now = deps?.now || Date.now;
+  const reusable = group && group.entries.length <= 125
+    && entries.every(entry => group.entries.some(row => row.id === entry.id && row.sku === entry.sku));
+  const fresh = reusable && (!group.data || now() - group.readAt <= 30000);
+  const readEntries = fresh ? group.entries : entries;
+  const variables = { ids: readEntries.map(entry => entry.id), locationId: supplierLocationId };
   const includeCosts = deps?.collectCosts === true;
   const query = `query InventoryScheduledBatch($ids: [ID!]!, $locationId: ID!) {
     nodes(ids: $ids) { ... on ProductVariant { id sku inventoryPolicy availableForSale sellableOnlineQuantity
@@ -82,13 +87,19 @@ async function readScheduledBatch(env, token, entries, supplierLocationId, deps)
     ${includeCosts ? "shop { currencyCode }" : ""}
     location(id: $locationId) { id isActive fulfillsOnlineOrders }
   }`;
-  let data, costUnavailable=false;
+  let data = fresh ? group.data : null, costUnavailable = fresh && group.costUnavailable || false;
+  const readAt = now();
+  if (!data) {
   try { data = await shopifyRead(env, token, query, variables, deps); }
   catch(error) {
     if(!includeCosts || !['SHOPIFY_ACCESS_DENIED','SHOPIFY_QUERY_FAILED'].includes(error.code))throw error;
     data = await shopifyRead(env, token, query.replace('unitCost { amount currencyCode }', '').replace('shop { currencyCode }', ''), variables, deps);
     costUnavailable=true;
   }
+  requireValue(Array.isArray(data.nodes) && data.nodes.length === readEntries.length, 'PILOT_VARIANT_MISSING_OR_INACTIVE');
+  if (fresh) Object.assign(group, {data, readAt, costUnavailable});
+  }
+  if (fresh) data = {...data, nodes:entries.map(entry => data.nodes[group.entries.findIndex(row => row.id === entry.id)])};
   requireValue(Array.isArray(data.nodes) && data.nodes.length === entries.length
     && data.nodes.every((variant, index) => variant?.id === entries[index].id
       && variant.sku === entries[index].sku && ['ACTIVE', 'UNLISTED'].includes(variant.product?.status)
@@ -166,10 +177,11 @@ async function setSupplierAvailableBatch(env, token, updates, observedAt, deps) 
       locationId: supplierLocationId, quantity: update.targetAvailable,
       changeFromQuantity: update.currentAvailable }))
   };
+  await deps?.beforeStockWrite?.();
   const result = await requestJson(`https://${shopDomain(env)}/admin/api/2026-07/graphql.json`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
     body: JSON.stringify({ query: SET_SUPPLIER_AVAILABLE, variables: { input, idempotencyKey: crypto.randomUUID() } })
-  }, deps);
+  }, {...deps,requestKind:'stockWrite'});
   if (result?.errors?.length) throw new SyncError('SHOPIFY_WRITE_FAILED');
   const payload = result?.data?.inventorySetQuantities;
   if (payload?.userErrors?.length) throw new SyncError(

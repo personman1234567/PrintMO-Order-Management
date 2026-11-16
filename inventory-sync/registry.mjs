@@ -75,8 +75,17 @@ export async function runRegistrySchedule(env,deps={},scheduledTime=Date.now()){
  const lease=await measure(deps,'phases','leaseAcquire',()=>acquireLease(env,now()));
  if(!lease){await saveJob(env,'schedule-busy','busy',{scheduledTime},null,now());return {mode:'registry-refresh',busy:true,variants:0,writes:0};}
  const started=now(),deadline=started+Number(env.INVENTORY_RUN_SECONDS||45)*1000;
+ let leaseConfirmedAt=started;
+ const ensureLease=async()=>{
+  if(now()-leaseConfirmedAt<20000)return;
+  const renewalAt=now();
+  await measure(deps,'phases','leaseRenew',()=>renewLease(env,lease,renewalAt));
+  leaseConfirmedAt=renewalAt;
+ };
+ const readSize=Number(env.INVENTORY_SHOPIFY_READ_BATCH_SIZE||25);
  const summary={mode:'registry-refresh',variants:0,batches:0,writes:0,held:0,failures:0,scheduleLagMs:Math.max(0,started-scheduledTime),timing:deps.timing};
  try{
+  requireValue([25,125].includes(readSize),'INVALID_SHOPIFY_READ_BATCH_SIZE');
   const cooldown=await database(env).prepare("SELECT result_json FROM inventory_sync_jobs WHERE name='supplier-backoff'").first();
   const retryAt=cooldown?.result_json ? JSON.parse(cooldown.result_json).retryAt : 0;
   if(retryAt>now())return {...summary,deferred:true,retryAt};
@@ -84,7 +93,7 @@ export async function runRegistrySchedule(env,deps={},scheduledTime=Date.now()){
   const size=supplierBatchSize(env),token=await measure(deps,'phases','setup',()=>shopifyToken(env,deps)),costs=await measure(deps,'phases','setup',()=>costConfig(env));
   if(costs.mode!=="disabled")summary.costs={checked:0,changed:0,writes:0,unchanged:0,skipped:0,failed:0,deferred:0};
   const costDeps={...deps,costDeadline:deadline-2000,costAuth:{}};
-  let pending=[],snapshot=null,costInputs=[];
+  let pending=[],snapshot=null,costInputs=[],shopifyReadGroup=null;
   const flushCosts=async()=>{
    if(!costInputs.length)return;
    const inputs=costInputs;costInputs=[];
@@ -99,15 +108,16 @@ export async function runRegistrySchedule(env,deps={},scheduledTime=Date.now()){
    if(!pending.length){
     await flushCosts();if(now()>=deadline)break;
     pending=(await measure(deps,'phases','registryRead',()=>database(env).prepare('SELECT variant_id AS id,sku,missing_policy AS missingPolicy FROM inventory_sync_variants WHERE enabled=1 AND next_due_at<=? ORDER BY next_due_at,variant_id LIMIT ?').bind(now(),size).all())).results;
-    snapshot=null;
+    snapshot=null;shopifyReadGroup=null;
    }
    if(!pending.length)break;
    const rows=pending.splice(0,BATCH_SIZE);
-   await measure(deps,'phases','leaseRenew',()=>renewLease(env,lease,now()));
+   await ensureLease();
+   if(!shopifyReadGroup?.entries.some(r=>r.id===rows[0].id))shopifyReadGroup={entries:[...rows,...pending].slice(0,readSize)};
    let error=null,defer=null;
    try{
     if(size>BATCH_SIZE&&!snapshot)snapshot=await measure(deps,'phases','supplier',()=>(deps.readSupplierBulk||readSupplierGatewayBulk)(env,[...rows,...pending].map(r=>r.sku),deps));
-    const result=await measure(deps,'phases','stock',()=>(deps.runBatch||runGuardedBatch)({...env,SHOPIFY_ACCESS_TOKEN:token,PILOT_VARIANT_IDS:JSON.stringify(rows.map(r=>r.id)),PILOT_VARIANT_SKUS:JSON.stringify(rows.map(r=>r.sku)),PILOT_MISSING_SKU_POLICIES:JSON.stringify(rows.map(r=>r.missingPolicy))},{...deps,...(snapshot?{supplierSnapshot:snapshot}:{}),collectCosts:costs.mode!=="disabled"}));
+    const result=await measure(deps,'phases','stock',()=>(deps.runBatch||runGuardedBatch)({...env,SHOPIFY_ACCESS_TOKEN:token,PILOT_VARIANT_IDS:JSON.stringify(rows.map(r=>r.id)),PILOT_VARIANT_SKUS:JSON.stringify(rows.map(r=>r.sku)),PILOT_MISSING_SKU_POLICIES:JSON.stringify(rows.map(r=>r.missingPolicy))},{...deps,shopifyReadGroup,beforeStockWrite:ensureLease,...(snapshot?{supplierSnapshot:snapshot}:{}),collectCosts:costs.mode!=="disabled"}));
     summary.writes+=result.writes||0;summary.held+=result.held||0;summary.variants+=rows.length;
     if(result.costInput&&costs.mode!=="disabled")costInputs.push(result.costInput);
    }catch(e){

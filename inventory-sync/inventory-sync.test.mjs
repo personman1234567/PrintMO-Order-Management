@@ -782,3 +782,36 @@ test('reopen refuses incomplete Shopify commitment evidence', async () => {
     SUPPLIER_REOPEN_POLICY: 'subtract-shopify-commitments' }, guardedDeps), /PILOT_BATCH_PARTIAL_FAILURE/);
   assert.equal(fixture.calls.filter(call => JSON.parse(call.options.body || '{}').query?.startsWith('mutation')).length, 0);
 });
+
+
+test('125-variant read shares five guarded slices, isolates invalid identities, and expires after 30 seconds', async () => {
+ const variants=Array.from({length:125},(_,i)=>{
+  const v=structuredClone(variant);v.id='gid://shopify/ProductVariant/'+(i+1);v.sku='GROUP'+(i+1);
+  v.inventoryItem.id='gid://shopify/InventoryItem/'+(i+1);v.inventoryItem.duplicateSkuCount=0;
+  v.inventoryItem.inventoryLevels.nodes[0].quantities=[{name:'available',quantity:0},{name:'committed',quantity:0},{name:'on_hand',quantity:0}];
+  v.inventoryItem.inventoryLevels.nodes[1].quantities.push({name:'on_hand',quantity:8});return v;
+ });
+ let current=Date.now(),beforeWrites=0;const reads=[],writes=[];
+ const group={entries:variants.map(({id,sku})=>({id,sku}))};
+ const deps={now:()=>current,shopifyReadGroup:group,beforeStockWrite:async()=>{beforeWrites++;},
+ supplierSnapshot:{skus:variants.map(v=>v.sku),observedAt:new Date(current).toISOString(),items:variants.map(v=>({sku:v.sku,warehouses:[{warehouseAbbr:'IL',qty:5,dropship:false}]}))},
+ fetchImpl:async(url,options)=>{
+  const {query,variables}=JSON.parse(options.body);
+  if(query.startsWith('query InventoryScheduledBatch')){
+   reads.push(variables.ids);return response({data:{nodes:variables.ids.map(id=>id===variants[25].id?null:variants.find(v=>v.id===id)),
+   currentAppInstallation:{accessScopes:[{handle:'write_inventory'}]},location:{id:supplierId,isActive:true,fulfillsOnlineOrders:true}}});
+  }
+  assert.match(query,/^mutation SetSupplierAvailable/);writes.push(variables.input.quantities);
+  return response({data:{inventorySetQuantities:{inventoryAdjustmentGroup:{id:'gid://shopify/InventoryAdjustmentGroup/1'},userErrors:[]}}});
+ }};
+ const run=(offset,extra={})=>{const slice=variants.slice(offset,offset+25);return runGuardedBatch({...env,INVENTORY_SYNC_MODE:'pilot-refresh',SS_WAREHOUSES:'["*"]',SS_SAFETY_BUFFER:'0',SUPPLIER_FEED_SEMANTICS:'ss-available-for-sale-downward-only',
+ PILOT_VARIANT_IDS:JSON.stringify(slice.map(v=>v.id)),PILOT_VARIANT_SKUS:JSON.stringify(slice.map(v=>v.sku))},{...deps,...extra});};
+ assert.equal((await run(0)).writes,25);
+ await assert.rejects(run(25),/PILOT_VARIANT_MISSING_OR_INACTIVE/);
+ assert.equal((await run(50)).writes,25);assert.equal((await run(75)).writes,25);assert.equal((await run(100)).writes,25);
+ assert.deepEqual(reads.map(r=>r.length),[125]);assert.equal(writes.length,4);assert.ok(writes.every(w=>w.length===25&&w.every(q=>q.changeFromQuantity===8)));
+ current+=30001;assert.equal((await run(50)).writes,25);assert.deepEqual(reads.map(r=>r.length),[125,25]);
+ assert.equal(beforeWrites,5);
+ await assert.rejects(run(0,{beforeStockWrite:async()=>{throw new Error('INVENTORY_LEASE_EXPIRED');}}),/INVENTORY_LEASE_EXPIRED/);
+ assert.equal(writes.length,5);
+});

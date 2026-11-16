@@ -251,3 +251,17 @@ test('250-SKU stock group checkpoints ten batches before one combined cost phase
  syncCosts:async(env,input)=>{costCalls++;assert.equal(stocks,10);assert.equal((await registryStatus(env,1000000)).awaitingFirstRefresh,0);assert.equal(input.variants.length,250);return {checked:250,writes:250};}});
  assert.equal(costCalls,1);assert.equal(result.writes,250);assert.equal(result.costs.writes,250);f.sqlite.close();
 });
+
+
+test('scheduled lease renews by elapsed time, checks again before writes, and blocks an expired holder',async()=>{
+ const f=fixture(),rows=entries(250);f.env.INVENTORY_SUPPLIER_BATCH_SIZE='250';f.env.INVENTORY_SHOPIFY_READ_BATCH_SIZE='125';let current=1000000;
+ for(let i=0;i<rows.length;i+=25)await registerEntries(f.env,rows.slice(i,i+25),{now:current});
+ const groups=new Set();
+ const result=await runRegistrySchedule(f.env,{now:()=>current,readSupplierBulk:async(env,skus)=>({skus,observedAt:new Date(current).toISOString(),items:inventoryRows(skus)}),
+ runBatch:async(env,deps)=>{groups.add(deps.shopifyReadGroup);current+=4100;await deps.beforeStockWrite();return {writes:25};}});
+ assert.equal(result.variants,250);assert.equal(result.timing.phases.leaseRenew.count,2);assert.equal(groups.size,2);
+ assert.ok([...groups].every(g=>g.entries.length===125));f.sqlite.close();
+ const expired=fixture();current=1000000;await registerEntries(expired.env,entries(25),{now:current});let writes=0;
+ const failed=await runRegistrySchedule(expired.env,{now:()=>current,runBatch:async(env,deps)=>{current+=120001;await deps.beforeStockWrite();writes++;return {writes:25};}});
+ assert.equal(failed.failures,1);assert.equal(writes,0);assert.equal((await registryStatus(expired.env,current)).awaitingFirstRefresh,25);expired.sqlite.close();
+});

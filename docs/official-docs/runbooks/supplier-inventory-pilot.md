@@ -115,7 +115,9 @@ The existing schedule job includes aggregate timing.phases for setup, registry s
 
 A lock-busy cron records schedule-busy separately without replacing the last completed schedule. Compare those timestamps with enrollment before treating an oldest-age sample as steady-state throughput. The 300-second setting is next eligibility after a successful checkpoint, not a maximum freshness guarantee; cron phase and backlog add time.
 
-Use inventory status for these reports. Measure normal completed runs before choosing an optimization; keep the existing shared lease, stock guards, 25-variant CAS/checkpoint boundaries and source-observation age.
+Use inventory status for these reports. The 2026-11-16 hosted baseline processed 825–1,025 variants in 46–47 seconds: Shopify reads took 14–16 seconds, lease renewal 6–9 seconds, checkpoints 6–9 seconds, stock mutations 5–10 seconds and cost records 2–5 seconds. No Shopify throttling occurred; the read bucket stayed at least 1,970/2,000 points available.
+
+The scheduler now groups up to 125 identities in each Shopify read (`INVENTORY_SHOPIFY_READ_BATCH_SIZE=125`; set 25 to restore the prior grouping). It keeps all guard fields, validates each original 25-variant slice independently, and retains the same 25-variant CAS writes and durable checkpoints. A missing/inactive identity fails its slice, not the other slices. Read data lives only within the current run and is reused for at most 30 seconds; older slices receive a fresh 25-variant read. The shared 120-second operation lease renews after 20 seconds of elapsed time, checked both before each batch and immediately before a stock mutation. An expired lease still blocks writes. The 45-second run window and 300-second refresh eligibility remain unchanged.
 
 ## Check and Pause
 
