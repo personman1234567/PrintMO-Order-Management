@@ -237,3 +237,15 @@ test('mixed-product costs share one Shopify request and confirm each product ind
  assert.equal(f.sqlite.prepare('SELECT state FROM inventory_sync_costs WHERE variant_id=?').get(rows[0].id).state,'matched');
  assert.equal(f.sqlite.prepare('SELECT state FROM inventory_sync_costs WHERE variant_id=?').get(rows[1].id).state,'failed');f.sqlite.close();
 });
+
+
+test('250-SKU stock group checkpoints ten batches before one combined cost phase',async()=>{
+ const f=fixture(),rows=entries(250);f.env.INVENTORY_SUPPLIER_BATCH_SIZE='250';
+ for(let i=0;i<rows.length;i+=25)await registerEntries(f.env,rows.slice(i,i+25),{now:1000000});
+ await configureCosts(f.env,{mode:'enabled'},1000000);let stocks=0,costCalls=0;
+ const result=await runRegistrySchedule(f.env,{now:()=>1000000,
+ readSupplierBulk:async(env,skus)=>({skus,observedAt:new Date(1000000).toISOString(),items:inventoryRows(skus)}),
+ runBatch:async env=>{stocks++;const ids=JSON.parse(env.PILOT_VARIANT_IDS);return {writes:ids.length,costInput:costInput(rows.filter(r=>ids.includes(r.id)),ids.map(()=> '3.00'))};},
+ syncCosts:async(env,input)=>{costCalls++;assert.equal(stocks,10);assert.equal((await registryStatus(env,1000000)).awaitingFirstRefresh,0);assert.equal(input.variants.length,250);return {checked:250,writes:250};}});
+ assert.equal(costCalls,1);assert.equal(result.writes,250);assert.equal(result.costs.writes,250);f.sqlite.close();
+});

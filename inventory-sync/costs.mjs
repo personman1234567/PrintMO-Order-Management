@@ -9,7 +9,7 @@ export const COST_MUTATION=`mutation SyncSupplierCosts($productId:ID!,$variants:
 
 export function costOperation(groups){
  const entries=[...groups.entries()];
- requireValue(entries.length>0&&entries.flatMap(([,rows])=>rows).length<=25,'INVALID_COST_BATCH');
+ requireValue(entries.length>0&&entries.length<=25&&entries.flatMap(([,rows])=>rows).length<=250,'INVALID_COST_BATCH');
  if(entries.length===1){const [productId,rows]=entries[0];return {query:COST_MUTATION,variables:{productId,variants:rows.map(r=>({id:r.id,inventoryItem:{cost:r.source}}))},results:[{key:'productVariantsBulkUpdate',rows}]};}
  const variables={},declarations=[],results=[];
  const fields=entries.map(([productId,rows],i)=>{
@@ -68,7 +68,7 @@ function record(env,row,now){
  .bind(row.id,row.productId,row.sku,now,row.observedAt||null,row.source??null,row.current??null,row.state,row.error||null,
  row.state==='pending'?(row.current??null):null,row.state==='pending'?(row.source??null):null,row.writtenAt||null);
 }
-const recordRows=(env,rows,now)=>rows.length?env.INVENTORY_DB.batch(rows.map(row=>record(env,row,now))):Promise.resolve();
+async function recordRows(env,rows,now){for(let i=0;i<rows.length;i+=100)await env.INVENTORY_DB.batch(rows.slice(i,i+100).map(row=>record(env,row,now)));}
 export async function syncCosts(env,input,config,deps={}){
  const summary={checked:0,changed:0,writes:0,unchanged:0,skipped:0,failed:0,deferred:0};
  if(config.mode==='disabled')return summary;
@@ -94,16 +94,18 @@ export async function syncCosts(env,input,config,deps={}){
   if(!groups.has(row.productId))groups.set(row.productId,[]);groups.get(row.productId).push(row);
  }
  await recordRows(env,checks,now());
- const updates=[...groups.values()].flat();
- if(!updates.length)return summary;
- if(now()>=deadline||deps.costAuth?.blocked){summary.deferred=updates.length;return summary;}
+ const grouped=[...groups.entries()];
+ for(let offset=0;offset<grouped.length;offset+=25){
+ const operationGroups=new Map(grouped.slice(offset,offset+25)),updates=[...operationGroups.values()].flat();
+ if(now()>=deadline||deps.costAuth?.blocked)continue;
  try{
   requireValue(shopDomain(env)==='429cc0-3.myshopify.com','INVALID_COST_DESTINATION');
   requireValue(env.SHOPIFY_POLICY_CLIENT_ID&&env.SHOPIFY_POLICY_CLIENT_SECRET,'PRODUCT_COST_WRITE_SCOPE_MISSING');
-  const operation=costOperation(groups);
+  const operation=costOperation(operationGroups);
   const token=deps.costAuth?.token||await shopifyToken({...env,SHOPIFY_ACCESS_TOKEN:undefined,SHOPIFY_API_KEY:env.SHOPIFY_POLICY_CLIENT_ID,SHOPIFY_API_SECRET:env.SHOPIFY_POLICY_CLIENT_SECRET},deps);
   if(deps.costAuth)deps.costAuth.token=token;
-  // One request contains all product groups in this guarded 25-variant batch.
+  // Cost work follows completed 25-variant stock checkpoints; combine up to
+  // 250 observed variants and 25 product groups in one cost-only request.
   // Persist recovery values before a possibly ambiguous network write.
   await recordRows(env,updates.map(row=>({...row,state:'pending'})),now());
   const age=now()-Date.parse(input.supplier.observedAt);
@@ -113,21 +115,22 @@ export async function syncCosts(env,input,config,deps={}){
    body:JSON.stringify({query:operation.query,variables:operation.variables})
   },{...deps,retryHttp:false});
   requireValue(response.data,'SHOPIFY_COST_WRITE_FAILED');
-  const recorded=[];
+  const recorded=[];let writes=0,failed=0;
   for(const {key,rows} of operation.results){
    const result=response.data[key],returned=new Map((result?.productVariants||[]).map(v=>[v.id,v.inventoryItem?.unitCost]));
    const error=!result||result.userErrors?.length?'SHOPIFY_COST_WRITE_REJECTED':
     rows.every(row=>returned.get(row.id)?.currencyCode==='USD'&&money(returned.get(row.id).amount)===row.source)?null:'SHOPIFY_COST_WRITE_UNCONFIRMED';
-   if(error){summary.failed+=rows.length;recorded.push(...rows.map(row=>({...row,state:'failed',error})));}
-   else{summary.writes+=rows.length;recorded.push(...rows.map(row=>({...row,state:'matched',current:row.source,writtenAt:now()})));}
+   if(error){failed+=rows.length;recorded.push(...rows.map(row=>({...row,state:'failed',error})));}
+   else{writes+=rows.length;recorded.push(...rows.map(row=>({...row,state:'matched',current:row.source,writtenAt:now()})));}
   }
-  await recordRows(env,recorded,now());
+  await recordRows(env,recorded,now());summary.writes+=writes;summary.failed+=failed;
   if(response.errors?.length&&deps.costAuth)deps.costAuth.blocked=true;
  }catch(e){
   await recordRows(env,updates.map(row=>({...row,state:'failed',error:e instanceof SyncError?e.code:'COST_BATCH_FAILED'})),now());
-  summary.failed=updates.length;summary.writes=0;
+  summary.failed+=updates.length;
   if(deps.costAuth)deps.costAuth.blocked=true;
  }
- summary.deferred=summary.changed-summary.writes-summary.failed;
+ }
+ if(config.mode==='enabled')summary.deferred=summary.changed-summary.writes-summary.failed;
  return summary;
 }

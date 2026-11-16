@@ -81,9 +81,20 @@ export async function runRegistrySchedule(env,deps={},scheduledTime=Date.now()){
   const size=supplierBatchSize(env),token=await shopifyToken(env,deps),costs=await costConfig(env);
   if(costs.mode!=="disabled")summary.costs={checked:0,changed:0,writes:0,unchanged:0,skipped:0,failed:0,deferred:0};
   const costDeps={...deps,costDeadline:deadline-2000,costAuth:{}};
-  let pending=[],snapshot=null;
+  let pending=[],snapshot=null,costInputs=[];
+  const flushCosts=async()=>{
+   if(!costInputs.length)return;
+   const inputs=costInputs;costInputs=[];
+   const combined={variants:inputs.flatMap(i=>i.variants),matches:inputs.flatMap(i=>i.matches),
+    currencyCode:inputs.every(i=>i.currencyCode==='USD')?'USD':null,costUnavailable:inputs.some(i=>i.costUnavailable),
+    supplier:{observedAt:inputs.map(i=>i.supplier.observedAt).sort()[0],items:inputs.flatMap(i=>i.supplier.items)}};
+   try{const resultCosts=await (deps.syncCosts||syncCosts)(env,combined,costs,costDeps);
+    for(const key of Object.keys(summary.costs))summary.costs[key]+=resultCosts[key]||0;
+   }catch{summary.costs.failed+=combined.variants.length;}
+  };
   while(now()<deadline){
    if(!pending.length){
+    await flushCosts();if(now()>=deadline)break;
     pending=(await database(env).prepare('SELECT variant_id AS id,sku,missing_policy AS missingPolicy FROM inventory_sync_variants WHERE enabled=1 AND next_due_at<=? ORDER BY next_due_at,variant_id LIMIT ?').bind(now(),size).all()).results;
     snapshot=null;
    }
@@ -95,12 +106,7 @@ export async function runRegistrySchedule(env,deps={},scheduledTime=Date.now()){
     if(size>BATCH_SIZE&&!snapshot)snapshot=await (deps.readSupplierBulk||readSupplierGatewayBulk)(env,[...rows,...pending].map(r=>r.sku),deps);
     const result=await (deps.runBatch||runGuardedBatch)({...env,SHOPIFY_ACCESS_TOKEN:token,PILOT_VARIANT_IDS:JSON.stringify(rows.map(r=>r.id)),PILOT_VARIANT_SKUS:JSON.stringify(rows.map(r=>r.sku)),PILOT_MISSING_SKU_POLICIES:JSON.stringify(rows.map(r=>r.missingPolicy))},{...deps,...(snapshot?{supplierSnapshot:snapshot}:{}),collectCosts:costs.mode!=="disabled"});
     summary.writes+=result.writes||0;summary.held+=result.held||0;summary.variants+=rows.length;
-    if(result.costInput&&costs.mode!=="disabled"){
-     try{
-      const resultCosts=await (deps.syncCosts||syncCosts)(env,result.costInput,costs,costDeps);
-      for(const key of Object.keys(summary.costs))summary.costs[key]+=resultCosts[key]||0;
-     }catch{summary.costs.failed+=rows.length;}
-    }
+    if(result.costInput&&costs.mode!=="disabled")costInputs.push(result.costInput);
    }catch(e){
     error=e instanceof SyncError?e.code:'INVENTORY_BATCH_FAILED';summary.failures++;
     if(isSupplierDeferred(e))defer=Math.max(60,e.retryAfterSeconds||60)*1000;
@@ -119,6 +125,7 @@ export async function runRegistrySchedule(env,deps={},scheduledTime=Date.now()){
    }
    if(error&&size>BATCH_SIZE&&!snapshot)break;
   }
+  await flushCosts();
   await saveJob(env,'schedule',summary.failures?'partial':'verified',{...summary,elapsedMs:now()-started,scheduledTime},null,now());
   return summary;
  }catch(e){await saveJob(env,'schedule','failed',summary,e instanceof SyncError?e.code:'INVENTORY_SCHEDULE_FAILED',now());throw e;}
