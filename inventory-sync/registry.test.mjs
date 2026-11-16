@@ -208,7 +208,8 @@ test('cost write errors retry on a fresh pass, and deadline deferral makes no pr
  const deps={now:()=>1000000,costAuth:{token:'policy'},fetchImpl:async()=>{calls++;return Response.json({data:{productVariantsBulkUpdate:{userErrors:reject?[{message:'rejected'}]:[],productVariants:reject?[]:rows.map((r,i)=>({id:r.id,inventoryItem:{unitCost:{amount:input.supplier.items[i].customerPrice,currencyCode:'USD'}}}))}}});}};
  assert.equal((await syncCosts(f.env,input,{mode:'enabled'},deps)).failed,2);assert.equal(calls,1);
  assert.equal(f.sqlite.prepare('SELECT before_cost FROM inventory_sync_costs LIMIT 1').get().before_cost,'2.00');
- reject=false;assert.equal((await syncCosts(f.env,input,{mode:'enabled'},deps)).writes,2);
+ assert.equal((await syncCosts(f.env,input,{mode:'enabled'},deps)).deferred,2);assert.equal(calls,1);
+ reject=false;deps.costAuth={token:'policy'};assert.equal((await syncCosts(f.env,input,{mode:'enabled'},deps)).writes,2);
  assert.equal((await syncCosts(f.env,input,{mode:'enabled'},{...deps,costDeadline:999999})).deferred,2);assert.equal(calls,2);f.sqlite.close();
 });
 test('cost pilot limits writes and currency or identity failures retain current values',async()=>{

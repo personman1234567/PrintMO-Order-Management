@@ -83,7 +83,7 @@ export async function syncCosts(env,input,config,deps={}){
  await recordRows(env,checks,now());
  let token=deps.costAuth?.token;
  for(const [productId,rows] of groups){
-  if(now()>=deadline){summary.deferred+=rows.length;continue;}
+  if(now()>=deadline||deps.costAuth?.blocked){summary.deferred+=rows.length;continue;}
   try{
    requireValue(shopDomain(env)==='429cc0-3.myshopify.com','INVALID_COST_DESTINATION');
    requireValue(rows.length<=25,'INVALID_COST_BATCH');
@@ -107,6 +107,7 @@ export async function syncCosts(env,input,config,deps={}){
   }catch(e){
    await recordRows(env,rows.map(row=>({...row,state:'failed',error:e instanceof SyncError?e.code:'COST_BATCH_FAILED'})),now());
    summary.failed+=rows.length;
+   if(deps.costAuth)deps.costAuth.blocked=true;
    // Retry on a later fresh pass; don't spend the stock run hammering a failed provider.
    break;
   }
