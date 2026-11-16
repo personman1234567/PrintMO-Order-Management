@@ -131,7 +131,7 @@ export async function setSupplierAvailable(env, token, { inventoryItemId, suppli
   const result = await requestJson(`https://${shopDomain(env)}/admin/api/2026-07/graphql.json`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
     body: JSON.stringify({ query: SET_SUPPLIER_AVAILABLE, variables: { input, idempotencyKey } })
-  }, deps);
+  }, {...deps,requestKind:'stockWrite'});
   if (result?.errors?.length) throw new SyncError('SHOPIFY_WRITE_FAILED');
   const payload = result?.data?.inventorySetQuantities;
   if (payload?.userErrors?.length) throw new SyncError(

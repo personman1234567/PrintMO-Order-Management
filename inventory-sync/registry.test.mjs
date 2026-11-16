@@ -28,6 +28,7 @@ test('21000 variants refresh without a catalog or request-count cap and repeated
  let calls=0;const deps={now,runBatch:async env=>{calls++;return {writes:JSON.parse(env.PILOT_VARIANT_IDS).length};}};
  const result=await runRegistrySchedule(f.env,deps,now());
  assert.equal(result.variants,21000);assert.equal(result.batches,840);assert.equal(calls,840);
+ assert.equal(result.timing.phases.stock.count,840);assert.equal(result.timing.phases.checkpoint.count,840);
  await registerEntries(f.env,rows.slice(0,25),{now:now()});
  assert.equal((await runRegistrySchedule(f.env,deps,now())).variants,0);
  assert.equal((await registryStatus(f.env,now())).awaitingFirstRefresh,0);f.sqlite.close();
@@ -73,8 +74,9 @@ test('permanent client retries a busy lease and rejects unexpected HTML instead 
  await assert.rejects(serviceClient(env,{fetchImpl:async()=>new Response('Not found',{status:404})})('/inventory/health'),/INVENTORY_SERVICE_HTTP_404/);
 });
 test('Shopify throttling uses the returned cost budget and retries once',async()=>{
- let calls=0;const waits=[];const data=await requestJson('https://example.com',{}, {sleep:async ms=>waits.push(ms),fetchImpl:async()=>++calls===1?Response.json({errors:[{extensions:{code:'THROTTLED'}}],extensions:{cost:{requestedQueryCost:100,throttleStatus:{currentlyAvailable:0,restoreRate:50}}}}):Response.json({data:{ok:true}})});
+ let calls=0;const waits=[],timing={};const data=await requestJson('https://example.com',{}, {timing,requestKind:'shopifyRead',sleep:async ms=>waits.push(ms),fetchImpl:async()=>++calls===1?Response.json({errors:[{extensions:{code:'THROTTLED'}}],extensions:{cost:{requestedQueryCost:100,throttleStatus:{currentlyAvailable:0,restoreRate:50}}}}):Response.json({data:{ok:true}})});
  assert.equal(data.data.ok,true);assert.deepEqual(waits,[2000]);assert.equal(calls,2);
+ assert.equal(timing.http.shopifyRead.count,2);assert.equal(timing.waits.shopifyThrottle.count,1);assert.equal(timing.graphql.shopifyRead.throttled,1);assert.equal(timing.graphql.shopifyRead.restoreRate,50);assert.equal(timing.graphql.shopifyRead.minAvailable,0);
 });
 
 const inventoryRows=skus=>skus.map(sku=>({sku,warehouses:[{warehouseAbbr:'IL',qty:10,dropship:false}]}));

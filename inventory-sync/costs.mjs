@@ -1,3 +1,4 @@
+import {measure} from './timing.mjs';
 import {SyncError,requireValue} from './core.mjs';
 import {requestJson,shopDomain,shopifyToken} from './clients.mjs';
 
@@ -68,7 +69,7 @@ function record(env,row,now){
  .bind(row.id,row.productId,row.sku,now,row.observedAt||null,row.source??null,row.current??null,row.state,row.error||null,
  row.state==='pending'?(row.current??null):null,row.state==='pending'?(row.source??null):null,row.writtenAt||null);
 }
-async function recordRows(env,rows,now){for(let i=0;i<rows.length;i+=100)await env.INVENTORY_DB.batch(rows.slice(i,i+100).map(row=>record(env,row,now)));}
+async function recordRows(env,rows,now,deps){for(let i=0;i<rows.length;i+=100)await measure(deps,'detail','costRecords',()=>env.INVENTORY_DB.batch(rows.slice(i,i+100).map(row=>record(env,row,now))));}
 export async function syncCosts(env,input,config,deps={}){
  const summary={checked:0,changed:0,writes:0,unchanged:0,skipped:0,failed:0,deferred:0};
  if(config.mode==='disabled')return summary;
@@ -93,7 +94,7 @@ export async function syncCosts(env,input,config,deps={}){
   if(config.mode==='preview')continue;
   if(!groups.has(row.productId))groups.set(row.productId,[]);groups.get(row.productId).push(row);
  }
- await recordRows(env,checks,now());
+ await recordRows(env,checks,now(),deps);
  const grouped=[...groups.entries()];
  for(let offset=0;offset<grouped.length;offset+=25){
  const operationGroups=new Map(grouped.slice(offset,offset+25)),updates=[...operationGroups.values()].flat();
@@ -107,13 +108,13 @@ export async function syncCosts(env,input,config,deps={}){
   // Cost work follows completed 25-variant stock checkpoints; combine up to
   // 250 observed variants and 25 product groups in one cost-only request.
   // Persist recovery values before a possibly ambiguous network write.
-  await recordRows(env,updates.map(row=>({...row,state:'pending'})),now());
+  await recordRows(env,updates.map(row=>({...row,state:'pending'})),now(),deps);
   const age=now()-Date.parse(input.supplier.observedAt);
   requireValue(age>=-30000&&age<=300000,'COST_SOURCE_STALE');
   const response=await requestJson(`https://${shopDomain(env)}/admin/api/2026-07/graphql.json`,{
    method:'POST',headers:{'Content-Type':'application/json','X-Shopify-Access-Token':token},
    body:JSON.stringify({query:operation.query,variables:operation.variables})
-  },{...deps,retryHttp:false});
+  },{...deps,retryHttp:false,requestKind:'costWrite'});
   requireValue(response.data,'SHOPIFY_COST_WRITE_FAILED');
   const recorded=[];let writes=0,failed=0;
   for(const {key,rows} of operation.results){
@@ -123,10 +124,10 @@ export async function syncCosts(env,input,config,deps={}){
    if(error){failed+=rows.length;recorded.push(...rows.map(row=>({...row,state:'failed',error})));}
    else{writes+=rows.length;recorded.push(...rows.map(row=>({...row,state:'matched',current:row.source,writtenAt:now()})));}
   }
-  await recordRows(env,recorded,now());summary.writes+=writes;summary.failed+=failed;
+  await recordRows(env,recorded,now(),deps);summary.writes+=writes;summary.failed+=failed;
   if(response.errors?.length&&deps.costAuth)deps.costAuth.blocked=true;
  }catch(e){
-  await recordRows(env,updates.map(row=>({...row,state:'failed',error:e instanceof SyncError?e.code:'COST_BATCH_FAILED'})),now());
+  await recordRows(env,updates.map(row=>({...row,state:'failed',error:e instanceof SyncError?e.code:'COST_BATCH_FAILED'})),now(),deps);
   summary.failed+=updates.length;
   if(deps.costAuth)deps.costAuth.blocked=true;
  }

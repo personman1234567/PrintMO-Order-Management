@@ -1,18 +1,19 @@
+import {measure,noteBudget} from './timing.mjs';
 import { SyncError, requireValue, uniqueStrings, skuList, normalizeInventory } from './core.mjs';
 
 // One retry only for throttling/server errors; no raw response body enters errors/logs.
-export async function requestJson(url, options = {}, { fetchImpl = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)), retryHttp = true, supplierErrors = false, now = Date.now } = {}) {
+export async function requestJson(url, options = {}, { fetchImpl = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)), retryHttp = true, supplierErrors = false, now = Date.now, timing, requestKind = 'other' } = {}) {
   for (let attempt = 0; attempt < 2; attempt++) {
     let response;
     // Workers reject redirect: 'error'. Manual mode also keeps credentials off redirected hosts.
-    try { response = await fetchImpl(url, { ...options, redirect: 'manual', signal: AbortSignal.timeout(15000) }); }
+    try { response = await measure({timing},'http',requestKind,()=>fetchImpl(url, { ...options, redirect: 'manual', signal: AbortSignal.timeout(15000) })); }
     catch (error) { if (error instanceof SyncError) throw error; throw new SyncError('UPSTREAM_TRANSPORT_FAILED'); }
     if (retryHttp && (response.status === 429 || response.status >= 500) && attempt === 0) {
       const header = response.headers.get('Retry-After');
       const retry = header === null ? 0.5 : /^\d+$/.test(header) ? Number(header) : (Date.parse(header) - Date.now()) / 1000;
       if (!Number.isFinite(retry) || retry > 2) throw new SyncError('UPSTREAM_RETRY_DEFERRED');
       await response.body?.cancel();
-      await sleep(Math.max(250, Number.isFinite(retry) ? retry * 1000 : 500));
+      await measure({timing},'waits','httpRetry',()=>sleep(Math.max(250, Number.isFinite(retry) ? retry * 1000 : 500)));
       continue;
     }
     if (!response.ok) {
@@ -30,14 +31,15 @@ export async function requestJson(url, options = {}, { fetchImpl = fetch, sleep 
       throw error;
     }
     let data;try { data=await response.json(); } catch { throw new SyncError('UPSTREAM_INVALID_JSON'); }
+    noteBudget(timing,requestKind,data.extensions?.cost,data.errors?.some(e=>e.extensions?.code==='THROTTLED'));
     if(data.errors?.some(e=>e.extensions?.code==='THROTTLED')&&attempt===0){
       const cost=data.extensions?.cost,rate=cost?.throttleStatus?.restoreRate;
       const wait=rate>0?Math.ceil(Math.max(1,(cost.requestedQueryCost||50)-cost.throttleStatus.currentlyAvailable)/rate*1000):1000;
       if(wait>15000)throw new SyncError('UPSTREAM_RETRY_DEFERRED');
-      await sleep(Math.max(250,wait));continue;
+      await measure({timing},'waits','shopifyThrottle',()=>sleep(Math.max(250,wait)));continue;
     }
     const budget=data.extensions?.cost?.throttleStatus;
-    if(budget?.restoreRate>0&&budget.currentlyAvailable<50)await sleep(Math.ceil((50-budget.currentlyAvailable)/budget.restoreRate*1000));
+    if(budget?.restoreRate>0&&budget.currentlyAvailable<50)await measure({timing},'waits','shopifyReserve',()=>sleep(Math.ceil((50-budget.currentlyAvailable)/budget.restoreRate*1000)));
     return data;
   }
 }
@@ -52,17 +54,17 @@ export async function shopifyToken(env, deps) {
   const data = await requestJson(`https://${shopDomain(env)}/admin/oauth/access_token`, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'client_credentials', client_id: env.SHOPIFY_API_KEY, client_secret: env.SHOPIFY_API_SECRET })
-  }, deps);
+  }, {...deps,requestKind:'shopifyAuth'});
   requireValue(typeof data?.access_token === 'string' && data.access_token, 'SHOPIFY_TOKEN_MISSING');
   return data.access_token;
 }
 export async function shopifyRead(env, token, query, variables = {}, deps) {
   // Fail closed: this module cannot send mutations or arbitrary shorthand operations.
   requireValue(/^\s*query\b/.test(query) && !/\bmutation\b/.test(query), 'READ_ONLY_QUERY_REQUIRED');
-  const data = await requestJson(`https://${shopDomain(env)}/admin/api/2026-07/graphql.json`, {
+  const data = await measure(deps,'detail','shopifyRead',()=>requestJson(`https://${shopDomain(env)}/admin/api/2026-07/graphql.json`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
     body: JSON.stringify({ query, variables })
-  }, deps);
+  }, {...deps,requestKind:'shopifyRead'}));
   if (data?.errors?.length) throw new SyncError(data.errors.some(e => e.extensions?.code === 'ACCESS_DENIED') ? 'SHOPIFY_ACCESS_DENIED' : 'SHOPIFY_QUERY_FAILED');
   requireValue(data?.data, 'SHOPIFY_DATA_MISSING');
   return data.data;
@@ -165,6 +167,6 @@ export async function readSupplierGatewayBulk(env, skus, deps) {
   const data = await requestJson(url.href, { headers: {
     'X-Inventory-Read-Key': env.INVENTORY_READ_KEY,
     'X-Shopify-Shop-Domain': shopDomain(env), Accept: 'application/json'
-  } }, { ...deps, retryHttp: false, supplierErrors: true });
+  } }, { ...deps, retryHttp: false, supplierErrors: true, requestKind:'supplier' });
   return { observedAt: data?.observedAt, skus: [...skus], items: normalizeSupplierBatch(data?.items, skus) };
 }

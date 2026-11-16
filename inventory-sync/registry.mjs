@@ -1,3 +1,4 @@
+import {measure} from './timing.mjs';
 import {costConfig,syncCosts} from './costs.mjs';
 import {SyncError,requireValue} from './core.mjs';
 import {shopifyToken,readSupplierGatewayBulk,supplierBatchSize,isSupplierDeferred} from './clients.mjs';
@@ -70,15 +71,17 @@ export async function registryStatus(env,now=Date.now()){
 
 export async function runRegistrySchedule(env,deps={},scheduledTime=Date.now()){
  const now=deps.now||Date.now;
- const lease=await acquireLease(env,now());if(!lease)return {mode:'registry-refresh',busy:true,variants:0,writes:0};
+ deps={...deps,timing:{}};
+ const lease=await measure(deps,'phases','leaseAcquire',()=>acquireLease(env,now()));
+ if(!lease){await saveJob(env,'schedule-busy','busy',{scheduledTime},null,now());return {mode:'registry-refresh',busy:true,variants:0,writes:0};}
  const started=now(),deadline=started+Number(env.INVENTORY_RUN_SECONDS||45)*1000;
- const summary={mode:'registry-refresh',variants:0,batches:0,writes:0,held:0,failures:0};
+ const summary={mode:'registry-refresh',variants:0,batches:0,writes:0,held:0,failures:0,scheduleLagMs:Math.max(0,started-scheduledTime),timing:deps.timing};
  try{
   const cooldown=await database(env).prepare("SELECT result_json FROM inventory_sync_jobs WHERE name='supplier-backoff'").first();
   const retryAt=cooldown?.result_json ? JSON.parse(cooldown.result_json).retryAt : 0;
   if(retryAt>now())return {...summary,deferred:true,retryAt};
   if(retryAt)await saveJob(env,'supplier-backoff','ready',null,null,now());
-  const size=supplierBatchSize(env),token=await shopifyToken(env,deps),costs=await costConfig(env);
+  const size=supplierBatchSize(env),token=await measure(deps,'phases','setup',()=>shopifyToken(env,deps)),costs=await measure(deps,'phases','setup',()=>costConfig(env));
   if(costs.mode!=="disabled")summary.costs={checked:0,changed:0,writes:0,unchanged:0,skipped:0,failed:0,deferred:0};
   const costDeps={...deps,costDeadline:deadline-2000,costAuth:{}};
   let pending=[],snapshot=null,costInputs=[];
@@ -88,23 +91,23 @@ export async function runRegistrySchedule(env,deps={},scheduledTime=Date.now()){
    const combined={variants:inputs.flatMap(i=>i.variants),matches:inputs.flatMap(i=>i.matches),
     currencyCode:inputs.every(i=>i.currencyCode==='USD')?'USD':null,costUnavailable:inputs.some(i=>i.costUnavailable),
     supplier:{observedAt:inputs.map(i=>i.supplier.observedAt).sort()[0],items:inputs.flatMap(i=>i.supplier.items)}};
-   try{const resultCosts=await (deps.syncCosts||syncCosts)(env,combined,costs,costDeps);
+   try{const resultCosts=await measure(deps,'phases','costWork',()=>(deps.syncCosts||syncCosts)(env,combined,costs,costDeps));
     for(const key of Object.keys(summary.costs))summary.costs[key]+=resultCosts[key]||0;
    }catch{summary.costs.failed+=combined.variants.length;}
   };
   while(now()<deadline){
    if(!pending.length){
     await flushCosts();if(now()>=deadline)break;
-    pending=(await database(env).prepare('SELECT variant_id AS id,sku,missing_policy AS missingPolicy FROM inventory_sync_variants WHERE enabled=1 AND next_due_at<=? ORDER BY next_due_at,variant_id LIMIT ?').bind(now(),size).all()).results;
+    pending=(await measure(deps,'phases','registryRead',()=>database(env).prepare('SELECT variant_id AS id,sku,missing_policy AS missingPolicy FROM inventory_sync_variants WHERE enabled=1 AND next_due_at<=? ORDER BY next_due_at,variant_id LIMIT ?').bind(now(),size).all())).results;
     snapshot=null;
    }
    if(!pending.length)break;
    const rows=pending.splice(0,BATCH_SIZE);
-   await renewLease(env,lease,now());
+   await measure(deps,'phases','leaseRenew',()=>renewLease(env,lease,now()));
    let error=null,defer=null;
    try{
-    if(size>BATCH_SIZE&&!snapshot)snapshot=await (deps.readSupplierBulk||readSupplierGatewayBulk)(env,[...rows,...pending].map(r=>r.sku),deps);
-    const result=await (deps.runBatch||runGuardedBatch)({...env,SHOPIFY_ACCESS_TOKEN:token,PILOT_VARIANT_IDS:JSON.stringify(rows.map(r=>r.id)),PILOT_VARIANT_SKUS:JSON.stringify(rows.map(r=>r.sku)),PILOT_MISSING_SKU_POLICIES:JSON.stringify(rows.map(r=>r.missingPolicy))},{...deps,...(snapshot?{supplierSnapshot:snapshot}:{}),collectCosts:costs.mode!=="disabled"});
+    if(size>BATCH_SIZE&&!snapshot)snapshot=await measure(deps,'phases','supplier',()=>(deps.readSupplierBulk||readSupplierGatewayBulk)(env,[...rows,...pending].map(r=>r.sku),deps));
+    const result=await measure(deps,'phases','stock',()=>(deps.runBatch||runGuardedBatch)({...env,SHOPIFY_ACCESS_TOKEN:token,PILOT_VARIANT_IDS:JSON.stringify(rows.map(r=>r.id)),PILOT_VARIANT_SKUS:JSON.stringify(rows.map(r=>r.sku)),PILOT_MISSING_SKU_POLICIES:JSON.stringify(rows.map(r=>r.missingPolicy))},{...deps,...(snapshot?{supplierSnapshot:snapshot}:{}),collectCosts:costs.mode!=="disabled"}));
     summary.writes+=result.writes||0;summary.held+=result.held||0;summary.variants+=rows.length;
     if(result.costInput&&costs.mode!=="disabled")costInputs.push(result.costInput);
    }catch(e){
@@ -114,9 +117,9 @@ export async function runRegistrySchedule(env,deps={},scheduledTime=Date.now()){
     if(size>BATCH_SIZE&&!snapshot)pending=[];
    }
    const checked=now();
-   await database(env).batch(rows.map(r=>database(env).prepare(`UPDATE inventory_sync_variants SET next_due_at=?,last_error=?,
+   await measure(deps,'phases','checkpoint',()=>database(env).batch(rows.map(r=>database(env).prepare(`UPDATE inventory_sync_variants SET next_due_at=?,last_error=?,
     last_success_at=CASE WHEN ? IS NULL THEN ? ELSE last_success_at END WHERE variant_id=?`)
-    .bind(checked+(error?(defer||60000):refreshInterval(env)),error,error,checked,r.id)));
+    .bind(checked+(error?(defer||60000):refreshInterval(env)),error,error,checked,r.id))));
    summary.batches++;
    if(defer){
     summary.deferred=true;summary.retryAt=checked+defer;

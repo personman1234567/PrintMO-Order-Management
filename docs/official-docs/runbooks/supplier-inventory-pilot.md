@@ -109,6 +109,14 @@ Rollout: deploy the backwards-compatible Render price response first, then relea
 
 This is current blank replacement cost, not invoice-level landed cost or full decorated COGS. S&S requests are unchanged; initial Shopify cost writes are extra. Existing order cost snapshots are not rewritten. Local verification is the existing inventory test command and docs check; the gateway runs verify:inventory and its existing shared-service tests.
 
+## Refresh Timing
+
+The existing schedule job includes aggregate timing.phases for setup, registry selection, supplier reads, lease renewal, stock batches, cost work and checkpoints. timing.detail/http/waits are nested measurements: do not add them to the phase totals. HTTP timings end at response headers; Shopify detail timings include response parsing and retry waits. timing.graphql reports returned requested/actual costs, throttled responses, minimum available budget and restore rate by request kind; it retains no payloads, tokens or SKU-level tracing. Lease acquisition precedes the existing elapsedMs window.
+
+A lock-busy cron records schedule-busy separately without replacing the last completed schedule. Compare those timestamps with enrollment before treating an oldest-age sample as steady-state throughput. The 300-second setting is next eligibility after a successful checkpoint, not a maximum freshness guarantee; cron phase and backlog add time.
+
+Use inventory status for these reports. Measure normal completed runs before choosing an optimization; keep the existing shared lease, stock guards, 25-variant CAS/checkpoint boundaries and source-observation age.
+
 ## Check and Pause
 
 ```powershell
