@@ -6,6 +6,19 @@ export const COST_MUTATION=`mutation SyncSupplierCosts($productId:ID!,$variants:
   productVariants{id inventoryItem{unitCost{amount currencyCode}}} userErrors{field message}
  }
 }`;
+
+export function costOperation(groups){
+ const entries=[...groups.entries()];
+ requireValue(entries.length>0&&entries.flatMap(([,rows])=>rows).length<=25,'INVALID_COST_BATCH');
+ if(entries.length===1){const [productId,rows]=entries[0];return {query:COST_MUTATION,variables:{productId,variants:rows.map(r=>({id:r.id,inventoryItem:{cost:r.source}}))},results:[{key:'productVariantsBulkUpdate',rows}]};}
+ const variables={},declarations=[],results=[];
+ const fields=entries.map(([productId,rows],i)=>{
+  variables['product'+i]=productId;variables['variants'+i]=rows.map(r=>({id:r.id,inventoryItem:{cost:r.source}}));
+  declarations.push('$product'+i+':ID!','$variants'+i+':[ProductVariantsBulkInput!]!');results.push({key:'cost'+i,rows});
+  return 'cost'+i+':productVariantsBulkUpdate(productId:$product'+i+',variants:$variants'+i+',allowPartialUpdates:false){productVariants{id inventoryItem{unitCost{amount currencyCode}}}userErrors{field message}}';
+ });
+ return {query:'mutation SyncSupplierCosts('+declarations.join(',')+'){'+fields.join('\n')+'}',variables,results};
+}
 export function money(value,{positive=false}={}){
  if(!['string','number'].includes(typeof value))return null;
  const text=String(value).trim();
@@ -81,37 +94,40 @@ export async function syncCosts(env,input,config,deps={}){
   if(!groups.has(row.productId))groups.set(row.productId,[]);groups.get(row.productId).push(row);
  }
  await recordRows(env,checks,now());
- let token=deps.costAuth?.token;
- for(const [productId,rows] of groups){
-  if(now()>=deadline||deps.costAuth?.blocked){summary.deferred+=rows.length;continue;}
-  try{
-   requireValue(shopDomain(env)==='429cc0-3.myshopify.com','INVALID_COST_DESTINATION');
-   requireValue(rows.length<=25,'INVALID_COST_BATCH');
-   requireValue(env.SHOPIFY_POLICY_CLIENT_ID&&env.SHOPIFY_POLICY_CLIENT_SECRET,'PRODUCT_COST_WRITE_SCOPE_MISSING');
-   token ||= await shopifyToken({...env,SHOPIFY_ACCESS_TOKEN:undefined,SHOPIFY_API_KEY:env.SHOPIFY_POLICY_CLIENT_ID,SHOPIFY_API_SECRET:env.SHOPIFY_POLICY_CLIENT_SECRET},deps);
-   if(deps.costAuth)deps.costAuth.token=token;
-   // Save recovery values before a possibly ambiguous network write.
-   await recordRows(env,rows.map(row=>({...row,state:'pending'})),now());
-   const age=now()-Date.parse(input.supplier.observedAt);
-   requireValue(age>=-30000&&age<=300000,'COST_SOURCE_STALE');
-   const response=await requestJson(`https://${shopDomain(env)}/admin/api/2026-07/graphql.json`,{
-    method:'POST',headers:{'Content-Type':'application/json','X-Shopify-Access-Token':token},
-    body:JSON.stringify({query:COST_MUTATION,variables:{productId,variants:rows.map(r=>({id:r.id,inventoryItem:{cost:r.source}}))}})
-   },{...deps,retryHttp:false});
-   requireValue(!response.errors?.length,'SHOPIFY_COST_WRITE_FAILED');
-   const result=response.data?.productVariantsBulkUpdate;
-   requireValue(result&&!result.userErrors?.length,'SHOPIFY_COST_WRITE_REJECTED');
-   const returned=new Map((result.productVariants||[]).map(v=>[v.id,v.inventoryItem?.unitCost]));
-   requireValue(rows.every(row=>returned.get(row.id)?.currencyCode==='USD'&&money(returned.get(row.id).amount)===row.source),'SHOPIFY_COST_WRITE_UNCONFIRMED');
-   await recordRows(env,rows.map(row=>({...row,state:'matched',current:row.source,writtenAt:now()})),now());summary.writes+=rows.length;
-  }catch(e){
-   await recordRows(env,rows.map(row=>({...row,state:'failed',error:e instanceof SyncError?e.code:'COST_BATCH_FAILED'})),now());
-   summary.failed+=rows.length;
-   if(deps.costAuth)deps.costAuth.blocked=true;
-   // Retry on a later fresh pass; don't spend the stock run hammering a failed provider.
-   break;
+ const updates=[...groups.values()].flat();
+ if(!updates.length)return summary;
+ if(now()>=deadline||deps.costAuth?.blocked){summary.deferred=updates.length;return summary;}
+ try{
+  requireValue(shopDomain(env)==='429cc0-3.myshopify.com','INVALID_COST_DESTINATION');
+  requireValue(env.SHOPIFY_POLICY_CLIENT_ID&&env.SHOPIFY_POLICY_CLIENT_SECRET,'PRODUCT_COST_WRITE_SCOPE_MISSING');
+  const operation=costOperation(groups);
+  const token=deps.costAuth?.token||await shopifyToken({...env,SHOPIFY_ACCESS_TOKEN:undefined,SHOPIFY_API_KEY:env.SHOPIFY_POLICY_CLIENT_ID,SHOPIFY_API_SECRET:env.SHOPIFY_POLICY_CLIENT_SECRET},deps);
+  if(deps.costAuth)deps.costAuth.token=token;
+  // One request contains all product groups in this guarded 25-variant batch.
+  // Persist recovery values before a possibly ambiguous network write.
+  await recordRows(env,updates.map(row=>({...row,state:'pending'})),now());
+  const age=now()-Date.parse(input.supplier.observedAt);
+  requireValue(age>=-30000&&age<=300000,'COST_SOURCE_STALE');
+  const response=await requestJson(`https://${shopDomain(env)}/admin/api/2026-07/graphql.json`,{
+   method:'POST',headers:{'Content-Type':'application/json','X-Shopify-Access-Token':token},
+   body:JSON.stringify({query:operation.query,variables:operation.variables})
+  },{...deps,retryHttp:false});
+  requireValue(response.data,'SHOPIFY_COST_WRITE_FAILED');
+  const recorded=[];
+  for(const {key,rows} of operation.results){
+   const result=response.data[key],returned=new Map((result?.productVariants||[]).map(v=>[v.id,v.inventoryItem?.unitCost]));
+   const error=!result||result.userErrors?.length?'SHOPIFY_COST_WRITE_REJECTED':
+    rows.every(row=>returned.get(row.id)?.currencyCode==='USD'&&money(returned.get(row.id).amount)===row.source)?null:'SHOPIFY_COST_WRITE_UNCONFIRMED';
+   if(error){summary.failed+=rows.length;recorded.push(...rows.map(row=>({...row,state:'failed',error})));}
+   else{summary.writes+=rows.length;recorded.push(...rows.map(row=>({...row,state:'matched',current:row.source,writtenAt:now()})));}
   }
+  await recordRows(env,recorded,now());
+  if(response.errors?.length&&deps.costAuth)deps.costAuth.blocked=true;
+ }catch(e){
+  await recordRows(env,updates.map(row=>({...row,state:'failed',error:e instanceof SyncError?e.code:'COST_BATCH_FAILED'})),now());
+  summary.failed=updates.length;summary.writes=0;
+  if(deps.costAuth)deps.costAuth.blocked=true;
  }
- if(config.mode==='enabled')summary.deferred=summary.changed-summary.writes-summary.failed;
+ summary.deferred=summary.changed-summary.writes-summary.failed;
  return summary;
 }

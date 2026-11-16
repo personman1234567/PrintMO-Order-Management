@@ -205,7 +205,7 @@ test('cost writes group by product, send only cost, preserve recovery values, an
 test('cost write errors retry on a fresh pass, and deadline deferral makes no provider calls',async()=>{
  const f=fixture(),rows=entries(2),input=costInput(rows,['3.00','4.00']);let reject=true,calls=0;
  f.env.SHOPIFY_POLICY_CLIENT_ID='id';f.env.SHOPIFY_POLICY_CLIENT_SECRET='secret';
- const deps={now:()=>1000000,costAuth:{token:'policy'},fetchImpl:async()=>{calls++;return Response.json({data:{productVariantsBulkUpdate:{userErrors:reject?[{message:'rejected'}]:[],productVariants:reject?[]:rows.map((r,i)=>({id:r.id,inventoryItem:{unitCost:{amount:input.supplier.items[i].customerPrice,currencyCode:'USD'}}}))}}});}};
+ const deps={now:()=>1000000,costAuth:{token:'policy'},fetchImpl:async()=>{calls++;if(reject)return Response.json({},{status:503});return Response.json({data:{productVariantsBulkUpdate:{userErrors:reject?[{message:'rejected'}]:[],productVariants:reject?[]:rows.map((r,i)=>({id:r.id,inventoryItem:{unitCost:{amount:input.supplier.items[i].customerPrice,currencyCode:'USD'}}}))}}});}};
  assert.equal((await syncCosts(f.env,input,{mode:'enabled'},deps)).failed,2);assert.equal(calls,1);
  assert.equal(f.sqlite.prepare('SELECT before_cost FROM inventory_sync_costs LIMIT 1').get().before_cost,'2.00');
  assert.equal((await syncCosts(f.env,input,{mode:'enabled'},deps)).deferred,2);assert.equal(calls,1);
@@ -222,4 +222,18 @@ test('cost failure does not mark a successful stock batch failed or schedule sup
  const f=fixture(),rows=entries(25);await registerEntries(f.env,rows,{now:1000000});await configureCosts(f.env,{mode:'enabled'},1000000);
  const result=await runRegistrySchedule(f.env,{now:()=>1000000,runBatch:async(env,deps)=>{assert.equal(deps.collectCosts,true);return {writes:25,costInput:costInput(rows,rows.map(()=>null))};},syncCosts:async()=>{throw new Error('cost database failure');}});
  assert.equal(result.writes,25);assert.equal(result.failures,0);assert.equal(result.costs.failed,25);assert.equal((await registryStatus(f.env,1000000)).failed,0);f.sqlite.close();
+});
+
+
+test('mixed-product costs share one Shopify request and confirm each product independently',async()=>{
+ const f=fixture(),rows=entries(2),input=costInput(rows,['3.00','4.00']);input.variants[1].product.id='gid://shopify/Product/2';
+ f.env.SHOPIFY_POLICY_CLIENT_ID='id';f.env.SHOPIFY_POLICY_CLIENT_SECRET='secret';let calls=0;
+ const result=await syncCosts(f.env,input,{mode:'enabled'},{now:()=>1000000,costAuth:{token:'policy'},fetchImpl:async(url,options)=>{
+  calls++;const operation=JSON.parse(options.body);assert.match(operation.query,/cost0:productVariantsBulkUpdate/);assert.match(operation.query,/cost1:productVariantsBulkUpdate/);
+  assert.equal(operation.variables.product0,'gid://shopify/Product/1');assert.equal(operation.variables.product1,'gid://shopify/Product/2');
+  return Response.json({data:{cost0:{userErrors:[],productVariants:[{id:rows[0].id,inventoryItem:{unitCost:{amount:'3.00',currencyCode:'USD'}}}]},cost1:{userErrors:[{message:'rejected'}],productVariants:[]}}});
+ }});
+ assert.equal(calls,1);assert.equal(result.writes,1);assert.equal(result.failed,1);
+ assert.equal(f.sqlite.prepare('SELECT state FROM inventory_sync_costs WHERE variant_id=?').get(rows[0].id).state,'matched');
+ assert.equal(f.sqlite.prepare('SELECT state FROM inventory_sync_costs WHERE variant_id=?').get(rows[1].id).state,'failed');f.sqlite.close();
 });
