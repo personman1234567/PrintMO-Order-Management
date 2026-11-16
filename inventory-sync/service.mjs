@@ -1,3 +1,4 @@
+import {costConfig,costStatus,configureCosts} from './costs.mjs';
 import {SyncError,requireValue} from './core.mjs';
 import {shopifyToken,shopifyRead,readSupplierGatewayBulk,supplierBatchSize,supplierSkuList,isSupplierDeferred} from './clients.mjs';
 import {discoverProduct,enrollBatch,SHOP} from './enrollment.mjs';
@@ -20,11 +21,17 @@ export async function inventoryService(request,env,deps){
   if(path==='/inventory/health'&&request.method==='GET'){
    const token=await shopifyToken(env,deps);const data=await shopifyRead(env,token,'query InventoryServiceHealth{currentAppInstallation{accessScopes{handle}}}',{},deps);
    const scopes=data.currentAppInstallation.accessScopes.map(s=>s.handle);
-   return respond({ok:true,service:SERVICE_VERSION,shop:SHOP,registryEnabled:env.INVENTORY_REGISTRY_ENABLED==='true',supplierBatchSize:supplierBatchSize(env),policyWriteAvailable:scopes.includes('write_products')||!!(env.SHOPIFY_POLICY_CLIENT_ID&&env.SHOPIFY_POLICY_CLIENT_SECRET),scopes});
+   return respond({ok:true,service:SERVICE_VERSION,shop:SHOP,registryEnabled:env.INVENTORY_REGISTRY_ENABLED==='true',supplierBatchSize:supplierBatchSize(env),costSync:await costConfig(env),policyWriteAvailable:scopes.includes('write_products')||!!(env.SHOPIFY_POLICY_CLIENT_ID&&env.SHOPIFY_POLICY_CLIENT_SECRET),scopes});
   }
+  if(path==='/inventory/costs/status'&&request.method==='GET')return respond(await costStatus(env));
+  if(path==='/inventory/costs/export'&&request.method==='GET')return respond({rows:(await database(env).prepare('SELECT c.* FROM inventory_sync_costs c JOIN inventory_sync_variants r ON r.variant_id=c.variant_id WHERE r.enabled=1 ORDER BY c.variant_id').all()).results});
   if(path==='/inventory/status'&&request.method==='GET')return respond(await registryStatus(env));
   if(path==='/inventory/export'&&request.method==='GET')return respond({entries:(await database(env).prepare('SELECT * FROM inventory_sync_variants ORDER BY variant_id').all()).results});
   requireValue(request.method==='POST','METHOD_NOT_ALLOWED');input=await request.json();
+  if(path==='/inventory/costs/config'){
+   lease=await acquireLease(env);requireValue(lease,'INVENTORY_BUSY');
+   return respond(await configureCosts(env,input));
+  }
   if(path==='/inventory/product'){
    const product=await discoverProduct(env,input.selector,deps,{allowOversell:true});
    requireValue(product.variants.every(v=>!PRIORITY_SHARED_6400_SKUS.has(v.sku)),'HELD_SHARED_6400_SKU');

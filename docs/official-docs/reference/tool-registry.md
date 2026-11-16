@@ -47,6 +47,8 @@ The machine-readable authority is `../retrieval-manifest.json`. Run `npm run rep
 - Mode: remote read-only. Uses the same permanent endpoint key as enrollment.
 - Output: registry counts, refresh age, failed batches and saved job progress; health verifies hosted app scopes and policy-write capability.
 
+Cost controls reuse this authenticated inventory service: `npm run repo -- inventory costs status|export` and `npm run repo -- inventory costs preview|enable|disable execute [PRODUCT_GID]`. Preview is read-only for Shopify costs; enable writes only changed garment costs. Export saves private check/recovery records under ignored backups. See the supplier inventory runbook for rollout and recovery.
+
 <!-- tool:inventory-release -->
 ### `inventory-release`
 

@@ -71,16 +71,24 @@ async function readBatchPrerequisites(env, token, variants, supplierLocationId, 
 // duplicate count in the same query; look up actual copies only when nonzero.
 async function readScheduledBatch(env, token, entries, supplierLocationId, deps) {
   const variables = { ids: entries.map(entry => entry.id), locationId: supplierLocationId };
+  const includeCosts = deps?.collectCosts === true;
   const query = `query InventoryScheduledBatch($ids: [ID!]!, $locationId: ID!) {
     nodes(ids: $ids) { ... on ProductVariant { id sku inventoryPolicy availableForSale sellableOnlineQuantity
-      product { status } inventoryItem { id tracked duplicateSkuCount inventoryLevels(first: 10, includeInactive: true) {
+      product { id status } inventoryItem { id tracked duplicateSkuCount ${includeCosts ? "unitCost { amount currencyCode }" : ""} inventoryLevels(first: 10, includeInactive: true) {
         nodes { isActive location { id } quantities(names: ["available", "committed", "on_hand"]) { name quantity } }
         pageInfo { hasNextPage }
       } } } }
     currentAppInstallation { accessScopes { handle } }
+    ${includeCosts ? "shop { currencyCode }" : ""}
     location(id: $locationId) { id isActive fulfillsOnlineOrders }
   }`;
-  const data = await shopifyRead(env, token, query, variables, deps);
+  let data, costUnavailable=false;
+  try { data = await shopifyRead(env, token, query, variables, deps); }
+  catch(error) {
+    if(!includeCosts || !['SHOPIFY_ACCESS_DENIED','SHOPIFY_QUERY_FAILED'].includes(error.code))throw error;
+    data = await shopifyRead(env, token, query.replace('unitCost { amount currencyCode }', '').replace('shop { currencyCode }', ''), variables, deps);
+    costUnavailable=true;
+  }
   requireValue(Array.isArray(data.nodes) && data.nodes.length === entries.length
     && data.nodes.every((variant, index) => variant?.id === entries[index].id
       && variant.sku === entries[index].sku && ['ACTIVE', 'UNLISTED'].includes(variant.product?.status)
@@ -91,7 +99,7 @@ async function readScheduledBatch(env, token, entries, supplierLocationId, deps)
     'SUPPLIER_LOCATION_NOT_ONLINE');
   const drafts=await verifyDraftSkuDuplicates(env,token,data.nodes,deps);
   const matches=data.nodes.map(v=>v.inventoryItem.duplicateSkuCount===0||drafts.has(v.id));
-  return { variants: data.nodes, preflight: { location: data.location, matches } };
+  return { variants: data.nodes, currencyCode:data.shop?.currencyCode, costUnavailable, preflight: { location: data.location, matches } };
 }
 
 export async function setSupplierAvailable(env, token, { inventoryItemId, supplierLocationId, currentAvailable,
@@ -269,6 +277,7 @@ export async function runGuardedBatch(env, deps) {
   const writes = updates.length ? await setSupplierAvailableBatch(env, token, updates, supplier.observedAt, deps) : 0;
   if (failures) throw new SyncError('PILOT_BATCH_PARTIAL_FAILURE');
   return { mode: 'pilot-refresh', writes, held,
+    ...(deps?.collectCosts ? {costInput:{variants,supplier,matches:preflight.matches,currencyCode:scheduled?.currencyCode,costUnavailable:scheduled?.costUnavailable}} : {}),
     increases: updates.filter(update => update.targetAvailable > update.currentAvailable).length,
     unchanged: ids.length - writes, variants: ids.length };
 }

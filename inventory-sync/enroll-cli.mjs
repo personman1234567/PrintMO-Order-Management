@@ -65,12 +65,26 @@ export async function enrollProductBatches(product,{execute,invoke,report,save=(
  }
 }
 export async function main(args=process.argv.slice(2)){
- if(!args.length||args.includes('--help')){console.log('Usage: npm run repo -- inventory enroll|sync PRODUCT [execute]\n       npm run repo -- inventory status|health\nDefault enrollment is a read-only plan. execute automatically disables overselling, tracks supplier inventory, verifies both locations and registers ongoing refresh. Repeating resumes from live state. No per-product deployment. Credentials: INVENTORY_SERVICE_URL and INVENTORY_ADMIN_KEY in root .env.');return 0;}
+ if(!args.length||args.includes('--help')){console.log('Usage: npm run repo -- inventory enroll|sync PRODUCT [execute]\n       npm run repo -- inventory status|health\n       npm run repo -- inventory costs status|export\n       npm run repo -- inventory costs preview|enable|disable execute [PRODUCT_GID]\nDefault enrollment is a read-only plan. execute automatically disables overselling, tracks supplier inventory, verifies both locations and registers ongoing refresh. Repeating resumes from live state. No per-product deployment. Credentials: INVENTORY_SERVICE_URL and INVENTORY_ADMIN_KEY in root .env.');return 0;}
  const [command,selector,...rest]=args;
  let envFile=path.join(root,'.env'),execute=selector==='execute';
- for(let i=0;i<rest.length;i++){if(['execute','--execute'].includes(rest[i]))execute=true;else if(rest[i]==='--')continue;else if(rest[i]==='--env-file'&&rest[i+1])envFile=path.resolve(rest[++i]);else throw new SyncError('INVALID_ARGUMENT');}
+ for(let i=0;i<rest.length;i++){if(['execute','--execute'].includes(rest[i]))execute=true;else if(rest[i]==='--'||command==='costs'&&/^gid:\/\/shopify\/Product\/\d+$/.test(rest[i]))continue;else if(rest[i]==='--env-file'&&rest[i+1])envFile=path.resolve(rest[++i]);else throw new SyncError('INVALID_ARGUMENT');}
  const env=loadEnvFile(envFile,{...process.env}),invoke=serviceClient(env);
  if(['status','health'].includes(command)){console.log(JSON.stringify(await invoke('/inventory/'+command),null,2));return 0;}
+ if(command==='costs'){
+  if(['status','export'].includes(selector)){
+   const result=await invoke('/inventory/costs/'+selector);
+   if(selector==='export'){
+    const directory=path.join(root,'backups','inventory-costs');fs.mkdirSync(directory,{recursive:true});
+    const file=path.join(directory,'costs-'+Date.now()+'.json');fs.writeFileSync(file,JSON.stringify(result,null,2));
+    console.log(JSON.stringify({rows:result.rows.length,report:file}));
+   }else console.log(JSON.stringify(result,null,2));return 0;
+  }
+  requireValue(['preview','enable','disable'].includes(selector)&&execute,'COST_CONFIG_REQUIRES_EXECUTE');
+  const mode={preview:'preview',enable:'enabled',disable:'disabled'}[selector];
+  const productId=rest.find(a=>a.startsWith('gid://shopify/Product/'));
+  console.log(JSON.stringify(await invoke('/inventory/costs/config',{mode,productId}),null,2));return 0;
+ }
  requireValue(['enroll','sync'].includes(command)&&selector,'INVALID_ARGUMENT');
  const started=Date.now(),product=await invoke('/inventory/product',{selector});
  const report={product:{id:product.id,handle:product.handle,title:product.title},mode:execute?'execute':'plan',startedAt:new Date(started).toISOString(),variantCount:product.variants.length,batches:[],status:'started'};

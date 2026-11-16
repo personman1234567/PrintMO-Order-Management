@@ -551,15 +551,18 @@ test('scheduled batch checks pinned SKU identity and store-wide uniqueness in it
   copy.inventoryItem.inventoryLevels.nodes[0].quantities = [
     { name: 'available', quantity: 0 }, { name: 'committed', quantity: 0 }, { name: 'on_hand', quantity: 0 }];
   copy.inventoryItem.inventoryLevels.nodes[1].quantities.push({ name: 'on_hand', quantity: 8 });
+  copy.product.id="gid://shopify/Product/1";copy.inventoryItem.unitCost={amount:"2.00",currencyCode:"USD"};
+  let denyCosts=false;
   const calls = [];
   const deps = { fetchImpl: async (url, options) => {
     calls.push({ url, options });
     if (!url.includes('myshopify')) return response({ observedAt: new Date().toISOString(),
-      items: [{ sku: copy.sku, warehouses: [{ warehouseAbbr: 'IL', qty: 5, dropship: false },
+      items: [{ sku: copy.sku, customerPrice:'3.00', warehouses: [{ warehouseAbbr: 'IL', qty: 5, dropship: false },
         { warehouseAbbr: 'DS', qty: 500, dropship: true }] }] });
     const { query } = JSON.parse(options.body);
+    if(denyCosts&&query.includes('unitCost'))return response({errors:[{extensions:{code:'ACCESS_DENIED'}}]});
     if (query.startsWith('query InventoryScheduledBatch')) return response({ data: {
-      nodes: [copy], currentAppInstallation: { accessScopes: [{ handle: 'write_inventory' }] },
+      nodes: [copy], shop:{currencyCode:'USD'}, currentAppInstallation: { accessScopes: [{ handle: 'write_inventory' }] },
       location: { id: supplierId, isActive: true, fulfillsOnlineOrders: true },
       sku0: { nodes: [{ id: copy.id, sku: copy.sku }], pageInfo: { hasNextPage: false } }
     } });
@@ -578,6 +581,14 @@ test('scheduled batch checks pinned SKU identity and store-wide uniqueness in it
   await assert.rejects(runGuardedBatch({ ...scheduledEnv, PILOT_VARIANT_SKUS: '["WRONG"]' }, deps),
     /PILOT_VARIANT_MISSING_OR_INACTIVE/);
   assert.equal(calls.length, 1);
+  calls.length=0;
+  const collected=await runGuardedBatch(scheduledEnv,{...deps,collectCosts:true});
+  assert.equal(collected.costInput.supplier.items[0].customerPrice,'3.00');
+  assert.equal(collected.costInput.currencyCode,'USD');assert.equal(calls.length,3);
+  denyCosts=true;calls.length=0;
+  const fallback=await runGuardedBatch(scheduledEnv,{...deps,collectCosts:true});
+  assert.equal(fallback.writes,1);assert.equal(fallback.costInput.costUnavailable,true);assert.equal(calls.length,4);
+
 });
 
 test('expanded 25-variant batches stay within three requests and reject 26 before network access', async () => {

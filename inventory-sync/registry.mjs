@@ -1,3 +1,4 @@
+import {costConfig,syncCosts} from './costs.mjs';
 import {SyncError,requireValue} from './core.mjs';
 import {shopifyToken,readSupplierGatewayBulk,supplierBatchSize,isSupplierDeferred} from './clients.mjs';
 import {runGuardedBatch} from './writer.mjs';
@@ -77,7 +78,9 @@ export async function runRegistrySchedule(env,deps={},scheduledTime=Date.now()){
   const retryAt=cooldown?.result_json ? JSON.parse(cooldown.result_json).retryAt : 0;
   if(retryAt>now())return {...summary,deferred:true,retryAt};
   if(retryAt)await saveJob(env,'supplier-backoff','ready',null,null,now());
-  const size=supplierBatchSize(env),token=await shopifyToken(env,deps);
+  const size=supplierBatchSize(env),token=await shopifyToken(env,deps),costs=await costConfig(env);
+  if(costs.mode!=="disabled")summary.costs={checked:0,changed:0,writes:0,unchanged:0,skipped:0,failed:0,deferred:0};
+  const costDeps={...deps,costDeadline:deadline-2000,costAuth:{}};
   let pending=[],snapshot=null;
   while(now()<deadline){
    if(!pending.length){
@@ -90,8 +93,14 @@ export async function runRegistrySchedule(env,deps={},scheduledTime=Date.now()){
    let error=null,defer=null;
    try{
     if(size>BATCH_SIZE&&!snapshot)snapshot=await (deps.readSupplierBulk||readSupplierGatewayBulk)(env,[...rows,...pending].map(r=>r.sku),deps);
-    const result=await (deps.runBatch||runGuardedBatch)({...env,SHOPIFY_ACCESS_TOKEN:token,PILOT_VARIANT_IDS:JSON.stringify(rows.map(r=>r.id)),PILOT_VARIANT_SKUS:JSON.stringify(rows.map(r=>r.sku)),PILOT_MISSING_SKU_POLICIES:JSON.stringify(rows.map(r=>r.missingPolicy))},snapshot?{...deps,supplierSnapshot:snapshot}:deps);
+    const result=await (deps.runBatch||runGuardedBatch)({...env,SHOPIFY_ACCESS_TOKEN:token,PILOT_VARIANT_IDS:JSON.stringify(rows.map(r=>r.id)),PILOT_VARIANT_SKUS:JSON.stringify(rows.map(r=>r.sku)),PILOT_MISSING_SKU_POLICIES:JSON.stringify(rows.map(r=>r.missingPolicy))},{...deps,...(snapshot?{supplierSnapshot:snapshot}:{}),collectCosts:costs.mode!=="disabled"});
     summary.writes+=result.writes||0;summary.held+=result.held||0;summary.variants+=rows.length;
+    if(result.costInput&&costs.mode!=="disabled"){
+     try{
+      const resultCosts=await (deps.syncCosts||syncCosts)(env,result.costInput,costs,costDeps);
+      for(const key of Object.keys(summary.costs))summary.costs[key]+=resultCosts[key]||0;
+     }catch{summary.costs.failed+=rows.length;}
+    }
    }catch(e){
     error=e instanceof SyncError?e.code:'INVENTORY_BATCH_FAILED';summary.failures++;
     if(isSupplierDeferred(e))defer=Math.max(60,e.retryAfterSeconds||60)*1000;

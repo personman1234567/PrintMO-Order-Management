@@ -1,3 +1,4 @@
+import {syncCosts,costConfig,configureCosts,costStatus,money} from './costs.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,6 +12,7 @@ import {PRIORITY_SHARED_6400_SKUS} from './priority-shared-6400.mjs';
 
 function fixture(){
  const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('./migrations/0001_inventory_registry.sql',import.meta.url),'utf8'));
+ sqlite.exec(fs.readFileSync(new URL('./migrations/0002_inventory_costs.sql',import.meta.url),'utf8'));
  const db={prepare(sql){const statement=sqlite.prepare(sql);return {bind(...values){return {
   async first(){return statement.get(...values)||null;},async all(){return {results:statement.all(...values)};},
   async run(){const r=statement.run(...values);return {success:true,meta:{changes:Number(r.changes)}};}
@@ -168,4 +170,55 @@ test('gateway HTTP 502 defers even when its safe body reports a transport failur
  assert.equal(response.status,503);assert.equal(response.headers.get('Retry-After'),'60');const payload=await response.json();assert.equal(payload.error,'UPSTREAM_TRANSPORT_FAILED');
  const invoke=serviceClient({INVENTORY_ADMIN_KEY:'x'.repeat(40)},{fetchImpl:async()=>Response.json(payload,{status:503,headers:{'Retry-After':'60'}})});
  await assert.rejects(invoke('/inventory/prefetch',{}),e=>isSupplierDeferred(e)&&e.retryAfterSeconds===60);f.sqlite.close();
+});
+
+
+function costInput(rows,prices,current='2.00'){
+ return {currencyCode:'USD',matches:rows.map(()=>true),supplier:{observedAt:new Date(1000000).toISOString(),items:inventoryRows(rows.map(r=>r.sku)).map((r,i)=>({...r,customerPrice:prices[i]}))},
+ variants:rows.map(r=>({...r,product:{id:'gid://shopify/Product/1',status:'ACTIVE'},inventoryItem:{unitCost:current===null?null:{amount:current,currencyCode:'USD'}}}))};
+}
+test('cost preview carries prices through bulk slices, compares decimal amounts, and retains unusable costs',async()=>{
+ const f=fixture(),rows=entries(5);await registerEntries(f.env,rows,{productId:'gid://shopify/Product/1',now:1000000});
+ const input=costInput(rows,['2.0000','3.10',null,0,'bad']);
+ const sliced=supplierSlice({...input.supplier,skus:rows.map(r=>r.sku)},[rows[1].sku]);assert.equal(sliced.items[0].customerPrice,'3.10');assert.equal(sliced.observedAt,input.supplier.observedAt);
+ await configureCosts(f.env,{mode:'preview'},1000000);
+ const result=await syncCosts(f.env,input,await costConfig(f.env),{now:()=>1000000,fetchImpl:()=>assert.fail('preview must not call Shopify')});
+ assert.deepEqual(result,{checked:5,changed:1,writes:0,unchanged:1,skipped:3,failed:0,deferred:0});
+ const status=await costStatus(f.env);assert.equal(status.eligible,5);assert.equal(status.checked,5);assert.equal(status.changes,1);assert.equal(status.skipped,3);
+ assert.equal(money('02.1000'),'2.10');assert.equal(money('2.105'),null);f.sqlite.close();
+});
+test('cost writes group by product, send only cost, preserve recovery values, and repeat as no-ops',async()=>{
+ const f=fixture(),rows=entries(2),input=costInput(rows,['3.10','4.00'],null),calls=[];
+ f.env.SHOPIFY_POLICY_CLIENT_ID='id';f.env.SHOPIFY_POLICY_CLIENT_SECRET='secret';
+ const deps={now:()=>1000000,costAuth:{},fetchImpl:async(url,options)=>{
+  calls.push({url,options});if(url.endsWith('/access_token'))return Response.json({access_token:'policy-token'});
+  const body=JSON.parse(options.body);assert.match(body.query,/mutation SyncSupplierCosts/);
+  assert.deepEqual(body.variables,{productId:'gid://shopify/Product/1',variants:rows.map((r,i)=>({id:r.id,inventoryItem:{cost:input.supplier.items[i].customerPrice}}))});
+  return Response.json({data:{productVariantsBulkUpdate:{userErrors:[],productVariants:rows.map((r,i)=>({id:r.id,inventoryItem:{unitCost:{amount:input.supplier.items[i].customerPrice,currencyCode:'USD'}}}))}}});
+ }};
+ const result=await syncCosts(f.env,input,{mode:'enabled'},deps);assert.equal(result.writes,2);assert.equal(calls.length,2);
+ let stored=f.sqlite.prepare('SELECT * FROM inventory_sync_costs WHERE variant_id=?').get(rows[0].id);assert.equal(stored.before_cost,null);assert.equal(stored.written_cost,'3.10');assert.equal(stored.written_at,1000000);
+ input.variants.forEach((v,i)=>v.inventoryItem.unitCost={amount:input.supplier.items[i].customerPrice,currencyCode:'USD'});
+ assert.equal((await syncCosts(f.env,input,{mode:'enabled'},deps)).writes,0);assert.equal(calls.length,2);
+ stored=f.sqlite.prepare('SELECT * FROM inventory_sync_costs WHERE variant_id=?').get(rows[0].id);assert.equal(stored.before_cost,null);assert.equal(stored.written_cost,'3.10');f.sqlite.close();
+});
+test('cost write errors retry on a fresh pass, and deadline deferral makes no provider calls',async()=>{
+ const f=fixture(),rows=entries(2),input=costInput(rows,['3.00','4.00']);let reject=true,calls=0;
+ f.env.SHOPIFY_POLICY_CLIENT_ID='id';f.env.SHOPIFY_POLICY_CLIENT_SECRET='secret';
+ const deps={now:()=>1000000,costAuth:{token:'policy'},fetchImpl:async()=>{calls++;return Response.json({data:{productVariantsBulkUpdate:{userErrors:reject?[{message:'rejected'}]:[],productVariants:reject?[]:rows.map((r,i)=>({id:r.id,inventoryItem:{unitCost:{amount:input.supplier.items[i].customerPrice,currencyCode:'USD'}}}))}}});}};
+ assert.equal((await syncCosts(f.env,input,{mode:'enabled'},deps)).failed,2);assert.equal(calls,1);
+ assert.equal(f.sqlite.prepare('SELECT before_cost FROM inventory_sync_costs LIMIT 1').get().before_cost,'2.00');
+ reject=false;assert.equal((await syncCosts(f.env,input,{mode:'enabled'},deps)).writes,2);
+ assert.equal((await syncCosts(f.env,input,{mode:'enabled'},{...deps,costDeadline:999999})).deferred,2);assert.equal(calls,2);f.sqlite.close();
+});
+test('cost pilot limits writes and currency or identity failures retain current values',async()=>{
+ const f=fixture(),input=costInput(entries(2),['3.00','4.00']);input.variants[1].product.id='gid://shopify/Product/2';
+ assert.equal((await syncCosts(f.env,input,{mode:'preview',productId:'gid://shopify/Product/1'},{now:()=>1000000})).checked,1);
+ input.currencyCode='CAD';assert.equal((await syncCosts(f.env,input,{mode:'enabled'},{now:()=>1000000})).skipped,2);
+ input.currencyCode='USD';input.matches=[false,false];assert.equal((await syncCosts(f.env,input,{mode:'enabled'},{now:()=>1000000})).skipped,2);f.sqlite.close();
+});
+test('cost failure does not mark a successful stock batch failed or schedule supplier backoff',async()=>{
+ const f=fixture(),rows=entries(25);await registerEntries(f.env,rows,{now:1000000});await configureCosts(f.env,{mode:'enabled'},1000000);
+ const result=await runRegistrySchedule(f.env,{now:()=>1000000,runBatch:async(env,deps)=>{assert.equal(deps.collectCosts,true);return {writes:25,costInput:costInput(rows,rows.map(()=>null))};},syncCosts:async()=>{throw new Error('cost database failure');}});
+ assert.equal(result.writes,25);assert.equal(result.failures,0);assert.equal(result.costs.failed,25);assert.equal((await registryStatus(f.env,1000000)).failed,0);f.sqlite.close();
 });

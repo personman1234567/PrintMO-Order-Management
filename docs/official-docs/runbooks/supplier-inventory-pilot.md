@@ -50,7 +50,7 @@ All stock calculations retain the existing protections: physical S&S warehouse s
 
 **Live on 2026-11-14 after owner approval.** Render gateway commit 84c9f1bb594f55f0e0965f1ca72fabca653ad4ac was deployed first. Worker version b2645ac7-a40f-4ade-8190-8880c0f5f06a includes bulk reads plus commitment-preserving first-time tracking. Authenticated cache verification preserved observedAt on repeated reads; scheduled failures cleared to zero while all 10,351 prior scheduled entries and 75 shared-SKU exclusions were preserved. The heading retains the original candidate name for existing retrieval links.
 
-- Render accepts 1-250 distinct SKUs and reads only S&S products with fields=sku,styleID,warehouses. Warehouse qty is documented as available for sale; dropship flags arrive in the same response. Repeated DS vendor rows collapse only when every flag is true and each quantity is valid. Other duplicates, invalid quantities and unknown rows fail closed. Missing SKUs remain absent, including in cache.
+- Render accepts 1-250 distinct SKUs and reads only S&S products with fields=sku,styleID,warehouses,customerPrice. Warehouse qty is documented as available for sale; dropship flags arrive in the same response. Repeated DS vendor rows collapse only when every flag is true and each quantity is valid. Other duplicates, invalid quantities and unknown rows fail closed. Missing SKUs remain absent, including in cache.
 - The process-local, account-scoped cache lasts 60 seconds from the actual fetch start. Hits preserve that timestamp; mixed-age results report the oldest contributing observation. Fills are serialized/coalesced, memory is bounded, and stale/error data is never served. Restarting Render clears the cache safely. This is a fetch observation, not a supplier-issued stock timestamp.
 - The reader spaces cold requests by at least 1.5 seconds and permits at most 40 starts per rolling minute. It reads limit/remaining/reset, reserves ten reported requests, and returns a safe code plus Retry-After on deferral. S&S's timezone-less ISO reset value is interpreted as UTC. A supplier 429/503 is deferred without an immediate retry. Other services sharing the key still consume quota; this in-memory limiter is per process, so horizontal scaling would need a shared budget or divided limits.
 - INVENTORY_SUPPLIER_BATCH_SIZE=250 selects up to 250 due registry rows for one source read. Each Shopify identity/commitment read, CAS write and saved registry checkpoint still covers at most 25 variants. Only completed batches advance. Unfinished prefetched rows remain due for a later run. No database migration or new secret is required. Setting the flag to 25 restores the old per-batch supplier-read pattern with the new single-endpoint gateway.
@@ -81,6 +81,31 @@ npm run repo -- inventory status
 Local checks: npm run repo -- inventory test and npm run docs:check. Gateway: npm run verify:inventory and npm test. Tests retain DENY, commitment subtraction, HQ isolation, missing/failed/stale source guards, unchanged CAS semantics and the existing shared 6400 holds.
 
 Rollback: reduce the new Worker's supplier batch setting to 25 through an approved release, or restore its prior version, **before** restoring a gateway limited to 25. Keep registry data, tracking, quantities and HQ untouched. A rollback is another owner-approved deployment; use status to verify recovery. Pausing the cron follows Check and Pause below and does not undo completed enrollment.
+
+## Supplier Garment Cost Sync
+
+The optional cost sync uses the same 250-SKU gateway reads and updates Shopify **Cost per item** for enabled, enrolled S&S variants. It uses account customerPrice only, validates positive USD amounts to cents, and preserves the current cost on missing/invalid prices or currency mismatches. Retail prices, quantity/tracking/policy fields, HQ records, dropship exclusions and shared-SKU holds are outside the cost mutation. New enrollments join cost checking on their next scheduled refresh.
+
+Default mode is disabled. The existing authenticated service stores the selected mode and optional pilot product in its job state; switching cost mode does not pause stock refreshes. Commands:
+
+~~~powershell
+npm run repo -- inventory costs preview execute
+npm run repo -- inventory costs status
+npm run repo -- inventory costs export
+npm run repo -- inventory costs enable execute gid://shopify/Product/EXACT_NUMERIC_ID
+npm run repo -- inventory costs enable execute
+npm run repo -- inventory costs disable execute
+~~~
+
+Preview checks the normal registry schedule without Shopify cost writes. Status reports coverage since the most recent mode change, matches, proposed changes, exceptions and pending work. Export saves the complete check/recovery records under ignored backups/inventory-costs. The one-product pilot uses an exact product GID; enabling without a GID selects all enabled registry entries. Leave cron running and allow a full registry pass after each mode change; do not treat a zero-change partial preview as catalog completion.
+
+Cost comparison is included in the existing Shopify scheduled read. If cost-field access is denied, stock falls back to its original read and records the cost-read exception. Stock writes finish before cost work. Changed costs are grouped by product, at most 25 per mutation, using the existing hosted product-write app. The per-run token is reused. Cost writes honor the normal Shopify throttle helper and stop near the run deadline; failures/deferred writes retry from fresh source and Shopify state on a later pass. Cost failures do not mark successful stock batches failed or activate supplier backoff. A long initial backfill can reduce stock throughput while costs are changing; watch actual refresh age during rollout.
+
+Migration 0002 adds one current cost/check/recovery row per checked variant, not a price-history system. Check records are batched in D1. Before each cost mutation, old and intended costs are persisted; the mutation response must confirm the exact returned amounts/currency. Later unchanged checks preserve recovery values. To recover from a bad mapping, disable cost sync first, export the records, and restore only identified bad writes after comparing live costs with their recorded written_cost. Disabling alone does not undo costs, and automatic bulk restoration is intentionally absent.
+
+Rollout: deploy the backwards-compatible Render price response first, then release the Worker disabled. Preview the complete eligible registry, inspect a small representative sample/differences, enable one product and verify readback, then enable the full registry and complete its initial reconciliation. Require matched costs or named exceptions, healthy stock refreshes, and an unchanged follow-up with no cost writes. Rollback can disable cost sync independently while leaving stock running.
+
+This is current blank replacement cost, not invoice-level landed cost or full decorated COGS. S&S requests are unchanged; initial Shopify cost writes are extra. Existing order cost snapshots are not rewritten. Local verification is the existing inventory test command and docs check; the gateway runs verify:inventory and its existing shared-service tests.
 
 ## Check and Pause
 

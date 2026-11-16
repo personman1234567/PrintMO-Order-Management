@@ -60,6 +60,9 @@ export async function main(args=process.argv.slice(2)){
   await query(fs.readFileSync(path.join(directory,'migrations','0001_inventory_registry.sql'),'utf8'));
   for(let i=0;i<values.length;i+=100)await query('INSERT INTO inventory_sync_variants(variant_id,sku,product_id,missing_policy,enabled,registered_at) VALUES '+values.slice(i,i+100).join(',')+' ON CONFLICT(variant_id) DO NOTHING;');
  }
+ // Idempotent additive cost-state migration; preserves stock registry and enrollments.
+ const costMigration=await cf('/d1/database/7fce58d5-d3f3-4f42-b084-6f3715cc48cc/query',{method:'POST',body:JSON.stringify({sql:fs.readFileSync(path.join(directory,'migrations','0002_inventory_costs.sql'),'utf8')})});
+ requireValue(costMigration.every(r=>r.success),'COST_MIGRATION_FAILED');
  // Deploy reviewed code first: older uploaded preview versions can otherwise block secret updates.
  wrangler(['deploy','-c','wrangler.jsonc']);
  wrangler(['secret','bulk','-c','wrangler.jsonc'],JSON.stringify(secrets));

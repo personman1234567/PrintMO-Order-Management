@@ -138,7 +138,9 @@ export function normalizeSupplierBatch(items, skus) {
     const batch = skus.slice(i, i + 25);
     normalized.push(...normalizeInventory(items.filter(item => batch.includes(item.sku)), batch));
   }
-  return normalized;
+  // Optional prices survive stock normalization without affecting stock validity.
+  const prices = new Map(items.filter(item => Object.hasOwn(item, 'customerPrice')).map(item => [item.sku, item.customerPrice]));
+  return normalized.map(item => prices.has(item.sku) ? {...item, customerPrice: prices.get(item.sku)} : item);
 }
 export function supplierSlice(snapshot, skus) {
   skuList(skus);
