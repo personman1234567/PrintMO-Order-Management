@@ -72,10 +72,11 @@ export async function registryStatus(env,now=Date.now()){
 export async function runRegistrySchedule(env,deps={},scheduledTime=Date.now()){
  const now=deps.now||Date.now;
  deps={...deps,timing:{}};
- const lease=await measure(deps,'phases','leaseAcquire',()=>acquireLease(env,now()));
+ const leaseRequestedAt=now();
+ const lease=await measure(deps,'phases','leaseAcquire',()=>acquireLease(env,leaseRequestedAt));
  if(!lease){await saveJob(env,'schedule-busy','busy',{scheduledTime},null,now());return {mode:'registry-refresh',busy:true,variants:0,writes:0};}
  const started=now(),deadline=started+Number(env.INVENTORY_RUN_SECONDS||45)*1000;
- let leaseConfirmedAt=started;
+ let leaseConfirmedAt=leaseRequestedAt;
  const ensureLease=async()=>{
   if(now()-leaseConfirmedAt<20000)return;
   const renewalAt=now();
