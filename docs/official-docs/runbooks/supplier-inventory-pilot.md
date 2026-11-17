@@ -119,6 +119,12 @@ Use inventory status for these reports. The 2026-11-16 hosted baseline processed
 
 The scheduler now groups up to 125 identities in each Shopify read (`INVENTORY_SHOPIFY_READ_BATCH_SIZE=125`; set 25 to restore the prior grouping). It keeps all guard fields, validates each original 25-variant slice independently, and retains the same 25-variant CAS writes and durable checkpoints. A missing/inactive identity fails its slice, not the other slices. Read data lives only within the current run and is reused for at most 30 seconds; older slices receive a fresh 25-variant read. The shared 120-second operation lease renews after 20 seconds of elapsed time, checked both before each batch and immediately before a stock mutation. An expired lease still blocks writes. The 45-second run window and 300-second refresh eligibility remain unchanged.
 
+
+
+**Verified result, 2026-11-16:** The observation refreshed all 12,792 enabled variants after the performance deployment and recorded 7,350 repeat-success transitions: median 353s, p95 361s, maximum 378s. Stock failures and Shopify throttles were zero; the 75 shared-SKU exclusions remained. New measured long runs used 76.5% fewer Shopify read responses than their count of original 25-variant slices, and 98.1% fewer lease renewals. Duplicate checks/freshness fallbacks explain the difference from the ideal 80% read reduction. Completed-run throughput varied 1,750–3,250 variants, so do not treat one run as guaranteed capacity. Cost status covered all 12,792: 12,702 matched, 90 missing-price exceptions retained existing values, zero pending.
+
+Timing reports are in ignored backups/inventory-performance. Measurement version was 752dbcd8-525f-4fe1-8e63-0d74ab1f597f (source 83b249e); final Worker 779c25c7-8448-4757-bd39-6917fc3f87c0 also anchors lease freshness to its acquisition request time (fa91dac), so a delayed acquisition cannot extend the local freshness assumption. The 94 owning inventory tests and documentation checks passed.
+
 ## Check and Pause
 
 ```powershell
