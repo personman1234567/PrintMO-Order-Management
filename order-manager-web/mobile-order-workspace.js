@@ -505,7 +505,7 @@
       if (more) {
         $('.mw-selection').hidden = true; $('.mw-empty').hidden = true;
         const host = $('.mw-more');
-        if (!host.children.length) for (const [destination, label] of [['prepared', 'Prepared Orders'], ['drafts', 'Draft Orders'], ['inventory', 'Inventory'], ['previous', 'History'], ['storage', 'Storage Browser']]) host.append(button(label, () => navigation.navigateMobile('more', { destination })));
+        if (!host.children.length) for (const [destination, label] of [['storefronts', 'Storefronts'], ['reports', 'Storefront Reports'], ['prepared', 'Prepared Orders'], ['drafts', 'Draft Orders'], ['inventory', 'Inventory'], ['previous', 'History'], ['storage', 'Studio activity']]) host.append(button(label, () => navigation.navigateMobile('more', { destination })));
         publishVisibleRows(); return;
       }
       if (area === 'print' && view().stage === 'print' && window.productionPlanner?.matchesOrder) {

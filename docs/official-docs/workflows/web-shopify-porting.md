@@ -64,6 +64,180 @@ Pages deployments replace the entire web artifact. Before publishing from an iso
 
 ### Source-switched operational board
 
+#### Studio activity
+
+Studio activity replaces the Storage Browser presentation
+without changing its `storage` navigation destination or the board's data owner.
+`storage-browser.js`, `studio-activity-model.js` and `studio-activity.css` provide a
+picture-first, newest-first feed with All, Mockups, Uploads and AI filters. The
+initial period is seven local calendar days; custom dates and all-AI history remain
+available from the compact range control. UTC storage folders are enumerated over
+the corresponding local-date bounds. Search includes the loaded period's complete
+file metadata, including exact references, and retains a matched export's files.
+
+Only a shared explicit design reference, workspace and identity group preview
+files into one export. Same-customer/date, same-product and visual similarity are
+not associations. Mockups lead their related print artwork and mobile derivatives;
+legacy files without a workspace remain separate. JSON sidecars enrich AI images
+without becoming additional feed entries. File details preserve exact references,
+copying and customer/product fields beneath the image. Temporary blob URLs are
+explicitly labeled as temporary. Existing shared dialog focus/isolation is reused;
+mobile detail retains global work-area navigation and the feed's scroll position.
+
+Direct checkout exports are live as of 2026-11-18. Order Manager migration
+`0020_studio_checkout_activity.sql` was applied before Worker
+`150b4610-18bf-407f-a34e-58252b277418` and Pages release `1795029424038`.
+The Worker update preserved its 31 existing bindings. Pages readback matched
+all 133 staged files, including the existing placement editor.
+
+After direct checkout saves its required SVGs and garment proof, the adapter
+records its ready timestamp on the existing draft projection. Studio Activity → Mockups uses that timestamp and the
+original private asset IDs. Each workspace has one entry with a proof cover and
+downloadable artwork by side. Shopify purchase status and matching order asset
+manifests let the same entry show Purchased and its order reference.
+
+Unpaid entries remain visible for the Order Manager Worker's `RETAIN_PREVIEW_HOURS`
+window, defaulting to 24 hours. The live value is 336 hours (14 days), matching
+the existing cart-preview setting. Set any custom value on both Workers.
+Age alone never makes a private draft object safe to delete. Shopify can finish an
+already-started checkout after a draft update, and promoted order assets can
+reference the same object. This implementation expires feed visibility and keeps
+the original artwork available for late purchases. It does not enable physical
+purge or backfill historical drafts.
+
+An unpaid live front-and-back Studio checkout created a ready gallery record.
+Private-storage readback matched the checksums for both SVGs, the 1072×576
+combined proof, and the 512×512 mobile preview. The live gallery rejected an
+unauthenticated request. Signed-in dashboard display and live paid conversion
+remain separate acceptance checks.
+
+Uploads use `/order-manager/storage/uploads` and its opaque-reference image route.
+`studio-activity.mjs` relays through the existing `PREPARED_ORDER_SERVICE` and
+server-only `PREPARED_ORDER_ADMIN_TOKEN` to the Designer's staff-authenticated
+`/api/admin/studio-uploads` routes. Account originals remain governed by customer
+library visibility; hidden/deleted records are excluded and rechecked on read.
+New manual artwork outside the authenticated library save path is captured after
+intake sanitation in the existing private customer storage. Its separate
+`studio-activity/uploads/` namespace has 14-day visibility and scheduled cleanup.
+The browser receives opaque references, never upload storage or account-owner keys.
+
+This feed describes retained creations, not unique visitors, a complete event log,
+or purchases. Guest originals from before capture was enabled cannot be recovered.
+Saved uploads use original creation time; repeated reuse is not a new file. Source
+failures remain visible alongside successfully loaded images instead of presenting
+an authoritative empty result. Refresh, source filtering, lazy images and related
+file selection do not read the order queue or mutate orders.
+
+Deployment state (2026-11-16): Pages release `1794841750346`, Designer Worker
+`c0b1385d-0957-4e13-ae66-cc9e9d94d896`, and Order Manager Worker
+`d7b5d2a3-43bc-4bc6-9b30-4f6100d20d91` are live. Signed-in Shopify browser
+checks confirmed retained AI images, grouped exports and account originals.
+Worker bindings/settings and unrelated Pages/editor assets were preserved.
+The Designer capture client is still pending Shopify identity verification;
+new guest-original coverage does not begin until that theme client is published.
+Synthetic mobile checks do not establish physical Shopify phone acceptance.
+For a fresh rollout, deploy the Designer Worker and relay before enabling the
+theme capture client and activity interface. The relay uses `redirect: 'manual'`:
+[Workers does not implement the Fetch standard's `error` redirect mode](https://developers.cloudflare.com/workers/runtime-apis/request/).
+Run `node --test scripts/studio-activity.test.js scripts/studio-activity.browser.test.cjs
+order-manager-proxy/studio-activity.test.mjs` (installed Playwright via `NODE_PATH`),
+the owning Designer capture/route/cleanup tests, Phase 1/2, docs and Pages packaging.
+
+#### Studio Usage
+
+Creations remains Studio activity's default. Usage extends the existing embedded
+workspace with an overview, Projects & accounts, Problems and period comparison.
+`studio-usage.js`, `studio-usage.css` and `studio-usage-model.js` retain rectangular
+2px controls, text tabs, quiet report rules and complete mobile/desktop layouts.
+Preserve the existing app navigation and Shopify Admin's own menu.
+
+The authenticated GET `/order-manager/studio-usage` accepts UTC ISO `after` and
+exclusive `before` bounds derived from the browser's local calendar dates, plus
+optional `compareAfter`/`compareBefore`. It delegates to
+`order-manager-proxy/studio-usage.mjs`, querying `pm_designer_telemetry` with the
+server-only read token `STUDIO_ANALYTICS_TOKEN`. Reports span at most 31 local
+calendar days within 90-day telemetry retention. Comparisons require equal-length,
+non-overlapping local periods. Successful reports normally have a 60-second server
+cache; an unavailable ledger result shortens caching to five seconds.
+
+Any single selected local day uses hourly bars, including historical days; longer
+periods use daily bars. Local midnight bounds support 23/25-hour DST days, and
+repeated hour labels include zone suffixes. The toolbar names the browser's local
+time zone. The report's generated-at snapshot marks the current partial hour/day
+and leaves future buckets blank. A zero current count still receives the
+in-progress note. Count tables provide the same hourly/daily data by disclosure.
+
+Activity counts are sampling-weighted production events marked external. Studio
+opens can include reloads; Uploads accepted counts local file intake, including
+repeated uploads, before placement confirmation. AI images generated is separate.
+Design actions use text-addition and garment-selection events plus successful
+committed artwork placements. Text is never an upload. Placement sources separate
+local, AI and saved artwork; accepted uploads or reuse events do not establish a
+committed placement. Missing frontend placement coverage is null (shown as an em
+dash), and partial/unavailable coverage remains explicit. Marked internal/test
+traffic is excluded; unmarked staff activity can remain.
+
+`studio-usage-outcomes.mjs` obtains distinct project/account records from the
+Designer's staff-only `/api/admin/studio-usage` route through the existing
+`PREPARED_ORDER_SERVICE` and server-only `PREPARED_ORDER_ADMIN_TOKEN`. Save and
+reopen coverage start separately: unavailable history yields null rather than zero,
+and partial history excludes dates before its coverage start. Projects saved and
+reopened are distinct-project counts within the period and can overlap; created
+projects use existing project records. Recent activity lists up to 20 projects,
+excluding deleted projects from previews. Project rows reuse the private lazy-image
+loader and existing detail/return behavior. The staff-authenticated GET
+`/order-manager/studio-usage/projects/:ref/thumbnail` relays bounded private bytes
+using an opaque project reference; browser output never exposes owner/storage keys.
+Ledger failure keeps the telemetry report usable with explicit unavailable status.
+
+Accounts after a save prompt separately count new accounts, existing accounts
+signed in, accounts with a saved project and unresolved account type. New/existing
+counts use the sign-in-return date; saved accounts use the successful-save date.
+These are separate date-scoped counts, not a conversion funnel. Initial guest or
+signed-in state events can include reloads and do not identify new account creation.
+Active editing time, cross-visit identity and revenue attribution are not measured.
+
+Problems covers existing AI failures, rejected uploads, preview failures,
+save/restore failures and cart failures. Cart starts, successful handoffs,
+failures, categorical reasons and the failure chart cover cart flow only; direct
+checkout is excluded. Retries may repeat and comparison traffic mix is not matched.
+Recorded-event estimates and ledger records do not establish unique people, paid
+orders, conversion rates or proof that a change caused a difference.
+
+Usage does not enumerate Creations folders or eagerly read gallery media. Entering
+Usage or leaving Studio aborts active gallery listing and queued reads. Returning
+to Creations completes an interrupted load with completed listing caches. The
+explicit Open creations for these dates action uses the selected range. Gallery
+progress must not rebuild Usage controls, restart its report or trigger telemetry
+queries. Loading/error/retry feedback and previous-successful-load messaging retain
+the report's limits in context. Stored creations and event totals remain separate.
+
+Deployment verified 2026-11-17: production Pages release `1794950312023`
+(`0c4bd7df`) serves all 133 artifact assets with matching SHA-256 values; 125
+unrelated assets and the placement editor are unchanged. Order Manager Worker
+`d5eede5b-3514-47d9-a9eb-03f20d35b4f1` and Designer Worker
+`0b29c7ba-882b-41c5-a708-d97eb95afa1e` preserve their 31 and 58 bindings/configuration,
+respectively; Designer migration `0008` is applied. Live Designer Studio Release 2
+theme `163682582776` serves `designer-entry.DmHqiZof.js`. All 17 referenced assets
+return 200; the entry and task-changed chunks match the build bytes. Shared CDN
+assets do not have a blanket byte-parity claim. Designer Testing 2's canonical
+publish was also verified.
+
+Save history starts `2026-11-17T21:05:14.712Z`; reopen/frontend history starts
+`2026-11-17T21:17:08.646Z`. Placement and auth-state Analytics summary events are
+independently cutoff-filtered (rounded up to whole-second timestamp precision);
+legacy metrics retain their full-period scope. Final measurement wording separates
+telemetry estimates from project/account stored records without changing layout.
+
+The live public mobile check observed initial guest state, accepted-file intake
+and committed placement, with telemetry POST 200 and no browser errors. Its test
+segment was excluded from business metrics and guest capture was stubbed to avoid
+retained-file pollution. SELECT-only live D1 plus the exact deployed producer run
+locally with actual aggregate Analytics returned 200/ready, validating SQL and the
+new DTO. Remote staff-authenticated report/thumbnail endpoint acceptance remains
+unverified. Automatic approval review denied a separate live-configuration
+credential read; no retrieval retry was made.
+
 #### Mobile order actions
 
 At widths through 900px, mobile-order-actions.js and its scoped stylesheet own
@@ -98,6 +272,46 @@ finish first-page enumeration; an acknowledged local update interrupting a later
 read restarts it without allowing the obsolete response to report completion.
 Routine polling never reopens the startup cover. Source changes release owned
 queue gates, preserving the isolated Legacy controls.
+
+#### Storefront setup workspace
+
+**Live November 12, 2026:** Menu → Storefronts (desktop), More → Storefronts (phone). Manage storefront opens a compact task home: Appearance, Products, Reports and Contact & notes. Reports opens its generator directly. There are no decorative branding-status badges. **Save appearance updates that owner's existing Shopify branding independently of products.** Existing product edits save in place; Add product creates an unpublished product under the same branding. Add storefront creates draft branding/unpublished collection and opens this same interface. Earlier saved work remains available.
+
+The [management continuation](../future-plans/storefront-setup-workspace-plan.md#current-continuation-state) owns exact capabilities, API/persistence/retry contracts, tests and release evidence. [Management](../../../order-manager-proxy/storefront-management.mjs) binds real partner/collection identity; the original setup/execution services supply catalog reads, unfinished product work, READY staged uploads and draft creation. Migration 0018 adds registry/source links/receipts separately from orders. App Bridge auth, expected-version checks, scoped leases and idempotent partial recovery protect saves. The controller/CSS remain lazy and Shopify-source-only. The mobile editor uses one scroll body and a separate compact save row above app navigation; the shell owns safe-area spacing.
+
+Current shop access is enabled; future installations use Enable Shopify access for optional product/metaobject/definition/file scopes. Source variants, prices, owner links and files are revalidated before writes. Existing ACTIVE appearance/products change only on their explicit Save action; product status is preserved. New products stay DRAFT. New-store branding/collections remain unpublished. No publication, report sending, bills, payments or owner portal exists. Contact notes never hold bank/tax credentials.
+
+Dallas live API and actual embedded Appearance save/restoration passed. New Dallas merchandise stayed DRAFT, reused original branding, preserved SKU and could be edited in place. Registered owners and newly created source links feed reporting; historical Dallas still reconciles. Physical-phone, shipping/inventory and new-owner launch acceptance remain separate. Run `npm run test:storefront-management`; use setup checks when changing its reused product tools.
+
+#### Storefront Reports workspace
+
+Date range includes All time in addition to month presets and Custom dates. All time uses the captured server cutoff and full available order history, requires existing read_all_orders access and resolves the covered dates from Shopify. It retains bounded reads and rejects incomplete enumeration. No scope, payment or sending change is introduced.
+
+The live screen starts with owner/date controls. Calculation details are collapsed below Generate; no generic intro, source badge or permanent blue explainer displaces the task. Small owner lists stay visible without a search field; larger lists can expand for search and batch selection. Actual errors, Needs review and export omissions remain contextual. Standalone sample previews remain explicitly synthetic.
+
+Real Shopify reporting is deployed to production Pages release `1794442287907` and Worker version `cb526dac-ea90-4d73-9cd1-97bcef244e69` (November 11, 2026). Open Menu → Storefront Reports without a URL switch. Reports is Shopify-source-only; Legacy rejects it. The loader fetches scoped CSS/controller only on entry, then PDF libraries/fonts on generation/preview. Leaving releases generation/viewer resources and retains small selection preferences and the production filter.
+
+The authenticated `GET /order-manager/v1/storefront-reports/owners` and `POST /order-manager/v1/storefront-reports/generate` use `storefront-reports.mjs`, the approved server-only profile and dedicated query-only Shopify reads. They do not call board/detail projection refresh or R2 imports. One generation per shop, coalescing, bounded pagination and API-cost reservation protect normal operations. No sends, bills, payments, financial archive or financial localStorage are connected.
+
+Dr. Dallas is the configured pilot. Orders from the November 16 activation use approved versioned garment-plus-print fulfillment prices. Earlier Dallas orders retain their previous deductions. Explicit product links and price evidence establish scope; two discontinued historical variants have source-backed rates limited to the original report period. Unresolved rates/refund reversal/affected source drift yield Needs review and null money, not zero. Reports are current-restated placed-order cohorts; tax/shipping and previous payments are excluded, so earnings are not an amount due. Unknown lines outside linked-owner orders are count-only coverage warnings; ambiguity within a linked-owner order requires review.
+
+Preview and download share identical PDF bytes. Long reports paginate; the redesigned two-page reference does not cap actual reports. The standalone `storefront-reports-preview.html` without `window.api` remains synthetic; live API failure never falls back to samples. The pilot logo/name uses the approved supplied fallback because the backend lacks `read_metaobjects`. Pages public app identity now matches the actual Order Manager backend; no permission change was made.
+
+The authenticated published API reconciled the historical Dallas cohort and a zero-activity period. Published UI verification generated the historical PDF from that exact verified API snapshot, with operational board traffic intercepted; actual PDF text and rendered pages were checked. Focused tests cover service/router/cents/DST/pagination, incomplete data, UI failures and cleanup, exact exports, fonts/logos, lazy navigation and desktop/393px layout. Native Shopify-device acceptance remains open. Worker publication preserved the freshly downloaded production baseline outside two report blocks, verified reverse-patch hashes and all 30 binding fingerprints; Pages packaging excluded unrelated backend work.
+
+See [continuation and delivery steps](../future-plans/storefront-reports-workspace-plan.md#current-continuation-state). Owning checks: `npm run test:storefront-reports`, registered Pages packaging, Phase 2 and documentation validation.
+
+##### Add another storefront owner to reporting
+
+**Verified November 12, 2026:** Dallas remains the only real owner. The reporting reader now accepts validated explicit registered owners with independent branding. Storefronts → Manage storefront adopts a verified existing partner/collection; Add storefront creates that relationship and registers it. Arbitrary Shopify discovery alone does not enroll it. No per-owner formula/layout/code edit is needed for ordinary newly created merchandise.
+
+1. Create or manage the storefront in Storefronts. Verify its public name/logo and actual partner/collection. Their Shopify `custom.partner_reference` must agree.
+2. Add merchandise through Products → Add product: choose the actual normal catalog garment/variants, retail prices and prepared images. Creation writes explicit `custom.partner_reference`, `custom.partner_collection`, `printmo_setup.source_product` and variant source references; D1 carries catalog product links into reporting. Existing products need those explicit owner links plus a verified catalog source. Opening an explicitly sourced product imports its mapping; older unmapped merchandise may still need technical assistance. Never infer ownership from SKU/title alone.
+3. Configure the owner-approved garment-plus-print fulfillment prices and a print selection for each merchandise product. Retain effective-dated versions and validate exact SKU/structured-option correspondence and source prices. Do not copy Dallas's dated historical rates to another owner or rename supplier SKUs. Unresolved price/refund inputs remain Needs review.
+4. Use the owner's Reports tab to select the owner, then choose dates and generate locally. Hand-reconcile a known order and a genuine no-activity period, inspect the PDF/branding, and verify Dallas stays separate. A valid empty period is zero; incomplete data is not zero. There is no sending or payment action.
+5. Before a separately authorized public launch, verify stock, shipping, layout/cart and publication readiness. Registration/report availability is not launch approval or a payable balance. If a mapping is wrong, stop using that report and correct the exact source/owner link; preserve other owners and recorded work. Do not disable or revert all storefronts.
+
+The server merges registered identities/source links with the approved pilot profile, rejecting duplicate/conflicting identities and catalog mappings. Shop isolation and independent-owner branding/zero tests are part of `npm run test:storefront-management`. Actual future-owner order/PDF acceptance is still required when a second real owner is added. Partners send branding/artwork assets to staff; they do not send sales calculations, and banking/tax setup remains outside this workflow.
 
 #### Prepared Orders preparation screen
 
@@ -205,6 +419,47 @@ purchase actions export the current customer-edited design; cart uses the
 existing Designer persistent export uploads and grouping properties, while
 draft checkout uses Order Manager's production attachments. Editable previews
 rehydrate all designed sides on initial load; manual mockups remain per-item.
+
+Prepared raster transport release (2026-11-11; shared backend and test theme): public
+resolve advertises `prepared-raster-refs-v1`. Supported direct-checkout clients
+send the canonical current SVG composition with opaque original-image references.
+Only PNG/JPEG/WebP project sources in that link's immutable published snapshot
+qualify; garment-choice transfers may reuse those sources across snapshot items.
+The server checks target membership, stored MIME/signature and SHA-256 before
+creating draft commerce. It reads no customer URLs. Source images remain unchanged;
+current crop, layer order, calibrated size, rotation and flips remain in the SVG.
+Vectors retain the existing sanitized inline path, and cart remains inline.
+
+Admin image bytes do not enter the recipient's 24 MiB request or 12 MiB submitted
+artwork-side budgets. New customer artwork retains those budgets and the existing
+20 MiB source-upload limit. Prepared originals retain their staff upload limit;
+server-expanded production output is separately capped at 32 MiB per side and
+64 MiB total. Expansion is checked incrementally before extra source reads, and
+production attachments use chunked Blob assembly rather than whole-file SVG
+encoding copies. These processing caps are not an unlimited-file exemption.
+No migration or link republish is needed; release the backend before the website.
+
+Backend version `90a93398-b7fe-4e45-a965-46958eb7a852` was deployed with
+`--keep-vars`; readback matched all 30 previous bindings and values. Rollback
+version is `ff3f288e-046b-471d-88f7-6577a6a3381d`. The owner's requested
+`./push.ps1` deployed Designer Testing 2 (`163707977976`) with entry
+`designer-entry.9eQPsFGu.js`. Remote entry, exporter and chunk-snippet hashes
+matched the local build, and the build contract passed. Live read-only probes
+confirmed the structured missing-link diagnostic and anonymous staff rejection.
+The published theme was not pushed; no checkout, payment or order mutation was
+used for release verification.
+
+Size errors identify artwork/upload size rather than garment quantity. Public
+errors carry the same request reference as `prepared_order_request_failed` Worker
+logs. Diagnostics contain stage, code, byte limits, aggregate/per-side byte counts
+and numeric item indexes. Small optional client size headers are labelled
+client-reported and never grant authorization. Never log artwork, text, filenames,
+asset hashes, customer details or bearer URLs. The browser preserves the reference
+and logs the numerical request breakdown. Price retry appears for quote failures
+and `PRICE_CHANGED`, not unrelated checkout/export failures. Owning regression
+coverage is `prepared-artwork-transport.test.mjs`, recipient/link tests, and the
+website prepared-artwork/export/checkout tests. Local mocks do not prove hosted
+Worker memory behavior, actual Shopify checkout, or completed payment acceptance.
 The isolated editor adds live drag selection, a touch-sized rotation handle and
 horizontal-only centering; Front/Back/Left/Right are views, with print classes
 kept separate and legacy chest-view coordinates rebased when reopened.
@@ -303,6 +558,48 @@ No draft/order creation, payment or actual Prepared checkout acceptance was exer
 by this release verification. Immediate Worker rollback is
 `ed419c52-15ce-400a-8c08-49a9ca89c2d2`; the prior theme loader is retained locally.
 This supersedes the preceding automatic-discount delegation for this paired release.
+
+
+Deployment and acceptance verified 2026-11-11: user explicitly approved the shared Order Manager Worker deployment; version `4c224a4f-ddd6-45f6-9ac7-ed075199ace1` was deployed with existing variables/bindings preserved. Rollback version is `90a93398-b7fe-4e45-a965-46958eb7a852`. Root `./push` enabled Studio checkout only on unpublished Designer Testing 2 (`163707977976`), entry `designer-entry.Qql9sc0L.js`. The live production theme was not pushed. A real unpaid Studio checkout reached Shopify with 12 eligible garments: 71.64 USD garment + 24.00 USD printing - 4.78 USD bulk savings = 90.86 USD, matching Review. A live service quote with a duplicated background-removal identity returned one full-price 2.00 USD service, the same 4.78 USD discount and net 92.86 USD. The test draft had its outlined front SVG, garment proof and optional recognition preview associated to the correct garment line; no payment or fulfillment was performed. The newly created unpaid test draft was deleted after verification. Frontend focused tests:29; Prepared/Studio backend tests:118; existing proxy/Phase1/Phase2, typecheck, generated build and docs checks passed. Mobile and other theme builds retain their existing purchase path.
+
+Pricing-confirmation update deployed 2026-11-11: shared Worker `bf30a6cd-68ff-4338-97e8-6acc44ca09c8` preserves existing bindings and the already-deployed Storefront Reports changes; immediate rollback is `cb526dac-ea90-4d73-9cd1-97bcef244e69`. Root `./push` deployed `designer-entry.BWKsMvLS.js` only to Designer Testing 2. The deployed zero-quantity-to-12-garment flow immediately showed 71.64 USD with a visible confirming state and disabled checkout, then confirmed 3.58 USD bulk savings and 68.06 USD net before enabling checkout. The same three-product quote measured 3.69 seconds versus the earlier 14.3-second observation. A live print/service quote confirmed 12 eligible garments, 5% / 4.78 USD savings and one deduplicated full-price 2.00 USD artwork service, totaling 92.86 USD. No new Shopify draft or purchase was created for this update. Compact layout checked at 1920x911 and 1366x768. Frontend pricing tests passed (23); the backend run passed 120 assertions/tests, but its separate quantity-browser process hung after passing its assertions and was stopped during cleanup. Required syntax, Phase 1/2, Worker dry run, type/build contract and documentation checks passed.
+
+Studio price checks reuse the lean `prepared-price-products.mjs` commerce reader for only the selected size variants and current canonical product configuration, including explicit availability. Initial validation and quote enrichment share one request-local read; checkout reads again and recalculates the same Prepared bulk policy. Full all-color catalog/media pagination is not part of Studio price confirmation. No cached quote can authorize changed prices, eligibility, print configuration or artwork-service charges.
+
+Ordinary Studio direct checkout has a source-verified adapter in
+`studio-checkout.mjs`; the deployment and test-theme acceptance above were recorded
+separately from local verification. It reuses `recipientQuote`,
+`completePreparedCheckout`, `calculatePreparedBulk`, and production asset
+transfer. The existing Prepared public and staff routes keep their authority.
+
+`POST /order-manager/v1/studio-checkout/quote` accepts bounded garment items
+with a selected variant GID, per-size quantities, a design revision and geometry,
+calibration, and instructions. Product IDs, configuration, print classes, prices,
+availability, and collection eligibility come from Shopify. The response includes
+an opaque UUID, snapshot and quote hashes, current item and service prices, USD
+gross/discount/net totals, and a 30-minute expiry. Private R2 snapshots bind the
+normalized design and quantities; they are separate from staff preparations.
+
+`POST /order-manager/v1/studio-checkout/{id}/checkout` accepts only the two
+hashes, a UUID session, per-item/side exported SVGs, and optional proof/front
+previews. It reloads current commerce and configuration, rejects stale prices or
+changed design/quantity/service payloads, and uses the shared lease/recovery path.
+Required production SVG uploads must finish and associate to every matching
+garment line before returning the verified Shopify checkout URL. A failed upload
+resumes the same draft on retry. Image, text, and explicit no-print designs use
+the existing descriptor and export validators. Checkout SVGs embed their sources;
+customer URLs cannot establish private artwork membership.
+
+Both Studio actions require the exact print-mo.com or www.print-mo.com HTTPS
+Origin, bounded request bodies, and per-IP action limits. Only the artwork-service
+key `background-removal` is allowed: the requested variant GID must currently
+have SKU `PM-ART-BG-REMOVE`, active status and explicit availability. The server
+deduplicates by asset identity, service key and variant, uses quantity one, and
+charges current Shopify price. Service lines never establish garment eligibility
+or inherit garment-batch discounts, even if their product belongs to the bulk
+collection. Service instructions and item/side references remain line attributes.
+Snapshot hashes and private storage keys confer no staff access. Expired snapshots
+cannot start checkout; existing issued Shopify checkout URLs follow Shopify state.
 
 `prepared-order-discounts.mjs` owns policy `prepared-bulk-v1`. Actual membership
 in Shopify collection `482306556152` determines the eligible garment count;
@@ -808,3 +1105,7 @@ The updated storefront layout is first deployed to Designer Testing 2. Copied cu
 On narrow embedded screens the top-layer garment finder uses the visible viewport height/top offset and Shopify App Bridge's --shopify-safe-area-inset-bottom, with the device safe-area as a fallback rather than adding both insets. Its header and action footer remain outside the internal scrolling content. This avoids placing Add garment behind Shopify Mobile's floating navigation; selecting an option alone does not apply it, and Close still dismisses the selection. The existing viewport metrics owner also tracks visualViewport scroll for keyboard-driven offsets.
 
 The normal review footer remains in the app's flex flow and benefits from App Bridge's automatic body padding. Do not add the host inset again to every footer. Verify that body padding is present in native acceptance. Shopify documents the inset at https://shopify.dev/docs/api/app-home/latest/apis/authentication-and-data/environment-api . This is an Order Manager Pages frontend contract, not a storefront theme or Worker deployment.
+
+### Storefront fulfillment pricing
+
+In Storefronts → Products → Edit product, choose the printing setup under Fulfillment pricing and Save product. Use Refresh garment & print prices before saving to adopt current source prices without changing print type. New product creation requires a printing choice. The app verifies the source garment options and existing Shopify print add-ons, saves current variant fulfillment money and appends the product pricing history. Reports select the version effective when the order was placed, preserving earlier order deductions. See [pricing contract](../future-plans/storefront-reports-workspace-plan.md#fulfillment-pricing--november-16-2026). Resolve Needs pricing options against real catalog sources; do not substitute zero, supplier unit cost or a guessed price.

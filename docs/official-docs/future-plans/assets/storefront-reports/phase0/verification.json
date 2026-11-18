@@ -1,0 +1,214 @@
+{
+  "schemaVersion": 1,
+  "capturedUtc": "2026-11-11T22:39:06.438Z",
+  "status": "phase0-partial-baseline-captured",
+  "authorization": "Local baseline, isolated verification and read-only Dr. Dallas checks. No deployment, report sending, bills, payments, permissions or migrations.",
+  "artifact": {
+    "name": "cloudflare-order-manager-web-1794436351349-558498f5",
+    "sourceHead": "903377064fd86ed2a9d0aa7b32b2ef1e22143996",
+    "branch": "Shopify-Sync",
+    "includesConcurrentWorkingTreeChanges": true,
+    "manifestSha256": "8237830bd42cbf974ede54f10a27723f41fee8f906003dd751ff317273109479",
+    "manifestCapturedAfterMeasurement": true
+  },
+  "verification": {
+    "localBuild": {
+      "command": "npm run repo -- build cloudflare",
+      "passed": true,
+      "deployed": false
+    },
+    "browserBaseline": {
+      "file": "baseline.json",
+      "samples": 6,
+      "fixtureOrders": 120,
+      "externalRequestsIntercepted": true,
+      "liveOperationalRequestsExecuted": false,
+      "visualPaintMeasured": false,
+      "productionLatencyMeasured": false
+    },
+    "pdf": {
+      "file": "pdf-proof.json",
+      "sameOriginGenerationWorkerPassed": true,
+      "pdfjsPreviewAndTextExtractionPassed": true,
+      "exactArtifactCspUsed": true,
+      "customFontEmbeddingVerified": false,
+      "redesignedDynamicTemplateImplemented": false,
+      "nativeShopifyMobileVerified": false
+    },
+    "dataReadiness": {
+      "mode": "exact-order-manager-app-query-only",
+      "appIdentityMatches": true,
+      "credentialSource": "Authenticated Shopify CLI app environment; credentials and short-lived token held in memory only. Root .env belongs to a different app and was excluded.",
+      "apiVersion": "2026-07",
+      "grantedScopes": [
+        "read_all_orders",
+        "read_draft_orders",
+        "read_merchant_managed_fulfillment_orders",
+        "read_orders",
+        "read_products",
+        "read_third_party_fulfillment_orders",
+        "write_draft_orders",
+        "write_orders"
+      ],
+      "shopTimezone": "America/Chicago",
+      "representativeAnchors": [
+        {
+          "label": "anchor-1",
+          "placedMonth": "2026-09",
+          "olderThan60Days": false,
+          "lineCount": 2,
+          "stableLineProductVariantIdsPresent": true,
+          "sampledConnectionsComplete": true,
+          "paymentStatus": "PAID",
+          "fulfillmentStatus": "FULFILLED",
+          "originalTotalDecimalStringsPresent": true,
+          "currencies": [
+            "USD"
+          ],
+          "refundCount": 0
+        },
+        {
+          "label": "anchor-2",
+          "placedMonth": "2026-10",
+          "olderThan60Days": false,
+          "lineCount": 2,
+          "stableLineProductVariantIdsPresent": true,
+          "sampledConnectionsComplete": true,
+          "paymentStatus": "PAID",
+          "fulfillmentStatus": "FULFILLED",
+          "originalTotalDecimalStringsPresent": true,
+          "currencies": [
+            "USD"
+          ],
+          "refundCount": 0
+        },
+        {
+          "label": "anchor-3",
+          "placedMonth": "2026-06",
+          "olderThan60Days": true,
+          "lineCount": 2,
+          "stableLineProductVariantIdsPresent": true,
+          "sampledConnectionsComplete": true,
+          "paymentStatus": "PAID",
+          "fulfillmentStatus": "FULFILLED",
+          "originalTotalDecimalStringsPresent": true,
+          "currencies": [
+            "USD"
+          ],
+          "refundCount": 0
+        }
+      ],
+      "currentDallasCatalogProductCount": 49,
+      "currentCatalogIsNotHistoricalAttribution": true,
+      "olderDiscovery": {
+        "recordsInspected": 25,
+        "complete": false
+      },
+      "partnerReferencePresent": true,
+      "partnerMetaobject": {
+        "recordReturned": false,
+        "graphqlErrors": 0,
+        "readMetaobjectsGranted": false,
+        "disposition": "Access or stale/deleted reference remains unresolved; null alone does not establish a missing record."
+      },
+      "calls": [
+        {
+          "label": "read-1",
+          "httpStatus": 200,
+          "apiVersion": "2026-07",
+          "graphqlErrors": 0,
+          "durationMs": 246,
+          "requestedCost": 4,
+          "actualCost": 4
+        },
+        {
+          "label": "read-2",
+          "httpStatus": 200,
+          "apiVersion": "2026-07",
+          "graphqlErrors": 0,
+          "durationMs": 221,
+          "requestedCost": 35,
+          "actualCost": 8
+        },
+        {
+          "label": "read-3",
+          "httpStatus": 200,
+          "apiVersion": "2026-07",
+          "graphqlErrors": 0,
+          "durationMs": 316,
+          "requestedCost": 149,
+          "actualCost": 10
+        },
+        {
+          "label": "read-4",
+          "httpStatus": 200,
+          "apiVersion": "2026-07",
+          "graphqlErrors": 0,
+          "durationMs": 334,
+          "requestedCost": 149,
+          "actualCost": 10
+        },
+        {
+          "label": "read-5",
+          "httpStatus": 200,
+          "apiVersion": "2026-07",
+          "graphqlErrors": 0,
+          "durationMs": 269,
+          "requestedCost": 80,
+          "actualCost": 38
+        },
+        {
+          "label": "read-6",
+          "httpStatus": 200,
+          "apiVersion": "2026-07",
+          "graphqlErrors": 0,
+          "durationMs": 689,
+          "requestedCost": 149,
+          "actualCost": 10
+        },
+        {
+          "label": "read-7",
+          "httpStatus": 200,
+          "apiVersion": "2026-07",
+          "graphqlErrors": 0,
+          "durationMs": 159,
+          "requestedCost": 3,
+          "actualCost": 1
+        }
+      ],
+      "observedThrottle": {
+        "maximumAvailable": 2000,
+        "restoreRate": 100,
+        "isSafeWorkloadLimit": false
+      },
+      "fullCohortCoverageVerified": false,
+      "discountRefundEarningsCalculationVerified": false,
+      "approvedRatesAndHistoricalAttributionVerified": false,
+      "deployedWorkerCredentialEqualityVerified": false
+    }
+  },
+  "remainingGates": [
+    "Approved, effective-dated ownership/rate authority before real earnings can be complete.",
+    "Complete period and nested pagination, refunds, partial fulfillment/payment and zero-activity reconciliation; anchors prove read capability only.",
+    "Partner metaobject/logo read resolution without an implicit scope change.",
+    "Custom font/logo embedding and actual data-driven redesigned PDF template.",
+    "Measured owner/date-span/row/size/runtime limits and cross-session API protection; observed API allowance is not an operational budget.",
+    "Native Shopify embedded desktop/mobile, cancellation/stale response races and repeated resource cleanup during normal order polling."
+  ],
+  "council": {
+    "independentInvestigators": 2,
+    "sameModel": true,
+    "roles": [
+      "Prepared-artifact baseline and PDF compatibility",
+      "Read-only data capability and evidence sufficiency"
+    ],
+    "importantRevisions": [
+      "DOM-state readiness was distinguished from visual paint.",
+      "Historical read capability was distinguished from full-cohort coverage and financial correctness.",
+      "Post-run artifact hashes were distinguished from pre-run immutability attestation."
+    ],
+    "decision": "Continue bounded local development; do not treat reporting accuracy or production readiness as established."
+  },
+  "localRawEvidenceDirectory": "G:/My Drive/Print-MO/tmp/storefront-reports-phase0",
+  "privacy": "This durable summary omits real order identifiers, financial amounts, customer fields and credentials. Local live-read evidence is not copied into this bundle."
+}

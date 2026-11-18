@@ -142,21 +142,32 @@
       ],
       "keywords": [
         "prepared orders",
+        "studio checkout",
+        "studio-checkout",
+        "artwork services",
         "prepared-order-drafts",
         "place artwork",
         "placement editor",
         "prepared mockup",
-        "prepared-orders-workspace"
+        "prepared-orders-workspace",
+        "merchandise-only",
+        "mixed checkout",
+        "return edit checkout",
+        "studio merchandise"
       ],
       "paths": [
         "order-manager-web/prepared-orders.js",
         "order-manager-web/prepared-orders-workspace.js",
         "order-manager-web/prepared-orders.css",
         "order-manager-proxy/prepared-order-drafts.mjs",
-        "scripts/build-placement-editor.js"
+        "order-manager-proxy/studio-checkout.mjs",
+        "scripts/build-placement-editor.js",
+        "order-manager-proxy/studio-merchandise.mjs",
+        "order-manager-proxy/studio-checkout-return.test.mjs"
       ],
       "symbols": [
         "handlePreparedDraftRequest",
+        "handleStudioCheckoutRequest",
         "createPreparedDraftService",
         "openEditor",
         "saveRecord"
@@ -171,9 +182,19 @@
         {
           "path": "docs/official-docs/workflows/web-shopify-porting.md",
           "anchor": "prepared-orders-preparation-screen"
+        },
+        {
+          "path": "docs/official-docs/future-plans/storefront-checkout-proof-plan.md"
         }
       ],
       "inspect": [
+        {
+          "path": "order-manager-proxy/studio-checkout.mjs",
+          "symbols": [
+            "handleStudioCheckoutRequest",
+            "studioServiceRequests"
+          ]
+        },
         {
           "path": "order-manager-web/prepared-orders-workspace.js",
           "symbols": [
@@ -201,6 +222,7 @@
         "cloudflare-bundle"
       ],
       "verify": [
+        "npm run test:studio-order-proof",
         "npm run test:prepared-orders",
         "node scripts/build-placement-editor.js --check",
         "npm run verify:phase2",
@@ -208,7 +230,8 @@
         "npm run docs:check"
       ],
       "stop": [
-        "Customer links reuse the existing website recipient screen. Preserve staff-only publishing, bearer-scoped quotes/checkout, Studio legacy links and correct production file associations. Full-Studio project import and native Shopify iOS acceptance remain separate."
+        "Customer links reuse the existing website recipient screen. Preserve staff-only publishing, bearer-scoped quotes/checkout, Studio legacy links and correct production file associations. Full-Studio project import and native Shopify iOS acceptance remain separate.",
+        "Do not enable the merchandise proof flag or deploy shared shopping until the checkout-return TODO gates and actual development-shop payment/retirement checks pass."
       ]
     },
     {
@@ -1412,6 +1435,193 @@
       ],
       "stop": [
         "Stop if packaging would require introducing secrets into the client bundle."
+      ]
+    },
+    {
+      "id": "storefront-setup",
+      "description": "Centralized storefront management, live branding saves, in-place product editing, shared new-owner setup and explicit reporting registration",
+      "taskTypes": [
+        "planning",
+        "implementation",
+        "documentation"
+      ],
+      "keywords": [
+        "storefront setup",
+        "storefront onboarding",
+        "setup plan",
+        "partner setup",
+        "first storefront product",
+        "storefront management",
+        "edit storefront",
+        "change storefront colors",
+        "manage storefront products",
+        "fulfillment pricing",
+        "printing charge"
+      ],
+      "paths": [
+        "order-manager-web/storefront-setup.js",
+        "order-manager-web/storefront-setup-workspace.mjs",
+        "order-manager-proxy/storefront-setup.mjs",
+        "docs/official-docs/future-plans/storefront-setup-workspace-plan.md",
+        "order-manager-proxy/storefront-management.mjs",
+        "order-manager-web/storefront-management-workspace.mjs"
+      ],
+      "symbols": [
+        "createStorefrontSetupService",
+        "mountStorefrontSetup",
+        "createStorefrontManagement",
+        "managedReportProfile"
+      ],
+      "errors": [],
+      "read": [
+        {
+          "path": "docs/official-docs/future-plans/storefront-setup-workspace-plan.md",
+          "anchor": "current-continuation-state"
+        },
+        {
+          "path": "docs/official-docs/workflows/web-shopify-porting.md",
+          "anchor": "storefront-setup-workspace"
+        }
+      ],
+      "inspect": [
+        {
+          "path": "order-manager-proxy/storefront-management.mjs",
+          "symbols": [
+            "createStorefrontManagement",
+            "managedReportProfile"
+          ]
+        },
+        {
+          "path": "order-manager-web/storefront-management-workspace.mjs",
+          "symbols": [
+            "mountStorefrontSetup"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/storefront-setup.mjs",
+          "symbols": [
+            "createStorefrontSetupService",
+            "normalizeStorefrontSetup"
+          ]
+        },
+        {
+          "path": "order-manager-web/storefront-setup-workspace.mjs",
+          "symbols": [
+            "mountStorefrontSetup"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/worker.js",
+          "symbols": []
+        },
+        {
+          "path": "order-manager-proxy/storefront-setup-execution.mjs",
+          "symbols": [
+            "createStorefrontSetupExecution",
+            "STOREFRONT_SETUP_SCOPES"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/storefront-fulfillment-pricing.mjs",
+          "symbols": [
+            "appendFulfillmentPricing",
+            "fulfillmentRateFor"
+          ]
+        }
+      ],
+      "tools": [
+        "docs-check"
+      ],
+      "verify": [
+        "npm run test:storefront-management",
+        "npm run test:storefront-setup",
+        "npm run verify:phase2",
+        "npm run docs:check"
+      ],
+      "stop": [
+        "Actual existing-storefront appearance/product saves and Order Manager deployment are authorized. New storefronts and new products remain unpublished. No product/collection publication, report sending, bills or payments. Reporting requires explicit validated registration and source links; discovery alone does not enroll."
+      ]
+    },
+    {
+      "id": "storefront-reports",
+      "description": "Manual earnings PDFs with versioned garment-plus-print fulfillment pricing and protected earlier deductions; query-only reporting",
+      "taskTypes": [
+        "planning",
+        "implementation",
+        "documentation"
+      ],
+      "keywords": [
+        "storefront reports",
+        "owner earnings",
+        "earnings report",
+        "report generator",
+        "report preview",
+        "PDF report",
+        "Dr. Dallas report",
+        "fulfillment pricing",
+        "printing charge"
+      ],
+      "paths": [
+        "docs/official-docs/future-plans/storefront-reports-workspace-plan.md"
+      ],
+      "symbols": [],
+      "errors": [],
+      "read": [
+        {
+          "path": "docs/official-docs/future-plans/storefront-reports-workspace-plan.md",
+          "anchor": "current-continuation-state"
+        },
+        {
+          "path": "docs/official-docs/future-plans/storefront-reports-workspace-plan.md",
+          "anchor": "technical-specification--task-checklist"
+        }
+      ],
+      "inspect": [
+        {
+          "path": "order-manager-web/storefront-reports.js",
+          "symbols": []
+        },
+        {
+          "path": "order-manager-web/storefront-reports-workspace.mjs",
+          "symbols": [
+            "mountReports"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/storefront-reports.mjs",
+          "symbols": [
+            "createStorefrontReportsService"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/storefront-report-profiles.mjs",
+          "symbols": []
+        },
+        {
+          "path": "order-manager-web/storefront-reports-pdf.mjs",
+          "symbols": [
+            "renderReport"
+          ]
+        },
+        {
+          "path": "order-manager-proxy/storefront-fulfillment-pricing.mjs",
+          "symbols": [
+            "appendFulfillmentPricing",
+            "fulfillmentRateFor"
+          ]
+        }
+      ],
+      "tools": [
+        "docs-check"
+      ],
+      "verify": [
+        "npm run test:storefront-reports",
+        "npm run verify:phase2",
+        "npm run repo -- build cloudflare",
+        "npm run docs:check"
+      ],
+      "stop": [
+        "Prospective fulfillment pricing and Order Manager deployment are approved. Preserve pre-activation deductions and explicit unknown prices. No report sending, bills, payments, product publication or unrelated scope changes."
       ]
     },
     {

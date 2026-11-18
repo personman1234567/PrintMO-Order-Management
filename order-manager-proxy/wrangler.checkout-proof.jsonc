@@ -1,0 +1,36 @@
+{
+  "name": "printmo-studio-checkout-proof",
+  "main": "studio-checkout-proof-worker.mjs",
+  "compatibility_date": "2026-07-22",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": false
+  },
+  "vars": {
+    "SHOPIFY_SHOP_DOMAIN": "429cc0-3.myshopify.com",
+    "PROOF_EXPIRES_AT": "2026-11-14T23:00:00.000Z"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ORDER_SYNC_COORDINATOR",
+        "class_name": "OrderSyncCoordinator",
+        "script_name": "order-manager-proxy"
+      }
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "ORDER_DB",
+      "database_name": "printmo-order-manager",
+      "database_id": "7fce58d5-d3f3-4f42-b084-6f3715cc48cc"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2_BUCKET",
+      "bucket_name": "printmo-artwork-private"
+    }
+  ]
+}

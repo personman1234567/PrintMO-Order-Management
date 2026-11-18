@@ -60,9 +60,10 @@ export async function calculatePreparedBulk(env, deps, lines, items) {
   pricing.rate = preparedBulkRate(pricing.eligibleQuantity);
   input.lineItems = lines.map((line, index) => {
     const item = items.find(value => value.id === attribute(line, '_preparedItemId'));
-    const expected = attribute(line, '_batch_role') === 'garment'
-      ? item?.variants.find(value => value.id === line.variantId)?.priceCents
-      : item?.prints.find(value => 'gid://shopify/ProductVariant/' + value.variantId === line.variantId)?.priceCents;
+    const role = attribute(line, '_batch_role');
+    const expected = role === 'garment' || (role === 'merchandise' && item?.kind === 'merchandise')
+      ? item?.variants?.find(value => value.id === line.variantId)?.priceCents
+      : item?.prints?.find(value => 'gid://shopify/ProductVariant/' + value.variantId === line.variantId)?.priceCents;
     const unitCents = preparedMoneyCents(variants.get(line.variantId).price);
     if (unitCents !== expected) fail('PRICE_CHANGED', 'A price changed while checking this order. Refresh the order price.', 409);
     pricing.subtotalCents += unitCents * line.quantity;

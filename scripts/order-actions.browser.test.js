@@ -273,7 +273,21 @@ test('actual browser: shared order actions preserve native behavior, target iden
     assert.equal(await evaluate('document.querySelector(".order-action-heading-title strong").textContent'), '#101');
     assert.equal(await evaluate('document.querySelector(".order-action-heading-customer").textContent'), 'Synthetic person');
     assert.equal(await evaluate('(()=>{const r=document.getElementById("order-action-menu").getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;})()'), true, 'context menu clamps near bottom-right edge');
-    await clickItem('Move production stage'); await clickItem('Move to Pipeline');
+    await evaluate(`OrderManagerViews.actions=()=>[
+      {value:'move:received',label:'Move to Pipeline',enabled:true},
+      {value:'move:to_order',label:'Move to Build Order',enabled:true},
+      {value:'move:print',label:'Move to Ready to Print',enabled:true}
+    ]`);
+    await clickItem('Move production stage');
+    await evaluate('new Promise(resolve=>setTimeout(resolve,160))');
+    const stageLayout = await evaluate(`[...document.querySelectorAll('.order-action-submenu .order-action-item')].map(row=>({
+      text:row.textContent.trim(), value:row.querySelector('.order-action-value')?.textContent || '',
+      height:row.getBoundingClientRect().height,labelWidth:row.querySelector('.order-action-label').getBoundingClientRect().width
+    }))`);
+    assert.deepEqual(stageLayout.map(row=>row.text),['Move to Pipeline','Move to Build Order','Move to Ready to Print'],'stage destinations show human-readable labels only');
+    assert.ok(stageLayout.every(row=>!row.value && row.height>=44 && row.height<=64 && row.labelWidth>=160),'desktop stage labels use the flexible column and readable compact rows: '+JSON.stringify(stageLayout));
+    if(screenshots){const shot=await cdp.send('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(screenshots,'desktop-stage-menu.png'),Buffer.from(shot.data,'base64'));}
+    await clickItem('Move to Pipeline');
     assert.deepEqual(await evaluate('reviewCalls.at(-1).keys'), [await evaluate('OrderBoardModel.orderKey(orders[1])')]);
     assert.equal(await evaluate('JSON.stringify(selectedKeys)'), selected, 'clicked target does not alter checkbox selection');
 

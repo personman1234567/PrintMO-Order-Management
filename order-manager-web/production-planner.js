@@ -322,7 +322,8 @@
     document.addEventListener('click', event => { if (event.target.closest('#print-view-printed') && filter) { filter = null; updateContext(); } });
     new MutationObserver(() => {
       if (!candidate() || (document.body.dataset.activeView && document.body.dataset.activeView !== 'orders')) {
-        filter = null; closeChecklist(); close(); context.hidden = true;
+        if (!candidate() || !['reports', 'storefronts'].includes(document.body.dataset.activeView)) filter = null;
+        closeChecklist(); close(); context.hidden = true;
       } else schedule();
     }).observe(document.body, { attributes: true, attributeFilter: ['data-order-source', 'data-active-view'] });
     document.addEventListener('visibilitychange', () => { if (!document.hidden) void refreshRun(true); });

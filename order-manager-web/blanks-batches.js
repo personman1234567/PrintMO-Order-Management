@@ -478,7 +478,7 @@
       batchDetailsById.set(result.batch.id, result.batch);
       buildOrderAccounting();
       annotateAccountingCards();
-      console.info(`Created blanks batch ${result.batch.id}`, result.batch);
+      // The saved batch is retained privately; do not log customer membership.
     }
     return result;
   }
@@ -1426,7 +1426,7 @@
     button.id = 'blanks-receive-batches-btn';
     button.className = 'fullscreen-btn blanks-receive-batches-btn';
     button.type = 'button';
-    button.textContent = 'Receive Batches';
+    button.textContent = 'Apparel batches';
     button.addEventListener('click', openReceiveOverlay);
     actions.insertBefore(button, actions.firstChild);
   }
@@ -1469,7 +1469,7 @@
           <button id="blanks-receive-refresh" class="manual-add-action" type="button">Refresh</button>
           <button id="blanks-receive-create" class="manual-add-action" type="button">Add outside S&amp;S order</button>
           <button id="blanks-receive-add-cart" class="manual-add-action hidden" type="button">Add Orders</button>
-          <button id="blanks-receive-mark-all" class="manual-add-action hidden" type="button" title="Use only when this delivery contains every outstanding garment in the receiving record">Check in all remaining</button>
+          <button id="blanks-receive-mark-all" class="manual-add-action hidden" type="button" title="Use only when this delivery contains every outstanding garment in the receiving record">Mark remaining In hand</button>
           <button id="blanks-receive-save" class="manual-add-action blanks-receive-save hidden" type="button" disabled>Save Receiving</button>
         </div>
         <section id="blanks-receive-lookup" class="blanks-receive-lookup" aria-label="Find a shipment">
@@ -1481,6 +1481,8 @@
         <section id="blanks-receive-create-panel" class="blanks-receive-order-picker" hidden aria-labelledby="blanks-receive-create-title">
           <h3 id="blanks-receive-create-title">Outside S&amp;S purchase</h3>
           <p>Link a purchase made outside Order Manager to customer orders already on the board. This does not place another supplier order.</p>
+          <label>Batch name (optional) <input id="blanks-receive-create-label" type="text" maxlength="120" placeholder="Automatic name if blank"></label>
+          <label>Ordered date <input id="blanks-receive-create-date" type="date" required></label>
           <label>S&amp;S order number(s) <input id="blanks-receive-create-number" type="text" maxlength="80" autocomplete="off" placeholder="Separate multiple numbers with commas"></label>
           <label>Print-MO PO (optional) <input id="blanks-receive-create-po" type="text" maxlength="80"></label>
           <label>Tracking number (optional) <input id="blanks-receive-create-tracking" type="text" maxlength="120"></label>
@@ -1491,7 +1493,9 @@
             <button id="blanks-receive-create-confirm" class="manual-add-action" type="button">Create receiving record</button>
           </div>
         </section>
-        <section id="blanks-receive-reference" class="blanks-receive-order-picker" hidden aria-label="Shipment reference">
+        <section id="blanks-receive-reference" class="blanks-receive-order-picker" hidden aria-label="Batch details">
+          <label>Batch name <input id="blanks-receive-reference-label" type="text" maxlength="120"></label>
+          <label>Ordered date <input id="blanks-receive-reference-date" type="date" required></label>
           <label>S&amp;S order number(s) <input id="blanks-receive-reference-number" type="text" maxlength="80" placeholder="Separate multiple numbers with commas"></label>
           <label>Print-MO PO (optional) <input id="blanks-receive-reference-po" type="text" maxlength="80"></label>
           <label>Tracking number (optional) <input id="blanks-receive-reference-tracking" type="text" maxlength="120"></label>
@@ -1574,10 +1578,7 @@
     overlay.querySelector('#blanks-receive-order-cancel')?.addEventListener('click', closeOrderPicker);
     overlay.querySelector('#blanks-receive-order-confirm')?.addEventListener('click', assignSelectedOrdersToActiveBatch);
     overlay.querySelector('#blanks-receive-order-options')?.addEventListener('change', syncOrderPickerSelection);
-    overlay.querySelector('#blanks-receive-mark-all')?.addEventListener('click', async () => {
-      markAllManifestReceived();
-      await saveReceiving();
-    });
+    overlay.querySelector('#blanks-receive-mark-all')?.addEventListener('click', receiveAllInHand);
     overlay.querySelector('#blanks-receive-save')?.addEventListener('click', saveReceiving);
     overlay.addEventListener('click', handleReceiveClick);
     overlay.addEventListener('input', handleReceiveInput);
@@ -1612,6 +1613,7 @@
   }
 
   function openOutsideOrderForm() {
+    document.getElementById('blanks-receive-create-date').value = window.materialBatchUi?.today() || new Date().toISOString().slice(0,10);
     closeOrderPicker({ focus: false });
     const panel = document.getElementById('blanks-receive-create-panel');
     const options = document.getElementById('blanks-receive-create-options');
@@ -1662,6 +1664,8 @@
     try {
       const result = await saveBatchForOrders(selected, {
         source: 'outside-order',
+        label: document.getElementById('blanks-receive-create-label').value.trim(),
+        orderedDate: document.getElementById('blanks-receive-create-date').value,
         supplierOrderNumber: number,
         purchaseOrderNumber: document.getElementById('blanks-receive-create-po')?.value.trim() || '',
         trackingNumber: document.getElementById('blanks-receive-create-tracking')?.value.trim() || ''
@@ -1696,11 +1700,17 @@
     message.textContent = 'Saving…';
     try {
       const result = await window.api.updateBlanksBatchReference(activeBatch.id, {
+        label: document.getElementById('blanks-receive-reference-label').value.trim(),
+        orderedDate: document.getElementById('blanks-receive-reference-date').value,
+        expectedUpdatedAt: activeBatch.updatedAt,
         supplierOrderNumber: document.getElementById('blanks-receive-reference-number').value.trim(),
         purchaseOrderNumber: document.getElementById('blanks-receive-reference-po').value.trim(),
         trackingNumber: document.getElementById('blanks-receive-reference-tracking').value.trim()
       });
       activeBatch = result.batch;
+      metadataBaseline = { label: activeBatch.label, orderedDate: activeBatch.orderedDate };
+      document.getElementById('blanks-receive-reference-label').value = activeBatch.label;
+      document.getElementById('blanks-receive-reference-date').value = activeBatch.orderedDate;
       batchDetailsById.set(activeBatch.id, activeBatch);
       await loadBatchIndex();
       activeBatch.supplierStatus = batchIndex.find(batch => batch.id === activeBatch.id)?.supplierStatus || null;
@@ -1912,14 +1922,14 @@
     const expected = Number(batch.expectedGarments) || 0;
     const received = Number(batch.receivedGarments) || 0;
     const missing = Math.max(0, Number(batch.missingGarments) || 0);
-    const allocationReview = Math.max(0, Number(batch.pendingAllocationLines) || 0);
-    const created = batch.createdAt ? new Date(batch.createdAt).toLocaleDateString() : '';
+    const allocationReview = Math.max(0, Number(batch.pendingAllocationLines) || 0) + Math.max(0,Number(batch.pendingReadinessOrders)||0);
+    const created = batch.orderedDate || (batch.createdAt ? new Date(batch.createdAt).toLocaleDateString() : '');
     const delivery = supplierStatusLabel(batch.supplierStatus, missing > 0);
 
     card.innerHTML = `
       <span class="blanks-receive-batch-main">
-        <strong>${escapeHtml(batch.supplierOrderNumber ? `S&S ${batch.supplierOrderNumber}` : batch.label || batch.id)}</strong>
-        <span>${batch.orderCount || 0} orders${batch.purchaseOrderNumber ? ` · PO ${escapeHtml(batch.purchaseOrderNumber)}` : ''}${batch.trackingNumber ? ` · Tracking ${escapeHtml(batch.trackingNumber)}` : ''}${created ? ` · ${escapeHtml(created)}` : ''}</span>
+        <strong>${escapeHtml(batch.label || batch.id)}</strong>
+        <span>${batch.supplierOrderNumber ? `S&amp;S ${escapeHtml(batch.supplierOrderNumber)} · ` : ''}${batch.orderCount || 0} orders${batch.purchaseOrderNumber ? ` · PO ${escapeHtml(batch.purchaseOrderNumber)}` : ''}${batch.trackingNumber ? ` · Tracking ${escapeHtml(batch.trackingNumber)}` : ''}${created ? ` · ${escapeHtml(created)}` : ''}</span>
         ${delivery ? `<span class="blanks-supplier-delivery" data-state="${escapeHtml(batch.supplierStatus.state || 'pending')}">S&amp;S: ${escapeHtml(delivery)}</span>` : ''}
         ${receiveAttentionOnly ? reviewModel.attentionReasons(batch).map(reason => `<span class="blanks-receive-attention-reason">${escapeHtml(reason)}</span>`).join('') : ''}
       </span>
@@ -1938,6 +1948,7 @@
     renderBatchDetail();
   }
 
+  let metadataBatchId = null, metadataBaseline = null;
   function renderBatchDetail() {
     closeOrderPicker({ focus: false });
     setHeaderMode('detail');
@@ -1954,10 +1965,20 @@
       fragment.appendChild(renderManifestLine(line));
     });
     list.appendChild(fragment);
+    const nameInput = document.getElementById('blanks-receive-reference-label'), dateInput = document.getElementById('blanks-receive-reference-date');
+    const hasDraft = metadataBatchId === activeBatch.id && metadataBaseline && (nameInput.value !== metadataBaseline.label || dateInput.value !== metadataBaseline.orderedDate);
+    if (!hasDraft) {
+      nameInput.value = activeBatch.label || '';
+      dateInput.value = activeBatch.orderedDate || (activeBatch.createdAt || '').slice(0,10);
+      metadataBaseline = { label: nameInput.value, orderedDate: dateInput.value };
+    }
+    metadataBatchId = activeBatch.id;
     document.getElementById('blanks-receive-reference-number').value = activeBatch.supplierOrderNumber || '';
     document.getElementById('blanks-receive-reference-po').value = activeBatch.purchaseOrderNumber || '';
     document.getElementById('blanks-receive-reference-tracking').value = activeBatch.trackingNumber || '';
     renderSupplierStatusPanel();
+    newlyCompleteBatchId = activeBatch.id;
+    newlyCompleteOrders = activeBatch.orders.filter(order => order.fullyAccounted && newlyCompleteEligibility(order.name).eligible).map(order => order.name);
     renderNewlyComplete();
     syncDraftStats();
     syncAddCartOrdersState();
@@ -2196,7 +2217,7 @@
         input.min = '0';
         input.max = String(quantities.expected);
         input.step = '1';
-        input.value = String(quantities.accounted);
+        input.defaultValue = input.value = String(quantities.accounted);
         input.dataset.allocationOrder = orderName;
         label.appendChild(input);
         allocation.appendChild(label);
@@ -2398,6 +2419,35 @@
     syncAllocationReview();
   }
 
+  async function receiveAllInHand() {
+    if (!activeBatch || allocationSaveBusy || receivingSavePromise || dirty) {
+      showMoveNotice('Finish saving edited quantities before receiving the complete batch.'); return;
+    }
+    if (Array.from(document.querySelectorAll('#blanks-receive-list [data-allocation-order]')).some(input => input.value !== input.defaultValue)) {
+      showMoveNotice('Review edited allocations individually or Refresh before receiving the complete batch.'); return;
+    }
+    const batch = activeBatch;
+    const missing = (batch.manifest || []).reduce((sum,line)=>sum+Math.max(0,Number(line.expectedQty)-Number(line.receivedQty||0)),0);
+    if (!window.confirm(batch.label + '\nOrdered ' + (batch.orderedDate || batch.createdAt.slice(0,10)) +
+      '\n' + missing + ' remaining garments · ' + batch.orders.length + ' customer orders\n\n' +
+      batch.orders.map(order=>order.name).join(', ') + '\n\nConfirm all remaining garments are counted, usable and each listed order receives its full quantities. For a partial delivery, Cancel and enter received quantities.')) return;
+    const controls = Array.from(document.querySelectorAll('#blanks-receive-overlay button, #blanks-receive-overlay input')).map(control=>[control,control.disabled]);
+    allocationSaveBusy = true; controls.forEach(([control])=>control.disabled=true);
+    try {
+      const result = await window.api.receiveFullBlanksBatch(batch.id, batch.updatedAt);
+      if (result?.batch?.id !== batch.id) throw new Error('Receipt could not be confirmed. Refresh before retrying.');
+      activeBatch = result.batch; batchDetailsById.set(batch.id,activeBatch);
+      captureNewlyComplete(batch,activeBatch);
+      draftReceived = new Map(activeBatch.manifest.map(line=>[line.itemKey,Number(line.receivedQty)||0]));
+      buildOrderAccounting(); annotateAccountingCards();
+      await loadBatchIndex(); renderBatchDetail();
+      const unresolved = (result.receiptResults || []).filter(item=>item.outcome !== 'in-hand');
+      showMoveNotice(unresolved.length ? 'Receipt and allocations saved. Readiness still needs review for: ' + unresolved.map(item=>item.name).join(', ') + '. Refresh and retry after review.' : 'Garments marked In hand. Review complete orders separately before moving to production.', 'info');
+      try { await window.refreshOrderManagerNow?.(); renderBatchDetail(); } catch { /* Saved receipt remains recoverable in this batch. */ }
+    } catch(error) { showMoveNotice('Receipt not fully confirmed. Refresh this batch before retrying. ' + error.message); }
+    finally { allocationSaveBusy=false; controls.forEach(([control,disabled])=>{if(control.isConnected)control.disabled=disabled;}); syncAllocationReview(); }
+  }
+
   function markAllManifestReceived() {
     if (!activeBatch) return;
     (activeBatch.manifest || []).forEach(line => {
@@ -2458,11 +2508,12 @@
     toast.append(text, review, move, dismiss);
   }
 
-  function newlyCompleteEligibility(name, orders = currentOrders()) {
+  function newlyCompleteEligibility(name, orders = currentOrders(), batch = activeBatch) {
     const order = orders.find(item => item?.name === name);
     if (!order) return { eligible: false, reason: 'Order no longer on board' };
     if (order.status === 'print' || order.status === 'completed') return { eligible: false, reason: 'Already moved' };
     if (order.status !== 'blanks') return { eligible: false, reason: 'Review current stage' };
+    if (batch?.canonicalReceiptRequired && (!Number(order.blanksStatus) || batch.orders.find(member=>member.name===name)?.canonicalReceiptState !== 'in-hand')) return { eligible: false, reason: 'Review garment readiness' };
     if (String(order.displayFinancialStatus || order.financialStatus || '').toUpperCase() !== 'PAID') {
       return { eligible: false, reason: 'Payment required before production' };
     }
@@ -2518,9 +2569,10 @@
         const stage = detail?.production?.stage;
         fresh.push({ ...boardOrder,
           status: stage === 'blanks_cart' || stage === 'blanks_ordered' ? 'blanks' : stage,
+          blanksStatus: Number(detail?.production?.blanksStatus || 0),
           displayFinancialStatus: detail?.commerce?.financialStatus || '' });
       }
-      const eligible = newlyCompleteOrders.filter(name => stillComplete.has(name) && newlyCompleteEligibility(name, fresh).eligible);
+      const eligible = newlyCompleteOrders.filter(name => stillComplete.has(name) && newlyCompleteEligibility(name, fresh, freshBatch.batch).eligible);
       const moved = [];
       for (const name of eligible) {
         const result = await applyBatchAwareOrderMove([name], 'print', { status: 'print' });
@@ -2612,6 +2664,13 @@
 
   async function saveDraftBeforeNavigation() {
     if (allocationSaveBusy) return false;
+    if (activeBatch && metadataBatchId === activeBatch.id && metadataBaseline) {
+      const name = document.getElementById('blanks-receive-reference-label'), date = document.getElementById('blanks-receive-reference-date');
+      if (name && date && (name.value !== metadataBaseline.label || date.value !== metadataBaseline.orderedDate)) {
+        if (!window.confirm('Batch name or ordered date has unsaved changes. Discard those changes and leave? Choose Cancel to return and save them.')) return false;
+        name.value = metadataBaseline.label; date.value = metadataBaseline.orderedDate;
+      }
+    }
     return !dirty && !receivingSavePromise ? true : saveReceiving();
   }
 
@@ -2674,22 +2733,17 @@
         return;
       }
 
-      const supplierOrderNumber = window.prompt(
-        `Enter the S&S order number for these ${cartOrders.length} orders. If they belong to different S&S orders, use Receive Batches to link each shipment separately.`
-      );
-      if (supplierOrderNumber === null) return;
-      if (!supplierOrderNumber.trim()) {
-        showMoveNotice('An S&S order number is required to create a searchable receiving record.');
-        return;
-      }
-
-      const orderNames = cartOrders.map(order => order.name).filter(Boolean);
+      const choice = await window.materialBatchUi.pick({ kind: 'apparel', orders: cartOrders,
+        requireSupplier: true, title: 'Mark apparel Ordered · save batch' });
+      if (!choice || !isShopifyBoard()) return;
+      const selectedOrders = choice.orders;
+      const orderNames = selectedOrders.map(order => order.name).filter(Boolean);
       markOrderedInFlight = true;
       button.disabled = true;
       button.textContent = `Marking ${orderNames.length} ordered...`;
       let manifestSaved = false;
       try {
-        const saved = await saveBatchForOrders(cartOrders, { supplierOrderNumber: supplierOrderNumber.trim() });
+        const saved = await saveBatchForOrders(selectedOrders, { supplierOrderNumber: choice.supplierOrderNumber, label: choice.label, orderedDate: choice.orderedDate });
         if (!saved?.batch) throw new Error('These orders have no supplier garments to receive.');
         manifestSaved = true;
         const moved = await applyBatchAwareOrderMove(orderNames, 'blanks', { blanksOrdered: 1 });

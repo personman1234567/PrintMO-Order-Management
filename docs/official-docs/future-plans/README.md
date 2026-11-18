@@ -24,6 +24,9 @@
 
 | Feature / plan | Status | Milestone | Graduation authority | Plan |
 |---|---|---|---|---|
+| Storefront Merchandise Checkout | `[In Progress]` | Owner-deferred; proofs and architecture assessment retained | Separate owner resumption and scoped lifecycle acceptance | [storefront-checkout-proof-plan.md](storefront-checkout-proof-plan.md) |
+| Storefront Management Workspace | `[Implemented Candidate]` | Live appearance, in-place product edits, shared new-owner setup and reporting registry live | Real owner/product acceptance and separate launch review | [storefront-setup-workspace-plan.md](storefront-setup-workspace-plan.md) |
+| Storefront Reports Workspace | `[Implemented Candidate]` | Real Shopify reporting deployed; Dallas owner review next | Owner acceptance, report accuracy and performance/read-only gates | [storefront-reports-workspace-plan.md](storefront-reports-workspace-plan.md) |
 | Supplier Inventory Sync | `[Implemented Candidate]` | Observation pilot | Verified supplier/local separation and checkout acceptance | [supplier-inventory-sync-plan.md](supplier-inventory-sync-plan.md) |
 | Blanks Batch Receiving Workflow | `[Implemented Candidate]` | v1.4 Backlog | `features/batch-receiving.md` | [blanks-batch-receiving-plan.md](blanks-batch-receiving-plan.md) |
 | Order Manager UX Overhaul | `[In Progress]` | Staged improvements | Current workflow and UI reference docs after shop acceptance | [order-manager-ux-overhaul-master-spec.md](order-manager-ux-overhaul-master-spec.md) |

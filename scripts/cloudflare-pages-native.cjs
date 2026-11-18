@@ -83,13 +83,13 @@ function buildArtifact({ root = ROOT, env = process.env, release = env.PRINTMO_R
   if (!html.includes('__SHOPIFY_API_KEY__')) throw new Error('Shopify API key placeholder missing.');
   fs.writeFileSync(index, html.replace('__SHOPIFY_API_KEY__', apiKey));
   const buildEnv = { ...env, PRINTMO_RELEASE_ID: release };
-  for (const file of ['index.html', 'customer-order.html']) run(root, path.join(root, 'scripts/cache-bust-html.js'), [path.join(output, file)], buildEnv);
+  for (const file of ['index.html', 'customer-order.html', 'storefront-reports-preview.html']) run(root, path.join(root, 'scripts/cache-bust-html.js'), [path.join(output, file)], buildEnv);
   run(root, path.join(root, 'scripts/build-placement-editor.js'), ['--output', path.join(output, 'placement-editor')], buildEnv);
   if (sha256(path.join(source, 'renderer.js')) !== sourceHash) throw new Error('Packaging changed tracked web renderer source.');
   if (sha256(path.join(output, 'renderer.js')) !== sha256(path.join(root, 'renderer.js'))) throw new Error('Packaged renderer does not match root source.');
   for (const file of required) if (!fs.existsSync(path.join(output, file)) || !fs.statSync(path.join(output, file)).isFile()) throw new Error(`Missing required deploy file: ${file}`);
   const marker = `<meta name="printmo-release" content="${release}">`;
-  for (const file of ['index.html', 'customer-order.html']) if (!fs.readFileSync(path.join(output, file), 'utf8').includes(marker)) throw new Error(`Missing release marker in ${file}.`);
+  for (const file of ['index.html', 'customer-order.html', 'storefront-reports-preview.html']) if (!fs.readFileSync(path.join(output, file), 'utf8').includes(marker)) throw new Error(`Missing release marker in ${file}.`);
   if (fs.readFileSync(index, 'utf8').includes('__SHOPIFY_API_KEY__')) throw new Error('API key placeholder unresolved.');
   if (!fs.existsSync(path.join(output, 'placement-editor/index.html'))) throw new Error('Placement editor is missing.');
   console.log(`Prepared Pages release ${release}: ${output}`);

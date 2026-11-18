@@ -350,6 +350,58 @@ export function createDraftOrderService(env, deps) {
     await (await event(owner, id, assetId, actor, remove ? 'remove' : 'assign')).run();
     return detail(id);
   }
+  async function markStudioCheckoutReady(id, readyAt) {
+    const owner = await shop();
+    await db.prepare(`UPDATE draft_order_projection SET studio_checkout_ready_at = ?
+      WHERE shop_id = ? AND draft_gid = ? AND studio_checkout_ready_at IS NULL`)
+      .bind(readyAt, owner.id, id).run();
+  }
+  async function studioCheckoutActivity(params, clock = Date.now()) {
+    if (!enabled()) fail('DRAFT_ACCESS_REQUIRED', 'Draft order access is required to view checkout exports.', 403);
+    const validDate = text => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(text || '') && Number.isFinite(Date.parse(text));
+    const after = params.get('after'), before = params.get('before');
+    if (!validDate(after) || !validDate(before) || after >= before)
+      fail('INVALID_RANGE', 'Choose a valid Studio Activity date range.');
+    const limit = Number(params.get('limit') ?? 60);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+      fail('INVALID_LIMIT', 'Choose a page size between 1 and 100.');
+    const cursor = params.get('cursor');
+    const [cursorDate, cursorId, extra] = cursor ? cursor.split('|') : [];
+    if (cursor && (!validDate(cursorDate) || !/^draft_[a-f0-9]{32}$/.test(cursorId || '') || extra !== undefined))
+      fail('INVALID_CURSOR', 'Refresh Studio Activity and try again.');
+    const owner = await shop();
+    const configuredHours = Number(env.RETAIN_PREVIEW_HOURS);
+    const hours = Number.isFinite(configuredHours) && configuredHours > 0 ? configuredHours : 24;
+    const cutoff = new Date(clock - hours * 3600_000).toISOString();
+    const paid = `m.order_gid = p.order_gid AND json_extract(p.summary_json, '$.financialStatus') IN ('PAID', 'PARTIALLY_REFUNDED', 'REFUNDED')`;
+    const query = db.prepare(`SELECT a.id, a.filename, a.content_type, a.byte_size, a.items_json, a.role, a.placement, a.preview_kind,
+        p.draft_gid, p.studio_checkout_ready_at AS ready_at,
+        CASE WHEN ${paid} THEN p.order_gid END AS order_gid,
+        CASE WHEN ${paid} THEN json_extract(p.summary_json, '$.orderName') END AS order_name
+      FROM draft_order_projection p
+      JOIN draft_artwork a ON a.shop_id = p.shop_id AND a.draft_gid = p.draft_gid
+      LEFT JOIN asset_manifests m ON m.id = a.id AND m.shop_id = a.shop_id AND m.state = 'active'
+      WHERE p.shop_id = ? AND p.studio_checkout_ready_at >= ? AND p.studio_checkout_ready_at < ?
+        AND a.state = 'active' AND a.created_by = 'studio-checkout'
+        AND ((p.deleted_at IS NULL AND p.studio_checkout_ready_at >= ?) OR (${paid}))
+        ${cursor ? 'AND (p.studio_checkout_ready_at < ? OR (p.studio_checkout_ready_at = ? AND a.id < ?))' : ''}
+      ORDER BY p.studio_checkout_ready_at DESC, a.id DESC LIMIT ?`);
+    const { results = [] } = await query.bind(owner.id, after, before, cutoff,
+      ...(cursor ? [cursorDate, cursorDate, cursorId] : []), limit + 1).all();
+    const page = results.slice(0, limit), last = page.at(-1), hasMore = results.length > limit;
+    return { items: page.map(row => {
+      const lines = parse(row.items_json, []);
+      const workspaces = new Set(lines.map(line => line.customAttributes?.find(attr => attr.key === '_preparedItemId')?.value || ''));
+      const workspace = workspaces.size === 1 ? workspaces.values().next().value : '';
+      return {
+        id: row.id, filename: row.filename, contentType: row.content_type, size: row.byte_size, uploadedAt: row.ready_at,
+        metadata: { source: 'studio-checkout', designref: row.draft_gid, workspaceid: workspace,
+          producttitle: lines[0]?.title || '', side: row.placement === 'other' ? '' : row.placement,
+          role: row.preview_kind === 'mobile-front' ? 'mobile-preview' : row.role,
+          ordergid: row.order_gid || '', ordername: row.order_name || '' },
+      };
+    }), hasMore, cursor: hasMore ? `${last.ready_at}|${last.id}` : null };
+  }
   async function findAsset(assetId) {
     const owner = await shop();
     return db.prepare(`SELECT id, object_key FROM draft_artwork WHERE shop_id = ? AND id = ? AND state = 'active'`).bind(owner.id, assetId).first();
@@ -410,5 +462,5 @@ export function createDraftOrderService(env, deps) {
       return mutate(id, parts[2], await request.json(), actor, request.method === 'DELETE');
     fail('METHOD_NOT_ALLOWED', 'This draft action is unavailable.', 405);
   }
-  return { handle, detail, list, findAsset, deleted, reconcile, enabled };
+  return { handle, detail, list, findAsset, deleted, reconcile, enabled, markStudioCheckoutReady, studioCheckoutActivity };
 }

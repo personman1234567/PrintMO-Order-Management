@@ -25,6 +25,8 @@
   function attentionReasons(batch) {
     const reasons = [];
     const missing = Math.max(0, Number(batch?.missingGarments) || 0);
+    const readiness = Math.max(0, Number(batch?.pendingReadinessOrders) || 0);
+    if (readiness) reasons.push(readiness + ' orders need readiness review');
     const pending = Math.max(0, Number(batch?.pendingAllocationLines) || 0);
     const state = batch?.supplierStatus?.state;
     if (missing) reasons.push(state === 'delivered' ? `Delivered · ${missing} still to check in` : `${missing} garments still to check in`);

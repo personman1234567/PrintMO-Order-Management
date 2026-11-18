@@ -13,21 +13,28 @@
     "dist": "electron-builder",
     "prepare:cloudflare": "bash scripts/prepare-cloudflare-pages-upload.sh",
     "build:placement-editor": "node scripts/build-placement-editor.js",
-    "test:prepared-orders": "node --test order-manager-proxy/prepared-order-discounts.test.mjs order-manager-proxy/prepared-colors.test.mjs order-manager-proxy/prepared-choices.test.mjs order-manager-proxy/prepared-order-drafts.test.mjs order-manager-proxy/prepared-order-links.test.mjs order-manager-proxy/prepared-publishing.test.mjs order-manager-proxy/prepared-recipient.test.mjs order-manager-proxy/prepared-size-guides.test.mjs order-manager-proxy/prepared-price-products.test.mjs scripts/prepared-orders-workspace.test.js scripts/prepared-viewport.test.js scripts/prepared-quantities.browser.test.js scripts/prepared-colors.test.js order-manager-proxy/prepared-catalog.test.mjs",
+    "test:studio-order-proof": "node --test order-manager-proxy/studio-merchandise.test.mjs order-manager-proxy/studio-checkout-return.test.mjs",
+    "test:prepared-orders": "node --test order-manager-proxy/studio-merchandise.test.mjs order-manager-proxy/studio-checkout.test.mjs order-manager-proxy/prepared-order-discounts.test.mjs order-manager-proxy/prepared-artwork-transport.test.mjs order-manager-proxy/prepared-colors.test.mjs order-manager-proxy/prepared-choices.test.mjs order-manager-proxy/prepared-order-drafts.test.mjs order-manager-proxy/prepared-order-links.test.mjs order-manager-proxy/prepared-publishing.test.mjs order-manager-proxy/prepared-recipient.test.mjs order-manager-proxy/prepared-size-guides.test.mjs order-manager-proxy/prepared-price-products.test.mjs scripts/prepared-orders-workspace.test.js scripts/prepared-viewport.test.js scripts/prepared-quantities.browser.test.js scripts/prepared-colors.test.js order-manager-proxy/prepared-catalog.test.mjs",
     "deploy:cloudflare": "bash scripts/deploy-cloudflare-pages.sh",
     "repo": "node scripts/repo-tool.js",
     "docs:check": "node scripts/check-docs.js",
     "verify:phase1": "node scripts/verify-phase1.js",
     "verify:phase2": "node scripts/verify-phase2.js",
+    "test:storefront-setup": "node --test order-manager-proxy/storefront-setup.test.mjs order-manager-proxy/storefront-setup-execution.test.mjs scripts/storefront-setup-worker.test.cjs scripts/storefront-setup.browser.test.cjs",
+    "test:storefront-reports": "node --test order-manager-proxy/storefront-reports.test.mjs order-manager-proxy/storefront-fulfillment-pricing.test.mjs scripts/storefront-reports-worker.test.cjs scripts/storefront-reports.test.js scripts/storefront-reports-pdf.test.cjs scripts/storefront-reports.browser.test.cjs",
     "verify:order-list": "node --test scripts/order-list-foundation.test.js",
     "simulate:ss-feedback": "node scripts/simulate-ss-feedback.js",
     "inventory:audit": "node inventory-sync/cli.mjs audit",
     "inventory:dry-run": "node inventory-sync/cli.mjs dry-run",
-    "inventory:test": "node --test inventory-sync/inventory-sync.test.mjs inventory-sync/enrollment.test.mjs inventory-sync/registry.test.mjs"
+    "inventory:test": "node --test inventory-sync/inventory-sync.test.mjs inventory-sync/enrollment.test.mjs inventory-sync/registry.test.mjs",
+    "test:storefront-management": "node --test order-manager-proxy/storefront-management.test.mjs order-manager-proxy/storefront-reports.test.mjs scripts/storefront-management.browser.test.cjs scripts/storefront-reports-worker.test.cjs"
   },
   "dependencies": {
+    "@pdf-lib/fontkit": "1.1.1",
     "dotenv": "^16.5.0",
-    "node-fetch": "^2.6.7"
+    "node-fetch": "^2.6.7",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "5.6.205"
   },
   "devDependencies": {
     "electron": "^26.0.0",

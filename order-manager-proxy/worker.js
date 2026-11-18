@@ -1,6 +1,15 @@
+import { createStorefrontManagement, managedReportProfile } from './storefront-management.mjs';
+import { createStorefrontSetupExecution } from './storefront-setup-execution.mjs';
+import { handleStudioCheckoutRequest } from './studio-checkout.mjs';
+import { handleStudioUploads } from './studio-activity.mjs';
+import { handleStudioUsage, handleStudioUsageProjectThumbnail } from './studio-usage.mjs';
 // worker.js — Order Manager proxy + R2 Storage Browser endpoints
 import { createDraftOrderService } from './draft-orders.mjs';
+import { createStorefrontReportsService } from './storefront-reports.mjs';
+import { createStorefrontSetupService } from './storefront-setup.mjs';
+import { DEFAULT_STOREFRONT_REPORT_PROFILE } from './storefront-report-profiles.mjs';
 import { createGarmentCostService, unavailableEstimate } from './garment-costs.mjs';
+import { createPrintBatchService, orderedDate, materialBatchLabel } from './material-batches.mjs';
 import { createProductionRunService } from './production-run.mjs';
 import { handlePreparedDraftRequest, handlePublicPreparedOrderRequest } from './prepared-order-drafts.mjs';
 import { isSupplierService, consolidateSupplierEvidence, claimSupplierAttempt } from './supplier-submission.mjs';
@@ -47,6 +56,100 @@ async function handleDraftOrderRequest(request, env, origin, headers, identity) 
         return jsonResponse(result, origin, headers);
     } catch (error) { return v1Error(error, origin, headers, error.status || 500); }
 }
+
+async function storefrontReportService(env, graphql) {
+    let profiles = {};
+    try { profiles = env.STOREFRONT_REPORTS_PROFILE_JSON ? JSON.parse(env.STOREFRONT_REPORTS_PROFILE_JSON) : DEFAULT_STOREFRONT_REPORT_PROFILE; }
+    catch { throw Object.assign(new Error('Reporting configuration could not be read.'), { code: 'REPORT_CONFIG_INVALID', status: 503 }); }
+    if (env.ORDER_DB) { const shop = await env.ORDER_DB.prepare('SELECT id FROM shops WHERE shop_domain = ?').bind(shopDomain(env)).first(); if (shop) profiles = await managedReportProfile({db:env.ORDER_DB,shopId:shop.id,base:profiles}); }
+    return createStorefrontReportsService({ graphql, shopDomain: shopDomain(env), profiles });
+}
+async function handleStorefrontReports(request, env, origin, headers, identity) {
+    try {
+        const path = new URL(request.url).pathname;
+        if (path.endsWith('/owners') && request.method === 'GET') {
+            const service = await storefrontReportService(env, (query, variables, operationName) => coordinatorGraphQL(env, query, variables, operationName));
+            return jsonResponse({ owners: await service.owners(), timeZone: 'America/Chicago' }, origin, headers);
+        }
+        if (path.endsWith('/generate') && request.method === 'POST') {
+            const text = await request.text();
+            if (new TextEncoder().encode(text).byteLength > 4096) throw Object.assign(new Error('The report request is too large.'), { code: 'REPORT_REQUEST_INVALID', status: 400 });
+            let input; try { input = JSON.parse(text); } catch { throw Object.assign(new Error('The report request is invalid.'), { code: 'REPORT_REQUEST_INVALID', status: 400 }); }
+            const selected = input?.preset === 'all-time' ? { ownerId: input?.ownerId, preset: 'all-time' } : { ownerId: input?.ownerId, start: input?.start, end: input?.end };
+            if (!env.ORDER_SYNC_COORDINATOR) throw Object.assign(new Error('Live reporting is temporarily unavailable.'), { code: 'REPORT_COORDINATOR_UNAVAILABLE', status: 503 });
+            const id = env.ORDER_SYNC_COORDINATOR.idFromName(shopDomain(env));
+            const response = await env.ORDER_SYNC_COORDINATOR.get(id).fetch(new Request('https://internal/storefront-report', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: selected, actor: identity.kind + ':' + identity.subject })
+            }));
+            const data = await response.json();
+            if (!response.ok) throw Object.assign(new Error(data.error?.message || 'The report could not be prepared.'), { code: data.error?.code || 'REPORT_FAILED', status: response.status });
+            return jsonResponse(data, origin, headers);
+        }
+        throw Object.assign(new Error('This reporting action is unavailable.'), { code: 'METHOD_NOT_ALLOWED', status: 405 });
+    } catch (error) { return v1Error(error, origin, headers, error.status || 500); }
+}
+// Storefront setup separates private plans from explicit unpublished Shopify draft execution.
+async function storefrontSetupBody(request) {
+    if (!request.headers.get('content-type')?.includes('application/json')) throw Object.assign(new Error('Send a JSON setup draft.'), {code:'SETUP_REQUEST_INVALID',status:400});
+    if (Number(request.headers.get('content-length')) > 128 * 1024) throw Object.assign(new Error('The setup draft is too large.'), {code:'SETUP_TOO_LARGE',status:413});
+    const reader=request.body?.getReader();if(!reader)throw Object.assign(new Error('A setup draft is required.'),{code:'SETUP_REQUEST_INVALID',status:400});
+    const chunks=[];let size=0;for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>128*1024){await reader.cancel();throw Object.assign(new Error('The setup draft is too large.'),{code:'SETUP_TOO_LARGE',status:413});}chunks.push(part.value);}
+    const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}
+    try{return JSON.parse(new TextDecoder().decode(bytes));}catch{throw Object.assign(new Error('The setup draft could not be read.'),{code:'SETUP_REQUEST_INVALID',status:400});}
+}
+async function handleStorefrontSetup(request, env, origin, headers, identity) {
+    try {
+        const url=new URL(request.url), base='/order-manager/v1/storefront-setup';
+        const shop=await d1Shop(env);
+        const service=createStorefrontSetupService({db:requireOrderDb(env),shopId:shop.id,graphql:(query,variables,name)=>coordinatorGraphQL(env,query,variables,name)});
+        const execution=createStorefrontSetupExecution({db:requireOrderDb(env),shopId:shop.id,setup:service,shopDomain:shopDomain(env),graphql:(query,variables,name)=>coordinatorGraphQL(env,query,variables,name)});
+        let result;const after=url.searchParams.get('after')||null;
+        const action=url.pathname.match(/^\/order-manager\/v1\/storefront-setup\/drafts\/([a-f0-9-]+)\/(branding|execution|uploads)(?:\/([a-f0-9-]+))?$/i);
+        if(url.pathname===base+'/access'&&request.method==='GET')result=await execution.access();
+        else if(action){const [,id,kind,uploadId]=action;
+            if(kind==='branding'&&request.method==='GET')result=await execution.loadBranding(id);
+            else if(kind==='execution'&&request.method==='GET')result=await execution.result(id);
+            else if(kind==='execution'&&request.method==='POST')result=await execution.execute(id,await storefrontSetupBody(request),identity.kind+':'+identity.subject);
+            else if(kind==='uploads'&&request.method==='POST')result=uploadId?await execution.finishUpload(id,uploadId):await execution.stageUpload(id,await storefrontSetupBody(request));
+        } else
+        if((url.pathname===base||url.pathname===base+'/drafts')&&request.method==='GET')result=await service.listDrafts();
+        else if(url.pathname===base+'/drafts'&&request.method==='POST')result=await service.saveDraft(await storefrontSetupBody(request),identity.kind+':'+identity.subject);
+        else if(url.pathname.startsWith(base+'/drafts/')){
+            const id=decodeURIComponent(url.pathname.slice((base+'/drafts/').length));
+            if(request.method==='GET')result=await service.getDraft(id);
+            else if(request.method==='PUT')result=await service.saveDraft({...await storefrontSetupBody(request),id},identity.kind+':'+identity.subject);
+        } else if(url.pathname===base+'/collections'&&request.method==='GET')result=await service.collections({after});
+        else if(url.pathname.startsWith(base+'/collections/')&&url.pathname.endsWith('/products')&&request.method==='GET')result=await service.collectionProducts({collectionId:decodeURIComponent(url.pathname.slice((base+'/collections/').length,-'/products'.length)),after});
+        else if(url.pathname===base+'/catalog'&&request.method==='GET')result=await service.catalogSearch({query:url.searchParams.get('q')||'',after});
+        else if(url.pathname.startsWith(base+'/catalog/')&&request.method==='GET')result=await service.catalogProduct({productId:decodeURIComponent(url.pathname.slice((base+'/catalog/').length)),after});
+        if(result===undefined)return v1Error({code:'SETUP_ACTION_UNAVAILABLE',message:'This storefront setup action is unavailable.'},origin,headers,405);
+        return jsonResponse(result,origin,headers,200,{'Cache-Control':'private, no-store'});
+    } catch(error) {
+        const known=error?.code&&Number.isInteger(error.status)&&error.status>=400&&error.status<500;
+        return v1Error(known?error:{code:'SETUP_UNAVAILABLE',message:'Storefront setup could not finish this action. Your current edits are still here; try again.'},origin,headers,known?error.status:503,known?error.details:undefined);
+    }
+}
+
+// Storefront management: real per-owner editing; private product work stays reusable.
+async function handleStorefrontManagement(request,env,origin,headers,identity){
+ try{const url=new URL(request.url),base='/order-manager/v1/storefront-management',shop=await d1Shop(env),db=requireOrderDb(env),graphql=(q,v,n)=>coordinatorGraphQL(env,q,v,n);const setup=createStorefrontSetupService({db,shopId:shop.id,graphql}),execution=createStorefrontSetupExecution({db,shopId:shop.id,shopDomain:shopDomain(env),graphql,setup}),service=createStorefrontManagement({db,shopId:shop.id,shopDomain:shopDomain(env),graphql,setup,execution}),actor=identity.kind+':'+identity.subject;let result;
+ const parts=url.pathname.slice(base.length).split('/').filter(Boolean).map(decodeURIComponent),[id,area,item,action]=parts;
+ if(!id&&request.method==='GET')result=await service.list({after:url.searchParams.get('after')||null});
+ else if(!id&&request.method==='POST')result=await service.create(await storefrontSetupBody(request),actor);
+ else if(id==='register'&&request.method==='POST')result=await service.register(await storefrontSetupBody(request),actor);
+ else if(parts.length===1&&request.method==='GET')result=await service.store(id);
+ else if(area==='appearance'&&request.method==='PUT')result=await service.saveAppearance(id,await storefrontSetupBody(request),actor);
+ else if(area==='details'&&request.method==='PUT')result=await service.saveDetails(id,await storefrontSetupBody(request),actor);
+ else if(area==='work'&&request.method==='GET')result=await service.work(id);
+ else if(area==='products'&&!item&&request.method==='GET')result=await service.products(id,{after:url.searchParams.get('after')||null});
+ else if(area==='products'&&item==='new'&&request.method==='POST')result=await service.newProduct(id,await storefrontSetupBody(request),actor);
+ else if(area==='products'&&item&&action==='create'&&request.method==='POST')result=await service.createProduct(id,item,await storefrontSetupBody(request),actor);
+ else if(area==='products'&&item&&request.method==='GET')result=await service.product(id,item);
+ else if(area==='products'&&item&&request.method==='PUT')result=await service.saveProduct(id,item,await storefrontSetupBody(request),actor);
+ if(result===undefined)return v1Error({code:'METHOD_NOT_ALLOWED',message:'This storefront action is unavailable.'},origin,headers,405);return jsonResponse(result,origin,headers,200,{'Cache-Control':'private, no-store'});
+ }catch(error){const known=error?.code&&Number.isInteger(error.status)&&error.status>=400&&error.status<500;return v1Error(known?error:{code:'STOREFRONT_UNAVAILABLE',message:'The storefront action could not finish. Your entries are retained; retry the same save.'},origin,headers,known?error.status:503);}
+}
+
 const oidcCache = new Map();
 
 function decodeBase64Url(value) {
@@ -147,8 +250,13 @@ export default {
         }
 
         const origin = (request.headers.get("Origin") || "").replace(/\/+$/, "");
+        const publicStudioPath = /^\/order-manager\/v1\/studio-checkout(?:\/quote|\/[a-f0-9-]{36}\/checkout)$/.test(url.pathname);
         const publicPreparedPath = /^\/order-manager\/v1\/prepared-orders\/public\/[a-f0-9-]{36}(?:\/(checkout|quote|size-guides|colors))?$/i.test(url.pathname);
-        const allowOrigin = pickAllowOrigin(origin, env) || (publicPreparedPath && ['https://print-mo.com','https://www.print-mo.com'].includes(origin) ? origin : '');
+        const allowOrigin = pickAllowOrigin(origin, env) || ((publicPreparedPath || publicStudioPath) && ['https://print-mo.com','https://www.print-mo.com'].includes(origin) ? origin : '');
+
+        if (publicStudioPath && !['https://print-mo.com','https://www.print-mo.com'].includes(origin)) {
+            return new Response('CORS blocked', {status:403,headers:{Vary:'Origin'}});
+        }
 
         // If browser sends an Origin and it's not allowed, block
         if (origin && !allowOrigin) {
@@ -170,13 +278,26 @@ export default {
             });
         }
 
+        // Studio creates only validated, short-lived checkout snapshots; no staff authority.
+        if (publicStudioPath) {
+            try {
+                const result = await handleStudioCheckoutRequest(request, env, { graphql: coordinatorGraphQL, drafts: draftOrderService(env), waitUntil: work => ctx.waitUntil(work) });
+                return jsonResponse(result, allowOrigin || origin, reqAllowHeaders, 200, { 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' });
+            } catch (error) {
+                return v1Error(error?.code ? error : {code:'CHECKOUT_UNAVAILABLE',message:'Your checkout could not be prepared. Retry or contact Print-MO.'},allowOrigin || origin,reqAllowHeaders,error.status || 503);
+            }
+        }
+
         // A public prepared-order bearer link permits review and checkout only.
         // Publication, editing and revocation stay below staff authentication.
         if (publicPreparedPath) {
             try {
                 return await handlePublicPreparedOrderRequest(request, env, { graphql: coordinatorGraphQL, drafts: draftOrderService(env) },
                     { 'Access-Control-Allow-Origin': allowOrigin || origin || '*', Vary: 'Origin' });
-            } catch (error) { return v1Error(error?.code ? error : { code: 'CHECKOUT_UNAVAILABLE', message: 'This order could not load or continue to checkout. Try again, or contact Print-MO.' }, allowOrigin || origin || '*', reqAllowHeaders, error.status || 503); }
+            } catch (error) {
+                const failure=error?.code?error:{code:'CHECKOUT_UNAVAILABLE',message:'This order could not load or continue to checkout. Try again, or contact Print-MO.',requestId:error.requestId};
+                return v1Error(failure,allowOrigin||origin||'*',reqAllowHeaders,error.status||503,error.details);
+            }
         }
 
         // EARLY UNAUTHENTICATED ROUTES: provider signatures are the only
@@ -221,6 +342,15 @@ export default {
             });
         }
 
+        if (url.pathname === '/order-manager/v1/storefront-management' || url.pathname.startsWith('/order-manager/v1/storefront-management/')) return handleStorefrontManagement(request,env,allowOrigin || origin || '*',reqAllowHeaders,identity);
+        if (url.pathname === '/order-manager/v1/storefront-setup' || url.pathname.startsWith('/order-manager/v1/storefront-setup/')) {
+            return handleStorefrontSetup(request, env, allowOrigin || origin || '*', reqAllowHeaders, identity);
+        }
+
+        if (url.pathname.startsWith('/order-manager/v1/storefront-reports/')) {
+            return handleStorefrontReports(request, env, allowOrigin || origin || '*', reqAllowHeaders, identity);
+        }
+
         if (url.pathname === '/order-manager/v1/prepared-order-drafts' || url.pathname.startsWith('/order-manager/v1/prepared-order-drafts/')) {
             try {
                 return await handlePreparedDraftRequest(request, env, { graphql: coordinatorGraphQL, drafts: draftOrderService(env) }, identity,
@@ -232,6 +362,34 @@ export default {
         }
         if (url.pathname === '/order-manager/v1/drafts' || url.pathname.startsWith('/order-manager/v1/drafts/')) {
             return handleDraftOrderRequest(request, env, allowOrigin || origin || '*', reqAllowHeaders, identity);
+        }
+        if (url.pathname === '/order-manager/v1/print-batches') {
+            try {
+                const shop = await d1Shop(env);
+                const service = createPrintBatchService(requireOrderDb(env), shop.id, {
+                    readOrder: async id => {
+                        const read = await readProductionMetafield(env, id);
+                        return { name: read.order.name, version: read.state.revision,
+                            eligible: !read.order.cancelledAt && read.order.displayFulfillmentStatus !== 'FULFILLED'
+                                && !read.state.archivedAt && read.state.stage !== 'completed',
+                            ordered: Boolean(read.state.readiness.printsOrdered), ready: Boolean(read.state.readiness.printsReady), savedSheet: Boolean(read.state.printsOnSavedSheet) };
+                    },
+                    mutateOrder: async (id, expectedVersion, patch, idempotencyKey) => {
+                        const inner = new Request(new URL('/order-manager/v1/orders/' + encodeURIComponent(id) + '/production', request.url),
+                            { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedVersion, patch, idempotencyKey }) });
+                        const response = await handleV1ProductionPatch(inner, env, allowOrigin || origin || '*', reqAllowHeaders, identity);
+                        const result = await response.json();
+                        if (response.status !== 200 || !result.production) throw Object.assign(new Error('Canonical print save not confirmed.'), { code: result.error?.code || 'SAVE_UNCONFIRMED' });
+                    }
+                });
+                const actor = shelfActor(identity);
+                let result;
+                if (request.method === 'GET') result = url.searchParams.has('id') ? { batch: await service.get(url.searchParams.get('id')) } : await service.list(url.searchParams.get('before'));
+                else if (request.method === 'POST') { const body = await request.json(); result = { batch: await service.create(body, actor) }; }
+                else if (request.method === 'PATCH') { const body = await request.json(); result = { batch: await (body.action === 'metadata' ? service.metadata(body) : service.run(body, actor)) }; }
+                else return v1Error({ code: 'METHOD_NOT_ALLOWED', message: 'Batch action unavailable.' }, allowOrigin || origin || '*', reqAllowHeaders, 405);
+                return jsonResponse(result, allowOrigin || origin || '*', reqAllowHeaders, 200, { 'Cache-Control': 'private, no-store' });
+            } catch (error) { return v1Error({ code: error.code || 'BATCH_UNAVAILABLE', message: error.code ? error.message : 'The print batch could not be saved. Refresh to review its current state.' }, allowOrigin || origin || '*', reqAllowHeaders, error.status || 503); }
         }
         if (url.pathname === '/order-manager/v1/production-run') {
             try {
@@ -295,6 +453,36 @@ export default {
         // -----------------------------
         // AUTHENTICATED R2 STORAGE ENDPOINTS
         // -----------------------------
+        if (url.pathname.startsWith('/order-manager/studio-usage/projects/')) {
+            const response = await handleStudioUsageProjectThumbnail(request, env);
+            const headers = new Headers(response.headers);
+            for (const [name, value] of Object.entries(corsHeaders(allowOrigin || origin || "*", reqAllowHeaders))) headers.set(name, value);
+            return new Response(response.body, { status: response.status, headers });
+        }
+        if (url.pathname === "/order-manager/studio-usage") {
+            const response = await handleStudioUsage(request, env);
+            const headers = new Headers(response.headers);
+            for (const [name, value] of Object.entries(corsHeaders(allowOrigin || origin || "*", reqAllowHeaders))) headers.set(name, value);
+            return new Response(response.body, { status: response.status, headers });
+        }
+        if (url.pathname === "/order-manager/storage/checkout-exports") {
+            try {
+                if (request.method !== "GET") return jsonResponse({ error: "Method not allowed" }, allowOrigin || origin, reqAllowHeaders, 405);
+                const result = await draftOrderService(env).studioCheckoutActivity(url.searchParams);
+                return jsonResponse(result, allowOrigin || origin, reqAllowHeaders, 200, { 'Cache-Control': 'private, no-store' });
+            } catch (error) {
+                return v1Error(error?.code ? error : { code: 'STUDIO_ACTIVITY_UNAVAILABLE', message: 'Checkout exports could not load. Try again.' },
+                    allowOrigin || origin, reqAllowHeaders, error.status || 503);
+            }
+        }
+
+        if (url.pathname === "/order-manager/storage/uploads" || url.pathname.startsWith("/order-manager/storage/uploads/")) {
+            const response = await handleStudioUploads(request, env);
+            const headers = new Headers(response.headers);
+            for (const [name, value] of Object.entries(corsHeaders(allowOrigin || origin || "*", reqAllowHeaders))) headers.set(name, value);
+            return new Response(response.body, { status: response.status, headers });
+        }
+
         if (url.pathname === "/order-manager/storage/list") {
             return handleStorageList(
                 request,
@@ -386,7 +574,7 @@ export default {
                 request,
                 env,
                 allowOrigin || origin || "*",
-                reqAllowHeaders
+                reqAllowHeaders, identity
             );
         }
         if (url.pathname === "/order-manager/blanks-batches/status-refresh") {
@@ -892,7 +1080,8 @@ function buildBlanksBatch(body) {
     const rawOrders = Array.isArray(body?.orders) ? body.orders.slice(0, 300) : [];
     const id = normalizeBlanksBatchId(body?.id) || makeBlanksBatchId();
     const supplierOrderNumber = safeText(body?.supplierOrderNumber, 80);
-    const label = safeText(body?.label, 120) || (supplierOrderNumber ? `S&S ${supplierOrderNumber}` : makeBlanksBatchLabel(now));
+    const label = materialBatchLabel('apparel', body?.label, now);
+    const purchaseDate = orderedDate(body?.orderedDate, now);
     const source = safeText(body?.source, 80) || "mark-in-cart-ordered";
 
     const orders = [];
@@ -980,6 +1169,7 @@ function buildBlanksBatch(body) {
         version: 1,
         id,
         label,
+        orderedDate: purchaseDate,
         supplierOrderNumber,
         purchaseOrderNumber: safeText(body?.purchaseOrderNumber, 80),
         trackingNumber: safeText(body?.trackingNumber, 120),
@@ -1007,6 +1197,8 @@ function blanksBatchIndexEntry(batch) {
         id: batch.id,
         key: blanksBatchKey(batch.id),
         label: batch.label,
+        pendingReadinessOrders: batch.canonicalReceiptRequired ? batch.orders.filter(order=>order.canonicalReceiptState !== 'in-hand').length : 0,
+        orderedDate: batch.orderedDate || (batch.createdAt || "").slice(0, 10),
         supplierOrderNumber: batch.supplierOrderNumber || "",
         purchaseOrderNumber: batch.purchaseOrderNumber || "",
         trackingNumber: batch.trackingNumber || "",
@@ -1292,7 +1484,8 @@ function applyBatchReferenceUpdate(batch, body) {
     batch.supplierOrderNumber = supplierOrderNumber;
     batch.purchaseOrderNumber = safeText(body?.purchaseOrderNumber, 80);
     batch.trackingNumber = safeText(body?.trackingNumber, 120);
-    batch.label = `S&S ${supplierOrderNumber}`;
+    if (body.label !== undefined) batch.label = materialBatchLabel('apparel', body.label, new Date(batch.createdAt));
+    if (body.orderedDate !== undefined) batch.orderedDate = orderedDate(body.orderedDate);
     batch.updatedAt = new Date().toISOString();
     return { ok: true, batch };
 }
@@ -1530,6 +1723,28 @@ async function assignOrdersToBatch(env, targetBatch, body) {
 
 function applyBatchOrderAction(batch, body) {
     const action = safeText(body?.action, 80);
+    if (action === "receive-all") {
+        if (body.confirmComplete !== true || body.expectedUpdatedAt !== batch.updatedAt)
+            return { ok: false, error: 'This batch changed. Refresh and confirm the current remaining garments.' };
+        for (const line of batch.manifest || []) {
+            const expected = Number(line.expectedQty);
+            const allocations = {};
+            for (const member of line.orderLines || []) allocations[member.orderName] = (allocations[member.orderName] || 0) + Number(member.expectedQty);
+            if (!Number.isInteger(expected) || expected < 1 || Object.values(allocations).some(q => !Number.isInteger(q) || q < 1)
+                || Object.values(allocations).reduce((sum, q) => sum + q, 0) !== expected)
+                return { ok: false, error: 'Review inconsistent garment quantities individually.' };
+        }
+        batch.canonicalReceiptRequired = true;
+        for (const member of batch.orders || []) member.canonicalReceiptState = 'pending';
+        for (const line of batch.manifest || []) {
+            line.receivedQty = Math.max(Number(line.receivedQty) || 0, Number(line.expectedQty));
+            line.confirmedAllocation = {};
+            for (const member of line.orderLines || []) line.confirmedAllocation[member.orderName] = (line.confirmedAllocation[member.orderName] || 0) + Number(member.expectedQty);
+            line.allocationConfirmed = true;
+        }
+        return { ok: true, batch: applyOldestFirstAllocation(batch) };
+    }
+
     if (action === "remove-orders") return removeOrdersFromBatch(batch, body);
     if (action === "add-orders") return addOrdersToBatch(batch, body);
     if (action === "confirm-allocation") return applyAllocationConfirmation(batch, body);
@@ -1894,7 +2109,7 @@ function isFileLike(value) {
 //  - { id, action: "update-reference", supplierOrderNumber, purchaseOrderNumber?, trackingNumber? }
 //  - updates receiving or batch membership and recalculates suggested allocation
 // -----------------------------
-async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
+async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders, identity) {
     if (!env.PREVIEWS) {
         return new Response("Missing R2 binding: PREVIEWS", { status: 500 });
     }
@@ -1931,6 +2146,8 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
             return jsonResponse({ error: "Invalid JSON body" }, allowOrigin, reqAllowHeaders, 400);
         }
 
+        try { orderedDate(body.orderedDate); materialBatchLabel('apparel', body.label); }
+        catch (error) { return v1Error(error, allowOrigin, reqAllowHeaders, 400); }
         body = await captureGarmentCosts(env, body);
         const batch = buildBlanksBatch(body);
         if (batch.source === "outside-order" && !batch.supplierOrderNumber) {
@@ -2002,6 +2219,30 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
         }
 
         const action = safeText(body?.action, 80);
+        let storageGuard = null;
+        if (action === 'receive-all' || action === 'update-reference' && body.expectedUpdatedAt !== undefined) {
+            storageGuard = await env.PREVIEWS.get(blanksBatchKey(batchId));
+            if (!storageGuard?.etag || JSON.stringify(JSON.parse(await storageGuard.text())) !== JSON.stringify(batch))
+                return v1Error({ code: 'VERSION_CONFLICT', message: 'This batch changed. Refresh before saving.' },allowOrigin,reqAllowHeaders,409);
+        }
+        const writeReviewedBatch = async value => {
+            if (!storageGuard) return writeBlanksBatch(env,value);
+            const key = blanksBatchKey(value.id);
+            const saved = await env.PREVIEWS.put(key,JSON.stringify(value,null,2),{
+                onlyIf: { etagMatches: storageGuard.etag }, httpMetadata: { contentType: 'application/json' },
+                customMetadata: { ...storageGuard.customMetadata, role: 'blanks-batch', batchId:value.id, status:value.status,
+                  createdAt:value.createdAt,expectedGarments:String(value.totals?.expectedGarments || 0),orderCount:String(value.totals?.orderCount || 0) }
+            });
+            if (!saved) return null;
+            storageGuard = saved;
+            return { key, batch:value };
+        };
+        if (action === 'update-reference') {
+            try { if (body.orderedDate !== undefined) orderedDate(body.orderedDate); if (body.label !== undefined) materialBatchLabel('apparel', body.label); }
+            catch (error) { return v1Error(error, allowOrigin, reqAllowHeaders, 400); }
+            if (body.expectedUpdatedAt !== undefined && body.expectedUpdatedAt !== batch.updatedAt)
+                return v1Error({ code: 'VERSION_CONFLICT', message: 'This batch changed. Refresh before saving.' }, allowOrigin, reqAllowHeaders, 409);
+        }
         if (action === "update-reference") {
             const reference = safeText(body?.supplierOrderNumber, 80);
             const currentIndex = await readBlanksBatchIndex(env);
@@ -2022,14 +2263,56 @@ async function handleBlanksBatches(request, env, allowOrigin, reqAllowHeaders) {
             return jsonResponse(result, allowOrigin, reqAllowHeaders, 200);
         }
 
-        const { key } = await writeBlanksBatch(env, result.batch);
+        const savedBatch = await writeReviewedBatch(result.batch);
+        if (!savedBatch) return v1Error({ code:'VERSION_CONFLICT',message:'This batch changed. Refresh to review its saved receipt.' },allowOrigin,reqAllowHeaders,409);
+        const { key } = savedBatch;
         const index = await upsertBlanksBatchIndexEntry(env, result.batch);
+        const receiptResults = [];
+        if (action === 'receive-all') {
+            for (const member of result.batch.orders.filter(order => order.fullyAccounted)) {
+                try {
+                    if (!/^gid:\/\/shopify\/Order\/\d+$/.test(member.orderId || '')) throw new Error('REVIEW');
+                    const latest = await env.PREVIEWS.head(blanksBatchKey(batchId));
+                    if (latest?.etag !== storageGuard.etag) throw new Error('REVIEW');
+                    const read = await readProductionMetafield(env, member.orderId);
+                    if (read.order.cancelledAt || read.order.displayFulfillmentStatus === 'FULFILLED' || read.state.stage === 'completed') throw new Error('REVIEW');
+                    {
+                        if (!['blanks_ordered','print'].includes(read.state.stage) || read.order.lineItems?.pageInfo?.hasNextPage) throw new Error('REVIEW');
+                        const shop = await d1Shop(env);
+                        const claims = shelfEnabled(env) ? (await requireOrderDb(env).prepare('SELECT line_item_gid, qty, pulled_qty FROM shelf_claims WHERE shop_id = ? AND order_gid = ? AND qty > 0').bind(shop.id,member.orderId).all()).results : [];
+                        if (claims.some(claim => claim.qty > claim.pulled_qty)) throw new Error('REVIEW');
+                        const expected = new Map(), actual = new Map();
+                        for (const line of result.batch.manifest) for (const part of line.orderLines || []) if (part.orderId === member.orderId || !part.orderId && part.orderName === member.name) expected.set(line.itemKey,(expected.get(line.itemKey)||0)+Number(part.expectedQty));
+                        for (const line of read.order.lineItems.nodes) {
+                            const item = { ...line, qty: Number(line.currentQuantity ?? line.quantity) - Number(claims.find(claim=>claim.line_item_gid===line.id)?.qty || 0) };
+                            if (item.qty > 0 && isBatchGarmentItem(item)) actual.set(batchManifestItemKey(item),(actual.get(batchManifestItemKey(item))||0)+item.qty);
+                        }
+                        if (actual.size !== expected.size || [...expected].some(([key,qty])=>actual.get(key)!==qty)) throw new Error('REVIEW');
+                        if (!read.state.readiness.blanksReady) {
+                        const inner = new Request(new URL('/order-manager/v1/orders/' + encodeURIComponent(member.orderId) + '/production', request.url),
+                            { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedVersion: read.state.revision,
+                              patch: { blanks_status: 1 }, idempotencyKey: 'material-apparel-' + crypto.randomUUID() }) });
+                        const saved = await handleV1ProductionPatch(inner,env,allowOrigin,reqAllowHeaders,identity);
+                        if (saved.status !== 200) throw new Error('REVIEW');
+                        }
+                    }
+                    receiptResults.push({ orderId: member.orderId, name: member.name, outcome: 'in-hand' });
+                } catch { receiptResults.push({ orderId: member.orderId, name: member.name, outcome: 'review', message: 'Receipt saved. Review changed order items, shelf pulls or readiness before marking this order In hand.' }); }
+            }
+            for (const member of result.batch.orders) {
+                const receipt = receiptResults.find(item=>item.orderId===member.orderId);
+                member.canonicalReceiptState = receipt?.outcome || 'review';
+            }
+            if (!(await writeReviewedBatch(result.batch))) return v1Error({ code:'VERSION_CONFLICT',message:'Receipt saved, but this batch changed during readiness updates. Refresh to review actual results.' },allowOrigin,reqAllowHeaders,409);
+            await upsertBlanksBatchIndexEntry(env,result.batch);
+        }
 
         return jsonResponse(
             {
                 ok: true,
                 key,
                 batch: result.batch,
+                receiptResults,
                 indexEntry: blanksBatchIndexEntry(result.batch),
                 indexUpdatedAt: index.updatedAt,
             },
@@ -6095,7 +6378,7 @@ function d1ProjectionRecord(row) {
 }
 
 function v1Error(error, allowOrigin, reqAllowHeaders, status = 500, details) {
-    const requestId = crypto.randomUUID();
+    const requestId = /^[a-f0-9-]{36}$/i.test(error?.requestId||'') ? error.requestId : crypto.randomUUID();
     const code = typeof error === 'string' ? error : error?.code || 'INTERNAL_ERROR';
     const message = typeof error === 'string' ? error : error?.message || 'Unexpected error';
     return jsonResponse({ error: { code, message, requestId, ...(details ? { details } : {}) } }, allowOrigin, reqAllowHeaders, status);
@@ -6185,6 +6468,7 @@ async function getShopifyAccessToken(env) {
 }
 
 async function performShopifyGraphQL(env, query, variables, operationName) {
+    if (operationName === "StorefrontSetupAccess") shopifyAccessTokenCache.delete(shopDomain(env));
     const token = await getShopifyAccessToken(env);
     const headers = {
         'Content-Type': 'application/json',
@@ -10507,6 +10791,7 @@ export class OrderSyncCoordinator {
         this.estimates = new Map();
         this.inflightRefreshes = new Map();
         this.inflightBootstrap = null;
+        this.activeStorefrontReport = null;
     }
 
     async reserve(operationName) {
@@ -10515,8 +10800,9 @@ export class OrderSyncCoordinator {
         this.throttle.currentlyAvailable = Math.min(this.throttle.maximumAvailable, this.throttle.currentlyAvailable + elapsed * this.throttle.restoreRate);
         this.throttle.updatedAt = now;
         const estimate = Math.max(Number(this.estimates.get(operationName) || 50), 1);
-        if (this.throttle.currentlyAvailable < estimate) {
-            await sleepMs(((estimate - this.throttle.currentlyAvailable) / Math.max(this.throttle.restoreRate, 1)) * 1000 + Math.random() * 200);
+        const reportReserve = /^Storefront(?:Report|Setup|Management)/.test(operationName) ? Math.min(250, this.throttle.maximumAvailable / 4) : 0;
+        if (this.throttle.currentlyAvailable < estimate + reportReserve) {
+            await sleepMs(((estimate + reportReserve - this.throttle.currentlyAvailable) / Math.max(this.throttle.restoreRate, 1)) * 1000 + Math.random() * 200);
         }
         this.throttle.currentlyAvailable = Math.max(0, this.throttle.currentlyAvailable - estimate);
     }
@@ -10685,9 +10971,27 @@ export class OrderSyncCoordinator {
         return result;
     }
 
+    async storefrontReport(input, actor) {
+        const key = JSON.stringify({ input, actor });
+        if (this.activeStorefrontReport) {
+            if (this.activeStorefrontReport.key === key) return this.activeStorefrontReport.promise;
+            throw Object.assign(new Error('Another storefront report is running. Retry shortly.'), { code: 'REPORT_BUSY', status: 429 });
+        }
+        const active = { key, promise: null };
+        this.activeStorefrontReport = active;
+        active.promise = Promise.resolve().then(() => storefrontReportService(this.env, (query, variables, operationName) => this.graphql(query, variables, operationName))).then(service => service.generate(input)).then(snapshot => ({ snapshot })).finally(() => {
+            if (this.activeStorefrontReport === active) this.activeStorefrontReport = null;
+        });
+        return active.promise;
+    }
+
     async fetch(request) {
         try {
             const url = new URL(request.url);
+            if (url.pathname === '/storefront-report' && request.method === 'POST') {
+                try { const body = await request.json(); return Response.json(await this.storefrontReport(body.input, body.actor)); }
+                catch (error) { return Response.json({ error: { code: error.code || 'REPORT_FAILED', message: error.message } }, { status: error.status || 500 }); }
+            }
             if (url.pathname === '/graphql' && request.method === 'POST') {
                 const body = await request.json();
                 return Response.json(await this.graphql(body.query, body.variables, body.operationName));

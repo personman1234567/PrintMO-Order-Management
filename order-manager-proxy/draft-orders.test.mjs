@@ -42,13 +42,17 @@ function fixture() {
     } };
   const service = createDraftOrderService(env, deps);
   const path = `/order-manager/v1/drafts/${encodeURIComponent(draft.id)}`;
-  const request = (suffix = '', method = 'GET', body) => service.handle(new Request(`https://worker.test${path}${suffix}`, {
+  const request = (suffix = '', method = 'GET', body, actor = 'fixture:operator') => service.handle(new Request(`https://worker.test${path}${suffix}`, {
     method, ...(body ? { body: body instanceof FormData ? body : JSON.stringify(body) } : {})
-  }), 'fixture:operator');
-  const upload = (ids = ['draft-m', 'draft-l'], role = 'design', key = 'fixture_upload_12345') => {
-    const form = new FormData(); form.set('file', new File(['<svg xmlns="http://www.w3.org/2000/svg"/>'], 'front.svg', { type: 'image/svg+xml' }));
+  }), actor);
+  const upload = (ids = ['draft-m', 'draft-l'], role = 'design', key = 'fixture_upload_12345', actor) => {
+    const form = new FormData();
+    const file = role === 'mockup'
+      ? new File([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j0i0AAAAASUVORK5CYII=', 'base64')], 'proof.png', { type: 'image/png' })
+      : new File(['<svg xmlns="http://www.w3.org/2000/svg"/>'], 'front.svg', { type: 'image/svg+xml' });
+    form.set('file', file);
     form.set('role', role); form.set('placement', 'front'); form.set('lineItemIds', JSON.stringify(ids)); form.set('uploadId', key);
-    return request('/assets', 'POST', form);
+    return request('/assets', 'POST', form, actor);
   };
   const convert = (items = draft.lineItems.nodes.map((item, i) => ({ ...item, id: `order-${i}` }))) => {
     draft.order = { id: 'gid://shopify/Order/84', name: '#1084', displayFinancialStatus: 'PENDING' };
@@ -252,7 +256,9 @@ test('paid-order-first reconciliation finds a prepared recent conversion', async
   assert.equal(f.calls.filter(call => call.operation === 'PrintMODrafts').length, 1);
 });
 test('Worker authenticates draft routes, verifies draft webhooks, retries failures and keeps private SVG tickets isolated', async () => {
-  const source = readFileSync(new URL('./worker.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(/from '(\.\/[^']+\.mjs)'/g, (_, file) => 'from ' + JSON.stringify(new URL(file, import.meta.url).href))
+    .replace("'./studio-checkout.mjs'", JSON.stringify(new URL('./studio-checkout.mjs', import.meta.url).href))
+    .replace("'./storefront-reports.mjs'", JSON.stringify(new URL('./storefront-reports.mjs', import.meta.url).href))
     .replace("'./draft-orders.mjs'", JSON.stringify(new URL('./draft-orders.mjs', import.meta.url).href))
     .replace("'./garment-costs.mjs'", JSON.stringify(new URL('./garment-costs.mjs', import.meta.url).href))
     .replace("'./production-run.mjs'", JSON.stringify(new URL('./production-run.mjs', import.meta.url).href))
@@ -274,6 +280,11 @@ test('Worker authenticates draft routes, verifies draft webhooks, retries failur
   const headers = { Authorization: `Bearer ${token}` };
   assert.equal((await worker.fetch(new Request(path), f.env)).status, 401);
   assert.equal((await worker.fetch(new Request(path, { headers }), f.env)).status, 200);
+  const activity = 'https://worker.test/order-manager/storage/checkout-exports?after=2026-11-18T00%3A00%3A00.000Z&before=2026-11-22T00%3A00%3A00.000Z';
+  assert.equal((await worker.fetch(new Request(activity), f.env)).status, 401);
+  const activityResponse = await worker.fetch(new Request(activity, { headers }), f.env);
+  assert.equal(activityResponse.status, 200);
+  assert.deepEqual(await activityResponse.json(), { items: [], hasMore: false, cursor: null });
   const asset = (await f.upload()).artwork[0];
   const ticketPath = `https://worker.test/order-manager/v1/assets/${asset.assetId}/read-ticket`;
   assert.equal((await worker.fetch(new Request(ticketPath, { method: 'POST' }), f.env)).status, 401);
@@ -317,4 +328,50 @@ test('purchased-order renderer retains every selected garment when deduplicating
   assert.equal(result.front.length, 0); assert.equal(result.extras[0].placement, 'left-chest');
   assert.deepEqual(Array.from(result.mockups[0].lineItemIds), ['order-m', 'order-l']);
   assert.deepEqual(Array.from(result.mockups[1].lineItemIds), ['order-back']);
+});
+
+test('checkout activity indexes only ready Studio files, expires unpaid visibility, and retains the same assets after late payment', async () => {
+  const f = fixture(), ready = '2026-11-18T12:00:00.000Z';
+  const params = new URLSearchParams({ after: '2026-11-18T00:00:00.000Z', before: '2026-11-22T00:00:00.000Z' });
+  const view = (at, search = params) => f.service.studioCheckoutActivity(search, Date.parse(at));
+  const first = '2026-11-18T13:00:00.000Z', afterTimer = '2026-11-19T13:00:00.000Z';
+  f.draft.lineItems.nodes[0].customAttributes = [{ key: '_preparedItemId', value: 'workspace-1' }];
+  await f.upload(['draft-m'], 'design', 'staff_file_123456789');
+  await f.upload(['draft-m'], 'design', 'studio_print_123456789', 'studio-checkout');
+  await f.upload(['draft-m'], 'mockup', 'studio_proof_123456789', 'studio-checkout');
+  assert.equal((await view(first)).items.length, 0);
+  await f.service.markStudioCheckoutReady(f.draft.id, ready);
+  await f.service.markStudioCheckoutReady(f.draft.id, first);
+  const page = await view(first);
+  assert.deepEqual(page.items.map(item => item.metadata.role).sort(), ['design', 'mockup']);
+  assert(page.items.every(item => item.uploadedAt === ready && item.metadata.workspaceid === 'workspace-1' && !item.metadata.ordergid));
+  assert(!JSON.stringify(page).includes('object_key') && !JSON.stringify(page).includes('fixture@example.test'));
+  const pagination = new URLSearchParams(params);
+  pagination.set('limit', '1');
+  const one = await view(first, pagination);
+  assert(one.hasMore);
+  pagination.set('cursor', one.cursor);
+  const two = await view(first, pagination);
+  assert.equal(two.hasMore, false);
+  assert.deepEqual([one.items[0].id, two.items[0].id], page.items.map(item => item.id));
+  assert.equal((await view(afterTimer)).items.length, 0);
+  f.env.RETAIN_PREVIEW_HOURS = '48';
+  assert.equal((await view(afterTimer)).items.length, 2);
+  delete f.env.RETAIN_PREVIEW_HOURS;
+  assert.equal(f.objects.size, 3, 'the feed expiry preserves private files for late payment');
+  f.convert();
+  await f.request();
+  assert.equal((await view(afterTimer)).items.length, 0, 'conversion with payment pending does not mark the export purchased');
+  f.draft.order.displayFinancialStatus = 'PAID';
+  await f.service.reconcile({ orderId: f.draft.order.id });
+  const purchased = await view(afterTimer);
+  assert.deepEqual(purchased.items.map(item => item.id), page.items.map(item => item.id));
+  assert(purchased.items.every(item => item.metadata.ordername === '#1084'));
+  for (const item of purchased.items) {
+    const manifest = f.sqlite.prepare('SELECT object_key FROM asset_manifests WHERE id = ?').get(item.id);
+    assert.equal(manifest.object_key, (await f.service.findAsset(item.id)).object_key);
+  }
+  await f.service.deleted(f.draft.id);
+  assert.equal((await view(afterTimer)).items.length, 2);
+  assert.equal(f.objects.size, 3);
 });

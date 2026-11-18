@@ -4,6 +4,7 @@ import { handlePreparedLinkRequest, handlePublicPreparedLinkRequest, deletePrepa
 import {preparedPriceProducts} from './prepared-price-products.mjs';
 import { preparedPublishStream } from './prepared-publish-progress.mjs';
 import { validateAlternativeGroups } from './prepared-choices.mjs';
+import {logPreparedFailure} from './prepared-artwork-transport.mjs';
 // Private admin preparation only. These records are not Shopify Draft Orders,
 // public prepared links, paid orders, or a second production-order authority.
 const ROOT = 'admin-prepared-orders/v1/';
@@ -272,5 +273,7 @@ export async function handlePreparedDraftRequest(request, env, deps, identity, h
 }
 export async function handlePublicPreparedOrderRequest(request, env, deps, headers) {
   const service = createPreparedDraftService(env, deps);
-  return Response.json(await handlePublicPreparedLinkRequest(request, env, deps, service), { headers: { ...headers, 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' } });
+  try {
+    return Response.json(await handlePublicPreparedLinkRequest(request, env, deps, service), { headers: { ...headers, 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' } });
+  } catch(error) { throw logPreparedFailure(request,error instanceof Error?error:new Error('Prepared request failed')); }
 }

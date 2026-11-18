@@ -246,6 +246,14 @@ Depth is light and structural. Borders and tonal layers separate most content; s
 
 ## Components
 
+### Studio activity
+
+Studio activity extends the existing blue/slate/white workbench with picture-first browsing. Keep its 20px semibold heading (19px below 350px), 14px working text, 16px inputs and 44px controls. Its dark text `#172033`, secondary text `#526174`, dividers `#DBE2EC` and fields `#B7C3D3` are local tonal values; `#1765C1` supplies the existing dark action blue. These do not create new semantic colors or replace the global type scale.
+
+Use compact date/search controls and All, Mockups, Uploads and AI filters above date-grouped images. The local pill filters use a pale-blue selected fill with dark-blue text. Keep two equal image columns through 900px and an auto-filling grid with a 190px minimum above it. Square white image frames contain the complete artwork; captions carry identity and time without enclosing each entry in a raised card. Media corners are 10px; controls use 6px or 8px corners. Preserve the existing app navigation and one workspace scroll boundary.
+
+Detail leads with the selected image, followed by related files and relevant context. Technical identifiers and copy actions belong in a disclosure. Desktop detail is a bounded 760px panel; through 900px it fills the available workspace above mobile navigation. Retain shared keyboard focus and return behavior, visible 2px focus outlines, readable loading/failure feedback, and usable controls at 320px. This is the local Studio composition, not a replacement for dashboard filter or card styles.
+
 ### Buttons
 
 - **Shape:** Dashboard actions use compact rectangular controls with 6px corners and explicit 14px type. Layout selection uses an 8px enclosing segment with 6px options. Targets are at least 44px high.
@@ -439,3 +447,15 @@ Garment summaries replace unavailable mockups within the existing media frame. U
 Garment summaries use fourteen authored cloth/seam pairs from `order-garment-summary.js` (`colorPairs`), plus an unknown neutral. Dark families retain darker complementary seams; never invert them mechanically to white. These colors identify families, not print-proof fabric swatches. The same vectors and pairs serve cards and the expanded detail preview.
 
 The owner-supplied fourteen-view garment sprite preserves garment and seam geometry while theming body, seam and secondary hat fills. Garment summaries distinguish chest/full-front and half/full-back placements. White-backed blue outlines communicate print areas; readable placement names share the existing caption. Unspecified sleeve sides stay unspecified.
+
+
+## Storefront management
+
+Storefronts uses a task home and focused Appearance, Products and Contact & notes editors; Reports opens the existing generator directly. Use compact contextual headers, flat divided rows, 14px working text, 16px inputs and 44px targets. No decorative owner/branding status pills, empty dashboard tiles or repeated headings. Actual product draft/status information stays plain and local to product management.
+
+Each editor has one shrinking scroll body and a compact opaque action row outside it, above existing app navigation. The shell owns safe-area allocation; do not add filler bottom padding. Image previews lead to named upload buttons, with URL fields disclosed on demand. Retain save/retry/discard behavior and the unpublished new-product boundary.
+
+
+## Admin information priority
+
+Working controls and actual data lead every admin screen. Experienced staff do not need a permanent introduction explaining the screen, badges naming an already-known source, repeated source subtitles or precautionary banners before the task. Keep reference explanations collapsed and below working controls. Show errors, incomplete-data warnings and action consequences at the affected field, result or action when they matter. Synthetic previews must remain clearly identified as samples. Empty results should not occupy a decorative panel before any work exists. This applies across Order Manager, including Storefront Reports.

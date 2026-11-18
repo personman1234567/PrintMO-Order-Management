@@ -5,6 +5,7 @@ import { mapConcurrent } from './prepared-publish-progress.mjs';
 import {recipientSizeGuides} from './prepared-size-guides.mjs';
 import {preparedColorOptions,recipientConfigurations} from './prepared-colors.mjs';
 import {calculatePreparedBulk, verifyPreparedBulkTotals, PREPARED_BULK_POLICY} from './prepared-order-discounts.mjs';
+import {PREPARED_ARTWORK_TRANSPORT,readPreparedBody,validatePreparedReferences,hydratePreparedSvgBlob} from './prepared-artwork-transport.mjs';
 const UPSTREAM = 'https://designer-preview-upload.printmobusiness.workers.dev';
 const customerUrl = (_env,id) => 'https://print-mo.com/pages/designer-studio?preparedOrder='+id;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -240,7 +241,7 @@ export async function withOptionalPreparedPreviewDeadline(work,{setTimer=setTime
   } catch { return false; }
   finally { if(timer!==undefined)clearTimer(timer); }
 }
-export async function transferProductionAssets(env,deps,service,snapshot,checkoutId,draftId,chosen,progress) {
+export async function transferProductionAssets(env,deps,service,snapshot,checkoutId,draftId,chosen,progress,actor='prepared-checkout') {
   const detail=await deps.drafts.detail(draftId),roles={front:'front',back:'back',breast:'left-chest',left:'left-sleeve',right:'right-sleeve'},jobs=new Map();
   for(const item of snapshot.record.items){
     if(!chosen.some(value=>value.itemId===item.id))continue;
@@ -248,7 +249,7 @@ export async function transferProductionAssets(env,deps,service,snapshot,checkou
     if(!lineIds.length)fail('PRODUCTION_ASSOCIATION_PENDING','Your checkout is being prepared. Retry in a moment.',503);
     const recipientFiles=(snapshot.recipientFiles||[]).filter(file=>file.itemId===item.id);
     const edited=recipientFiles.filter(file=>file.role!=='mobile-preview');
-    const files=[...edited.map(file=>({assetId:'recipient-'+item.id+'-'+file.side,mime:file.mime||'image/svg+xml',svg:file.svg,base64:file.base64,role:file.svg?'design':'mockup',placement:roles[file.side]||'other'})),
+    const files=[...edited.map(file=>({itemId:item.id,assetId:'recipient-'+item.id+'-'+file.side,mime:file.mime||'image/svg+xml',svg:file.svg,base64:file.base64,role:file.svg?'design':'mockup',placement:roles[file.side]||'other'})),
       ...recipientFiles.filter(file=>file.role==='mobile-preview'&&file.side==='front').map(file=>({assetId:'recipient-'+item.id+'-mobile-front',mime:file.mime,base64:file.base64,role:'mobile-preview',placement:'front'})),
       ...(!edited.length?item.project?.prints||[]:[]).map(print=>({assetId:print.asset.assetId,mime:print.asset.mime,role:['image/png','image/svg+xml'].includes(print.asset.mime)?'design':'mockup',placement:roles[print.side]||'other'})),
       ...(item.proofAssetId&&!edited.length?[{assetId:item.proofAssetId,mime:'image/png',role:'mockup',placement:roles[item.proofSide]||'other'}]:[]),
@@ -259,16 +260,16 @@ export async function transferProductionAssets(env,deps,service,snapshot,checkou
   for(const [key,file] of jobs){
     const uploadId='prep-'+await hash(checkoutId+key);if(progress.completedUploads.includes(uploadId))continue;
     try {
-      const bytes=file.svg?new TextEncoder().encode(file.svg):file.base64?Uint8Array.from(atob(file.base64),value=>value.charCodeAt(0)):await (await service.asset(snapshot.record.id,file.assetId)).arrayBuffer(),extension={'image/png':'.png','image/svg+xml':'.svg','image/jpeg':'.jpg','image/webp':'.webp'}[file.mime];if(!extension)fail('ARTWORK_FORMAT','An artwork file format needs attention. Contact Print-MO.');
+      const bytes=file.svg?await hydratePreparedSvgBlob(snapshot.record,file.itemId,file.svg,service):file.base64?Uint8Array.from(atob(file.base64),value=>value.charCodeAt(0)):await (await service.asset(snapshot.record.id,file.assetId)).arrayBuffer(),extension={'image/png':'.png','image/svg+xml':'.svg','image/jpeg':'.jpg','image/webp':'.webp'}[file.mime];if(!extension)fail('ARTWORK_FORMAT','An artwork file format needs attention. Contact Print-MO.');
       const form=new FormData();form.set('role',file.role);form.set('placement',file.placement);form.set('lineItemIds',JSON.stringify([...file.lineIds]));form.set('uploadId',uploadId);form.set('file',new File([bytes],'prepared-'+file.assetId.slice(0,32)+extension,{type:file.mime}));
       const request=new Request('https://internal/order-manager/v1/drafts/'+encodeURIComponent(draftId)+'/assets',{method:'POST',body:form});
       if(file.role==='mobile-preview') {
-        if(await withOptionalPreparedPreviewDeadline(()=>deps.drafts.handle(request,'prepared-checkout')))progress.completedUploads.push(uploadId);
+        if(await withOptionalPreparedPreviewDeadline(()=>deps.drafts.handle(request,actor)))progress.completedUploads.push(uploadId);
         // The next required-file checkpoint or final ready write persists this
         // progress. Optional media adds no separate unbounded storage wait.
         continue;
       }
-      await deps.drafts.handle(request,'prepared-checkout');
+      await deps.drafts.handle(request,actor);
       progress.completedUploads.push(uploadId);await writeJson(env.R2_BUCKET,ROOT(env)+'checkouts/'+checkoutId+'.json',progress);
     } catch (error) {
       if (file.role!=='mobile-preview') throw error;
@@ -276,7 +277,7 @@ export async function transferProductionAssets(env,deps,service,snapshot,checkou
     }
   }
 }
-async function recipientQuote(env,deps,service,document,body) {
+export async function recipientQuote(env,deps,service,document,body,extras={lines:[],items:[]}) {
   if(body.snapshotId!==document.purchase.snapshotId)fail('ORDER_CHANGED','Print-MO updated this order. Reload it before continuing.',409);
   const selected=selectedPreparedRecord(document.snapshot.record,body.selection);
   if(body.configurations&&env.PREPARED_RECIPIENT_COLORS_ENABLED!=='true')fail('COLORS_UNAVAILABLE','Color changes are not enabled on this order service.',409);
@@ -284,18 +285,21 @@ async function recipientQuote(env,deps,service,document,body) {
   const configured=await recipientConfigurations(selected,body.configurations,configuredService);
   const edited=recipientDesigns(configured,body.designs);
   const loadedProducts=new Map(await Promise.all([...colorProducts].map(async([id,job])=>[id,await job])));
-  const items=await enrich(env,deps,configuredService,edited.record,document.snapshot.items,loadedProducts);
+  const hasMerchandise=extras.items.some(item=>item.kind==='merchandise')&&extras.lines.some(line=>line.customAttributes?.some(attr=>attr.key==='_batch_role'&&attr.value==='merchandise'));
+  const items=!edited.record.items.length&&hasMerchandise?[]:await enrich(env,deps,configuredService,edited.record,document.snapshot.items,loadedProducts);
   for(const item of items){const saved=document.snapshot.items.find(value=>value.id===item.id);const changed=configured.items.find(value=>value.id===item.id)?.variantId!==selected.items.find(value=>value.id===item.id)?.variantId;item.images=changed?[]:saved.images||[];}
   const chosen=body.quantities===undefined?null:buildPreparedCheckoutLines(items,body.quantities,document.order.id,body.snapshotId,true);
-  const calculated=chosen?await calculatePreparedBulk(env,deps,chosen.lines,items):null;
+  const expanded=chosen?[...chosen.lines,...extras.lines]:[];
+  if(expanded.length>200)fail('ORDER_TOO_LARGE','This order has too many checkout lines. Split the order before continuing.');
+  const primaryQuantity=expanded.filter(line=>line.customAttributes?.some(attr=>attr.key==='_batch_role'&&['garment','merchandise'].includes(attr.value))).reduce((sum,line)=>sum+line.quantity,0);
+  if(primaryQuantity>10000)fail('ORDER_TOO_LARGE','This order has too many items. Split the order before continuing.');
+  const calculated=chosen?await calculatePreparedBulk(env,deps,expanded,[...items,...extras.items]):null;
   const quoteId=await hash(JSON.stringify({policyVersion:PREPARED_BULK_POLICY,snapshotId:body.snapshotId,designs:edited.designs,items,
-    ...(chosen?{chosen:chosen.chosen,pricing:calculated.pricing}:{}),...(body.selection?{selection:body.selection}:{}),...(body.configurations?{configurations:body.configurations}:{})}));
+    ...(chosen?{chosen:chosen.chosen,pricing:calculated.pricing,...(extras.items.length?{extras:extras.items}:{})}:{}),...(body.selection?{selection:body.selection}:{}),...(body.configurations?{configurations:body.configurations}:{})}));
   return {...edited,items,quoteId,...(calculated?{pricing:calculated.pricing,checkoutInput:calculated.input}:{})};
 }
 async function checkout(request,env,deps,service,id,document,isQuote=false) {
-  if(Number(request.headers.get('Content-Length'))>24*1024*1024)fail('REQUEST_TOO_LARGE','This order selection is too large.',413);
-  const raw=await request.text();if(new TextEncoder().encode(raw).length>24*1024*1024)fail('REQUEST_TOO_LARGE','This order selection is too large.',413);
-  let body;try{body=JSON.parse(raw)}catch{fail('INVALID_JSON','Your quantities could not be read. Try again.');}
+  const body=await readPreparedBody(request);
   if(body.snapshotId!==document.purchase.snapshotId)fail('ORDER_CHANGED','Print-MO updated this order. Reload it to review the changes before checkout.',409);
   const selectedIds=new Set(preparedSelection(document.snapshot.record,body.selection));
   for(const [itemId,values] of Object.entries(body.quantities||{}))if(!selectedIds.has(itemId)&&Object.values(values||{}).some(quantity=>Number(quantity)>0))fail('INVALID_SELECTION','An unselected option cannot be purchased. Review your order.');
@@ -307,13 +311,30 @@ async function checkout(request,env,deps,service,id,document,isQuote=false) {
     try{quote=await job}finally{if(quoteFlights.get(key)===job)quoteFlights.delete(key);}
   }else quote=await recipientQuote(env,deps,service,document,body);
   if(isQuote)return {quoteId:quote.quoteId,items:quote.items,...(quote.pricing?{pricing:quote.pricing}:{})};
+  return completePreparedCheckout(request,env,deps,service,id,document,body,quote);
+}
+// Shared completion path for validated Prepared and ordinary Studio snapshots.
+export async function completePreparedCheckout(request,env,deps,service,id,document,body,quote,{studioActivity=false}={}) {
+  async function publishActivity(progress) {
+    if (!studioActivity || !progress.readyAt || !deps.drafts.markStudioCheckoutReady) return;
+    const job = deps.drafts.markStudioCheckoutReady(progress.draftId, progress.readyAt)
+      .catch(() => console.error('Studio checkout activity indexing failed'));
+    if (deps.waitUntil) deps.waitUntil(job);
+    else await job;
+  }
   if(!UUID.test(body.sessionId||''))fail('INVALID_SESSION','Reload this order, then try checkout again.');
   if(!quote.checkoutInput||body.quoteId!==quote.quoteId)fail('PRICE_CHANGED','The price, quantities or design changed. Refresh the order price and retry checkout.',409);
-  const chosen=buildPreparedCheckoutLines(quote?.items||document.snapshot.items.filter(item=>selectedIds.has(item.id)),body.quantities,id,body.snapshotId);
+  const hasMerchandise=quote.checkoutInput.lineItems.some(line=>line.customAttributes?.some(attr=>attr.key==='_batch_role'&&attr.value==='merchandise'));
+  const chosen=buildPreparedCheckoutLines(quote.items,body.quantities,id,body.snapshotId,hasMerchandise);
   const files=recipientArtwork(document.snapshot.record,quote?.designs||{},body.artwork,new Set(chosen.chosen.map(value=>value.itemId)),body.previews,body.frontPreviews);
+  Object.assign(request.preparedDiagnostic,{stage:'prepared-source',...await validatePreparedReferences(document.snapshot.record,files,service)});
+  request.preparedDiagnostic.stage='checkout';
   const checkoutId=await hash(JSON.stringify({policyVersion:PREPARED_BULK_POLICY,id,snapshotId:body.snapshotId,sessionId:body.sessionId,chosen:chosen.chosen,...(quote?{quoteId:quote.quoteId,artworkHash:await hash(JSON.stringify(files))}:{})})),key=ROOT(env)+'checkouts/'+checkoutId+'.json';
   const existing=await readJson(env.R2_BUCKET,key);
-  if(existing?.value.state==='ready'&&existing.value.pricingVerified)return {checkoutUrl:existing.value.url};
+  if(existing?.value.state==='ready'&&existing.value.pricingVerified){
+    await publishActivity(existing.value);
+    return {checkoutUrl:existing.value.url};
+  }
   let progress=existing?.value;
   if(!progress?.draftId&&progress?.state==='pending'){
     const recovered=checked(await deps.graphql(env,PREPARED_CHECKOUT_RECOVER,{query:'tag:pm-prepared-'+checkoutId.slice(0,40)},'PreparedCheckoutRecover')).draftOrders.nodes[0];
@@ -338,9 +359,13 @@ async function checkout(request,env,deps,service,id,document,isQuote=false) {
     verifyPreparedBulkTotals(recovered,quote.pricing);progress.pricingVerified=true;await writeJson(env.R2_BUCKET,key,progress);
   }
   if(quote){progress.recipientDesigns=quote.designs;await writeJson(env.R2_BUCKET,key,progress);}
-  await transferProductionAssets(env,deps,service,{...document.snapshot,recipientFiles:files},checkoutId,progress.draftId,chosen.chosen,progress);
+  await transferProductionAssets(env,deps,service,{...document.snapshot,recipientFiles:files},checkoutId,progress.draftId,chosen.chosen,progress,studioActivity?'studio-checkout':'prepared-checkout');
   const url=new URL(progress.url);if(url.protocol!=='https:'||!(url.hostname==='print-mo.com'||url.hostname==='www.print-mo.com'||url.hostname.endsWith('.myshopify.com')||url.hostname.endsWith('.shopify.com')))fail('CHECKOUT_UNAVAILABLE','The checkout address could not be verified. Contact Print-MO.',502);
-  progress.state='ready';await writeJson(env.R2_BUCKET,key,progress);return {checkoutUrl:progress.url};
+  progress.state='ready';
+  if (studioActivity) progress.readyAt=new Date().toISOString();
+  await writeJson(env.R2_BUCKET,key,progress);
+  await publishActivity(progress);
+  return {checkoutUrl:progress.url};
 }
 export async function handlePublicPreparedLinkRequest(request,env,deps,service) {
   const match=new URL(request.url).pathname.match(/^\/order-manager\/v1\/prepared-orders\/public\/([a-f0-9-]{36})(?:\/(checkout|quote|size-guides|colors))?$/i);
@@ -355,7 +380,7 @@ export async function handlePublicPreparedLinkRequest(request,env,deps,service) 
   if(request.method==='GET'&&match[2]==='size-guides')return recipientSizeGuides(env,deps,document.snapshot.record);
   if(request.method==='GET'&&!match[2]){
     const template=await recipientTemplate(selectedPreparedRecord(document.snapshot.record),document.snapshot.items,service,document.order.template,{preferPublished:true});
-    return {order:{id:document.order.id,url:customerUrl(env,match[1]),reference:document.order.reference,title:document.snapshot.record.title,preparedFor:document.snapshot.record.preparedFor,customerMessage:document.snapshot.record.customerMessage,expiresAt:document.order.expiresAt,snapshotId:document.purchase.snapshotId,items:document.snapshot.items,choices:recipientChoicePresentations(document.snapshot.choices,document.snapshot.record,template),referenceImages:document.snapshot.referenceImages||[],template:{...template,purchase:document.purchase}}};
+    return {order:{id:document.order.id,url:customerUrl(env,match[1]),reference:document.order.reference,title:document.snapshot.record.title,preparedFor:document.snapshot.record.preparedFor,customerMessage:document.snapshot.record.customerMessage,expiresAt:document.order.expiresAt,snapshotId:document.purchase.snapshotId,items:document.snapshot.items,choices:recipientChoicePresentations(document.snapshot.choices,document.snapshot.record,template),referenceImages:document.snapshot.referenceImages||[],template:{...template,purchase:{...document.purchase,artworkTransport:PREPARED_ARTWORK_TRANSPORT}}}};
   }
   if(request.method==='POST'&&['checkout','quote'].includes(match[2])){
     const key=(request.headers.get('CF-Connecting-IP')||'unknown')+':'+match[1]+':'+match[2],minute=Math.floor(Date.now()/60000),previous=attempts.get(key),count=previous?.minute===minute?previous.count+1:1;

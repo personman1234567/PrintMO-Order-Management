@@ -2,7 +2,7 @@
  * another workspace's controls or create a second order cache. */
 (() => {
   const destinations = new Map();
-  const views = { orders: 'orders-view', drafts: 'drafts-view', prepared: 'prepared-orders-view', inventory: 'inventory-view',
+  const views = { orders: 'orders-view', drafts: 'drafts-view', prepared: 'prepared-orders-view', reports: 'storefront-reports-view', storefronts: 'storefront-setup-view', inventory: 'inventory-view',
     previous: 'previous-orders-view', storage: 'storage-view' };
   let ready = false, lastOrdersTab = 'pipeline';
   let mobileGuard = null;
@@ -13,9 +13,9 @@
   function navigate(view, { mobileTab, scrollTop = false, force = false, mobileGuarded = false } = {}) {
     const next = Object.hasOwn(views, view) ? view : 'orders';
     if (!force && !mobileGuarded && mobileWorkspace() && mobileGuard?.(() => navigate(view, { mobileTab, scrollTop, mobileGuarded: true })) === false) return false;
-    if (['drafts', 'prepared'].includes(next) && document.body.dataset.orderSource !== 'shopify') return false;
+    if (['drafts', 'prepared', 'reports', 'storefronts'].includes(next) && document.body.dataset.orderSource !== 'shopify') return false;
     const previous = document.body.dataset.activeView || 'orders';
-    if (!force && previous !== next && destinations.get(previous)?.canLeave?.() === false) return false;
+    if (!force && previous !== next && destinations.get(previous)?.canLeave?.({ destination: next, resume: () => navigate(view, { mobileTab, scrollTop, force: true, mobileGuarded: true }) }) === false) return false;
     if (previous === 'orders' && next !== 'orders') lastOrdersTab = document.body.dataset.activeTab || 'pipeline';
     if ((previous !== next || mobileTab) && document.body.classList.contains('detail-open')) document.getElementById('detail-close')?.click();
     if (previous !== next) {
@@ -98,7 +98,7 @@
     new MutationObserver(() => {
       const shopify = document.body.dataset.orderSource === 'shopify';
       document.querySelector('[data-view="drafts"]')?.toggleAttribute('hidden', !shopify);
-      if (!shopify && document.body.dataset.activeView === 'drafts') navigate('orders', { force: true });
+      if (!shopify && ['drafts', 'reports', 'storefronts'].includes(document.body.dataset.activeView)) navigate('orders', { force: true });
     }).observe(document.body, { attributes: true, attributeFilter: ['data-order-source'] });
   });
 })();

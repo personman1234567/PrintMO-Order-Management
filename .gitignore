@@ -49,9 +49,19 @@ inventory-sync/.enrollment-*/
 
 # Task-local baselines, previews, test output, downloads and packaged candidates
 /tmp/
+/order-manager-proxy/tmp/
+/.studio-worker-build/
+/.impeccable/critique/
+/.impeccable/review/
 
-# Local Prepared Orders verification and deployment logs
+# Local Prepared Orders and Studio verification and deployment logs
 /.prepared-*.log
+/.studio-*.log
+
+# Raw Storefront Reports baseline captures
+/docs/official-docs/future-plans/assets/storefront-reports/phase0/baseline.json
+/docs/official-docs/future-plans/assets/storefront-reports/phase0/artifact-source-manifest.json
+/docs/official-docs/future-plans/assets/storefront-reports/phase0/artifact-source-manifest.sha256
 
 # Local secret configuration; retain shareable example templates
 .env.*

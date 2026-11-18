@@ -22,8 +22,17 @@ function rsaJwt(privateKey, kid, payload) {
 async function run() {
   const root = path.join(__dirname, '..');
   const workerSource = fs.readFileSync(path.join(root, 'order-manager-proxy', 'worker.js'), 'utf8')
+    .replace("'./studio-checkout.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'studio-checkout.mjs')).href))
+    .replace("'./studio-activity.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'studio-activity.mjs')).href))
+    .replace("'./studio-usage.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'studio-usage.mjs')).href))
+    .replace("'./storefront-setup.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'storefront-setup.mjs')).href))
+    .replace("'./storefront-management.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'storefront-management.mjs')).href))
+    .replace("'./storefront-setup-execution.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'storefront-setup-execution.mjs')).href))
+    .replace("'./storefront-reports.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'storefront-reports.mjs')).href))
+    .replace("'./storefront-report-profiles.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'storefront-report-profiles.mjs')).href))
     .replace("'./draft-orders.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'draft-orders.mjs')).href))
     .replace("'./garment-costs.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'garment-costs.mjs')).href))
+    .replace("'./material-batches.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'material-batches.mjs')).href))
     .replace("'./production-run.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'production-run.mjs')).href))
     .replace("'./prepared-order-drafts.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'prepared-order-drafts.mjs')).href))
     .replace("'./supplier-submission.mjs'", JSON.stringify(require('url').pathToFileURL(path.join(root, 'order-manager-proxy', 'supplier-submission.mjs')).href));

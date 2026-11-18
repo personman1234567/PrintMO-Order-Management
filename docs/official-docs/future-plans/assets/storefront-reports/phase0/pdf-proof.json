@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "artifact": "E:\\PrintMO\\PrintMO-Order-Management\\dist\\cloudflare-order-manager-web-1794436351349-558498f5",
+  "csp": "default-src 'self'; img-src 'self' data: blob: https:; script-src 'self' https: 'unsafe-inline'; style-src 'self' https: 'unsafe-inline'; connect-src 'self' https: wss://order-manager-proxy.printmobusiness.workers.dev; font-src 'self' data: https:; object-src 'none'; base-uri 'self';",
+  "browser": "157.0.4341.42",
+  "proof": {
+    "generatedBytes": 3935,
+    "generationWorkerMs": 12,
+    "workerTerminated": true,
+    "documents": [
+      {
+        "kind": "synthetic",
+        "pages": 4,
+        "textCharacters": 6828
+      },
+      {
+        "kind": "reference",
+        "pages": 2,
+        "textCharacters": 2003
+      }
+    ],
+    "violations": [],
+    "syntheticCanvas": {
+      "width": 612,
+      "height": 792
+    },
+    "referenceCanvas": {
+      "width": 612,
+      "height": 792
+    },
+    "mobileLayout": {
+      "width": 392.984375,
+      "right": 392.984375,
+      "viewport": 393,
+      "overflow": false
+    },
+    "blocked": [],
+    "canvasCountAfterCleanup": 0
+  },
+  "scope": "Standalone local page with artifact CSP, installed Edge headless, no external requests; not native Shopify embedded acceptance."
+}

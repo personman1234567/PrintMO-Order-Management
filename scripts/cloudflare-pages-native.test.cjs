@@ -34,7 +34,7 @@ function fixture() {
   for (const file of [...contract.required, 'customer-order.html', ...contract.exclusions]) {
     fs.mkdirSync(path.dirname(path.join(web, file)), { recursive: true }); fs.writeFileSync(path.join(web, file), 'fixture');
   }
-  for (const file of ['index.html', 'customer-order.html']) fs.writeFileSync(path.join(web, file), '<html><head></head><body><script src="./mobile-order-recognition.js"></script>__SHOPIFY_API_KEY__</body></html>');
+  for (const file of ['index.html', 'customer-order.html', 'storefront-reports-preview.html']) fs.writeFileSync(path.join(web, file), '<html><head></head><body><script src="./mobile-order-recognition.js"></script>__SHOPIFY_API_KEY__</body></html>');
   fs.writeFileSync(path.join(dir, 'renderer.js'), 'root-renderer');
   fs.writeFileSync(path.join(web, 'renderer.js'), 'source-web-renderer');
   const run = (cwd, file, args, env) => {
@@ -59,7 +59,7 @@ test('fresh artifacts mirror the existing required/exclusion contract, preserve 
   assert.equal(fs.readFileSync(path.join(f.web, 'renderer.js'), 'utf8'), 'source-web-renderer');
   for (const excluded of f.contract.exclusions) assert.equal(fs.existsSync(path.join(first.output, excluded)), false);
   for (const file of f.contract.required) assert(fs.existsSync(path.join(first.output, file)));
-  for (const file of ['index.html', 'customer-order.html']) {
+  for (const file of ['index.html', 'customer-order.html', 'storefront-reports-preview.html']) {
     const html = fs.readFileSync(path.join(first.output, file), 'utf8'); assert(html.includes(first.marker)); assert(html.includes('mobile-order-recognition.js?v=123'));
   }
   const index = fs.readFileSync(path.join(first.output, 'index.html'), 'utf8'); assert(index.includes('public-fixture-key')); assert(!index.includes('__SHOPIFY_API_KEY__'));

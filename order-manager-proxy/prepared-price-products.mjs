@@ -1,7 +1,7 @@
 // Current commerce only. Presentation and all-color catalog media belong to publishing.
 export const PREPARED_RECIPIENT_COMMERCE_QUERY = `query PreparedRecipientCommerce($ids:[ID!]!) { nodes(ids:$ids) {
   ... on Product { id title handle status designerConfig:metafield(namespace:"custom",key:"designer_config") { value } }
-  ... on ProductVariant { id price selectedOptions { name value } product { id status } }
+  ... on ProductVariant { id price availableForSale selectedOptions { name value } product { id status } }
 } }`;
 export async function preparedPriceProducts(env,graphql,record,snapshotItems,normalizeConfig) {
   const products=new Map(),variants=new Map(),ids=[...new Set(record.items.flatMap(item=>[item.productId,item.variantId,...(snapshotItems.find(value=>value.id===item.id)?.variants||[]).map(value=>value.id)]))];

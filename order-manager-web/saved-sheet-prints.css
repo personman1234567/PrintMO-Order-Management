@@ -15,3 +15,10 @@
 .saved-sheet-dialog :focus-visible, .saved-sheet-trigger:focus-visible { outline: 2px solid #1765C1; outline-offset: 2px; }
 .saved-sheet-dialog button:disabled, .saved-sheet-trigger:disabled { opacity: .65; cursor: default; }
 @media (max-width: 420px) { .saved-sheet-dialog { padding: 16px; } }
+.material-batch-field { display: grid; gap: 6px; margin: 12px 0; font-weight: 600; }
+.material-batch-field input { box-sizing: border-box; min-height: 44px; width: 100%; padding: 8px 10px; border: 1px solid #CBD5E1; border-radius: 6px; color: #0F172A; background: #FFF; font: inherit; }
+.material-batch-card { display: grid; gap: 4px; width: 100%; min-height: 64px; padding: 12px; margin: 10px 0; text-align: left; color: #0F172A; background: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 8px; font: 600 14px/1.5 system-ui; cursor: pointer; overflow-wrap: anywhere; }
+.material-batch-card span { color: #475569; font-weight: 400; }
+.material-batch-dialog button { min-height: 44px; padding: 8px 12px; cursor: pointer; border: 1px solid #CBD5E1; border-radius: 6px; background: #FFF; color: #334155; font: inherit; }
+.material-batch-dialog button.saved-sheet-save { color: #FFF; background: #1765C1; }
+.material-batch-dialog .saved-sheet-row > span { gap: 3px; }

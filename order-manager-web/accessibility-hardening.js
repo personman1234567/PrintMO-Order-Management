@@ -172,7 +172,7 @@
   function focusableElements(root) {
     if (!root) return [];
     return Array.from(root.querySelectorAll(
-      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], summary, [tabindex]:not([tabindex="-1"])'
     )).filter(element => {
       if (element.tabIndex < 0) return false;
       if (element.closest('[hidden], [aria-hidden="true"], [inert]')) return false;
@@ -235,11 +235,11 @@
 
   function syncDialog(config) {
     const open = isDialogOpen(config);
-    const mobileDrillIn = config.root === '#detail-overlay'
-      && document.body.classList.contains('mobile-mode')
-      && config.rootElement.classList.contains('mobile-fullscreen-detail');
+    const mobileDrillIn = document.body.classList.contains('mobile-mode')
+      && ((config.root === '#detail-overlay' && config.rootElement.classList.contains('mobile-fullscreen-detail'))
+        || (config.root === '#storage-detail-overlay' && document.body.dataset.mobileWorkspace === 'true'));
     config.rootElement.setAttribute('aria-hidden', open ? 'false' : 'true');
-    if (config.root === '#detail-overlay') {
+    if (config.root === '#detail-overlay' || config.root === '#storage-detail-overlay') {
       config.rootElement.setAttribute('aria-modal', mobileDrillIn ? 'false' : 'true');
     }
     const modeChangedWhileOpen = open && config.wasOpen && mobileDrillIn !== config.mobileDrillIn;

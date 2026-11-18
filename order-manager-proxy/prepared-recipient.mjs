@@ -1,4 +1,5 @@
 // Bridge private admin preparation to the existing website's workspace contract.
+import {assertPreparedArtworkSize} from './prepared-artwork-transport.mjs';
 const SIDES = ['front','back','breast','left','right'];
 const fail = message => { throw Object.assign(new Error(message), {code:'INVALID_DESIGN',status:400}); };
 export function recipientDesigns(record, input = {}) {
@@ -88,12 +89,13 @@ export async function recipientTemplate(record, items, service, sourceTemplate,{
 export function recipientArtwork(record, designs, input, selectedIds, previews={}, frontPreviews={}) {
   const files = [];
   let frontBudget = 2*1024*1024;
-  for (const item of record.items) {
+  for (const [itemIndex,item] of record.items.entries()) {
     if (!selectedIds.has(item.id) || !designs[item.id]) continue;
     const sides = [...new Set(designs[item.id].prints.map(print=>print.side))];
     for (const side of sides) {
       const svg = input?.[item.id]?.[side];
-      if (typeof svg !== 'string' || svg.length > 12*1024*1024 || !/<svg[\s>]/i.test(svg)
+      assertPreparedArtworkSize(svg,itemIndex,side);
+      if (typeof svg !== 'string' || !/<svg[\s>]/i.test(svg)
         || /<script|<foreignObject|on[a-z]+\s*=|(?:href|src)\s*=\s*["']\s*(?:https?:|\/\/)/i.test(svg)) fail('The edited artwork could not be exported safely. Return to the review and retry.');
       files.push({itemId:item.id,side,svg});
     }

@@ -84,6 +84,12 @@ test('receiving shortcuts and saved-run printing work in a real browser at deskt
     await wait('document.getElementById("blanks-receive-allocation-feedback").textContent.startsWith("2 lines confirmed")');
     assert.deepEqual(await evaluate('fixture.calls.slice(2).map(c=>c.key)'), ['two', 'three']);
     assert.equal(await evaluate('fixture.serverBatch.manifest[3].allocationConfirmed'), false);
+    // Full-purchase receipt accepts untouched shared allocations and retains a metadata draft.
+    await evaluate(`fixture.serverBatch.createdAt='2026-11-13T16:00:00Z';fixture.serverBatch.updatedAt='saved-version';fixture.fullReceipts=0;window.confirm=()=>true;window.api.receiveFullBlanksBatch=async(id,version)=>{if(version!=='saved-version')throw Error('wrong receipt scope');fixture.fullReceipts++;fixture.serverBatch.manifest.forEach(line=>{line.receivedQty=line.expectedQty;line.allocationConfirmed=true});fixture.serverBatch.totals.receivedGarments=20;fixture.serverBatch.totals.missingGarments=0;return{batch:structuredClone(fixture.serverBatch),receiptResults:[]}}`);
+    await click('#blanks-receive-refresh'); await wait('document.getElementById("blanks-receive-reference-date").value==="2026-11-13"');
+    await evaluate("document.getElementById('blanks-receive-reference-label').value='Draft batch name'");
+    await click('#blanks-receive-mark-all'); await wait('fixture.fullReceipts===1 && !document.getElementById("blanks-receive-mark-all").disabled');
+    assert.equal(await evaluate('document.getElementById("blanks-receive-reference-label").value'), 'Draft batch name');
     await click('#blanks-receive-close');
     await evaluate('productionPlanner.open("run")'); await wait('!document.querySelector(".production-planner-print").disabled');
     await evaluate(`document.querySelector('#production-planner [data-query]').value='#1';document.querySelector('#production-planner [data-query]').dispatchEvent(new Event('input',{bubbles:true}))`);
@@ -133,5 +139,5 @@ test('receiving shortcuts and saved-run printing work in a real browser at deskt
       await cdp.send('Emulation.setEmulatedMedia', { media: 'print' });
       await capture('checklist-paper');
     }
-  } finally { cdp?.close(); browser.kill(); await new Promise(resolve => server.close(resolve)); }
+  } finally { cdp?.close(); browser.kill(); browser.stderr?.destroy(); browser.unref(); await new Promise(resolve => server.close(resolve)); }
 });

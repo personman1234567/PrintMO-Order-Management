@@ -992,6 +992,44 @@ window.api.getQueue = async ({ onPage } = {}) => {
   return Array.isArray(data) ? data : (data?.orders || []);
 };
 
+// Reports use a dedicated query-only service, not operational queue/detail handlers.
+window.api.getStorefrontReportOwners = ({ signal } = {}) => apiFetch('/order-manager/v1/storefront-reports/owners', { method: 'GET', signal });
+window.api.generateStorefrontReport = (input, { signal } = {}) => apiFetch('/order-manager/v1/storefront-reports/generate', {
+  method: 'POST', body: JSON.stringify(input.preset === 'all-time' ? { ownerId: input.ownerId, preset: 'all-time' } : { ownerId: input.ownerId, start: input.start, end: input.end }), signal
+});
+
+// Storefront planning is app-owned; normal Shopify commerce remains read-only.
+function storefrontSetupFetch(path, options) {
+  if (!isShopifyCandidateView()) return Promise.reject(Object.assign(new Error('Storefronts is available in the Shopify workspace.'), {code:'SETUP_SOURCE_UNAVAILABLE'}));
+  return apiFetch('/order-manager/v1/storefront-setup'+path, options);
+}
+const storefrontManagementFetch = (path,options) => { if(!isShopifyCandidateView()) return Promise.reject(Object.assign(new Error('Storefronts is available in the Shopify workspace.'),{code:'STOREFRONT_SOURCE_UNAVAILABLE',status:403})); return apiFetch('/order-manager/v1/storefront-management'+path,options); };
+window.api.listManagedStorefronts = ({after,signal}={}) => storefrontManagementFetch(buildQuery({after}),{method:'GET',signal});
+window.api.registerManagedStorefront = (input,{signal}={}) => storefrontManagementFetch('/register',{method:'POST',body:JSON.stringify(input),signal});
+window.api.createManagedStorefront = (input,{signal}={}) => storefrontManagementFetch('',{method:'POST',body:JSON.stringify(input),signal});
+window.api.getManagedStorefront = (id,{signal}={}) => storefrontManagementFetch('/'+encodeURIComponent(id),{method:'GET',signal});
+window.api.saveManagedStorefrontAppearance = (id,input,{signal}={}) => storefrontManagementFetch('/'+encodeURIComponent(id)+'/appearance',{method:'PUT',body:JSON.stringify(input),signal});
+window.api.saveManagedStorefrontDetails = (id,input,{signal}={}) => storefrontManagementFetch('/'+encodeURIComponent(id)+'/details',{method:'PUT',body:JSON.stringify(input),signal});
+window.api.getManagedStorefrontProducts = (id,{after,signal}={}) => storefrontManagementFetch('/'+encodeURIComponent(id)+'/products'+buildQuery({after}),{method:'GET',signal});
+window.api.getManagedStorefrontProduct = (id,productId,{signal}={}) => storefrontManagementFetch('/'+encodeURIComponent(id)+'/products/'+encodeURIComponent(productId),{method:'GET',signal});
+window.api.saveManagedStorefrontProduct = (id,productId,input,{signal}={}) => storefrontManagementFetch('/'+encodeURIComponent(id)+'/products/'+encodeURIComponent(productId),{method:'PUT',body:JSON.stringify(input),signal});
+window.api.getManagedStorefrontWork = (id,{signal}={}) => storefrontManagementFetch('/'+encodeURIComponent(id)+'/work',{method:'GET',signal});
+window.api.newManagedStorefrontProduct = (id,input,{signal}={}) => storefrontManagementFetch('/'+encodeURIComponent(id)+'/products/new',{method:'POST',body:JSON.stringify(input),signal});
+window.api.createManagedStorefrontProduct = (id,planId,input,{signal}={}) => storefrontManagementFetch('/'+encodeURIComponent(id)+'/products/'+encodeURIComponent(planId)+'/create',{method:'POST',body:JSON.stringify(input),signal});
+window.api.getStorefrontSetupAccess = ({signal}={}) => storefrontSetupFetch('/access',{method:'GET',signal});
+window.api.getStorefrontSetupBranding = (id,{signal}={}) => storefrontSetupFetch('/drafts/'+encodeURIComponent(id)+'/branding',{method:'GET',signal});
+window.api.getStorefrontSetupExecution = (id,{signal}={}) => storefrontSetupFetch('/drafts/'+encodeURIComponent(id)+'/execution',{method:'GET',signal});
+window.api.executeStorefrontSetup = (id,input,{signal}={}) => storefrontSetupFetch('/drafts/'+encodeURIComponent(id)+'/execution',{method:'POST',body:JSON.stringify(input),signal});
+window.api.stageStorefrontSetupUpload = (id,input,{signal}={}) => storefrontSetupFetch('/drafts/'+encodeURIComponent(id)+'/uploads',{method:'POST',body:JSON.stringify(input),signal});
+window.api.finishStorefrontSetupUpload = (id,uploadId,{signal}={}) => storefrontSetupFetch('/drafts/'+encodeURIComponent(id)+'/uploads/'+encodeURIComponent(uploadId),{method:'POST',body:'{}',signal});
+window.api.getStorefrontSetupDrafts = ({signal}={}) => storefrontSetupFetch('/drafts',{method:'GET',signal});
+window.api.getStorefrontSetupDraft = (id,{signal}={}) => storefrontSetupFetch('/drafts/'+encodeURIComponent(id),{method:'GET',signal});
+window.api.saveStorefrontSetupDraft = (input,{signal}={}) => storefrontSetupFetch('/drafts/'+encodeURIComponent(input.id),{method:'PUT',body:JSON.stringify(input),signal});
+window.api.getStorefrontSetupCollections = ({after,signal}={}) => storefrontSetupFetch('/collections'+buildQuery({after}),{method:'GET',signal});
+window.api.getStorefrontSetupProducts = (id,{after,signal}={}) => storefrontSetupFetch('/collections/'+encodeURIComponent(id)+'/products'+buildQuery({after}),{method:'GET',signal});
+window.api.searchStorefrontSetupCatalog = (query,{after,signal}={}) => storefrontSetupFetch('/catalog'+buildQuery({q:query,after}),{method:'GET',signal});
+window.api.getStorefrontSetupCatalogProduct = (id,{after,signal}={}) => storefrontSetupFetch('/catalog/'+encodeURIComponent(id)+buildQuery({after}),{method:'GET',signal});
+
 // Draft preparation uses the authenticated Worker and never enters the shared queue adapter.
 window.api.getDraftOrders = ({ cursor, q, status } = {}) => apiFetch(`/order-manager/v1/drafts${buildQuery({ cursor, q, status })}`);
 window.api.getDraftOrder = id => apiFetch(`/order-manager/v1/drafts/${encodeURIComponent(id)}`);
@@ -1406,6 +1444,16 @@ window.api.processBatch = async (orderIds) => {
   });
 };
 
+window.api.printBatches = async (method = 'GET', payload = {}) => {
+  if (!isShopifyCandidateView()) throw new Error('Open the active Shopify board to manage print batches.');
+  const query = method === 'GET' ? buildQuery(payload) : '';
+  const result = await apiFetch('/order-manager/v1/print-batches' + query, { method,
+    ...(method === 'GET' ? {} : { body: JSON.stringify(payload) }) });
+  return result;
+};
+window.api.receiveFullBlanksBatch = (id, expectedUpdatedAt) => apiFetch('/order-manager/blanks-batches', {
+  method: 'PATCH', body: JSON.stringify({ id, action: 'receive-all', confirmComplete: true, expectedUpdatedAt })
+});
 window.api.createBlanksBatch = async (payload = {}) => {
   return apiFetch("/order-manager/blanks-batches", {
     method: "POST",
@@ -1487,22 +1535,58 @@ window.api.assignOrdersToBlanksBatch = async (id, orders = []) => {
   });
 };
 
-window.api.listStorageObjects = async ({ prefix, cursor, limit, delimiter } = {}) => {
+window.api.listStorageObjects = async ({ prefix, cursor, limit, delimiter, signal } = {}) => {
   const query = buildQuery({ prefix, cursor, limit, delimiter });
-  return apiFetch(`/order-manager/storage/list${query}`, { method: "GET" });
+  return apiFetch(`/order-manager/storage/list${query}`, { method: "GET", signal });
 };
 
-window.api.headStorageObject = async (key) => {
+window.api.headStorageObject = async (key, { signal } = {}) => {
   if (!key) throw new Error("Storage key is required");
   const query = buildQuery({ key });
-  return apiFetch(`/order-manager/storage/head${query}`, { method: "GET" });
+  return apiFetch(`/order-manager/storage/head${query}`, { method: "GET", signal });
 };
+
+window.api.getStudioUsage = (query, { signal } = {}) => apiFetch(`/order-manager/studio-usage${buildQuery(query)}`, { method: 'GET', signal });
+
+window.api.listStudioUploads = async ({ after, before, cursor, limit, signal } = {}) => {
+  const query = buildQuery({ after, before, cursor, limit });
+  return apiFetch(`/order-manager/storage/uploads${query}`, { method: "GET", signal });
+};
+
+window.api.listStudioCheckoutExports = ({ after, before, cursor, limit, signal } = {}) =>
+  apiFetch(`/order-manager/storage/checkout-exports${buildQuery({ after, before, cursor, limit })}`, { method: "GET", signal });
+
+const studioUploadUrls = new Map();
+async function studioPrivateImage(id, path, { refresh = false } = {}) {
+  if (!id) throw new Error("Upload reference is required");
+  if (refresh && studioUploadUrls.has(id)) {
+    studioUploadUrls.get(id).then(url => URL.revokeObjectURL(url)).catch(() => {});
+    studioUploadUrls.delete(id);
+  }
+  if (!studioUploadUrls.has(id)) {
+    if (studioUploadUrls.size >= 200) {
+      const oldest = studioUploadUrls.keys().next().value;
+      studioUploadUrls.get(oldest).then(url => URL.revokeObjectURL(url)).catch(() => {});
+      studioUploadUrls.delete(oldest);
+    }
+    const load = apiFetch(path, { method: "GET", expect: "blob" })
+      .then(blob => URL.createObjectURL(blob)).catch(error => { studioUploadUrls.delete(id); throw error; });
+    studioUploadUrls.set(id, load);
+  }
+  return studioUploadUrls.get(id);
+}
+window.api.getStudioUploadUrl = (id, options) => studioPrivateImage(id, `/order-manager/storage/uploads/${encodeURIComponent(id)}`, options);
+window.api.getStudioProjectThumbnailUrl = (ref, options) => studioPrivateImage(`project:${ref}`, `/order-manager/studio-usage/projects/${encodeURIComponent(ref)}/thumbnail`, options);
 
 const storageObjectUrls = new Map();
 const storageObjectUrlLoads = new Map();
 
-window.api.getStorageObjectUrl = async (key) => {
+window.api.getStorageObjectUrl = async (key, { refresh = false } = {}) => {
   if (!key) return "";
+  if (refresh && storageObjectUrls.has(key)) {
+    URL.revokeObjectURL(storageObjectUrls.get(key));
+    storageObjectUrls.delete(key);
+  }
   if (storageObjectUrls.has(key)) return storageObjectUrls.get(key);
   if (storageObjectUrlLoads.has(key)) return storageObjectUrlLoads.get(key);
   const load = (async () => {

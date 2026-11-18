@@ -199,7 +199,7 @@
     } else {
       const choices = window.OrderManagerViews?.actions([context.key]) || [];
       for (const item of choices.filter(item => item.value.startsWith('move:') && !item.hidden)) {
-        action(item.label, () => move(item.value), { ...item, panel: content });
+        action(item.label, () => move(item.value), { enabled: item.enabled, reason: item.reason, panel: content });
       }
       if (!choices.length) action('Stage actions unavailable', () => {}, { enabled: false, reason: 'Refresh the app and try again.', panel: content });
     }
